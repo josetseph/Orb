@@ -1596,7 +1596,8 @@ class RetrievalService:
         final_synthesis_from_sub_results function.
         Returns (final_answer, all_accumulated_docs, thinking).
         """
-        llm_service = self._llm
+        # This KB's LLM (a pinned per-KB model, or the system default).
+        llm = self._llm
 
         def _progress(stage: str, model: str | None = None) -> None:
             if progress_callback:
@@ -1632,7 +1633,7 @@ class RetrievalService:
         # (type pre-filter + initial reranking). This call covers the expansion
         # docs which are reranked outside hybrid_search.
         _progress("Analyzing question", "Gemma4")
-        _loop_qa = llm_service.analyze_query(query)
+        _loop_qa = llm.analyze_query(query)
         _loop_question_attr = _loop_qa.get("question_attribute") or None
         logger.info(f"  [IterLoop] question_attribute={_loop_question_attr!r}")
 
@@ -1719,7 +1720,7 @@ class RetrievalService:
                 f"Reasoning over retrieved context ({iteration + 1}/{settings.MAX_LOOP_ITERATIONS})",
                 "Gemma4",
             )
-            result = await llm_service.iterative_step(
+            result = await llm.iterative_step(
                 original_question=query,
                 accumulated_steps=accumulated_steps,
                 search_query=current_query,
