@@ -1,10 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Check, ChevronDown, Cpu, Loader2, RotateCcw, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  Cpu,
+  FolderOpen,
+  Loader2,
+  RotateCcw,
+  X,
+} from "lucide-react";
 import { api } from "@/lib/api";
+import { getDesktopBridge, pickDesktopFile } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
-import type { KBLLMConfig, KnowledgeBase } from "@/lib/types";
+import type { KBLLMConfig, KnowledgeBase, LocalChatModel } from "@/lib/types";
 
 const INHERIT = "";
 
@@ -83,6 +93,7 @@ export function KBModelPanel({
   const effectiveProvider = provider || config?.effective.provider || "local";
   const isLocal = effectiveProvider === "local";
   const localModels = config?.local_models ?? [];
+  const canBrowse = Boolean(getDesktopBridge()?.pickFile);
 
   async function save(next: { provider: string; model: string; ingestion_model: string }) {
     setSaving(true);
@@ -108,30 +119,87 @@ export function KBModelPanel({
     }
   }
 
+  /** A model the user picked from disk that is not in the scanned list yet. */
+  function extraOption(value: string): LocalChatModel | null {
+    if (!value || localModels.some((m) => m.id === value)) return null;
+    return {
+      id: value,
+      label: value.split("/").pop() || value,
+      size_gb: 0,
+      source: "discovered",
+    };
+  }
+
+  async function browseForModel(setValue: (v: string) => void) {
+    const picked = await pickDesktopFile({
+      title: "Choose a GGUF model file",
+      filters: [{ name: "GGUF models", extensions: ["gguf"] }],
+    });
+    if (picked) setValue(picked);
+  }
+
   function modelField(
     label: string,
     value: string,
     setValue: (v: string) => void,
     hint: string,
   ) {
-    const select = "w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 pr-8 text-xs text-white outline-none focus:border-purple-500/50";
+    const select =
+      "w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 pr-8 text-xs text-white outline-none focus:border-purple-500/50";
+    const extra = extraOption(value);
+    const options = extra ? [...localModels, extra] : localModels;
+    const selected = options.find((m) => m.id === value);
     return (
       <div className="space-y-1">
         <label className="text-[11px] text-white/45">{label}</label>
         {isLocal ? (
-          <div className="relative">
-            <select value={value} onChange={(e) => setValue(e.target.value)} className={select}>
-              <option value={INHERIT} className="bg-[#0d0d12]">
-                Inherit ({hint})
-              </option>
-              {localModels.map((m) => (
-                <option key={m.id} value={m.id} className="bg-[#0d0d12]">
-                  {m.label} · {m.size_gb} GB
-                </option>
-              ))}
-            </select>
-            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
-          </div>
+          <>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <select
+                  value={value}
+                  onChange={(e) => setValue(e.target.value)}
+                  className={select}
+                >
+                  <option value={INHERIT} className="bg-[#0d0d12]">
+                    Inherit ({hint})
+                  </option>
+                  {options.map((m) => (
+                    <option key={m.id} value={m.id} className="bg-[#0d0d12]">
+                      {m.label}
+                      {m.size_gb ? ` · ${m.size_gb} GB` : ""}
+                      {m.source === "discovered" ? " · on disk" : ""}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
+              </div>
+              {canBrowse && (
+                <button
+                  type="button"
+                  onClick={() => void browseForModel(setValue)}
+                  title="Choose a .gguf file from anywhere on this machine"
+                  className="shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-white/60 transition hover:border-white/25 hover:text-white"
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+            {selected?.architecture && (
+              <p className="text-[10px] text-white/30">
+                {selected.architecture}
+                {selected.context_length
+                  ? ` · ${selected.context_length.toLocaleString()} token context`
+                  : ""}
+              </p>
+            )}
+            {(selected?.warnings ?? []).map((w) => (
+              <p key={w} className="flex items-start gap-1 text-[10px] text-amber-300/80">
+                <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                {w}
+              </p>
+            ))}
+          </>
         ) : (
           <input
             type="text"
@@ -209,8 +277,9 @@ export function KBModelPanel({
 
               {isLocal && localModels.length === 0 && (
                 <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-100/80">
-                  No local chat models are downloaded yet. Download one in Setup → Local
-                  models to pin it here.
+                  No local chat models found. Download one in Setup → Local models, or
+                  drop a <code className="font-mono">.gguf</code> into your models folder
+                  {canBrowse ? " (or browse for one)" : ""}.
                 </p>
               )}
 
@@ -223,8 +292,9 @@ export function KBModelPanel({
               )}
               {isLocal && (
                 <p className="text-[11px] text-white/30">
-                  Tip: a smaller GGUF for ingestion (extraction is structured JSON) keeps
-                  the bigger model for Chat.
+                  Any GGUF in your models folder is listed — not just the curated ones.
+                  A smaller model for ingestion (extraction is structured JSON) keeps the
+                  bigger one for Chat.
                 </p>
               )}
 

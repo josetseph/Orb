@@ -93,6 +93,20 @@ export interface KnowledgeBase {
     effective_llm?: EffectiveLLM;
 }
 
+/** A local chat GGUF Orb found on this machine. */
+export interface LocalChatModel {
+    /** Catalog id, or a MODELS_DIR-relative / absolute .gguf path. */
+    id: string;
+    label: string;
+    size_gb: number;
+    /** "catalog" = curated + downloaded; "discovered" = found on disk. */
+    source: "catalog" | "discovered";
+    architecture?: string;
+    context_length?: number | null;
+    /** Non-blocking advisories, e.g. the file looks like a reranker. */
+    warnings?: string[];
+}
+
 /** GET/PATCH /api/v1/kb/:id/llm */
 export interface KBLLMConfig {
     kb_id: string;
@@ -103,8 +117,8 @@ export interface KBLLMConfig {
     };
     effective: EffectiveLLM;
     providers: string[];
-    /** Chat GGUFs already on disk — the only local models a KB can pin. */
-    local_models: Array<{ id: string; label: string; size_gb: number }>;
+    /** Chat GGUFs already on disk — catalog downloads plus user-added files. */
+    local_models: LocalChatModel[];
 }
 
 export interface FinanceAccount {

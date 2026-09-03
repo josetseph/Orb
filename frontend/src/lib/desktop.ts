@@ -6,6 +6,13 @@ export type OrbDesktopBridge = {
     buttonLabel?: string;
     defaultPath?: string;
   }) => Promise<string | null>;
+  /** Pick a single file (e.g. a .gguf outside the models directory). */
+  pickFile?: (opts?: {
+    title?: string;
+    buttonLabel?: string;
+    defaultPath?: string;
+    filters?: Array<{ name: string; extensions: string[] }>;
+  }) => Promise<string | null>;
   /** Direct FastAPI base, e.g. http://127.0.0.1:17401/api/v1 */
   getApiBaseUrl?: () => Promise<string>;
   /** Reveal a local file in Finder / Explorer (vault / data / models only) */
@@ -68,6 +75,16 @@ export async function resolveApiBaseUrl(fallback: string): Promise<string> {
   }
   cachedDesktopApiBase = null;
   return fallback;
+}
+
+export async function pickDesktopFile(opts?: {
+  title?: string;
+  defaultPath?: string;
+  filters?: Array<{ name: string; extensions: string[] }>;
+}): Promise<string | null> {
+  const bridge = getDesktopBridge();
+  if (!bridge?.pickFile) return null;
+  return bridge.pickFile(opts);
 }
 
 export async function revealInFolder(filePath: string): Promise<boolean> {

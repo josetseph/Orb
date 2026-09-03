@@ -93,9 +93,17 @@ class TestResolveChatGguf:
             rt.resolve_chat_gguf("qwen3-embed-0.6b-q8")
 
     def test_explicit_gguf_path(self, tmp_path):
-        f = tmp_path / "custom.gguf"
-        f.write_bytes(b"x")
+        from tests.unit.test_model_discovery import make_model
+
+        f = make_model(tmp_path / "custom.gguf", name="Custom")
         assert lm.LocalLlamaRuntime().resolve_chat_gguf(str(f)) == Path(f)
+
+    def test_a_file_that_is_not_really_a_gguf_is_refused(self, tmp_path):
+        """Pinning must validate the file, not just its extension."""
+        f = tmp_path / "fake.gguf"
+        f.write_bytes(b"x")
+        with pytest.raises(RuntimeError, match="not a readable GGUF"):
+            lm.LocalLlamaRuntime().resolve_chat_gguf(str(f))
 
     def test_unknown_name_falls_back_to_selection(self):
         assert lm.LocalLlamaRuntime().resolve_chat_gguf("something-else") is None

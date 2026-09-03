@@ -262,6 +262,38 @@ ipcMain.handle("pick-directory", async (event, opts = {}) => {
   return result.filePaths[0];
 });
 
+/**
+ * Pick a single file (used to add a GGUF from outside the models directory).
+ * Read-only: the renderer gets a path back, nothing is copied or executed here.
+ */
+ipcMain.handle("pick-file", async (event, opts = {}) => {
+  const win =
+    BrowserWindow.fromWebContents(event.sender) ||
+    BrowserWindow.getFocusedWindow() ||
+    undefined;
+  const filters = Array.isArray(opts.filters) && opts.filters.length
+    ? opts.filters
+        .filter((f) => f && typeof f.name === "string" && Array.isArray(f.extensions))
+        .map((f) => ({
+          name: String(f.name).slice(0, 60),
+          // Extensions are matched by Electron verbatim; keep them simple.
+          extensions: f.extensions
+            .filter((e) => typeof e === "string" && /^[A-Za-z0-9]{1,12}$/.test(e))
+            .slice(0, 12),
+        }))
+        .filter((f) => f.extensions.length)
+    : undefined;
+  const result = await dialog.showOpenDialog(win, {
+    title: opts.title || "Choose file",
+    buttonLabel: opts.buttonLabel || "Select",
+    properties: ["openFile"],
+    defaultPath: opts.defaultPath || undefined,
+    filters,
+  });
+  if (result.canceled || !result.filePaths[0]) return null;
+  return result.filePaths[0];
+});
+
 ipcMain.handle("get-api-base-url", () => apiV1Url());
 
 ipcMain.handle("reveal-in-folder", (_e, filePath) => {

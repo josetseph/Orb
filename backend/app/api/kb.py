@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -57,9 +58,49 @@ def _with_effective_llm(row: dict) -> dict:
     return {**row, "effective_llm": effective_llm_config(row)}
 
 
-def _kb_llm_payload(kb_id: str) -> dict:
-    from app.services.model_catalog import downloaded_chat_models
+def _local_chat_models() -> list[dict]:
+    """Every chat GGUF on this machine — catalog downloads and user-added files.
 
+    The curated catalog no longer gates the choice; it only contributes labels
+    and the download flow. Anything discovered on disk is selectable.
+    """
+    from app.services.model_catalog import downloaded_chat_models
+    from app.services.model_discovery import discover_chat_models, model_ref_for
+
+    rows: list[dict] = []
+    seen_paths: set[str] = set()
+    for opt in downloaded_chat_models():
+        from app.core.paths import resolve_models_dir
+
+        path = resolve_models_dir() / "gguf" / opt.hf_file
+        seen_paths.add(str(path.resolve()) if path.exists() else str(path))
+        rows.append(
+            {
+                "id": opt.id,
+                "label": opt.label,
+                "size_gb": opt.size_gb,
+                "source": "catalog",
+                "warnings": [],
+            }
+        )
+    for model in discover_chat_models():
+        if str(Path(model.path).resolve()) in seen_paths:
+            continue  # already listed under its curated catalog name
+        rows.append(
+            {
+                "id": model.ref,
+                "label": model.label,
+                "size_gb": model.size_gb,
+                "source": "discovered",
+                "architecture": model.architecture,
+                "context_length": model.context_length,
+                "warnings": list(model.warnings),
+            }
+        )
+    return rows
+
+
+def _kb_llm_payload(kb_id: str) -> dict:
     meta = kb_registry.get_metadata(kb_id) or {}
     return {
         "kb_id": kb_id,
@@ -70,11 +111,8 @@ def _kb_llm_payload(kb_id: str) -> dict:
         },
         "effective": effective_llm_config(meta),
         "providers": list(LLM_PROVIDERS),
-        # Only GGUFs already on disk can be pinned — no per-KB downloads.
-        "local_models": [
-            {"id": m.id, "label": m.label, "size_gb": m.size_gb}
-            for m in downloaded_chat_models()
-        ],
+        # Models already on this machine — pinning never triggers a download.
+        "local_models": _local_chat_models(),
     }
 
 
@@ -101,6 +139,7 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
     """
     from app.services.ai_gate import provider_is_configured
     from app.services.model_catalog import chat_model_downloaded, get_option
+    from app.services.model_discovery import inspect_chat_model, resolve_model_ref
 
     provider = _inherit(body.provider)
     model = _inherit(body.model)
@@ -123,16 +162,31 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
             if not mid:
                 continue
             opt = get_option(mid)
-            if opt is None or opt.role != "chat":
+            if opt is not None:
+                if opt.role != "chat":
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{label} '{mid}' is a {opt.role} model, not a chat model.",
+                    )
+                if not chat_model_downloaded(opt):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{opt.label} is not downloaded — download it in Setup first.",
+                    )
+                continue
+            # Not a catalog id: accept any GGUF on disk, but prove it can chat.
+            path = resolve_model_ref(mid)
+            if path is None:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"{label} '{mid}' is not a known local chat model id.",
+                    detail=(
+                        f"{label} '{mid}' is neither a known model id nor a path to a "
+                        ".gguf file."
+                    ),
                 )
-            if not chat_model_downloaded(opt):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{opt.label} is not downloaded — download it in Setup first.",
-                )
+            _info, error = inspect_chat_model(path)
+            if error:
+                raise HTTPException(status_code=400, detail=error)
     try:
         meta = kb_registry.set_llm_config(
             kb_id, provider=provider, model=model, ingestion_model=ingestion_model

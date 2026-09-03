@@ -137,6 +137,32 @@ def _default_chat_max_tokens() -> int | None:
         return None
 
 
+def _clamp_ctx_to_model(gguf_path: Path, requested_ctx: int) -> int:
+    """Never ask for more context than the model was trained for.
+
+    With arbitrary user-supplied GGUFs the configured 16k default can exceed a
+    model's real window (some are 4k/8k), which wastes KV cache at best and
+    produces garbage past the trained length at worst. Reading the header costs
+    ~0.1-0.3s against a load measured in tens of seconds.
+    """
+    try:
+        from app.services.gguf_metadata import try_read_gguf_metadata
+
+        info = try_read_gguf_metadata(gguf_path)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return requested_ctx
+    model_ctx = getattr(info, "context_length", None) if info else None
+    if not model_ctx or model_ctx <= 0 or model_ctx >= requested_ctx:
+        return requested_ctx
+    logger.info(
+        "Lowering n_ctx %s -> %s to match %s's trained context window",
+        requested_ctx,
+        model_ctx,
+        gguf_path.name,
+    )
+    return int(model_ctx)
+
+
 def _default_repeat_penalty() -> float:
     raw = _env_first("ORB_LLAMA_REPEAT_PENALTY", "LIVEOS_LLAMA_REPEAT_PENALTY", default="1.12")
     try:
@@ -1076,6 +1102,7 @@ class LocalLlamaRuntime:
     def _load_chat_unlocked(self, chat_gguf: Path) -> dict:
         Llama = self._import_llama()
         chat_kwargs = self._chat_kwargs()
+        chat_kwargs["n_ctx"] = _clamp_ctx_to_model(chat_gguf, chat_kwargs["n_ctx"])
         logger.info(
             "Loading chat GGUF in-process (%s, n_gpu_layers=%s, n_ctx=%s, swa_full=True): %s",
             self.accel["backend"],
@@ -1175,17 +1202,23 @@ class LocalLlamaRuntime:
             self._touch()
 
     def resolve_chat_gguf(self, model: str | None) -> Path | None:
-        """Map a catalog id or ``.gguf`` path to a file on disk.
+        """Map a catalog id or a GGUF path ref to a file on disk.
 
-        ``None`` means "use the Setup selection". Unknown ids fall back to the
-        selection with a warning; a known-but-missing catalog id raises so a
-        per-KB model that was never downloaded fails loudly instead of silently
-        answering with the wrong model.
+        Accepts three forms so any local model can be used, not only curated ones:
+          * a catalog id            — ``gemma4-e4b-q4``
+          * a MODELS_DIR-relative path — ``gguf/My-Model-Q4_K_M.gguf``
+          * an absolute path        — ``/Volumes/x/My-Model.gguf``
+
+        ``None`` means "use the Setup selection". A ref that names a specific
+        model but cannot be satisfied raises, so a KB pinned to a model that was
+        deleted or never downloaded fails loudly rather than silently answering
+        with a different model.
         """
         name = (model or "").strip()
         if not name or name == "local-chat":
             return None
         from app.services.model_catalog import get_option
+        from app.services.model_discovery import inspect_chat_model, resolve_model_ref
 
         opt = get_option(name)
         if opt is not None:
@@ -1198,9 +1231,14 @@ class LocalLlamaRuntime:
                 f"Chat model '{opt.label}' is not downloaded. "
                 "Download it in Setup → Local models, or pick another model."
             )
-        path = Path(name).expanduser()
-        if path.suffix.lower() == ".gguf" and path.is_file():
-            return path
+
+        path_ref = resolve_model_ref(name)
+        if path_ref is not None:
+            _info, error = inspect_chat_model(path_ref)
+            if error:
+                raise RuntimeError(error)
+            return path_ref
+
         if name != (settings.LLM_MODEL or ""):
             logger.warning("Unknown local chat model %r — using the Setup selection", name)
         return None
