@@ -14,7 +14,7 @@ import httpx
 from app.core.config import settings
 from app.core.log import get_logger
 from app.services.kb_registry import KBContext, kb_registry
-from app.services.llm import llm_service
+from app.services.timing import load_snapshot, log_stage_timing
 
 logger = get_logger("FireflyService")
 
@@ -2271,6 +2271,8 @@ class FireflyService:
         note_docs: list[dict[str, Any]] | None = None,
         rewritten_query: str | None = None,
     ) -> dict[str, Any]:
+        started = time.perf_counter()
+        load_before = load_snapshot()
         workspace = await self.get_workspace(kb)
         if not workspace.get("ready"):
             detail = workspace.get("detail") or "Firefly III is not ready yet."
@@ -2305,7 +2307,21 @@ class FireflyService:
             user_parts.append(
                 f"No relevant note passages were retrieved from KB \"{kb.name}\"."
             )
-        answer = llm_service.generate_text(system, "\n\n".join(user_parts))
+        # Use this KB's LLM (a pinned per-KB model, or the system default), and
+        # run it in a worker thread: the call is synchronous and — now that a KB
+        # can pin a different GGUF — may swap a multi-GB model here. Inline, that
+        # would block the event loop serving /chat/status polls.
+        answer = await asyncio.to_thread(
+            kb.llm.generate_text, system, "\n\n".join(user_parts)
+        )
+        log_stage_timing(
+            logger,
+            "finance_chat",
+            time.perf_counter() - started,
+            load_before,
+            kb=kb.name,
+            docs=len(note_docs or []),
+        )
         context: list[dict[str, Any]] = list(note_docs or [])
         context.append({"source": "finance", "summary": summary, "kb_id": kb.kb_id})
         return {

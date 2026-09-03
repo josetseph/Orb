@@ -150,7 +150,7 @@ async def ingest_existing_note(
     Always force-reingests — resets processed/failed flags so the pipeline runs
     regardless of prior ingestion status.
     """
-    require_ai()
+    require_ai(kb)
     result = await db.execute(
         select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
     )
@@ -194,7 +194,7 @@ async def ingest_note(
     For manual note creation, prefer POST /api/v1/notes then POST /api/v1/notes/{id}/ingest.
     """
     if not note_data.skip_ingestion:
-        require_ai()
+        require_ai(kb)
     note_id = str(uuid.uuid4())
     c_at = (
         _parse_date_str(note_data.created_at)

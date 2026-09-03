@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 import { ShaderBackground } from "@/components/shader-background";
 import { getDesktopBridge, pickDesktopDirectory } from "@/lib/desktop";
 import type { KnowledgeBase } from "@/lib/types";
+import { KBModelPanel } from "./_components/KBModelPanel";
 
 export default function KBPage() {
     const { currentKB, setCurrentKB, setCurrentKBName } = useKB();
@@ -240,8 +241,9 @@ export default function KBPage() {
                     </div>
                     <p className="text-white/50 text-sm">
                         Each knowledge base has its own notes vault folder, graph, and search
-                        index. Models and app data from Setup are shared — you do not re-run
-                        Setup when adding a vault.
+                        index. Every KB follows the chat model from Settings unless you pin a
+                        different one below; embedding, reranking, and media models from Setup
+                        are always shared.
                     </p>
                 </motion.div>
 
@@ -460,6 +462,7 @@ export default function KBPage() {
                                                     Original knowledge base — always available
                                                 </p>
                                             )}
+                                            <KBModelPanel kb={kb} onSaved={fetchKBs} onError={setError} />
                                         </div>
 
                                         {/* Actions */}

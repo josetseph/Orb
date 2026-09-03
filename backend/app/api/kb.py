@@ -15,7 +15,12 @@ from app.core.log import get_logger
 from app.models.note import Note
 from app.models.wikilink import NoteLink
 from app.services.firefly_service import firefly_service
-from app.services.kb_registry import KBContext, kb_registry
+from app.services.kb_registry import (
+    LLM_PROVIDERS,
+    KBContext,
+    effective_llm_config,
+    kb_registry,
+)
 from app.services.vault import clear_vault_contents, ensure_vault
 
 logger = get_logger("API")
@@ -35,10 +40,118 @@ class RenameKBInput(BaseModel):
     name: str
 
 
+class KBLLMInput(BaseModel):
+    """Per-KB LLM override. Empty / null / "inherit" fields fall back to Settings."""
+
+    provider: str | None = None
+    model: str | None = None
+    ingestion_model: str | None = None
+
+
+def _inherit(value: str | None) -> str | None:
+    text = (value or "").strip()
+    return None if text.lower() in ("", "inherit", "system", "default") else text
+
+
+def _with_effective_llm(row: dict) -> dict:
+    return {**row, "effective_llm": effective_llm_config(row)}
+
+
+def _kb_llm_payload(kb_id: str) -> dict:
+    from app.services.model_catalog import downloaded_chat_models
+
+    meta = kb_registry.get_metadata(kb_id) or {}
+    return {
+        "kb_id": kb_id,
+        "override": {
+            "provider": meta.get("llm_provider"),
+            "model": meta.get("llm_model"),
+            "ingestion_model": meta.get("llm_ingestion_model"),
+        },
+        "effective": effective_llm_config(meta),
+        "providers": list(LLM_PROVIDERS),
+        # Only GGUFs already on disk can be pinned — no per-KB downloads.
+        "local_models": [
+            {"id": m.id, "label": m.label, "size_gb": m.size_gb}
+            for m in downloaded_chat_models()
+        ],
+    }
+
+
 @router.get("/api/v1/kb")
 async def list_knowledge_bases():
-    """List all registered knowledge bases."""
-    return {"knowledge_bases": kb_registry.list_kbs()}
+    """List all registered knowledge bases (with their effective LLM)."""
+    return {"knowledge_bases": [_with_effective_llm(r) for r in kb_registry.list_kbs()]}
+
+
+@router.get("/api/v1/kb/{kb_id}/llm")
+async def get_kb_llm(kb_id: str):
+    """Current per-KB LLM override, the resolved effective model, and pinnable local GGUFs."""
+    if kb_id != "default" and not kb_registry.get_metadata(kb_id):
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
+    return _kb_llm_payload(kb_id)
+
+
+@router.patch("/api/v1/kb/{kb_id}/llm")
+async def update_kb_llm(kb_id: str, body: KBLLMInput):
+    """Pin (or clear) the chat / ingestion LLM for one knowledge base.
+
+    Validates up front so a KB never points at a model it cannot run: local
+    ids must be downloaded, cloud providers need their API key in ``.env``.
+    """
+    from app.services.ai_gate import provider_is_configured
+    from app.services.model_catalog import chat_model_downloaded, get_option
+
+    provider = _inherit(body.provider)
+    model = _inherit(body.model)
+    ingestion_model = _inherit(body.ingestion_model)
+    if provider is not None:
+        provider = provider.lower()
+        if provider not in LLM_PROVIDERS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported provider '{provider}'. Choose one of: {', '.join(LLM_PROVIDERS)}",
+            )
+        if provider != "local" and not provider_is_configured(provider):
+            raise HTTPException(
+                status_code=400,
+                detail=f"No API key configured for {provider} — add it to backend/.env first.",
+            )
+    effective_provider = provider or effective_llm_config({})["provider"]
+    if effective_provider == "local":
+        for label, mid in (("model", model), ("ingestion_model", ingestion_model)):
+            if not mid:
+                continue
+            opt = get_option(mid)
+            if opt is None or opt.role != "chat":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{label} '{mid}' is not a known local chat model id.",
+                )
+            if not chat_model_downloaded(opt):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{opt.label} is not downloaded — download it in Setup first.",
+                )
+    try:
+        meta = kb_registry.set_llm_config(
+            kb_id, provider=provider, model=model, ingestion_model=ingestion_model
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
+    # Build the service now so a bad override surfaces here, not in the next chat.
+    ctx = kb_registry.get_kb(kb_id)
+    if ctx is not None and ctx.has_llm_override:
+        try:
+            ctx.llm  # noqa: B018 — construct for validation
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            kb_registry.set_llm_config(kb_id, provider=None, model=None, ingestion_model=None)
+            raise HTTPException(
+                status_code=400, detail=f"Could not initialise that model: {exc}"
+            ) from exc
+    return _kb_llm_payload(kb_id)
 
 
 @router.post("/api/v1/kb", status_code=201)

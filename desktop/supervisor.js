@@ -457,8 +457,16 @@ class Supervisor {
           CORS_ORIGINS: process.env.CORS_ORIGINS || corsOrigins(),
           // GGUF context / generation (one model loaded at a time).
           ORB_LLAMA_N_CTX: envFirst("ORB_LLAMA_N_CTX", "LIVEOS_LLAMA_N_CTX") || "16384",
-          ORB_LLAMA_MAX_TOKENS:
-            envFirst("ORB_LLAMA_MAX_TOKENS", "LIVEOS_LLAMA_MAX_TOKENS") || "10240",
+          // No default output cap — the API sizes max_tokens per call from the
+          // context left after the prompt; a fixed cap truncated long extractions.
+          ...(envFirst("ORB_LLAMA_MAX_TOKENS", "LIVEOS_LLAMA_MAX_TOKENS")
+            ? {
+                ORB_LLAMA_MAX_TOKENS: envFirst(
+                  "ORB_LLAMA_MAX_TOKENS",
+                  "LIVEOS_LLAMA_MAX_TOKENS",
+                ),
+              }
+            : {}),
           ORB_LLAMA_SWA_FULL: envFirst("ORB_LLAMA_SWA_FULL", "LIVEOS_LLAMA_SWA_FULL") || "true",
           ORB_LLAMA_REPEAT_PENALTY:
             envFirst("ORB_LLAMA_REPEAT_PENALTY", "LIVEOS_LLAMA_REPEAT_PENALTY") || "1.12",

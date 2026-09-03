@@ -28,6 +28,71 @@ logger = get_logger("KBRegistry")
 DEFAULT_KB_ID = "default"
 _LEGACY_REGISTRY = REPO_ROOT / "data" / "kb_registry.json"
 
+# Providers a KB may pin. Embed / rerank / multimodal are deliberately not
+# per-KB: embed dims are shared across every KB's Qdrant collections.
+LLM_PROVIDERS = ("local", "openai", "gemini", "anthropic", "huggingface")
+_LLM_META_KEYS = ("llm_provider", "llm_model", "llm_ingestion_model")
+
+
+def _clean_override(value) -> str | None:
+    text = (str(value) if value is not None else "").strip()
+    return text or None
+
+
+def build_kb_llm_service(
+    provider: str | None, model: str | None, ingestion_model: str | None
+):
+    """Construct an LLMService pinned to a KB's override (raises on bad config)."""
+    from app.services.llm import LLMService
+
+    prov = (provider or settings.LLM_PROVIDER or "local").lower().strip()
+    return LLMService(
+        prov,
+        chat_model=model,
+        ingestion_model=ingestion_model,
+        ingestion_provider=prov,
+    )
+
+
+def _system_model_for(provider: str, *, ingestion: bool) -> str | None:
+    """What the global Settings would use for ``provider`` (no service construction)."""
+    is_global = provider == (settings.LLM_PROVIDER or "").lower().strip()
+    if ingestion and is_global and settings.INGESTION_MODEL:
+        return settings.INGESTION_MODEL
+    if is_global and settings.CHAT_MODEL:
+        return settings.CHAT_MODEL
+    if provider == "local" and ingestion:
+        # INGESTION_LLM_MODEL defaults to the "local-chat" placeholder, which
+        # resolves to the Setup selection at runtime — show that selection.
+        local_ingest = settings.INGESTION_LLM_MODEL
+        if local_ingest and local_ingest != "local-chat":
+            return local_ingest
+    return {
+        "local": settings.LLM_MODEL,
+        "openai": settings.OPENAI_MODEL,
+        "gemini": settings.GEMINI_MODEL,
+        "anthropic": settings.ANTHROPIC_MODEL,
+        "huggingface": settings.HUGGINGFACE_MODEL,
+    }.get(provider)
+
+
+def effective_llm_config(meta: dict) -> dict:
+    """Resolved provider/model for a KB row: overrides layered over system Settings."""
+    provider = (_clean_override(meta.get("llm_provider")) or settings.LLM_PROVIDER or "local").lower()
+    model = _clean_override(meta.get("llm_model")) or _system_model_for(provider, ingestion=False)
+    ingestion_model = (
+        _clean_override(meta.get("llm_ingestion_model"))
+        or _clean_override(meta.get("llm_model"))
+        or _system_model_for(provider, ingestion=True)
+        or model
+    )
+    return {
+        "provider": provider,
+        "model": model,
+        "ingestion_model": ingestion_model,
+        "inherited": not any(_clean_override(meta.get(k)) for k in _LLM_META_KEYS),
+    }
+
 
 def _kuzu_db_file(data_dir: Path, slug: str) -> Path:
     """Return the Kuzu *database file* path for a KB slug.
@@ -69,6 +134,12 @@ class KBContext:
     retrieval_service: object = field(default=None, repr=False)
     ingestion_workflow: object = field(default=None, repr=False)
     chat_workflow: object = field(default=None, repr=False)
+    # Per-KB LLM override (None = inherit system Settings).
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_ingestion_model: str | None = None
+    _llm: object = field(default=None, repr=False)
+    _llm_built_for: tuple | None = field(default=None, repr=False)
 
     @property
     def graph(self) -> GraphService:
@@ -81,21 +152,59 @@ class KBContext:
             self._graph = GraphService(db_path=path, qdrant=self.qdrant)
         return self._graph
 
+    @property
+    def has_llm_override(self) -> bool:
+        return bool(self.llm_provider or self.llm_model or self.llm_ingestion_model)
+
+    @property
+    def llm(self):
+        """LLM service for this KB: a pinned per-KB instance, or the global one."""
+        if not self.has_llm_override:
+            from app.services.llm import llm_service
+
+            return llm_service
+        # Rebuild if the override (or the inherited provider) changed underneath.
+        key = (
+            (self.llm_provider or settings.LLM_PROVIDER or "local").lower(),
+            self.llm_model,
+            self.llm_ingestion_model,
+        )
+        if self._llm is None or self._llm_built_for != key:
+            self._llm = build_kb_llm_service(*key)
+            self._llm_built_for = key
+        return self._llm
+
+    def apply_llm_override(
+        self, provider: str | None, model: str | None, ingestion_model: str | None
+    ) -> None:
+        """Replace the override and drop cached services so they pick it up."""
+        self.llm_provider = provider
+        self.llm_model = model
+        self.llm_ingestion_model = ingestion_model
+        self._llm = None
+        self._llm_built_for = None
+        self.retrieval_service = None
+        self.ingestion_workflow = None
+        self.chat_workflow = None
+
     def _ensure_lazy(self) -> None:
+        llm = self.llm
         if self.retrieval_service is None:
             self.retrieval_service = RetrievalService(
                 graph=self.graph,
                 qdrant=self.qdrant,
                 meili=self.meili,
+                llm=llm,
             )
         if self.ingestion_workflow is None:
             self.ingestion_workflow = IngestionWorkflow(
                 graph=self.graph,
                 qdrant=self.qdrant,
                 meili=self.meili,
+                llm=llm,
             )
         if self.chat_workflow is None:
-            self.chat_workflow = ChatWorkflow(retrieval=self.retrieval_service)
+            self.chat_workflow = ChatWorkflow(retrieval=self.retrieval_service, llm=llm)
 
     def get_retrieval_service(self):
         self._ensure_lazy()
@@ -133,23 +242,31 @@ def _connect() -> sqlite3.Connection:
             typesense_collection TEXT NOT NULL,
             created_at TEXT,
             firefly_group_id INTEGER,
-            firefly_group_title TEXT
+            firefly_group_title TEXT,
+            llm_provider TEXT,
+            llm_model TEXT,
+            llm_ingestion_model TEXT
         )
         """
     )
-    _ensure_firefly_columns(conn)
+    _ensure_optional_columns(conn)
     conn.commit()
     return conn
 
 
-def _ensure_firefly_columns(conn: sqlite3.Connection) -> None:
-    """Add finance scope columns to existing knowledge_bases tables."""
+def _ensure_optional_columns(conn: sqlite3.Connection) -> None:
+    """Add finance-scope and LLM-override columns to existing knowledge_bases tables."""
     rows = conn.execute("PRAGMA table_info(knowledge_bases)").fetchall()
     colnames = {row["name"] for row in rows}
-    if "firefly_group_id" not in colnames:
-        conn.execute("ALTER TABLE knowledge_bases ADD COLUMN firefly_group_id INTEGER")
-    if "firefly_group_title" not in colnames:
-        conn.execute("ALTER TABLE knowledge_bases ADD COLUMN firefly_group_title TEXT")
+    for name, sqltype in (
+        ("firefly_group_id", "INTEGER"),
+        ("firefly_group_title", "TEXT"),
+        ("llm_provider", "TEXT"),
+        ("llm_model", "TEXT"),
+        ("llm_ingestion_model", "TEXT"),
+    ):
+        if name not in colnames:
+            conn.execute(f"ALTER TABLE knowledge_bases ADD COLUMN {name} {sqltype}")
 
 
 def _default_kb() -> KBContext:
@@ -325,6 +442,9 @@ class KBRegistry:
                         _kuzu_path=normalize_kuzu_path(
                             meta.get("kuzu_path") or str(settings.KUZU_DB_PATH)
                         ),
+                        llm_provider=_clean_override(meta.get("llm_provider")),
+                        llm_model=_clean_override(meta.get("llm_model")),
+                        llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
                     )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[KBRegistry] Failed to load from SQLite: {exc}")
@@ -336,14 +456,18 @@ class KBRegistry:
             INSERT INTO knowledge_bases
             (id, name, slug, vault_path, kuzu_path, qdrant_col_cores,
              qdrant_col_rels, qdrant_col_contexts, typesense_collection, created_at,
-             firefly_group_id, firefly_group_title)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             firefly_group_id, firefly_group_title,
+             llm_provider, llm_model, llm_ingestion_model)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name,
               vault_path=excluded.vault_path,
               kuzu_path=excluded.kuzu_path,
               firefly_group_id=excluded.firefly_group_id,
-              firefly_group_title=excluded.firefly_group_title
+              firefly_group_title=excluded.firefly_group_title,
+              llm_provider=excluded.llm_provider,
+              llm_model=excluded.llm_model,
+              llm_ingestion_model=excluded.llm_ingestion_model
             """,
             (
                 meta["id"],
@@ -358,6 +482,9 @@ class KBRegistry:
                 meta.get("created_at"),
                 meta.get("firefly_group_id"),
                 meta.get("firefly_group_title"),
+                meta.get("llm_provider"),
+                meta.get("llm_model"),
+                meta.get("llm_ingestion_model"),
             ),
         )
         conn.commit()
@@ -548,6 +675,57 @@ class KBRegistry:
             self._metadata[kb_id]["firefly_group_title"] = None
             self._save_row(self._metadata[kb_id])
 
+    def set_llm_config(
+        self,
+        kb_id: str,
+        *,
+        provider: str | None,
+        model: str | None,
+        ingestion_model: str | None,
+    ) -> dict | None:
+        """Persist a per-KB LLM override (all None = inherit) and refresh the live context."""
+        provider = _clean_override(provider)
+        if provider is not None:
+            provider = provider.lower()
+            if provider in ("ollama", "lm_studio"):
+                provider = "local"
+            if provider not in LLM_PROVIDERS:
+                raise ValueError(
+                    f"Unsupported provider '{provider}'. Choose one of: {', '.join(LLM_PROVIDERS)}"
+                )
+        model = _clean_override(model)
+        ingestion_model = _clean_override(ingestion_model)
+        with self._lock:
+            if kb_id == DEFAULT_KB_ID and DEFAULT_KB_ID not in self._metadata:
+                self._ensure_default_row()
+            meta = self._metadata.get(kb_id)
+            if meta is None:
+                return None
+            meta["llm_provider"] = provider
+            meta["llm_model"] = model
+            meta["llm_ingestion_model"] = ingestion_model
+            self._save_row(meta)
+            ctx = self._cache.get(kb_id)
+            if ctx is not None:
+                ctx.apply_llm_override(provider, model, ingestion_model)
+            logger.info(
+                "[KBRegistry] LLM override for '%s' → provider=%s model=%s ingestion=%s",
+                meta.get("name"),
+                provider or "(inherit)",
+                model or "(inherit)",
+                ingestion_model or "(inherit)",
+            )
+            return dict(meta)
+
+    def effective_llm(self, kb_id: str) -> dict | None:
+        with self._lock:
+            meta = self._metadata.get(kb_id)
+        if meta is None:
+            if kb_id != DEFAULT_KB_ID:
+                return None
+            meta = {}
+        return effective_llm_config(meta)
+
     def set_vault_path(self, kb_id: str, vault_path: str) -> KBContext | None:
         """Point a KB at a different notes folder (creates folder if needed)."""
         vault_str = str(ensure_vault(vault_path))
@@ -587,6 +765,9 @@ class KBRegistry:
             meili=ms,
             vault_path=meta.get("vault_path", ""),
             _kuzu_path=kuzu_path or meta.get("kuzu_path", ""),
+            llm_provider=_clean_override(meta.get("llm_provider")),
+            llm_model=_clean_override(meta.get("llm_model")),
+            llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
         )
 
     def _cleanup_stores(self, meta: dict) -> None:

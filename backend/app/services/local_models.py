@@ -54,12 +54,87 @@ def _raise_if_degeneration(text: str) -> None:
         )
 
 
+class PromptTooLongError(RuntimeError):
+    """Prompt alone (nearly) fills the context window — nothing left to generate."""
+
+
+class ModelLoadClock:
+    """Process-wide accumulator of time spent *loading* heavy models.
+
+    Every GGUF / HF load records here so ingestion and chat can report
+    ``model_load`` separately from inference — a slow disk and a slow model
+    look identical in a bare stage timer.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._seconds: dict[str, float] = {}
+        self._counts: dict[str, int] = {}
+
+    def record(self, kind: str, seconds: float) -> None:
+        with self._lock:
+            self._seconds[kind] = self._seconds.get(kind, 0.0) + float(seconds)
+            self._counts[kind] = self._counts.get(kind, 0) + 1
+        logger.info("[ModelLoad] %s loaded in %.1fs", kind, seconds)
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {"seconds": dict(self._seconds), "counts": dict(self._counts)}
+
+    @staticmethod
+    def diff(before: dict, after: dict) -> dict:
+        """Loads that happened between two snapshots."""
+        b_sec = before.get("seconds", {})
+        b_cnt = before.get("counts", {})
+        seconds = {
+            k: round(v - b_sec.get(k, 0.0), 2)
+            for k, v in after.get("seconds", {}).items()
+            if v - b_sec.get(k, 0.0) > 0
+        }
+        counts = {
+            k: v - b_cnt.get(k, 0)
+            for k, v in after.get("counts", {}).items()
+            if v - b_cnt.get(k, 0) > 0
+        }
+        return {
+            "total_seconds": round(sum(seconds.values()), 2),
+            "seconds": seconds,
+            "counts": counts,
+        }
+
+    @staticmethod
+    def describe(delta: dict) -> str:
+        counts = delta.get("counts") or {}
+        if not counts:
+            return "none"
+        return ",".join(f"{k}×{n}" for k, n in sorted(counts.items()))
+
+
+model_load_clock = ModelLoadClock()
+
+# Generation budget: leave a little headroom below n_ctx, and refuse prompts that
+# leave less than this many tokens for the answer.
+_GEN_SAFETY_MARGIN = 32
+_MIN_OUTPUT_TOKENS = 256
+
+
 def _default_chat_n_ctx() -> int:
     return int(_env_first("ORB_LLAMA_N_CTX", "LIVEOS_LLAMA_N_CTX", default="16384"))
 
 
-def _default_chat_max_tokens() -> int:
-    return int(_env_first("ORB_LLAMA_MAX_TOKENS", "LIVEOS_LLAMA_MAX_TOKENS", default="10240"))
+def _default_chat_max_tokens() -> int | None:
+    """Explicit output cap from env, or None to use whatever context remains.
+
+    Unset by default: a fixed cap silently truncates long extractions, so the
+    runtime sizes ``max_tokens`` per call from ``n_ctx - prompt_tokens`` instead.
+    """
+    raw = _env_first("ORB_LLAMA_MAX_TOKENS", "LIVEOS_LLAMA_MAX_TOKENS")
+    if not raw:
+        return None
+    try:
+        return int(raw) or None
+    except ValueError:
+        return None
 
 
 def _default_repeat_penalty() -> float:
@@ -896,7 +971,7 @@ class LocalLlamaRuntime:
         n_ctx = _default_chat_n_ctx()
         max_tokens = _default_chat_max_tokens()
         prompt_reserve = int(_env_first("ORB_LLAMA_PROMPT_RESERVE", "LIVEOS_LLAMA_PROMPT_RESERVE", default="4096"))
-        min_ctx = max_tokens + prompt_reserve
+        min_ctx = (max_tokens + prompt_reserve) if max_tokens else 0
         if n_ctx < min_ctx:
             logger.info(
                 "Raising chat n_ctx %s → %s (max_tokens=%s + prompt_reserve=%s)",
@@ -1008,9 +1083,11 @@ class LocalLlamaRuntime:
             chat_kwargs["n_ctx"],
             chat_gguf,
         )
+        started = time.perf_counter()
         self._chat = _construct_llama(
             Llama, model_path=str(chat_gguf), embedding=False, **chat_kwargs
         )
+        model_load_clock.record("chat", time.perf_counter() - started)
         self._chat_path = Path(chat_gguf)
         self._embed = None
         self._embed_path = None
@@ -1028,9 +1105,11 @@ class LocalLlamaRuntime:
             embed_kwargs["n_ctx"],
             embed_gguf,
         )
+        started = time.perf_counter()
         self._embed = _construct_llama(
             Llama, model_path=str(embed_gguf), embedding=True, **embed_kwargs
         )
+        model_load_clock.record("embed", time.perf_counter() - started)
         self._embed_path = Path(embed_gguf)
         self._chat = None
         self._chat_path = None
@@ -1068,10 +1147,16 @@ class LocalLlamaRuntime:
         """Back-compat: ensure chat GGUF is loaded (exclusive)."""
         self.ensure_chat_loaded()
 
-    def ensure_chat_loaded(self) -> None:
-        """Load chat GGUF only — unloads embed / rerank / multimodal first."""
+    def ensure_chat_loaded(self, chat_gguf: Path | None = None) -> None:
+        """Load chat GGUF only — unloads embed / rerank / multimodal first.
+
+        ``chat_gguf`` selects a specific on-disk GGUF (per-KB model); ``None``
+        means the Setup selection. A different path than the resident one swaps.
+        """
         with self._lock:
-            if self._chat is not None:
+            if self._chat is not None and (
+                chat_gguf is None or Path(chat_gguf) == self._chat_path
+            ):
                 self._touch()
                 return
             present = gguf_paths_if_present()
@@ -1080,11 +1165,85 @@ class LocalLlamaRuntime:
                     "Local GGUF models are not downloaded. "
                     "Open Setup → Download selected models."
                 )
+            target = Path(chat_gguf) if chat_gguf else Path(present["chat"])
+            if self._chat is not None:
+                logger.info("Switching chat GGUF %s → %s", self._chat_path, target)
             self._unload_peers_for_gguf()
-            self._unload_embed_unlocked(release=True)
-            self._load_chat_unlocked(present["chat"])
+            self._unload_unlocked(release=True)
+            self._load_chat_unlocked(target)
             self._embed_path_hint = present.get("embed") or present["chat"]
             self._touch()
+
+    def resolve_chat_gguf(self, model: str | None) -> Path | None:
+        """Map a catalog id or ``.gguf`` path to a file on disk.
+
+        ``None`` means "use the Setup selection". Unknown ids fall back to the
+        selection with a warning; a known-but-missing catalog id raises so a
+        per-KB model that was never downloaded fails loudly instead of silently
+        answering with the wrong model.
+        """
+        name = (model or "").strip()
+        if not name or name == "local-chat":
+            return None
+        from app.services.model_catalog import get_option
+
+        opt = get_option(name)
+        if opt is not None:
+            if opt.role != "chat":
+                raise RuntimeError(f"'{name}' is a {opt.role} model, not a chat model")
+            candidate = resolve_models_dir() / "gguf" / opt.hf_file
+            if _gguf_looks_complete(candidate, opt.hf_path):
+                return candidate
+            raise RuntimeError(
+                f"Chat model '{opt.label}' is not downloaded. "
+                "Download it in Setup → Local models, or pick another model."
+            )
+        path = Path(name).expanduser()
+        if path.suffix.lower() == ".gguf" and path.is_file():
+            return path
+        if name != (settings.LLM_MODEL or ""):
+            logger.warning("Unknown local chat model %r — using the Setup selection", name)
+        return None
+
+    def count_tokens(self, text: str) -> int:
+        """Token count using whichever GGUF is resident; heuristic when none is.
+
+        Never forces a model load — chunk sizing must not trigger a disk read.
+        """
+        if not text:
+            return 0
+        model = self._chat or self._embed
+        if model is not None:
+            try:
+                return len(model.tokenize(text.encode("utf-8"), add_bos=False, special=True))
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+        return len(text) // 4 + 1
+
+    def _prompt_token_estimate(self, messages: list[dict]) -> int:
+        """Approximate tokens the chat template will consume for ``messages``."""
+        total = 4
+        for msg in messages:
+            content = msg.get("content") or ""
+            total += self.count_tokens(content) + 8
+        return total
+
+    def _remaining_output_budget(self, messages: list[dict]) -> int:
+        """Tokens left for generation once the prompt is in the context window."""
+        assert self._chat is not None
+        try:
+            n_ctx = int(self._chat.n_ctx())
+        except Exception:  # pylint: disable=broad-exception-caught
+            n_ctx = _default_chat_n_ctx()
+        prompt_tokens = self._prompt_token_estimate(messages)
+        remaining = n_ctx - prompt_tokens - _GEN_SAFETY_MARGIN
+        if remaining < _MIN_OUTPUT_TOKENS:
+            raise PromptTooLongError(
+                f"Prompt is ~{prompt_tokens} tokens; context window is {n_ctx}. "
+                f"Fewer than {_MIN_OUTPUT_TOKENS} tokens would remain for the answer — "
+                "split the input or raise ORB_LLAMA_N_CTX."
+            )
+        return remaining
 
     def ensure_embed_loaded(self) -> None:
         """Load embed GGUF only — unloads chat / rerank / multimodal first."""
@@ -1170,10 +1329,14 @@ class LocalLlamaRuntime:
         max_tokens: int | None = None,
         model: str | None = None,
     ) -> SimpleNamespace:
-        self.ensure_chat_loaded()
+        self.ensure_chat_loaded(self.resolve_chat_gguf(model))
         assert self._chat is not None
         if max_tokens is None:
             max_tokens = _default_chat_max_tokens()
+        # Size the answer to the context actually left, instead of a fixed cap
+        # that truncates long extractions mid-JSON.
+        budget = self._remaining_output_budget(messages)
+        max_tokens = min(max_tokens, budget) if max_tokens else budget
         repeat_penalty = _default_repeat_penalty()
         model_id = model or settings.LLM_MODEL or "local-chat"
         last_error: Exception | None = None
@@ -1228,11 +1391,15 @@ class LocalLlamaRuntime:
                 return raw
 
             parts: list[str] = []
+            finish_reason: str | None = None
             for chunk in stream:
                 try:
-                    delta = (chunk.get("choices") or [{}])[0].get("delta") or {}
+                    choice = (chunk.get("choices") or [{}])[0]
+                    delta = choice.get("delta") or {}
                 except (AttributeError, IndexError, TypeError):
                     continue
+                if choice.get("finish_reason"):
+                    finish_reason = choice.get("finish_reason")
                 piece = delta.get("content") or delta.get("reasoning_content") or ""
                 if not piece:
                     continue
@@ -1250,12 +1417,16 @@ class LocalLlamaRuntime:
             self._touch()
             text = "".join(parts)
             _raise_if_degeneration(text)
+            if finish_reason == "length":
+                logger.warning(
+                    "Chat generation hit max_tokens=%s — output is truncated", max_tokens
+                )
             return {
                 "id": "local-chat",
                 "choices": [
                     {
                         "message": {"role": "assistant", "content": text},
-                        "finish_reason": "stop",
+                        "finish_reason": finish_reason or "stop",
                         "index": 0,
                     }
                 ],
@@ -1340,6 +1511,7 @@ class LocalGgufReranker:
                 release_accelerator_memory()
             logger.info(f"Loading reranker GGUF (exclusive): {path}")
             default_ctx = "8192"
+            started = time.perf_counter()
             self._model = _construct_llama(
                 Llama,
                 model_path=str(path),
@@ -1348,6 +1520,7 @@ class LocalGgufReranker:
                 logits_all=True,
                 verbose=False,
             )
+            model_load_clock.record("rerank", time.perf_counter() - started)
             self._path = path
             # Resolve yes/no token ids
             try:

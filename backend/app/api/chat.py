@@ -94,7 +94,7 @@ async def delete_chat_conversation(
 @router.post("/api/v1/chat")
 async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
     """Chat: retrieval → rerank → synthesis (or finance path when query matches)."""
-    require_ai()
+    require_ai(kb)
 
     request_id = body.request_id or str(uuid.uuid4())
     conversation = await chat_store.ensure_conversation(
@@ -216,7 +216,7 @@ async def start_chat(
     kb: KBContext = Depends(get_kb),
 ):
     """Start a chat request and return immediately for polling clients."""
-    require_ai()
+    require_ai(kb)
     request_id = body.request_id or str(uuid.uuid4())
     conversation = await chat_store.ensure_conversation(
         body.conversation_id, kb.kb_id

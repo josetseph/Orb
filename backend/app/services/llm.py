@@ -19,12 +19,28 @@ logger = get_logger("LLMService")
 class LLMService:
     """Multi-provider LLM client supporting structured extraction, generation, and ingestion routing."""
 
-    def __init__(self, provider: str | None = None):
+    def __init__(
+        self,
+        provider: str | None = None,
+        *,
+        chat_model: str | None = None,
+        ingestion_model: str | None = None,
+        ingestion_provider: str | None = None,
+    ):
         # Declare client attributes upfront so they are always present on the
         # instance regardless of which provider branch _init_clients() takes.
         self.extraction_client = None
         self.chat_client = None
         self.async_chat_client = None
+
+        # Per-KB instances pin their models here; the global service leaves these
+        # unset and reads ``settings`` (Setup / Settings page) instead.
+        self._chat_model_override = (chat_model or "").strip() or None
+        self._ingestion_model_override = (ingestion_model or "").strip() or None
+        _ip = (ingestion_provider or "").strip().lower() or None
+        if _ip in ("ollama", "lm_studio"):
+            _ip = "local"
+        self._ingestion_provider_override = _ip
 
         # Map deprecated sidecar names onto in-process local GGUF.
         raw = (provider or settings.LLM_PROVIDER).lower()
@@ -228,7 +244,11 @@ class LLMService:
         If INGESTION_PROVIDER is not set, the ingestion clients simply alias the
         main chat clients so there is zero overhead.
         """
-        raw_provider = (settings.INGESTION_PROVIDER or "").strip().lower()
+        raw_provider = (
+            getattr(self, "_ingestion_provider_override", None)
+            or settings.INGESTION_PROVIDER
+            or ""
+        ).strip().lower()
         if raw_provider in ("ollama", "lm_studio"):
             logger.warning(
                 "INGESTION_PROVIDER=%s is deprecated; using in-process local",
@@ -1163,8 +1183,11 @@ class LLMService:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": temperature,
                 "extra_body": extra_body,
-                "max_tokens": max_tokens if max_tokens is not None else 10240,
             }
+            # No default cap: local sizes output from the context left, cloud
+            # providers use their own model maximum.
+            if max_tokens is not None:
+                _kwargs["max_tokens"] = max_tokens
             response = await asyncio.to_thread(
                 self.chat_client.chat.completions.create, **_kwargs
             )
@@ -1496,8 +1519,12 @@ class LLMService:
     def get_chat_model(self) -> str:
         """Return the model to use for chat and generation tasks.
 
-        CHAT_MODEL always wins if set — provider-specific keys are fallbacks.
+        Per-instance override (per-KB model) wins, then CHAT_MODEL, then the
+        provider-specific keys.
         """
+        override = getattr(self, "_chat_model_override", None)
+        if override:
+            return override
         if settings.CHAT_MODEL:
             return settings.CHAT_MODEL
         if self.provider == "local":
@@ -1513,8 +1540,14 @@ class LLMService:
     def get_ingestion_model(self) -> str | None:
         """Return the configured ingestion model for the active ingestion provider.
 
-        INGESTION_MODEL always wins if set — provider-specific keys are fallbacks.
+        Per-instance override wins (ingestion model, else the instance's chat
+        model), then INGESTION_MODEL, then the provider-specific keys.
         """
+        override = getattr(self, "_ingestion_model_override", None) or getattr(
+            self, "_chat_model_override", None
+        )
+        if override:
+            return override
         if settings.INGESTION_MODEL:
             return settings.INGESTION_MODEL
         p = getattr(self, "ingestion_provider", self.provider)
@@ -1542,6 +1575,23 @@ class LLMService:
         Like ``generate()`` but always routes to the ingestion provider/server.
         Use this for all LLM calls inside the ingestion pipeline.
         """
+        content, _meta = await self.ingestion_generate_with_meta(
+            prompt, temperature=temperature, max_tokens=max_tokens
+        )
+        return content
+
+    async def ingestion_generate_with_meta(
+        self,
+        prompt: str,
+        temperature: float = 0.1,
+        max_tokens: int | None = None,
+    ) -> tuple[str, dict]:
+        """``ingestion_generate`` plus ``{"finish_reason", "truncated"}``.
+
+        ``truncated`` is True when the provider stopped at its output limit —
+        callers that parse JSON must treat that as an incomplete result, not
+        as a malformed one to retry blindly.
+        """
         model = self.get_ingestion_model()
         try:
             if self.ingestion_provider == "gemini":
@@ -1556,17 +1606,30 @@ class LLMService:
                     contents=prompt,
                     config=_gemini_cfg,
                 )
-                return response.text.strip()
+                reason = None
+                try:
+                    reason = str(response.candidates[0].finish_reason or "")
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+                return (response.text or "").strip(), {
+                    "finish_reason": reason,
+                    "truncated": bool(reason and "MAX_TOKENS" in reason.upper()),
+                }
 
             if self.ingestion_provider == "anthropic":
                 response = await asyncio.to_thread(
                     self.i_anthropic_client.messages.create,
                     model=settings.ANTHROPIC_MODEL,
-                    max_tokens=max_tokens if max_tokens is not None else 10240,
+                    # Anthropic requires an explicit cap.
+                    max_tokens=max_tokens if max_tokens is not None else 16384,
                     temperature=temperature,
                     messages=[{"role": "user", "content": prompt}],
                 )
-                return response.content[0].text.strip()
+                reason = getattr(response, "stop_reason", None)
+                return response.content[0].text.strip(), {
+                    "finish_reason": reason,
+                    "truncated": reason == "max_tokens",
+                }
 
             # local / openai / huggingface
             _kwargs = {
@@ -1574,23 +1637,52 @@ class LLMService:
                 "messages": [{"role": "user", "content": prompt}],
                 "temperature": temperature,
                 "extra_body": self._with_ingestion_keep_alive(),
-                "max_tokens": max_tokens if max_tokens is not None else 10240,
             }
+            if max_tokens is not None:
+                _kwargs["max_tokens"] = max_tokens
             response = await asyncio.to_thread(
                 self.i_chat_client.chat.completions.create, **_kwargs
             )
-            content = response.choices[0].message.content
+            choice = response.choices[0]
+            content = choice.message.content
             if not content or not content.strip():
                 raise ValueError(
                     "Local LLM returned empty content (0 output tokens). "
                     "Possible causes: context overflow, KV cache pressure, or "
                     "model crash. Check local GGUF / API server logs."
                 )
-            return content.strip()
+            reason = getattr(choice, "finish_reason", None)
+            return content.strip(), {
+                "finish_reason": reason,
+                "truncated": reason == "length",
+            }
 
         except Exception as e:
             logger.error(f"[LLM] ingestion_generate() failed: {e}")
             raise
+
+    def ingestion_count_tokens(self, text: str) -> int:
+        """Token estimate for ``text`` on the ingestion model (no model load)."""
+        if getattr(self, "ingestion_provider", self.provider) == "local":
+            try:
+                from app.services.local_models import local_llama_runtime
+
+                return local_llama_runtime.count_tokens(text)
+            except Exception:  # pylint: disable=broad-exception-caught
+                pass
+        return len(text or "") // 4 + 1
+
+    def ingestion_context_tokens(self) -> int:
+        """Context window of the ingestion model, for input chunk sizing."""
+        if getattr(self, "ingestion_provider", self.provider) == "local":
+            try:
+                from app.services.local_models import _default_chat_n_ctx
+
+                return int(_default_chat_n_ctx())
+            except Exception:  # pylint: disable=broad-exception-caught
+                return 16384
+        # Cloud models are far larger; output limits, not context, bind there.
+        return 128000
 
     def ingestion_extract_structured(  # pylint: disable=too-many-return-statements
         self,

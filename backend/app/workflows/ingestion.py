@@ -85,10 +85,13 @@ class IngestionWorkflow:
         graph: GraphService | None = None,
         qdrant: QdrantService | None = None,
         meili: MeilisearchService | None = None,
+        llm=None,
     ):
         self._graph = graph or graph_service
         self._qdrant = qdrant or qdrant_service
         self._meili = meili or meilisearch_service
+        # Per-KB LLM override (chat/ingestion model) or the global service.
+        self._llm = llm or llm_service
         # Per-KB concurrency / maintenance state (not process-global).
         # Default concurrency is 1 so in-process GGUF/HF models, Gemma extraction,
         # graph writes, and indexing do not overlap within a vault.
@@ -143,9 +146,11 @@ class IngestionWorkflow:
 
             # Use ainvoke because the graph contains async nodes (multimodal_node)
             t_start = time.perf_counter()
+            load_before = self._load_snapshot()
             try:
                 final_state = await ingestion_agent.ainvoke(initial_state)
                 t_end = time.perf_counter()
+                self._log_timing(note_id, t_end - t_start, load_before, final_state)
 
                 if final_state["errors"]:
                     logger.error(
@@ -199,24 +204,50 @@ class IngestionWorkflow:
                 # Always decrement the active counter and potentially schedule
                 # community recompute, regardless of success or failure.
                 await _tracker.end_ingestion(self.rebuild_leiden_communities)
-                # Free resident models only once the whole batch has drained —
-                # unloading per note would re-read multi-GB GGUFs from disk for
-                # every note in a batch re-ingest.
-                if not _tracker.has_active_ingestions():
-                    try:
-                        from app.services.local_models import (
-                            local_gguf_reranker,
-                            local_llama_runtime,
-                        )
-                        from app.services.multimodal_runtime import multimodal_runtime
+                # Models stay resident after a note: the idle watcher
+                # (ORB_MODEL_IDLE_SECONDS, default 5 min) unloads them, and
+                # loading any other model evicts them anyway. Unloading here
+                # made every single-note ingest re-read multi-GB GGUFs.
 
-                        local_llama_runtime.unload()
-                        local_gguf_reranker.unload()
-                        multimodal_runtime.unload(None)
-                    except Exception as unload_exc:  # pylint: disable=broad-exception-caught
-                        logger.debug(
-                            "Post-ingestion model unload skipped: %s", unload_exc
-                        )
+    @staticmethod
+    def _load_snapshot() -> dict:
+        try:
+            from app.services.local_models import model_load_clock
+
+            return model_load_clock.snapshot()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return {}
+
+    @staticmethod
+    def _log_timing(note_id: str, total: float, load_before: dict, final_state: dict) -> None:
+        """One line per note: wall time split into model loads vs. everything else,
+        plus per-stage seconds — so a slow disk and a slow model stop looking alike."""
+        try:
+            from app.services.local_models import ModelLoadClock, model_load_clock
+
+            delta = model_load_clock.diff(load_before, model_load_clock.snapshot())
+            loads = ModelLoadClock.describe(delta)
+        except Exception:  # pylint: disable=broad-exception-caught
+            delta, loads = {"total_seconds": 0.0}, "none"
+        load = float(delta.get("total_seconds") or 0.0)
+        stages = final_state.get("timings") or {}
+        stage_text = " ".join(
+            f"{k}={float(v):.1f}"
+            for k, v in stages.items()
+            if k != "extraction_chunks"
+        )
+        chunks = stages.get("extraction_chunks")
+        logger.info(
+            "[Timing] ingest note_id=%s total=%.1fs model_load=%.1fs inference=%.1fs "
+            "loads=%s | %s%s",
+            note_id,
+            total,
+            load,
+            max(0.0, total - load),
+            loads,
+            stage_text,
+            f" chunks={int(chunks)}" if chunks else "",
+        )
 
     async def _update_note_fields(self, note_id: str, log_message: str, **values) -> None:
         """Single UPDATE helper behind all note-metadata status writes."""
@@ -336,9 +367,9 @@ class IngestionWorkflow:
             title = extraction.title
             logger.info(f"[Ontology] Using extracted title: '{title}'")
         else:
-            title = llm_service.generate_title(
+            title = self._llm.generate_title(
                 content,
-                model=llm_service.get_ingestion_model(),
+                model=self._llm.get_ingestion_model(),
             )
             logger.info(f"[Ontology] Generated title: '{title}'")
         # Base Note Node — structural node in Kuzu with kind='note'.
@@ -1287,9 +1318,9 @@ class IngestionWorkflow:
                 "The NAME must be specific and user-facing."
             )
         raw = (
-            llm_service.reason(
+            self._llm.reason(
                 prompt,
-                model=llm_service.get_ingestion_model(),
+                model=self._llm.get_ingestion_model(),
             )
             or ""
         )
@@ -1340,9 +1371,9 @@ class IngestionWorkflow:
                 "The NAME must be specific and user-facing."
             )
         raw = (
-            llm_service.reason(
+            self._llm.reason(
                 prompt,
-                model=llm_service.get_ingestion_model(),
+                model=self._llm.get_ingestion_model(),
             )
             or ""
         )
@@ -2076,7 +2107,7 @@ class IngestionWorkflow:
                 f"[TemporalDigest] Summarising {len(contexts)} chunk(s) for {period_key}…"
             )
             try:
-                summary = llm_service.generate_text(
+                summary = self._llm.generate_text(
                     system_prompt=(
                         "You are a knowledge synthesis assistant. "
                         "Summarize the main topics, events, and themes from the provided "

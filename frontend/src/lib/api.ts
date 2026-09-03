@@ -1,5 +1,6 @@
 import axios from "axios";
 import type {
+  KBLLMConfig,
   ChatConversation,
   ChatMessageRecord,
   ChatStatus,
@@ -329,6 +330,18 @@ export const api = {
 
   async deleteKB(id: string): Promise<void> {
     return http.del(`/kb/${id}`);
+  },
+
+  async getKBLLM(id: string): Promise<KBLLMConfig> {
+    return http.get(`/kb/${id}/llm`);
+  },
+
+  /** Empty strings / null clear a field back to "inherit Settings". */
+  async updateKBLLM(
+    id: string,
+    data: { provider?: string | null; model?: string | null; ingestion_model?: string | null },
+  ): Promise<KBLLMConfig> {
+    return http.patch(`/kb/${id}/llm`, data);
   },
 
   async emptyKB(kb = "default"): Promise<{

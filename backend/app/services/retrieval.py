@@ -30,11 +30,23 @@ class RetrievalService:
         graph: GraphService | None = None,
         qdrant: QdrantService | None = None,
         meili: MeilisearchService | None = None,
+        llm=None,
     ):
         self._graph = graph or graph_service
         self._qdrant = qdrant or qdrant_service
         self._meili = meili or meilisearch_service
+        # Per-KB LLM override, or the global service (resolved lazily so the
+        # module-level singleton is not constructed at import).
+        self._llm_override = llm
         logger.info("RetrievalService initialized")
+
+    @property
+    def _llm(self):
+        if self._llm_override is not None:
+            return self._llm_override
+        from app.services.llm import llm_service
+
+        return llm_service
 
     def _log_retrieval_details(
         self,
@@ -965,10 +977,8 @@ class RetrievalService:
         t_phase_start = time.perf_counter()
 
         # Query Analysis with LLM structured outputs
-        from app.services.llm import llm_service
-
         logger.info("  [HybridSearch] Calling LLM query analysis...")
-        query_analysis = llm_service.analyze_query(query)
+        query_analysis = self._llm.analyze_query(query)
 
         # Extract expected entity types for filtering/boosting
         expected_entity_types = [
@@ -1586,7 +1596,7 @@ class RetrievalService:
         final_synthesis_from_sub_results function.
         Returns (final_answer, all_accumulated_docs, thinking).
         """
-        from app.services.llm import llm_service
+        llm_service = self._llm
 
         def _progress(stage: str, model: str | None = None) -> None:
             if progress_callback:

@@ -355,7 +355,7 @@ async def reingest_vault(
 ):
     from app.services.ai_gate import require_ai
 
-    require_ai()
+    require_ai(kb)
     result = await db.execute(select(Note).where(Note.kb_id == kb.kb_id))
     notes = list(result.scalars().all())
     for n in notes:

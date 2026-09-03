@@ -35,3 +35,8 @@ class KnowledgeBase(Base):  # pylint: disable=too-few-public-methods
     # Per-KB Firefly III administration (user_group_id) — never leak across vaults
     firefly_group_id = Column(Integer, nullable=True)
     firefly_group_title = Column(Text, nullable=True)
+    # Per-KB LLM override (NULL = inherit the system Settings). Chat + ingestion
+    # only — embed/rerank/multimodal stay system-wide (embed dims are shared).
+    llm_provider = Column(String, nullable=True)
+    llm_model = Column(String, nullable=True)
+    llm_ingestion_model = Column(String, nullable=True)

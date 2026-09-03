@@ -389,6 +389,21 @@ def recommend_chat(fits: list[ModelOption]) -> ModelOption | None:
     return max(fits, key=lambda m: m.min_ram_gb)
 
 
+def chat_model_downloaded(opt: ModelOption) -> bool:
+    """True when this catalog GGUF is complete on disk (usable per-KB without a download)."""
+    try:
+        from app.core.paths import resolve_models_dir
+        from app.services.local_models import _gguf_looks_complete
+
+        return _gguf_looks_complete(resolve_models_dir() / "gguf" / opt.hf_file, opt.hf_path)
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
+def downloaded_chat_models() -> list[ModelOption]:
+    return [m for m in CHAT_MODELS if chat_model_downloaded(m)]
+
+
 def recommend_stack(chat_id: str | None = None) -> dict:
     """Return hardware + filtered options + auto embed/rerank + suggested chat."""
     hw = hardware_profile()
@@ -404,6 +419,7 @@ def recommend_stack(chat_id: str | None = None) -> dict:
     for c in CHAT_MODELS:
         row = asdict(c)
         row["fits_budget"] = c.id in fit_ids
+        row["downloaded"] = chat_model_downloaded(c)
         all_chats.append(row)
     suggested = None
     if chat_id and get_option(chat_id):

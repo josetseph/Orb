@@ -122,7 +122,7 @@ async def reingest_all(
     kb: KBContext = Depends(get_kb),
 ):
     """Queue notes in the current KB for ingestion (reads vault .md bodies)."""
-    require_ai()
+    require_ai(kb)
     result = await db.execute(
         select(Note)
         .where(Note.kb_id == kb.kb_id)

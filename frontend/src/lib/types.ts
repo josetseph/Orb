@@ -67,6 +67,15 @@ export interface ChatMessageRecord {
     created_at?: string | null;
 }
 
+/** Resolved chat/ingestion LLM for a KB (override layered over Settings). */
+export interface EffectiveLLM {
+    provider: string;
+    model: string | null;
+    ingestion_model: string | null;
+    /** True when nothing is pinned on the KB — it follows Settings. */
+    inherited: boolean;
+}
+
 /** Knowledge base metadata returned by GET /api/v1/kb */
 export interface KnowledgeBase {
     id: string;
@@ -77,6 +86,25 @@ export interface KnowledgeBase {
     qdrant_col_cores?: string;
     typesense_collection?: string;
     created_at: string | null;
+    /** Per-KB LLM override (null = inherit Settings). Chat + ingestion only. */
+    llm_provider?: string | null;
+    llm_model?: string | null;
+    llm_ingestion_model?: string | null;
+    effective_llm?: EffectiveLLM;
+}
+
+/** GET/PATCH /api/v1/kb/:id/llm */
+export interface KBLLMConfig {
+    kb_id: string;
+    override: {
+        provider: string | null;
+        model: string | null;
+        ingestion_model: string | null;
+    };
+    effective: EffectiveLLM;
+    providers: string[];
+    /** Chat GGUFs already on disk — the only local models a KB can pin. */
+    local_models: Array<{ id: string; label: string; size_gb: number }>;
 }
 
 export interface FinanceAccount {

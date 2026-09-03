@@ -116,6 +116,16 @@ class MultimodalRuntime:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.debug("GGUF unload before multimodal skipped: %s", exc)
 
+    @staticmethod
+    def _record_load(kind: str, started: float) -> None:
+        """Feed HF loads into the shared model-load clock (see local_models)."""
+        try:
+            from app.services.local_models import model_load_clock
+
+            model_load_clock.record(kind, time.perf_counter() - started)
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
+
     def unload(self, family: str | None = None) -> dict[str, Any]:
         family = family.lower() if family else None
         valid = {None, "florence", "whisper", "marlin"}
@@ -314,6 +324,7 @@ class MultimodalRuntime:
         self._patch_florence_remote_code(model_path)
         self._patch_tokenizer_additional_special_tokens()
         logger.info("Loading Florence from %s on %s", model_path, self.device)
+        started = time.perf_counter()
         # Florence-2 remote code predates transformers 5 SDPA checks; force eager attn.
         load_kwargs: dict[str, Any] = {
             "trust_remote_code": True,
@@ -348,6 +359,7 @@ class MultimodalRuntime:
         self._patch_florence_generation_config()
         if not hasattr(self._florence_model, "_supports_sdpa"):
             type(self._florence_model)._supports_sdpa = False  # type: ignore[attr-defined]
+        self._record_load("florence", started)
         logger.info("Florence loaded")
 
     def _tie_florence_weights(self) -> None:
@@ -485,6 +497,7 @@ class MultimodalRuntime:
         self._unload_except("whisper")
         model_path = str(path)
         logger.info("Loading Whisper from %s on %s", model_path, self.device)
+        started = time.perf_counter()
         import torch
 
         dtype = torch.float32 if self.device == "cpu" else torch.float16
@@ -498,6 +511,7 @@ class MultimodalRuntime:
             .eval()
         )
         self._whisper_processor = AutoProcessor.from_pretrained(model_path)
+        self._record_load("whisper", started)
         logger.info("Whisper loaded")
 
     def _resolve_ffmpeg_bins(self) -> tuple[str | None, str | None]:
@@ -685,7 +699,7 @@ class MultimodalRuntime:
             .to(device)
             .eval()
         )
-        logger.info("Marlin loaded in %.1fs", time.perf_counter() - started)
+        self._record_load("marlin", started)
 
     def caption_video_path(self, video_path: str) -> dict[str, Any]:
         with self._lock:

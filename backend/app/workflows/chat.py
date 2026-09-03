@@ -10,6 +10,7 @@ from app.models.note import Note
 from app.schemas.chat import ChatTurn
 from app.services.llm import llm_service
 from app.services.retrieval import RetrievalService, retrieval_service
+from app.services.timing import load_snapshot, log_stage_timing
 from sqlalchemy import select
 
 logger = get_logger("ChatWorkflow")
@@ -57,8 +58,14 @@ def _truncate_context(docs: list[dict], max_docs: int) -> list[dict]:
 class ChatWorkflow:  # pylint: disable=too-few-public-methods
     """Iterative research-loop workflow: retrieve, synthesise, and attribute sources."""
 
-    def __init__(self, retrieval: RetrievalService | None = None) -> None:
+    def __init__(
+        self,
+        retrieval: RetrievalService | None = None,
+        llm=None,
+    ) -> None:
         self._retrieval = retrieval or retrieval_service
+        # Per-KB LLM (chat model override) or the global service.
+        self._llm = llm or llm_service
 
     async def _retrieve_context(
         self,
@@ -73,7 +80,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         """
         history = history or []
         history_payload = [{"role": t.role, "content": t.content} for t in history]
-        rewritten_query = llm_service.rewrite_follow_up_query(
+        rewritten_query = self._llm.rewrite_follow_up_query(
             history_payload, user_query
         )
 
@@ -102,6 +109,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
     ) -> dict:
         """Research-style retrieval loop with final answer + note references."""
         start_time = time.perf_counter()
+        load_before = load_snapshot()
         logger.info(f"\n[Chat] Started processing query: '{user_query}'")
         rewritten_query, final_answer, unique_docs, thinking = (
             await self._retrieve_context(
@@ -144,9 +152,9 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         if references:
             answer += "\n\n### References\n" + "\n".join(references)
 
-        logger.info(
-            f"[Chat] Total pipeline duration: {time.perf_counter() - start_time:.2f}s\n"
-        )
+        total = time.perf_counter() - start_time
+        logger.info(f"[Chat] Total pipeline duration: {total:.2f}s\n")
+        log_stage_timing(logger, "chat", total, load_before, docs=len(unique_docs))
         return {
             "query": user_query,
             "rewritten_query": rewritten_query,
@@ -162,10 +170,19 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         progress_callback: Callable[[str, str | None], None] | None = None,
     ) -> dict:
         """Retrieve note context without synthesizing a final answer."""
+        start_time = time.perf_counter()
+        load_before = load_snapshot()
         rewritten_query, _final_answer, unique_docs, thinking = (
             await self._retrieve_context(
                 user_query, history, progress_callback, max_context_docs=12
             )
+        )
+        log_stage_timing(
+            logger,
+            "retrieve",
+            time.perf_counter() - start_time,
+            load_before,
+            docs=len(unique_docs),
         )
         return {
             "query": user_query,
