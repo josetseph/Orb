@@ -229,3 +229,14 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 | Postgres as default | `3f21e08` | SQLite for desktop |
 
 See [25-development-history.md](25-development-history.md) for the full chronology.
+
+## Model choice and credentials (2026-09)
+
+- **The catalog recommends; the filesystem decides.** Any chat GGUF on disk is selectable per KB. `model_catalog.py` exists to size and download recommendations, not to allow-list. Do not reintroduce "is this a known model id" as a gate.
+- **Never infer a model's role from its chat template.** Embedding and reranker GGUFs derived from instruct models carry one. Use `<arch>.pooling_type` to exclude embedders; a reranker cannot be distinguished from a chat model by metadata, so warn rather than block.
+- **Never `rglob` MODELS_DIR.** It descended into a virtualenv and took minutes on an external disk. Walk with pruning and a depth cap.
+- **A pin that cannot be satisfied raises.** A KB pointing at a deleted or unusable model must fail loudly; silently falling back to the Setup selection would answer with a different model than the user chose.
+- **API keys never touch `DATA_DIR` in plaintext.** It is commonly a synced folder. Keys live in the OS keychain (`safeStorage` → `credentials.enc`) and in backend memory; `desktop/credentials.js` refuses to store rather than degrade to plaintext when no keychain is available.
+- **No endpoint ever returns key material.** `GET /api/v1/credentials` reports `configured` and `source` only.
+- **An OpenAI-compatible endpoint is identified by its URL**, not a user-chosen name — so two servers can never share a key by accident. `normalize_base_url` is duplicated in Python and JS by necessity; the two implementations must stay in lockstep and are tested against the same corpus.
+- **`.env` is a contributor fallback, not the product path.** End users cannot edit it; keys are entered in Settings.

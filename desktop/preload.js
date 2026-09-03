@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld("orbDesktop", {
   setCredential: (provider, apiKey) =>
     ipcRenderer.invoke("credentials:set", provider, apiKey),
   deleteCredential: (provider) => ipcRenderer.invoke("credentials:delete", provider),
+  setEndpointCredential: (baseUrl, apiKey) =>
+    ipcRenderer.invoke("credentials:set-endpoint", baseUrl, apiKey),
+  deleteEndpointCredential: (baseUrl) =>
+    ipcRenderer.invoke("credentials:delete-endpoint", baseUrl),
   getApiBaseUrl: () => ipcRenderer.invoke("get-api-base-url"),
   revealInFolder: (filePath) =>
     ipcRenderer.invoke("reveal-in-folder", filePath),

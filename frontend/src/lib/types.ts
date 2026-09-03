@@ -72,6 +72,8 @@ export interface EffectiveLLM {
     provider: string;
     model: string | null;
     ingestion_model: string | null;
+    /** Endpoint URL when provider is "openai_compat". */
+    base_url?: string | null;
     /** True when nothing is pinned on the KB — it follows Settings. */
     inherited: boolean;
 }
@@ -114,9 +116,12 @@ export interface KBLLMConfig {
         provider: string | null;
         model: string | null;
         ingestion_model: string | null;
+        base_url?: string | null;
     };
     effective: EffectiveLLM;
     providers: string[];
+    /** OpenAI-compatible endpoints that already have a saved key. */
+    endpoints?: string[];
     /** Chat GGUFs already on disk — catalog downloads plus user-added files. */
     local_models: LocalChatModel[];
 }

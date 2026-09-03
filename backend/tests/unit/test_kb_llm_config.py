@@ -36,6 +36,8 @@ class TestEffectiveLLMConfig:
             "provider": "local",
             "model": "gemma4-12b-q4",
             "ingestion_model": "gemma4-12b-q4",
+            # Only meaningful for OpenAI-compatible endpoints.
+            "base_url": None,
             "inherited": True,
         }
 
@@ -90,3 +92,65 @@ class TestLLMServiceOverrides:
         svc = LLMService.__new__(LLMService)
         svc.provider = "local"
         assert svc.get_chat_model() == "gemma4-12b-q4"
+
+
+class TestOpenAiCompatConfig:
+    """A KB may point at any OpenAI-compatible server: URL + key + model name."""
+
+    def test_endpoint_url_is_part_of_the_effective_config(self):
+        from app.services.kb_registry import effective_llm_config
+
+        eff = effective_llm_config(
+            {
+                "llm_provider": "openai_compat",
+                "llm_base_url": "https://openrouter.ai/api/v1",
+                "llm_model": "anthropic/claude-sonnet-4.5",
+            }
+        )
+        assert eff["provider"] == "openai_compat"
+        assert eff["base_url"] == "https://openrouter.ai/api/v1"
+        assert eff["model"] == "anthropic/claude-sonnet-4.5"
+        assert eff["inherited"] is False
+
+    def test_base_url_alone_counts_as_an_override(self):
+        from app.services.kb_registry import effective_llm_config
+
+        assert effective_llm_config({"llm_base_url": "https://x.test/v1"})["inherited"] is False
+
+    def test_non_compat_provider_reports_no_endpoint(self):
+        from app.services.kb_registry import effective_llm_config
+
+        assert effective_llm_config({"llm_provider": "gemini"})["base_url"] is None
+
+    def test_openai_compat_is_an_allowed_provider(self):
+        from app.services.kb_registry import LLM_PROVIDERS
+
+        assert "openai_compat" in LLM_PROVIDERS
+
+
+class TestLLMServiceEndpoint:
+    def test_instance_base_url_wins_over_settings(self, monkeypatch):
+        monkeypatch.setattr(config.settings, "LLM_BASE_URL", "https://global.test/v1", raising=False)
+        svc = LLMService.__new__(LLMService)
+        svc.provider = "openai_compat"
+        svc._base_url_override = "https://per-kb.test/v1"
+        assert svc.get_base_url() == "https://per-kb.test/v1"
+
+    def test_falls_back_to_settings_base_url(self, monkeypatch):
+        monkeypatch.setattr(config.settings, "LLM_BASE_URL", "https://global.test/v1/", raising=False)
+        svc = LLMService.__new__(LLMService)
+        svc.provider = "openai_compat"
+        svc._base_url_override = None
+        # Trailing slash is normalised away so it matches the stored credential.
+        assert svc.get_base_url() == "https://global.test/v1"
+
+    def test_malformed_url_is_ignored_rather_than_crashing(self, monkeypatch):
+        monkeypatch.setattr(config.settings, "LLM_BASE_URL", "notaurl", raising=False)
+        svc = LLMService.__new__(LLMService)
+        svc.provider = "openai_compat"
+        svc._base_url_override = None
+        assert svc.get_base_url() is None
+
+    def test_endpoint_without_a_key_uses_a_placeholder(self):
+        """llama-server / LM Studio accept any token; the SDK demands one."""
+        assert LLMService.get_endpoint_key("https://nokey.test/v1") == "not-needed"

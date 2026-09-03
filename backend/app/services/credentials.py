@@ -20,6 +20,7 @@ configured, and where its key came from.
 from __future__ import annotations
 
 import threading
+from urllib.parse import urlsplit, urlunsplit
 
 from app.core.log import get_logger
 
@@ -40,8 +41,56 @@ _ENV_SETTING = {
 }
 
 
+# OpenAI-compatible endpoints are identified by their URL rather than a name the
+# user has to invent: two KBs pointing at different servers therefore get
+# different keys automatically, and two pointing at the same one share a key.
+ENDPOINT_PREFIX = "endpoint:"
+
+
+class InvalidEndpointError(ValueError):
+    """The supplied base URL is not a usable http(s) endpoint."""
+
+
+def normalize_base_url(url: str) -> str:
+    """Canonical form of an OpenAI-compatible base URL.
+
+    Lowercases scheme and host, drops a trailing slash, and discards query and
+    fragment, so ``HTTPS://Api.Example.com/v1/`` and ``https://api.example.com/v1``
+    resolve to one credential.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        raise InvalidEndpointError("Endpoint URL must not be empty")
+    parts = urlsplit(raw)
+    if parts.scheme.lower() not in ("http", "https"):
+        raise InvalidEndpointError(
+            f"Endpoint URL must start with http:// or https:// (got {raw!r})"
+        )
+    if not parts.hostname:
+        raise InvalidEndpointError(f"Endpoint URL has no host: {raw!r}")
+    netloc = parts.hostname.lower()
+    if parts.port:
+        netloc = f"{netloc}:{parts.port}"
+    path = parts.path.rstrip("/")
+    return urlunsplit((parts.scheme.lower(), netloc, path, "", ""))
+
+
+def endpoint_credential_id(base_url: str) -> str:
+    """Credential id for an OpenAI-compatible endpoint."""
+    return f"{ENDPOINT_PREFIX}{normalize_base_url(base_url)}"
+
+
+def is_endpoint_id(provider: str) -> bool:
+    return (provider or "").startswith(ENDPOINT_PREFIX)
+
+
 def normalize_provider(provider: str) -> str:
-    name = (provider or "").strip().lower()
+    name = (provider or "").strip()
+    if is_endpoint_id(name):
+        # Endpoint ids carry a URL; only the URL portion is canonicalised, since
+        # a path can be case-sensitive.
+        return endpoint_credential_id(name[len(ENDPOINT_PREFIX) :])
+    name = name.lower()
     return {"google": "gemini", "hf": "huggingface"}.get(name, name)
 
 
@@ -118,6 +167,22 @@ class CredentialStore:
         with self._lock:
             self._seed_from_env_unlocked()
             return self._sources.get(name)
+
+    def endpoints(self) -> list[str]:
+        """Base URLs that currently have a stored key."""
+        with self._lock:
+            self._seed_from_env_unlocked()
+            return sorted(
+                name[len(ENDPOINT_PREFIX) :]
+                for name in self._keys
+                if is_endpoint_id(name)
+            )
+
+    def has_endpoint(self, base_url: str) -> bool:
+        try:
+            return self.has(endpoint_credential_id(base_url))
+        except InvalidEndpointError:
+            return False
 
     def status(self) -> dict[str, dict]:
         """Per-provider configuration state. Never includes key material."""

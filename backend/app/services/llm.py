@@ -8,7 +8,13 @@ from typing import Optional, Type
 import instructor
 from app.core.config import settings
 from app.core.log import get_logger
-from app.services.credentials import credentials, get_api_key
+from app.services.credentials import (
+    InvalidEndpointError,
+    credentials,
+    endpoint_credential_id,
+    get_api_key,
+    normalize_base_url,
+)
 from google import genai
 from google.genai import types
 from openai import AsyncOpenAI, OpenAI
@@ -27,6 +33,7 @@ class LLMService:
         chat_model: str | None = None,
         ingestion_model: str | None = None,
         ingestion_provider: str | None = None,
+        base_url: str | None = None,
     ):
         # Declare client attributes upfront so they are always present on the
         # instance regardless of which provider branch _init_clients() takes.
@@ -38,6 +45,8 @@ class LLMService:
         # unset and reads ``settings`` (Setup / Settings page) instead.
         self._chat_model_override = (chat_model or "").strip() or None
         self._ingestion_model_override = (ingestion_model or "").strip() or None
+        # OpenAI-compatible endpoint for this instance (per-KB), if any.
+        self._base_url_override = (base_url or "").strip() or None
         _ip = (ingestion_provider or "").strip().lower() or None
         if _ip in ("ollama", "lm_studio"):
             _ip = "local"
@@ -92,6 +101,30 @@ class LLMService:
             self.chat_client = sync
             self.async_chat_client = async_client
             self.extraction_client = extraction
+
+        elif self.provider == "openai_compat":
+            # Any OpenAI-compatible server: OpenRouter, Groq, Together, vLLM,
+            # LM Studio, llama-server, Ollama's /v1 … The endpoint URL is the
+            # credential identity, so each server carries its own key.
+            base_url = self.get_base_url()
+            if not base_url:
+                raise ValueError(
+                    "No endpoint URL set. Add one in Settings -> AI provider."
+                )
+            api_key = self.get_endpoint_key(base_url)
+            logger.info("Initializing OpenAI-compatible endpoint at %s", base_url)
+            self.chat_client = OpenAI(
+                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+            )
+            self.async_chat_client = AsyncOpenAI(
+                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+            )
+            self.extraction_client = instructor.patch(
+                OpenAI(
+                    base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                ),
+                mode=instructor.Mode.MD_JSON,
+            )
 
         elif self.provider == "openai":
             if not get_api_key("openai"):
@@ -288,6 +321,28 @@ class LLMService:
             self.i_chat_client = sync
             self.i_async_chat_client = async_client
             self.i_extraction_client = extraction
+            self.i_gemini_client = None
+            self.i_anthropic_client = None
+
+        elif self.ingestion_provider == "openai_compat":
+            base_url = self.get_base_url()
+            if not base_url:
+                raise ValueError(
+                    "No endpoint URL set. Add one in Settings -> AI provider."
+                )
+            api_key = self.get_endpoint_key(base_url)
+            self.i_chat_client = OpenAI(
+                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+            )
+            self.i_async_chat_client = AsyncOpenAI(
+                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+            )
+            self.i_extraction_client = instructor.patch(
+                OpenAI(
+                    base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                ),
+                mode=instructor.Mode.MD_JSON,
+            )
             self.i_gemini_client = None
             self.i_anthropic_client = None
 
@@ -1521,6 +1576,28 @@ class LLMService:
         - If you cannot answer yet → output NEXT_QUERY, not ANSWER
         """
 
+    def get_base_url(self) -> str | None:
+        """Endpoint for OpenAI-compatible providers: instance override, then Settings."""
+        raw = self._base_url_override or settings.LLM_BASE_URL
+        if not raw:
+            return None
+        try:
+            return normalize_base_url(raw)
+        except InvalidEndpointError:
+            logger.warning("Ignoring malformed endpoint URL %r", raw)
+            return None
+
+    @staticmethod
+    def get_endpoint_key(base_url: str) -> str:
+        """Stored key for an endpoint. Servers that need no auth get a placeholder."""
+        try:
+            key = get_api_key(endpoint_credential_id(base_url))
+        except InvalidEndpointError:
+            key = None
+        # Local servers (llama-server, LM Studio, Ollama) accept any token; the
+        # OpenAI SDK refuses to construct without one.
+        return key or "not-needed"
+
     def get_chat_model(self) -> str:
         """Return the model to use for chat and generation tasks.
 
@@ -1535,6 +1612,7 @@ class LLMService:
         if self.provider == "local":
             return settings.LLM_MODEL
         provider_model_map = {
+            "openai_compat": settings.LLM_MODEL,
             "openai": settings.OPENAI_MODEL,
             "gemini": settings.GEMINI_MODEL,
             "anthropic": settings.ANTHROPIC_MODEL,
@@ -1559,6 +1637,7 @@ class LLMService:
         _local = settings.INGESTION_LLM_MODEL or settings.LLM_MODEL or None
         ingestion_model_map = {
             "local": _local,
+            "openai_compat": settings.LLM_MODEL or None,
             "ollama": _local,  # deprecated alias
             "lm_studio": _local,  # deprecated alias
             "gemini": settings.INGESTION_GEMINI_MODEL or settings.GEMINI_MODEL or None,

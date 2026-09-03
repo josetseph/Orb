@@ -277,7 +277,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `LLM_RESPONSE_FORMAT` | str | `"text"` | `llm._local_response_format_candidates` (`text` → only `{"type":"text"}`; anything else → try `json_object` then `text`) |
 | `CHAT_MODEL` | str \| None | `None` | `llm.get_chat_model` (wins over everything), `api/settings.py`, `runtime_config` |
 | `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL` | str \| None | `None` | `llm.py` per-provider fallback + `init_clients` log lines; `multimedia.py` cloud image captions (`OPENAI_MODEL or "gpt-4o-mini"`, `GEMINI_MODEL or "gemini-2.0-flash"`) |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_API_KEY` | str \| None | `None` | `llm.init_clients` / `_init_ingestion_clients` (raise `ValueError` if the selected provider's key is missing), `ai_gate`, `multimedia.py` |
+| `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_API_KEY` | str \| None | `None` | **Seed only.** Read once by `services/credentials.CredentialStore._seed_from_env_unlocked` for contributors running outside the desktop shell. Runtime reads go through `credentials.get()` — see [13 §Credentials](13-llm-providers-and-prompting.md). |
 
 **LLM — ingestion axis**
 
@@ -737,7 +737,7 @@ Algorithm:
 5. If provider or base_url changed: `llm_service.provider = settings.LLM_PROVIDER.lower()` then `llm_service.init_clients()` and log `"LLM clients reinitialized"`. **Only `init_clients()` is re-run, not `_init_ingestion_clients()`**, so after a provider switch the ingestion clients (`i_chat_client` etc.) still point at the previous provider until restart, unless `INGESTION_PROVIDER` was unset (in which case they were aliases of the *old* chat clients — still stale). Per-KB pinned services (`KBContext.llm`) are rebuilt independently because their cache key includes the inherited provider.
 6. Returns `{provider, model: CHAT_MODEL or LLM_MODEL, ingestion_model: INGESTION_MODEL or LLM_MODEL, base_url}` (note: computed from `settings`, not from `get_chat_model()`, so for a cloud provider with only `GEMINI_MODEL` set this response shows `local-chat` while `GET` shows the Gemini model).
 
-What it never does: accept API keys (must be in `backend/.env`), validate the provider string, change `AI_SETUP_MODE` (that goes through `POST /api/v1/setup/paths`), or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
+What it never does: accept API keys (those go to `PUT /api/v1/credentials`, which stores them in memory only — see [13](13-llm-providers-and-prompting.md)), validate the provider string, change `AI_SETUP_MODE` (that goes through `POST /api/v1/setup/paths`), or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
 
 What needs a restart regardless: anything captured at import (`DATA_DIR`-derived engine URL, semaphores), `EMBEDDING_DIMENSIONS` changes that require Qdrant collection recreation (handled by `sync_embedding_infrastructure`, not by this endpoint), and `.env` edits (pydantic-settings reads the file once).
 
@@ -757,7 +757,7 @@ Purpose: let Orb run in an "Obsidian-like limited mode" (notes, wikilinks, vault
 2. `mode = (settings.AI_SETUP_MODE or "none").lower().strip()`; `none` / `""` / `skip` → `False`.
 3. `local` → GGUFs present (same check as above).
 4. `cloud` / `hybrid` →
-   - `True` if any of `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY` is set (note: **`HUGGINGFACE_API_KEY` is not consulted here**);
+   - `True` if any provider in `credentials.CLOUD_PROVIDERS` has a key in the credential store — which now **does** include `huggingface`, and covers keys pushed from the keychain as well as env-seeded ones;
    - else `True` if `LLM_PROVIDER` is not one of `local`, `ollama`, `lm_studio`, `none`, `""` (i.e. any other provider name counts as "configured" even without a key — `LLMService` will then raise on first use);
    - else `True` if `LLM_BASE_URL` is set and `LLM_API_KEY` is a real key (not `local` / `lm-studio` / `ollama`);
    - else `bool(settings.LLM_BASE_URL)` — which is **always `True`** because the default is `http://127.0.0.1:8080`. Net effect: `AI_SETUP_MODE=cloud|hybrid` is always considered configured unless `LLM_BASE_URL` is explicitly blanked.
@@ -823,7 +823,7 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 3. **`core/` never imports `services/` at module scope.** Function-local imports only (`config._default_data_dir`, `runtime_config._data_path`, `main.startup_event`).
 4. **`KUZU_DB_PATH` is derived, not configured.** Always `<DATA_DIR>/kuzu/kuzu_graph` for the default KB; per-KB paths come from `kb_registry`.
 5. **`DATA_DIR` is frozen for the SQLite engine at import.** `sync_settings_paths` updates `settings` and logging, but the engine, Qdrant/Meili clients and Kuzu handles need a process restart (the desktop shell restarts the backend after the wizard).
-6. **API keys live only in `backend/.env`.** `runtime_config.json` and `PATCH /settings` never carry them; the per-KB override endpoint validates that a cloud key exists but never stores one.
+6. **API keys live only in memory, and on disk only as keychain ciphertext.** The desktop shell owns them (`desktop/credentials.js`, Electron `safeStorage` → `DATA_DIR/credentials.enc`) and pushes them to `PUT /api/v1/credentials`; `CredentialStore` never writes to disk, because `DATA_DIR` is frequently a synced folder. `runtime_config.json` and `PATCH /settings` never carry them, and no endpoint ever returns key material. Environment variables still seed the store for contributors running the backend outside the shell.
 7. **Router order is significant** — the desktop router must stay first (§4.2).
 8. **`extra="ignore"` on `Settings`** — unknown env keys are silently dropped; a typo in a variable name is not an error.
 9. **No migrations.** Schema changes on existing installs need an explicit `ALTER TABLE` path (pattern: `kb_registry._ensure_optional_columns`) or an `init_db` addition like the manual index.
@@ -887,4 +887,7 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 - `3f21e08` (2026-08-02) "Ship LifeOS as a Docker-free desktop app" — SQLite + `NullPool`, `paths.json` bootstrap, `api_desktop` router, `AI_SETUP_MODE`, `MAX_LOOP_ITERATIONS` lowered to 3, runtime config file.
 - `fbcafe7` (2026-08-03) "Align codebase with Orb desktop product" — rename to Orb, `TYPESENSE_*` → `MEILI_*` with alias validator, desktop router moved first, `Note.content` deprecated in favour of vault files, `ix_notes_kb_rel_path` manual index.
 - `72413b9` — note title ↔ vault filename sync; `b35d612` — wikilink autocomplete; `8de5cda`/`e14dc67` (0.2.0) — ingestion/retrieval batching.
-- Working tree (uncommitted, 2026-09) — per-KB LLM overrides (`knowledge_bases.llm_*`, `KBContext.llm`, `require_ai(kb)`), chunked extraction (`workflows/extraction_chunking.py`, `ORB_EXTRACTION_CHUNK_TOKENS`), no-default `ORB_LLAMA_MAX_TOKENS`, `ModelLoadClock`.
+- `b4d14cd` / `34b00b3` / `019fd13` (2026-09) — per-KB LLM overrides (`knowledge_bases.llm_*`, `KBContext.llm`, `require_ai(kb)`), chunked extraction (`workflows/extraction_chunking.py`, `ORB_EXTRACTION_CHUNK_TOKENS`), no-default `ORB_LLAMA_MAX_TOKENS`, `ModelLoadClock`, and the finance-chat `time` import fix.
+- `2c122cd` (2026-09) — bring-your-own local GGUFs: `services/gguf_metadata.py` + `services/model_discovery.py`; the curated catalog stops gating selection.
+- `1c4c69d` (2026-09) — cloud API keys moved out of `.env` into the OS keychain: `services/credentials.py`, `api/credentials.py`, `desktop/credentials.js`.
+- Working tree — `openai_compat` provider: any OpenAI-compatible URL + key + model name, with the endpoint URL as the credential identity (`knowledge_bases.llm_base_url`).

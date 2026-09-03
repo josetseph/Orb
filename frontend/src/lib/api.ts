@@ -652,8 +652,14 @@ export const api = {
   async getCredentials(): Promise<{
     providers: Record<string, { configured: boolean; source: string | null }>;
     known: string[];
+    endpoints: string[];
   }> {
     return http.get("/credentials");
+  },
+
+  /** Ask an OpenAI-compatible server which models it serves. */
+  async getEndpointModels(baseUrl: string): Promise<{ base_url: string; models: string[] }> {
+    return http.get("/llm/endpoint-models", { base_url: baseUrl });
   },
 
   // ── Maintenance ───────────────────────────────────────────────────────────

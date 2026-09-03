@@ -365,6 +365,32 @@ ipcMain.handle("credentials:delete", async (_event, provider) => {
   }
 });
 
+ipcMain.handle("credentials:set-endpoint", async (_event, baseUrl, apiKey) => {
+  try {
+    const id = credentialStore.endpointCredentialId(baseUrl);
+    const dataDir = credentialsDataDir();
+    // Servers such as llama-server accept any token; store a placeholder so the
+    // endpoint is still remembered as configured.
+    const key = String(apiKey || "").trim() || "not-needed";
+    credentialStore.saveCredential(dataDir, id, key);
+    await credentialStore.pushCredential(apiV1Url(), id, key);
+    return { ok: true, baseUrl: id.slice(credentialStore.ENDPOINT_PREFIX.length) };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+ipcMain.handle("credentials:delete-endpoint", async (_event, baseUrl) => {
+  try {
+    const id = credentialStore.endpointCredentialId(baseUrl);
+    credentialStore.deleteCredential(credentialsDataDir(), id);
+    await credentialStore.clearCredentialOnBackend(apiV1Url(), id);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
 ipcMain.handle("get-default-paths", () => ({
   data_dir: defaultDataDir(),
   models_dir: defaultModelsDir(),

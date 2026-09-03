@@ -19,6 +19,7 @@ import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { ShaderBackground } from "@/components/shader-background";
 import { CredentialsPanel } from "./_components/CredentialsPanel";
+import { EndpointPanel } from "./_components/EndpointPanel";
 import { useKB } from "@/lib/kb-context";
 import type { SetupStatus } from "@/lib/types";
 
@@ -26,6 +27,7 @@ const LOCAL_PROVIDERS = new Set(["local", "ollama", "lm_studio"]);
 
 const PROVIDERS = [
     { value: "local", label: "Local (on this device)" },
+    { value: "openai_compat", label: "OpenAI-compatible endpoint (any URL)" },
     { value: "openai", label: "OpenAI (cloud)" },
     { value: "gemini", label: "Google Gemini (cloud)" },
     { value: "anthropic", label: "Anthropic (cloud)" },
@@ -461,6 +463,8 @@ export default function SettingsPage() {
                         )}
 
                         <CredentialsPanel />
+
+                        <EndpointPanel />
 
                         {/* Maintenance */}
                         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">

@@ -504,7 +504,7 @@ Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default
 
 #### PATCH /api/v1/settings
 
-Body (`LLMSettings`, all optional): `provider`, `model`, `ingestion_model`, `base_url`. API keys are **never** accepted here (they live in `.env`).
+Body (`LLMSettings`, all optional): `provider`, `model`, `ingestion_model`, `base_url`. API keys are **never** accepted here — they go to `PUT /api/v1/credentials`, which keeps them in memory and lets the desktop shell hold the only on-disk copy as keychain ciphertext.
 
 Behaviour: loads `runtime_config.json`, applies each non-null field to both the overrides dict and live `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`), `runtime_config.save(overrides)` (only `MUTABLE_KEYS` are written). If `provider` or `base_url` **changed**, `llm_service.provider = …lower()` and `llm_service.init_clients()` (rebuilds provider clients). Model-only changes need no reinit. Response mirrors GET but reads `settings.CHAT_MODEL or settings.LLM_MODEL` directly.
 
@@ -1244,10 +1244,24 @@ Body (`KBLLMInput`): `provider`, `model`, `ingestion_model` — each `string | n
 
 Validation, in order:
 
-1. `provider` must be one of `LLM_PROVIDERS` → 400 otherwise.
-2. A non-`local` provider must have its API key present (`ai_gate.provider_is_configured`) → 400 "No API key configured for … — add it to backend/.env first."
-3. If the effective provider is `local`, each of `model` / `ingestion_model` (when set) must be a known catalogue id with `role == "chat"` and must be downloaded (`chat_model_downloaded`) → 400 otherwise.
-4. `kb_registry.set_llm_config(...)` persists the row (400 on `ValueError`, 404 if the KB does not exist).
+1. `provider` must be one of `LLM_PROVIDERS` (`local`, `openai_compat`, `openai`, `gemini`, `anthropic`, `huggingface`) → 400 otherwise.
+2. A provider other than `local` / `openai_compat` must have its key present (`ai_gate.provider_is_configured`) → 400 "No API key configured for … — add one in Settings → Cloud API keys first." (`openai_compat` is exempt: local servers such as llama-server need no key.)
+3. If the effective provider is `local`, each of `model` / `ingestion_model` (when set) is resolved as **either** a catalogue id (`role == "chat"`, downloaded) **or** a GGUF path ref — `MODELS_DIR`-relative like `gguf/My-Model.gguf`, or absolute. Path refs are validated by `model_discovery.inspect_chat_model`: missing file, unreadable GGUF, an embedding model (`<arch>.pooling_type` present), or a shard continuation each → 400.
+4. If the effective provider is `openai_compat`, an endpoint URL is required (body `base_url`, else `settings.LLM_BASE_URL`) and normalised by `credentials.normalize_base_url` (400 on a non-http(s) URL); a `model` is also required, since there is no catalogue to fall back to. Switching to any other provider clears a stale `base_url`.
+5. `kb_registry.set_llm_config(...)` persists the row (400 on `ValueError`, 404 if the KB does not exist).
+
+### Credential routes (`api/credentials.py`)
+
+Key material is **write-only** across this API: nothing here ever returns a key.
+
+| Method | Path | Body / query | Notes |
+|---|---|---|---|
+| `GET` | `/api/v1/credentials` | — | `{providers: {name: {configured, source}}, known: [...], endpoints: [url, ...]}`. `source` is `"keychain"` (pushed by the shell) or `"env"` (seeded from the environment for contributors). |
+| `PUT` | `/api/v1/credentials/{provider}` | `{api_key, source?}` | One of `CLOUD_PROVIDERS`; 400 for anything else, 422 for an empty key. Rebuilds LLM clients so the change applies without a restart. |
+| `DELETE` | `/api/v1/credentials/{provider}` | — | Forgets the key for this session. |
+| `PUT` | `/api/v1/credentials/endpoint` | `{base_url, api_key?}` | OpenAI-compatible endpoint. The **URL is the credential id**, so no name is invented and two servers cannot share a key; `api_key` defaults to `not-needed` for local servers. |
+| `DELETE` | `/api/v1/credentials/endpoint` | `?base_url=` | Forgets one endpoint's key. |
+| `GET` | `/api/v1/llm/endpoint-models` | `?base_url=` | Proxies `GET {base_url}/models` using the stored key and returns `{base_url, models: [...]}`. 502 when the server is unreachable or does not implement it — callers fall back to a free-text model field rather than blocking.
 5. The route then constructs `KBContext.llm` immediately; if construction raises, the override is rolled back to inherit and a 400 "Could not initialise that model: …" is returned, so a bad pin surfaces here rather than in the next chat.
 
 Response: same shape as `GET …/llm`.

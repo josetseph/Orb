@@ -71,7 +71,9 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
     └── .tmp/                               Firefly/PHP archive download + extract scratch — transient
 ```
 
-Not present under `DATA_DIR` (by design): model weights (`MODELS_DIR`), the app bundle, Node/Python runtimes, `.env` with API keys (`backend/.env`, never copied).
+Present under `DATA_DIR`: `credentials.enc` — cloud API keys encrypted with the OS keychain (Electron `safeStorage`), written `0600` via a temp-file rename by `desktop/credentials.js`. It is ciphertext only, and unreadable on another machine or when the keychain is locked (both degrade to "no keys" rather than an error). The backend never reads or writes this file; the shell decrypts and pushes the keys over localhost.
+
+Not present under `DATA_DIR` (by design): model weights (`MODELS_DIR`), the app bundle, Node/Python runtimes, and **any plaintext secret** — `DATA_DIR` is commonly a synced folder (OneDrive/NAS), so a cleartext key here would leave the machine.
 
 ## 3. Path-by-path reference
 
@@ -209,7 +211,8 @@ When neither env vars nor `paths.json` exist (e.g. `uvicorn app.main:app` in `ba
 | Engine binaries | `<repo>/desktop/binaries/<triple>/` or `<repo>/desktop/binaries/` (fallback lookup in `supervisor.resolveBinary`) | `desktop/binaries/README.md` |
 | Firefly seed | `<repo>/desktop/resources/firefly/` (gitignored build output) | used by `firefly-runtime.js` as `bundledRoot` in dev |
 | Backend logs (legacy) | `backend/logs/` is gitignored but no longer written; logs go to `DATA_DIR/logs` | |
-| `.env` | `<repo>/backend/.env` — API keys, ports, provider defaults; **never copied into `DATA_DIR`** | `runtime_config.json` intentionally excludes secrets |
+| `.env` | `<repo>/backend/.env` — ports and provider defaults for contributors; API keys here are only a **seed** for non-desktop runs (end users set keys in Settings). **Never copied into `DATA_DIR`** | `runtime_config.json` intentionally excludes secrets |
+| `credentials.enc` | `<DATA_DIR>/credentials.enc` — keychain-encrypted cloud API keys, `0600` | written by the shell, never by the backend |
 
 Because `settings.DATA_DIR` is evaluated at import, importing `app.core.config` (or any service) in a test without `ORB_DATA_DIR` creates `<repo>/data/` and `orb.db` as a side effect.
 

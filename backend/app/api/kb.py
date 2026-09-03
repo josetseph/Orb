@@ -47,6 +47,8 @@ class KBLLMInput(BaseModel):
     provider: str | None = None
     model: str | None = None
     ingestion_model: str | None = None
+    # Only meaningful for provider="openai_compat".
+    base_url: str | None = None
 
 
 def _inherit(value: str | None) -> str | None:
@@ -101,6 +103,8 @@ def _local_chat_models() -> list[dict]:
 
 
 def _kb_llm_payload(kb_id: str) -> dict:
+    from app.services.credentials import credentials
+
     meta = kb_registry.get_metadata(kb_id) or {}
     return {
         "kb_id": kb_id,
@@ -108,7 +112,10 @@ def _kb_llm_payload(kb_id: str) -> dict:
             "provider": meta.get("llm_provider"),
             "model": meta.get("llm_model"),
             "ingestion_model": meta.get("llm_ingestion_model"),
+            "base_url": meta.get("llm_base_url"),
         },
+        # Endpoints that already have a stored key, for the picker.
+        "endpoints": credentials.endpoints(),
         "effective": effective_llm_config(meta),
         "providers": list(LLM_PROVIDERS),
         # Models already on this machine — pinning never triggers a download.
@@ -141,9 +148,12 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
     from app.services.model_catalog import chat_model_downloaded, get_option
     from app.services.model_discovery import inspect_chat_model, resolve_model_ref
 
+    from app.services.credentials import InvalidEndpointError, normalize_base_url
+
     provider = _inherit(body.provider)
     model = _inherit(body.model)
     ingestion_model = _inherit(body.ingestion_model)
+    base_url = _inherit(body.base_url)
     if provider is not None:
         provider = provider.lower()
         if provider not in LLM_PROVIDERS:
@@ -151,12 +161,41 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
                 status_code=400,
                 detail=f"Unsupported provider '{provider}'. Choose one of: {', '.join(LLM_PROVIDERS)}",
             )
-        if provider != "local" and not provider_is_configured(provider):
+        if provider not in ("local", "openai_compat") and not provider_is_configured(
+            provider
+        ):
             raise HTTPException(
                 status_code=400,
-                detail=f"No API key configured for {provider} — add it to backend/.env first.",
+                detail=(
+                    f"No API key configured for {provider} — add one in "
+                    "Settings → Cloud API keys first."
+                ),
             )
     effective_provider = provider or effective_llm_config({})["provider"]
+
+    if effective_provider == "openai_compat":
+        resolved_url = base_url or effective_llm_config({}).get("base_url")
+        if not resolved_url:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "An OpenAI-compatible provider needs an endpoint URL. "
+                    "Add one in Settings, or set it for this knowledge base."
+                ),
+            )
+        try:
+            base_url = normalize_base_url(resolved_url) if base_url else base_url
+        except InvalidEndpointError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not model:
+            raise HTTPException(
+                status_code=400,
+                detail="Enter the model name this endpoint serves.",
+            )
+    elif base_url:
+        # A stale URL left over from switching provider would be misleading.
+        base_url = None
+
     if effective_provider == "local":
         for label, mid in (("model", model), ("ingestion_model", ingestion_model)):
             if not mid:
@@ -189,7 +228,11 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
                 raise HTTPException(status_code=400, detail=error)
     try:
         meta = kb_registry.set_llm_config(
-            kb_id, provider=provider, model=model, ingestion_model=ingestion_model
+            kb_id,
+            provider=provider,
+            model=model,
+            ingestion_model=ingestion_model,
+            base_url=base_url,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

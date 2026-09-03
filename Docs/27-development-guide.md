@@ -44,7 +44,7 @@ cd frontend && npm install && cd ..
 cd desktop && npm install
 ```
 
-`backend/.env.example` is the annotated reference for every setting; for a pure-local desktop run you can leave `.env` empty.
+`backend/.env.example` is the annotated reference for every setting; for a pure-local desktop run you can leave `.env` empty. Cloud API keys are **not** set there any more — enter them in Settings → Cloud API keys (the shell encrypts them into the OS keychain). Values in `.env` still seed the credential store when you run the backend outside the desktop shell.
 
 ---
 
@@ -201,7 +201,9 @@ Add a `ModelOption` in `services/model_catalog.py` (id, role, family, HF repo/fi
 
 ### Add a cloud provider
 
-`services/llm.py` (client construction, model resolution, structured-output path), `services/ai_gate.py::_CLOUD_KEYS`, `core/config.py` (API key + model fields), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
+First ask whether you need one: **`openai_compat` already covers every OpenAI-shaped API** (OpenRouter, Groq, Together, vLLM, LM Studio, llama-server, Ollama) — the user supplies a URL, a key and a model name, with no code change. A new provider is only warranted for a genuinely different wire protocol (as with Gemini and Anthropic).
+
+If it is: `services/llm.py` (client construction in `init_clients` **and** `_init_ingestion_clients`, model resolution), `services/credentials.py::CLOUD_PROVIDERS` (+ `_ENV_SETTING` for the contributor seed), `desktop/credentials.js::KNOWN_PROVIDERS`, `core/config.py` (model field), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
 
 ### Change the graph schema
 

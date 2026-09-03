@@ -40,7 +40,14 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_ingestion_chunked_extraction.py` (untracked) | Chunk/truncate/retry loop and batched image titling in `ingestion_agent`; documents the duck-typed LLM protocol via `_StubLLM`. | 4 async tests |
 | `backend/tests/unit/test_kb_llm_config.py` (untracked) | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
 | `backend/tests/unit/test_local_runtime_budget.py` (untracked) | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf` |
-| `backend/tests/unit/test_model_load_clock.py` (untracked) | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
+| `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
+| `backend/tests/unit/test_gguf_metadata.py` | GGUF header parsing against **synthesised** fixtures (`build_gguf` writes spec-conformant bytes), including the guards for corrupt/hostile headers and the `pooling_type` vs `chat_template` role distinction. | 24 tests |
+| `backend/tests/unit/test_model_discovery.py` | Disk scanning: shard grouping, AppleDouble/partial/dotfile filtering, venv + depth pruning, `MODELS_DIR`-relative refs, the metadata cache, `inspect_chat_model`. | 31 tests |
+| `backend/tests/unit/test_byo_model_selection.py` | End-to-end bring-your-own model: `resolve_chat_gguf` for catalog ids / relative refs / absolute paths, loud failure for missing or unusable files, `n_ctx` clamping, KB-API validation, payload listing. | 18 tests |
+| `backend/tests/unit/test_credentials.py` | `CredentialStore` semantics, env seeding and precedence, version bumps, endpoint URL identity, and the invariant that **no status output contains key material**. | 24 tests |
+| `backend/tests/unit/test_finance_chat_llm.py` | Finance synthesis routes through the KB's own LLM and runs off the event loop (a concurrent poller must keep ticking). | 6 async tests |
+| `backend/tests/unit/test_timing_helpers.py` | `[Timing]` line composition; load vs inference split never goes negative. | `TestLogStageTiming` |
+| `desktop/credentials.test.js` | The Electron keychain store, run with `node --test` (`npm test` in `desktop/`) — no test-runner dependency. Asserts the plaintext key never reaches disk, `0600` permissions, refusal to store when the OS cannot encrypt, and URL normalisation **identical to the Python side**. | 18 tests |
 | `backend/tests/benchmark/README.md` | Operator guide for the harness. | — |
 | `backend/tests/benchmark/fetch_notes.py` | Downloads HotpotQA distractor-dev JSON and LongBench `musique.jsonl`, materialises the note `.md` files referenced by the manifests. | `fetch_hotpotqa(force=)`, `fetch_musique(force=)`, filename sanitisers |
 | `backend/tests/benchmark/prepare_dataset.py` | Drives ingestion through the API one note at a time with resumable progress. | `prepare()`, `retry_failed()`, `_create_and_ingest()`, `_wait_for_completion()`, `_resolve_pending()`, `_clean_content()` |
@@ -93,6 +100,7 @@ In short: the unit tests need the **full** backend environment installed, even t
 
 - `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "lm_studio"` for every test, so no `.env` is required. Importing `app.core.config` still evaluates `Settings()` once: it reads `backend/.env` **if present** (`env_file` in `model_config`, `extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). If you have a real `.env` in `backend/`, its values leak into the tests except for the keys individual tests monkeypatch.
 - `test_kb_llm_config.py` has its own autouse fixture that overrides `LLM_PROVIDER` to `"local"` and pins `LLM_MODEL`, `CHAT_MODEL`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL`, `GEMINI_MODEL`, `OPENAI_MODEL` — it runs after `patch_settings` and wins.
+- Cross-language check: `normalize_base_url` exists in both `backend/app/services/credentials.py` and `desktop/credentials.js`. They must agree exactly — a mismatch would store a key under an id the backend never looks up — so both sides have tests over the same URL corpus.
 - Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS` (and its legacy alias `LIVEOS_LLAMA_MAX_TOKENS`). Nothing else touches the OS environment.
 - Nothing writes to disk except `tmp_path` fixtures in `test_local_runtime_budget.py`.
 

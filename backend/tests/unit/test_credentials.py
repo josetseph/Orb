@@ -132,3 +132,60 @@ class TestRequireApiKey:
         monkeypatch.setattr(mod, "credentials", store)
         store.set("openai", "sk-ok")
         assert mod.require_api_key("openai") == "sk-ok"
+
+
+class TestEndpointIdentity:
+    """OpenAI-compatible endpoints are keyed by URL, so no naming step is needed."""
+
+    def test_url_is_canonicalised(self):
+        from app.services.credentials import normalize_base_url
+
+        assert normalize_base_url("HTTPS://Api.Example.COM/v1/") == "https://api.example.com/v1"
+        assert normalize_base_url("  https://api.test/v1  ") == "https://api.test/v1"
+        assert normalize_base_url("https://api.test/v1?x=1#f") == "https://api.test/v1"
+
+    def test_port_is_preserved(self):
+        from app.services.credentials import normalize_base_url
+
+        assert normalize_base_url("http://127.0.0.1:8080/v1") == "http://127.0.0.1:8080/v1"
+
+    def test_non_http_urls_are_rejected(self):
+        from app.services.credentials import InvalidEndpointError, normalize_base_url
+
+        for bad in ("ftp://x/v1", "file:///etc/passwd", "notaurl", "", "   "):
+            with pytest.raises(InvalidEndpointError):
+                normalize_base_url(bad)
+
+    def test_equivalent_urls_share_one_credential(self, store):
+        from app.services.credentials import endpoint_credential_id
+
+        store.set(endpoint_credential_id("https://API.test/v1/"), "k-1")
+        assert store.get(endpoint_credential_id("https://api.test/v1")) == "k-1"
+
+    def test_different_endpoints_get_different_keys(self, store):
+        from app.services.credentials import endpoint_credential_id
+
+        store.set(endpoint_credential_id("https://openrouter.ai/api/v1"), "or-key")
+        store.set(endpoint_credential_id("https://api.groq.com/openai/v1"), "groq-key")
+        assert store.get(endpoint_credential_id("https://openrouter.ai/api/v1")) == "or-key"
+        assert store.get(endpoint_credential_id("https://api.groq.com/openai/v1")) == "groq-key"
+
+    def test_endpoints_are_listed_without_keys(self, store):
+        from app.services.credentials import endpoint_credential_id
+
+        store.set(endpoint_credential_id("https://openrouter.ai/api/v1"), "secret-or-key")
+        assert store.endpoints() == ["https://openrouter.ai/api/v1"]
+        assert "secret-or-key" not in repr(store.endpoints())
+        assert store.has_endpoint("https://openrouter.ai/api/v1/") is True
+        assert store.has_endpoint("https://other.test/v1") is False
+
+    def test_malformed_endpoint_lookup_is_false_not_an_error(self, store):
+        assert store.has_endpoint("notaurl") is False
+
+    def test_endpoint_keys_do_not_collide_with_provider_names(self, store):
+        from app.services.credentials import endpoint_credential_id
+
+        store.set("openai", "provider-key")
+        store.set(endpoint_credential_id("https://api.test/v1"), "endpoint-key")
+        assert store.get("openai") == "provider-key"
+        assert store.status()["openai"]["configured"] is True

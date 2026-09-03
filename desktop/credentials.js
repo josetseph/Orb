@@ -17,19 +17,69 @@ const http = require("http");
 const FILE_NAME = "credentials.enc";
 const KNOWN_PROVIDERS = ["openai", "gemini", "anthropic", "huggingface"];
 
+/**
+ * OpenAI-compatible servers are identified by their URL rather than a name the
+ * user invents, so two endpoints can never share a key by accident. Must match
+ * normalize_base_url() in backend/app/services/credentials.py.
+ */
+const ENDPOINT_PREFIX = "endpoint:";
+
+function normalizeBaseUrl(raw) {
+  const text = String(raw || "").trim();
+  if (!text) throw new Error("Endpoint URL must not be empty");
+  let url;
+  try {
+    url = new URL(text);
+  } catch (_) {
+    throw new Error(`Endpoint URL must start with http:// or https:// (got '${text}')`);
+  }
+  const scheme = url.protocol.replace(":", "").toLowerCase();
+  if (scheme !== "http" && scheme !== "https") {
+    throw new Error(`Endpoint URL must start with http:// or https:// (got '${text}')`);
+  }
+  if (!url.hostname) throw new Error(`Endpoint URL has no host: '${text}'`);
+  const host = url.port
+    ? `${url.hostname.toLowerCase()}:${url.port}`
+    : url.hostname.toLowerCase();
+  const path = url.pathname.replace(/\/+$/, "");
+  return `${scheme}://${host}${path}`;
+}
+
+function endpointCredentialId(baseUrl) {
+  return `${ENDPOINT_PREFIX}${normalizeBaseUrl(baseUrl)}`;
+}
+
+function isEndpointId(name) {
+  return String(name || "").startsWith(ENDPOINT_PREFIX);
+}
+
 function credentialsFile(dataDir) {
   return path.join(dataDir, FILE_NAME);
 }
 
 function normalizeProvider(provider) {
-  const name = String(provider || "").trim().toLowerCase();
+  const raw = String(provider || "").trim();
+  if (isEndpointId(raw)) {
+    // Only the URL is canonicalised; a path may be case-sensitive.
+    return endpointCredentialId(raw.slice(ENDPOINT_PREFIX.length));
+  }
+  const name = raw.toLowerCase();
   if (name === "google") return "gemini";
   if (name === "hf") return "huggingface";
   return name;
 }
 
 function isKnownProvider(provider) {
-  return KNOWN_PROVIDERS.includes(normalizeProvider(provider));
+  const raw = String(provider || "").trim();
+  if (isEndpointId(raw)) {
+    try {
+      normalizeBaseUrl(raw.slice(ENDPOINT_PREFIX.length));
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+  return KNOWN_PROVIDERS.includes(normalizeProvider(raw));
 }
 
 /** Electron's safeStorage, or a stand-in supplied by tests. */
@@ -111,7 +161,7 @@ function deleteCredential(dataDir, provider, injected) {
   return existed;
 }
 
-/** Which providers have a stored key — never the keys themselves. */
+/** Which providers and endpoints have a stored key — never the keys themselves. */
 function listCredentials(dataDir, injected) {
   const secrets = loadCredentials(dataDir, injected);
   return {
@@ -120,6 +170,10 @@ function listCredentials(dataDir, injected) {
       provider: name,
       configured: Boolean(secrets[name]),
     })),
+    endpoints: Object.keys(secrets)
+      .filter(isEndpointId)
+      .map((id) => id.slice(ENDPOINT_PREFIX.length))
+      .sort(),
   };
 }
 
@@ -165,14 +219,25 @@ function request(apiBase, method, providerPath, body) {
 
 /** Push one key into the running API so it takes effect without a restart. */
 async function pushCredential(apiBase, provider, apiKey) {
-  await request(apiBase, "PUT", normalizeProvider(provider), {
-    api_key: apiKey,
-    source: "keychain",
-  });
+  const name = normalizeProvider(provider);
+  if (isEndpointId(name)) {
+    await request(apiBase, "PUT", "endpoint", {
+      base_url: name.slice(ENDPOINT_PREFIX.length),
+      api_key: apiKey,
+    });
+    return;
+  }
+  await request(apiBase, "PUT", name, { api_key: apiKey, source: "keychain" });
 }
 
 async function clearCredentialOnBackend(apiBase, provider) {
-  await request(apiBase, "DELETE", normalizeProvider(provider), null);
+  const name = normalizeProvider(provider);
+  if (isEndpointId(name)) {
+    const query = encodeURIComponent(name.slice(ENDPOINT_PREFIX.length));
+    await request(apiBase, "DELETE", `endpoint?base_url=${query}`, null);
+    return;
+  }
+  await request(apiBase, "DELETE", name, null);
 }
 
 /** Push every stored key at boot. Failures are logged, never fatal. */
@@ -191,7 +256,11 @@ async function pushAllCredentials(dataDir, apiBase, injected) {
 
 module.exports = {
   KNOWN_PROVIDERS,
+  ENDPOINT_PREFIX,
   credentialsFile,
+  normalizeBaseUrl,
+  endpointCredentialId,
+  isEndpointId,
   normalizeProvider,
   isKnownProvider,
   encryptionAvailable,

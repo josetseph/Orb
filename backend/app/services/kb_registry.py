@@ -30,8 +30,20 @@ _LEGACY_REGISTRY = REPO_ROOT / "data" / "kb_registry.json"
 
 # Providers a KB may pin. Embed / rerank / multimodal are deliberately not
 # per-KB: embed dims are shared across every KB's Qdrant collections.
-LLM_PROVIDERS = ("local", "openai", "gemini", "anthropic", "huggingface")
-_LLM_META_KEYS = ("llm_provider", "llm_model", "llm_ingestion_model")
+LLM_PROVIDERS = (
+    "local",
+    "openai_compat",
+    "openai",
+    "gemini",
+    "anthropic",
+    "huggingface",
+)
+_LLM_META_KEYS = (
+    "llm_provider",
+    "llm_model",
+    "llm_ingestion_model",
+    "llm_base_url",
+)
 
 
 def _clean_override(value) -> str | None:
@@ -40,7 +52,10 @@ def _clean_override(value) -> str | None:
 
 
 def build_kb_llm_service(
-    provider: str | None, model: str | None, ingestion_model: str | None
+    provider: str | None,
+    model: str | None,
+    ingestion_model: str | None,
+    base_url: str | None = None,
 ):
     """Construct an LLMService pinned to a KB's override (raises on bad config)."""
     from app.services.llm import LLMService
@@ -51,6 +66,7 @@ def build_kb_llm_service(
         chat_model=model,
         ingestion_model=ingestion_model,
         ingestion_provider=prov,
+        base_url=base_url,
     )
 
 
@@ -86,10 +102,14 @@ def effective_llm_config(meta: dict) -> dict:
         or _system_model_for(provider, ingestion=True)
         or model
     )
+    base_url = _clean_override(meta.get("llm_base_url")) or (
+        settings.LLM_BASE_URL if provider == "openai_compat" else None
+    )
     return {
         "provider": provider,
         "model": model,
         "ingestion_model": ingestion_model,
+        "base_url": base_url,
         "inherited": not any(_clean_override(meta.get(k)) for k in _LLM_META_KEYS),
     }
 
@@ -138,6 +158,7 @@ class KBContext:
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_ingestion_model: str | None = None
+    llm_base_url: str | None = None
     _llm: object = field(default=None, repr=False)
     _llm_built_for: tuple | None = field(default=None, repr=False)
 
@@ -154,7 +175,12 @@ class KBContext:
 
     @property
     def has_llm_override(self) -> bool:
-        return bool(self.llm_provider or self.llm_model or self.llm_ingestion_model)
+        return bool(
+            self.llm_provider
+            or self.llm_model
+            or self.llm_ingestion_model
+            or self.llm_base_url
+        )
 
     @property
     def llm(self):
@@ -171,20 +197,26 @@ class KBContext:
             (self.llm_provider or settings.LLM_PROVIDER or "local").lower(),
             self.llm_model,
             self.llm_ingestion_model,
+            self.llm_base_url,
             credentials.version,
         )
         if self._llm is None or self._llm_built_for != key:
-            self._llm = build_kb_llm_service(*key[:3])
+            self._llm = build_kb_llm_service(*key[:4])
             self._llm_built_for = key
         return self._llm
 
     def apply_llm_override(
-        self, provider: str | None, model: str | None, ingestion_model: str | None
+        self,
+        provider: str | None,
+        model: str | None,
+        ingestion_model: str | None,
+        base_url: str | None = None,
     ) -> None:
         """Replace the override and drop cached services so they pick it up."""
         self.llm_provider = provider
         self.llm_model = model
         self.llm_ingestion_model = ingestion_model
+        self.llm_base_url = base_url
         self._llm = None
         self._llm_built_for = None
         self.retrieval_service = None
@@ -249,7 +281,8 @@ def _connect() -> sqlite3.Connection:
             firefly_group_title TEXT,
             llm_provider TEXT,
             llm_model TEXT,
-            llm_ingestion_model TEXT
+            llm_ingestion_model TEXT,
+            llm_base_url TEXT
         )
         """
     )
@@ -268,6 +301,7 @@ def _ensure_optional_columns(conn: sqlite3.Connection) -> None:
         ("llm_provider", "TEXT"),
         ("llm_model", "TEXT"),
         ("llm_ingestion_model", "TEXT"),
+        ("llm_base_url", "TEXT"),
     ):
         if name not in colnames:
             conn.execute(f"ALTER TABLE knowledge_bases ADD COLUMN {name} {sqltype}")
@@ -449,6 +483,7 @@ class KBRegistry:
                         llm_provider=_clean_override(meta.get("llm_provider")),
                         llm_model=_clean_override(meta.get("llm_model")),
                         llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
+                        llm_base_url=_clean_override(meta.get("llm_base_url")),
                     )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[KBRegistry] Failed to load from SQLite: {exc}")
@@ -461,8 +496,8 @@ class KBRegistry:
             (id, name, slug, vault_path, kuzu_path, qdrant_col_cores,
              qdrant_col_rels, qdrant_col_contexts, typesense_collection, created_at,
              firefly_group_id, firefly_group_title,
-             llm_provider, llm_model, llm_ingestion_model)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             llm_provider, llm_model, llm_ingestion_model, llm_base_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name,
               vault_path=excluded.vault_path,
@@ -471,7 +506,8 @@ class KBRegistry:
               firefly_group_title=excluded.firefly_group_title,
               llm_provider=excluded.llm_provider,
               llm_model=excluded.llm_model,
-              llm_ingestion_model=excluded.llm_ingestion_model
+              llm_ingestion_model=excluded.llm_ingestion_model,
+              llm_base_url=excluded.llm_base_url
             """,
             (
                 meta["id"],
@@ -489,6 +525,7 @@ class KBRegistry:
                 meta.get("llm_provider"),
                 meta.get("llm_model"),
                 meta.get("llm_ingestion_model"),
+                meta.get("llm_base_url"),
             ),
         )
         conn.commit()
@@ -686,6 +723,7 @@ class KBRegistry:
         provider: str | None,
         model: str | None,
         ingestion_model: str | None,
+        base_url: str | None = None,
     ) -> dict | None:
         """Persist a per-KB LLM override (all None = inherit) and refresh the live context."""
         provider = _clean_override(provider)
@@ -699,6 +737,11 @@ class KBRegistry:
                 )
         model = _clean_override(model)
         ingestion_model = _clean_override(ingestion_model)
+        base_url = _clean_override(base_url)
+        if base_url:
+            from app.services.credentials import normalize_base_url
+
+            base_url = normalize_base_url(base_url)
         with self._lock:
             if kb_id == DEFAULT_KB_ID and DEFAULT_KB_ID not in self._metadata:
                 self._ensure_default_row()
@@ -708,10 +751,11 @@ class KBRegistry:
             meta["llm_provider"] = provider
             meta["llm_model"] = model
             meta["llm_ingestion_model"] = ingestion_model
+            meta["llm_base_url"] = base_url
             self._save_row(meta)
             ctx = self._cache.get(kb_id)
             if ctx is not None:
-                ctx.apply_llm_override(provider, model, ingestion_model)
+                ctx.apply_llm_override(provider, model, ingestion_model, base_url)
             logger.info(
                 "[KBRegistry] LLM override for '%s' → provider=%s model=%s ingestion=%s",
                 meta.get("name"),
@@ -772,6 +816,7 @@ class KBRegistry:
             llm_provider=_clean_override(meta.get("llm_provider")),
             llm_model=_clean_override(meta.get("llm_model")),
             llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
+            llm_base_url=_clean_override(meta.get("llm_base_url")),
         )
 
     def _cleanup_stores(self, meta: dict) -> None:

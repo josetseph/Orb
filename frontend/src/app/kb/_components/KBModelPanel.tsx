@@ -20,6 +20,7 @@ const INHERIT = "";
 
 const PROVIDER_LABELS: Record<string, string> = {
   local: "Local (on this device)",
+  openai_compat: "OpenAI-compatible endpoint",
   openai: "OpenAI (cloud)",
   gemini: "Google Gemini (cloud)",
   anthropic: "Anthropic (cloud)",
@@ -37,6 +38,10 @@ function describeEffective(kb: KnowledgeBase): string {
   const eff = kb.effective_llm;
   if (!eff) return "—";
   const model = eff.model || "(not set)";
+  if (eff.provider === "openai_compat") {
+    const host = eff.base_url ? new URL(eff.base_url).host : "(no endpoint)";
+    return `${host} · ${model}`;
+  }
   const ingest =
     eff.ingestion_model && eff.ingestion_model !== eff.model
       ? ` · ingest ${eff.ingestion_model}`
@@ -64,6 +69,7 @@ export function KBModelPanel({
   const [provider, setProvider] = useState(INHERIT);
   const [model, setModel] = useState(INHERIT);
   const [ingestionModel, setIngestionModel] = useState(INHERIT);
+  const [baseUrl, setBaseUrl] = useState(INHERIT);
 
   const inherited = kb.effective_llm?.inherited ?? true;
 
@@ -79,6 +85,7 @@ export function KBModelPanel({
         setProvider(cfg.override.provider ?? INHERIT);
         setModel(cfg.override.model ?? INHERIT);
         setIngestionModel(cfg.override.ingestion_model ?? INHERIT);
+        setBaseUrl(cfg.override.base_url ?? INHERIT);
       })
       .catch(() => onError("Could not load model settings for this knowledge base."))
       .finally(() => {
@@ -92,10 +99,17 @@ export function KBModelPanel({
   // The provider the pinned models must belong to (inherit → system provider).
   const effectiveProvider = provider || config?.effective.provider || "local";
   const isLocal = effectiveProvider === "local";
+  const isEndpoint = effectiveProvider === "openai_compat";
+  const knownEndpoints = config?.endpoints ?? [];
   const localModels = config?.local_models ?? [];
   const canBrowse = Boolean(getDesktopBridge()?.pickFile);
 
-  async function save(next: { provider: string; model: string; ingestion_model: string }) {
+  async function save(next: {
+    provider: string;
+    model: string;
+    ingestion_model: string;
+    base_url: string;
+  }) {
     setSaving(true);
     onError(null);
     try {
@@ -104,6 +118,7 @@ export function KBModelPanel({
       setProvider(cfg.override.provider ?? INHERIT);
       setModel(cfg.override.model ?? INHERIT);
       setIngestionModel(cfg.override.ingestion_model ?? INHERIT);
+      setBaseUrl(cfg.override.base_url ?? INHERIT);
       await onSaved();
       setOpen(false);
     } catch (err: unknown) {
@@ -259,6 +274,7 @@ export function KBModelPanel({
                       // Model ids are provider-specific; don't carry them across.
                       setModel(INHERIT);
                       setIngestionModel(INHERIT);
+                      if (e.target.value !== "openai_compat") setBaseUrl(INHERIT);
                     }}
                     className="w-full appearance-none rounded-lg border border-white/10 bg-white/5 px-3 py-2 pr-8 text-xs text-white outline-none focus:border-purple-500/50"
                   >
@@ -274,6 +290,29 @@ export function KBModelPanel({
                   <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/40" />
                 </div>
               </div>
+
+              {isEndpoint && (
+                <div className="space-y-1">
+                  <label className="text-[11px] text-white/45">Endpoint URL</label>
+                  <input
+                    type="text"
+                    list="orb-kb-endpoints"
+                    value={baseUrl}
+                    onChange={(e) => setBaseUrl(e.target.value)}
+                    placeholder="https://openrouter.ai/api/v1"
+                    className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
+                  />
+                  <datalist id="orb-kb-endpoints">
+                    {knownEndpoints.map((e) => (
+                      <option key={e} value={e} />
+                    ))}
+                  </datalist>
+                  <p className="text-[10px] text-white/30">
+                    Add the key for an endpoint in Settings → OpenAI-compatible
+                    endpoints. Leave blank to use the one from Settings.
+                  </p>
+                </div>
+              )}
 
               {isLocal && localModels.length === 0 && (
                 <p className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-100/80">
@@ -304,7 +343,12 @@ export function KBModelPanel({
                     type="button"
                     disabled={saving}
                     onClick={() =>
-                      void save({ provider: INHERIT, model: INHERIT, ingestion_model: INHERIT })
+                      void save({
+                        provider: INHERIT,
+                        model: INHERIT,
+                        ingestion_model: INHERIT,
+                        base_url: INHERIT,
+                      })
                     }
                     className="flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/50 transition hover:text-white disabled:opacity-50"
                     title="Clear the override and follow Settings again"
@@ -323,7 +367,12 @@ export function KBModelPanel({
                   type="button"
                   disabled={saving}
                   onClick={() =>
-                    void save({ provider, model, ingestion_model: ingestionModel })
+                    void save({
+                      provider,
+                      model,
+                      ingestion_model: ingestionModel,
+                      base_url: baseUrl,
+                    })
                   }
                   className="flex items-center gap-1.5 rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-medium text-white transition hover:bg-purple-500 disabled:opacity-50"
                 >

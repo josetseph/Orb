@@ -17,6 +17,7 @@ export type OrbDesktopBridge = {
   listCredentials?: () => Promise<{
     encryptionAvailable: boolean;
     providers: Array<{ provider: string; configured: boolean }>;
+    endpoints?: string[];
     error?: string;
   }>;
   /** Encrypt a key into the OS keychain and push it to the running API. */
@@ -25,6 +26,14 @@ export type OrbDesktopBridge = {
     apiKey: string,
   ) => Promise<{ ok: boolean; provider?: string; error?: string }>;
   deleteCredential?: (provider: string) => Promise<{ ok: boolean; error?: string }>;
+  /** Same, for an OpenAI-compatible endpoint keyed by its URL. */
+  setEndpointCredential?: (
+    baseUrl: string,
+    apiKey: string,
+  ) => Promise<{ ok: boolean; baseUrl?: string; error?: string }>;
+  deleteEndpointCredential?: (
+    baseUrl: string,
+  ) => Promise<{ ok: boolean; error?: string }>;
   /** Direct FastAPI base, e.g. http://127.0.0.1:17401/api/v1 */
   getApiBaseUrl?: () => Promise<string>;
   /** Reveal a local file in Finder / Explorer (vault / data / models only) */
