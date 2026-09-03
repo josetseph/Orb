@@ -647,6 +647,15 @@ export const api = {
     return http.patch("/settings", data);
   },
 
+  // ── Cloud credentials (write-only; keys are never returned) ───────────────
+
+  async getCredentials(): Promise<{
+    providers: Record<string, { configured: boolean; source: string | null }>;
+    known: string[];
+  }> {
+    return http.get("/credentials");
+  },
+
   // ── Maintenance ───────────────────────────────────────────────────────────
 
   async getMaintenanceStatus(kb = "default"): Promise<{

@@ -18,6 +18,7 @@ import {
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { ShaderBackground } from "@/components/shader-background";
+import { CredentialsPanel } from "./_components/CredentialsPanel";
 import { useKB } from "@/lib/kb-context";
 import type { SetupStatus } from "@/lib/types";
 
@@ -401,11 +402,9 @@ export default function SettingsPage() {
                                         ingestion call {PROVIDERS.find((p) => p.value === form.provider)?.label || "the provider"} over the internet.
                                     </p>
                                     <p>
-                                        Put the API key in <code className="font-mono text-amber-50/90">backend/.env</code>{" "}
-                                        (<code className="font-mono">OPENAI_API_KEY</code>,{" "}
-                                        <code className="font-mono">GOOGLE_API_KEY</code>, or{" "}
-                                        <code className="font-mono">ANTHROPIC_API_KEY</code>) — keys are not edited
-                                        here. Then set the model names below to match that provider&apos;s catalog.
+                                        Add the API key under <span className="font-medium text-amber-100">Cloud API keys</span>{" "}
+                                        below — it is encrypted into your OS keychain. Then set the model
+                                        names to match that provider&apos;s catalog.
                                     </p>
                                 </div>
                             )}
@@ -460,6 +459,8 @@ export default function SettingsPage() {
                                 </div>
                             </div>
                         )}
+
+                        <CredentialsPanel />
 
                         {/* Maintenance */}
                         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">

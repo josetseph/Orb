@@ -7,6 +7,7 @@ from collections.abc import Callable
 
 from app.core.config import settings
 from app.core.log import get_logger
+from app.services.credentials import get_api_key
 
 logger = get_logger("MultimediaService")
 
@@ -230,10 +231,10 @@ class MultimediaService:
             mime = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
             data_url = f"data:{mime};base64,{b64}"
 
-            if settings.OPENAI_API_KEY:
+            if get_api_key("openai"):
                 from openai import OpenAI
 
-                client = OpenAI(api_key=settings.OPENAI_API_KEY)
+                client = OpenAI(api_key=get_api_key("openai"))
                 resp = client.chat.completions.create(
                     model=settings.OPENAI_MODEL or "gpt-4o-mini",
                     messages=[
@@ -249,11 +250,11 @@ class MultimediaService:
                 )
                 return (resp.choices[0].message.content or "").strip()
 
-            if settings.GEMINI_API_KEY:
+            if get_api_key("gemini"):
                 from google import genai
                 from google.genai import types
 
-                client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                client = genai.Client(api_key=get_api_key("gemini"))
                 part = types.Part.from_bytes(data=data, mime_type=mime)
                 resp = client.models.generate_content(
                     model=settings.GEMINI_MODEL or "gemini-2.0-flash",

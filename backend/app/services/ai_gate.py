@@ -7,14 +7,6 @@ from fastapi import HTTPException
 from app.core.config import settings
 
 
-_CLOUD_KEYS = {
-    "openai": lambda: settings.OPENAI_API_KEY,
-    "gemini": lambda: settings.GEMINI_API_KEY,
-    "anthropic": lambda: settings.ANTHROPIC_API_KEY,
-    "huggingface": lambda: settings.HUGGINGFACE_API_KEY,
-}
-
-
 def provider_is_configured(provider: str | None) -> bool:
     """Can ``provider`` answer right now (key present / GGUFs on disk)?"""
     name = (provider or "").lower().strip()
@@ -25,8 +17,9 @@ def provider_is_configured(provider: str | None) -> bool:
             return gguf_paths_if_present() is not None
         except Exception:  # pylint: disable=broad-exception-caught
             return False
-    getter = _CLOUD_KEYS.get(name)
-    return bool(getter and getter())
+    from app.services.credentials import credentials
+
+    return credentials.has(name)
 
 
 def ai_is_configured(kb=None) -> bool:
@@ -48,7 +41,9 @@ def ai_is_configured(kb=None) -> bool:
             return False
     if mode in ("cloud", "hybrid"):
         # Cloud/hybrid needs at least one provider key or custom OpenAI-compat URL
-        if settings.OPENAI_API_KEY or settings.GEMINI_API_KEY or settings.ANTHROPIC_API_KEY:
+        from app.services.credentials import CLOUD_PROVIDERS, credentials
+
+        if any(credentials.has(p) for p in CLOUD_PROVIDERS):
             return True
         provider = (settings.LLM_PROVIDER or "").lower().strip()
         if provider not in ("local", "ollama", "lm_studio", "none", ""):

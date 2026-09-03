@@ -8,6 +8,7 @@ from typing import Optional, Type
 import instructor
 from app.core.config import settings
 from app.core.log import get_logger
+from app.services.credentials import credentials, get_api_key
 from google import genai
 from google.genai import types
 from openai import AsyncOpenAI, OpenAI
@@ -66,6 +67,10 @@ class LLMService:
         if self.fallback_provider:
             logger.info(f"Fallback LLM Provider: {self.fallback_provider.upper()}")
 
+        # Credential version the clients were built against; a key change
+        # bumps the store's version and invalidates cached per-KB services.
+        self.credentials_version = credentials.version
+
         # Initialize provider-specific clients
         self.init_clients()
 
@@ -89,29 +94,29 @@ class LLMService:
             self.extraction_client = extraction
 
         elif self.provider == "openai":
-            if not settings.OPENAI_API_KEY:
-                raise ValueError("OPENAI_API_KEY not set in configuration")
+            if not get_api_key("openai"):
+                raise ValueError("No OpenAI API key. Add one in Settings -> AI provider.")
             logger.info(f"Initializing OpenAI (Model: {settings.OPENAI_MODEL})")
 
             self.extraction_client = instructor.patch(
-                OpenAI(api_key=settings.OPENAI_API_KEY, timeout=300.0)
+                OpenAI(api_key=get_api_key("openai"), timeout=300.0)
             )
-            self.chat_client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=300.0)
+            self.chat_client = OpenAI(api_key=get_api_key("openai"), timeout=300.0)
             # Async client for batch processing
             self.async_chat_client = AsyncOpenAI(
-                api_key=settings.OPENAI_API_KEY, timeout=300.0
+                api_key=get_api_key("openai"), timeout=300.0
             )
 
         elif self.provider == "gemini":
-            if not settings.GEMINI_API_KEY:
-                raise ValueError("GEMINI_API_KEY not set in configuration")
+            if not get_api_key("gemini"):
+                raise ValueError("No Gemini API key. Add one in Settings -> AI provider.")
             logger.info(f"Initializing Gemini (Model: {settings.GEMINI_MODEL})")
 
             # Use native Google Gen AI SDK for better rate limits
             # Timeout: 120 seconds per call — long enough for complex extractions, short
             # enough to fail fast rather than appear frozen when the API hangs.
             self.gemini_client = genai.Client(
-                api_key=settings.GEMINI_API_KEY,
+                api_key=get_api_key("gemini"),
                 http_options=types.HttpOptions(timeout=120000),
             )
 
@@ -184,14 +189,14 @@ class LLMService:
             self.chat_client = GeminiChatWrapper(self.gemini_client)
 
         elif self.provider == "anthropic":
-            if not settings.ANTHROPIC_API_KEY:
-                raise ValueError("ANTHROPIC_API_KEY not set in configuration")
+            if not get_api_key("anthropic"):
+                raise ValueError("No Anthropic API key. Add one in Settings -> AI provider.")
             logger.info(f"Initializing Anthropic (Model: {settings.ANTHROPIC_MODEL})")
 
             # Anthropic uses instructor for structured outputs (prompt engineering mode)
             from anthropic import Anthropic
 
-            self.anthropic_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+            self.anthropic_client = Anthropic(api_key=get_api_key("anthropic"))
 
             # Create OpenAI-compatible wrapper for backward compatibility
             # Note: Anthropic doesn't have native structured outputs, so we use instructor
@@ -202,8 +207,8 @@ class LLMService:
             self.chat_client = self.anthropic_client
 
         elif self.provider == "huggingface":
-            if not settings.HUGGINGFACE_API_KEY:
-                raise ValueError("HUGGINGFACE_API_KEY not set in configuration")
+            if not get_api_key("huggingface"):
+                raise ValueError("No Hugging Face API key. Add one in Settings -> AI provider.")
             if not settings.HUGGINGFACE_MODEL:
                 raise ValueError("HUGGINGFACE_MODEL not set in configuration")
             base_url = "https://router.huggingface.co/v1"
@@ -213,13 +218,13 @@ class LLMService:
             )
             self.chat_client = OpenAI(
                 base_url=base_url,
-                api_key=settings.HUGGINGFACE_API_KEY,
+                api_key=get_api_key("huggingface"),
                 timeout=300.0,
                 max_retries=3,
             )
             self.async_chat_client = AsyncOpenAI(
                 base_url=base_url,
-                api_key=settings.HUGGINGFACE_API_KEY,
+                api_key=get_api_key("huggingface"),
                 timeout=300.0,
                 max_retries=3,
             )
@@ -227,7 +232,7 @@ class LLMService:
             self.extraction_client = instructor.patch(
                 OpenAI(
                     base_url=base_url,
-                    api_key=settings.HUGGINGFACE_API_KEY,
+                    api_key=get_api_key("huggingface"),
                     timeout=300.0,
                     max_retries=3,
                 ),
@@ -287,12 +292,12 @@ class LLMService:
             self.i_anthropic_client = None
 
         elif self.ingestion_provider == "gemini":
-            if not settings.GEMINI_API_KEY:
+            if not get_api_key("gemini"):
                 raise ValueError(
-                    "GEMINI_API_KEY required for INGESTION_PROVIDER=gemini"
+                    "No Gemini API key. Add one in Settings -> AI provider."
                 )
             self.i_gemini_client = genai.Client(
-                api_key=settings.GEMINI_API_KEY,
+                api_key=get_api_key("gemini"),
                 http_options=types.HttpOptions(timeout=120000),
             )
             self.i_chat_client = None
@@ -301,28 +306,28 @@ class LLMService:
             self.i_anthropic_client = None
 
         elif self.ingestion_provider == "openai":
-            if not settings.OPENAI_API_KEY:
+            if not get_api_key("openai"):
                 raise ValueError(
-                    "OPENAI_API_KEY required for INGESTION_PROVIDER=openai"
+                    "No OpenAI API key. Add one in Settings -> AI provider."
                 )
-            self.i_chat_client = OpenAI(api_key=settings.OPENAI_API_KEY, timeout=300.0)
+            self.i_chat_client = OpenAI(api_key=get_api_key("openai"), timeout=300.0)
             self.i_async_chat_client = AsyncOpenAI(
-                api_key=settings.OPENAI_API_KEY, timeout=300.0
+                api_key=get_api_key("openai"), timeout=300.0
             )
             self.i_extraction_client = instructor.patch(
-                OpenAI(api_key=settings.OPENAI_API_KEY, timeout=300.0)
+                OpenAI(api_key=get_api_key("openai"), timeout=300.0)
             )
             self.i_gemini_client = None
             self.i_anthropic_client = None
 
         elif self.ingestion_provider == "anthropic":
-            if not settings.ANTHROPIC_API_KEY:
+            if not get_api_key("anthropic"):
                 raise ValueError(
-                    "ANTHROPIC_API_KEY required for INGESTION_PROVIDER=anthropic"
+                    "No Anthropic API key. Add one in Settings -> AI provider."
                 )
             from anthropic import Anthropic
 
-            self.i_anthropic_client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+            self.i_anthropic_client = Anthropic(api_key=get_api_key("anthropic"))
             self.i_extraction_client = instructor.from_anthropic(
                 self.i_anthropic_client, mode=instructor.Mode.ANTHROPIC_JSON
             )
@@ -331,27 +336,27 @@ class LLMService:
             self.i_gemini_client = None
 
         elif self.ingestion_provider == "huggingface":
-            if not settings.HUGGINGFACE_API_KEY:
+            if not get_api_key("huggingface"):
                 raise ValueError(
-                    "HUGGINGFACE_API_KEY required for INGESTION_PROVIDER=huggingface"
+                    "No Hugging Face API key. Add one in Settings -> AI provider."
                 )
             base_url = "https://router.huggingface.co/v1"
             self.i_chat_client = OpenAI(
                 base_url=base_url,
-                api_key=settings.HUGGINGFACE_API_KEY,
+                api_key=get_api_key("huggingface"),
                 timeout=300.0,
                 max_retries=3,
             )
             self.i_async_chat_client = AsyncOpenAI(
                 base_url=base_url,
-                api_key=settings.HUGGINGFACE_API_KEY,
+                api_key=get_api_key("huggingface"),
                 timeout=300.0,
                 max_retries=3,
             )
             self.i_extraction_client = instructor.patch(
                 OpenAI(
                     base_url=base_url,
-                    api_key=settings.HUGGINGFACE_API_KEY,
+                    api_key=get_api_key("huggingface"),
                     timeout=300.0,
                     max_retries=3,
                 ),

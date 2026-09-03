@@ -163,14 +163,18 @@ class KBContext:
             from app.services.llm import llm_service
 
             return llm_service
-        # Rebuild if the override (or the inherited provider) changed underneath.
+        # Rebuild if the override, the inherited provider, or a credential
+        # changed underneath — clients capture the API key at construction.
+        from app.services.credentials import credentials
+
         key = (
             (self.llm_provider or settings.LLM_PROVIDER or "local").lower(),
             self.llm_model,
             self.llm_ingestion_model,
+            credentials.version,
         )
         if self._llm is None or self._llm_built_for != key:
-            self._llm = build_kb_llm_service(*key)
+            self._llm = build_kb_llm_service(*key[:3])
             self._llm_built_for = key
         return self._llm
 

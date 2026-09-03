@@ -11,6 +11,11 @@ contextBridge.exposeInMainWorld("orbDesktop", {
   },
   pickDirectory: (opts) => ipcRenderer.invoke("pick-directory", opts || {}),
   pickFile: (opts) => ipcRenderer.invoke("pick-file", opts || {}),
+  // Cloud API keys: write-only from the renderer's point of view.
+  listCredentials: () => ipcRenderer.invoke("credentials:list"),
+  setCredential: (provider, apiKey) =>
+    ipcRenderer.invoke("credentials:set", provider, apiKey),
+  deleteCredential: (provider) => ipcRenderer.invoke("credentials:delete", provider),
   getApiBaseUrl: () => ipcRenderer.invoke("get-api-base-url"),
   revealInFolder: (filePath) =>
     ipcRenderer.invoke("reveal-in-folder", filePath),

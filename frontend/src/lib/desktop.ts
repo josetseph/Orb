@@ -13,6 +13,18 @@ export type OrbDesktopBridge = {
     defaultPath?: string;
     filters?: Array<{ name: string; extensions: string[] }>;
   }) => Promise<string | null>;
+  /** Which providers have a stored key. Never returns key material. */
+  listCredentials?: () => Promise<{
+    encryptionAvailable: boolean;
+    providers: Array<{ provider: string; configured: boolean }>;
+    error?: string;
+  }>;
+  /** Encrypt a key into the OS keychain and push it to the running API. */
+  setCredential?: (
+    provider: string,
+    apiKey: string,
+  ) => Promise<{ ok: boolean; provider?: string; error?: string }>;
+  deleteCredential?: (provider: string) => Promise<{ ok: boolean; error?: string }>;
   /** Direct FastAPI base, e.g. http://127.0.0.1:17401/api/v1 */
   getApiBaseUrl?: () => Promise<string>;
   /** Reveal a local file in Finder / Explorer (vault / data / models only) */

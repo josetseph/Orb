@@ -15,6 +15,7 @@ const {
   envFirst,
 } = require("./paths");
 const { uiUrl, apiV1Url } = require("./ports");
+const credentialStore = require("./credentials");
 
 // Keep macOS menu / "Quit …" label as Orb (not package.json "orb-desktop").
 app.setName("Orb");
@@ -328,6 +329,42 @@ ipcMain.handle("reveal-in-folder", (_e, filePath) => {
   }
 });
 
+// ── Cloud API keys (OS keychain via safeStorage) ────────────────────────────
+// The renderer can set and clear keys but never read them back.
+function credentialsDataDir() {
+  return loadPaths(getAppRoot()).dataDir;
+}
+
+ipcMain.handle("credentials:list", () => {
+  try {
+    return credentialStore.listCredentials(credentialsDataDir());
+  } catch (err) {
+    return { encryptionAvailable: false, providers: [], error: String(err.message || err) };
+  }
+});
+
+ipcMain.handle("credentials:set", async (_event, provider, apiKey) => {
+  try {
+    const dataDir = credentialsDataDir();
+    const name = credentialStore.saveCredential(dataDir, provider, apiKey);
+    await credentialStore.pushCredential(apiV1Url(), name, String(apiKey).trim());
+    return { ok: true, provider: name };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
+ipcMain.handle("credentials:delete", async (_event, provider) => {
+  try {
+    const dataDir = credentialsDataDir();
+    credentialStore.deleteCredential(dataDir, provider);
+    await credentialStore.clearCredentialOnBackend(apiV1Url(), provider);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) };
+  }
+});
+
 ipcMain.handle("get-default-paths", () => ({
   data_dir: defaultDataDir(),
   models_dir: defaultModelsDir(),
@@ -403,6 +440,16 @@ ipcMain.handle("save-wizard", async (event, payload) => {
 async function bootStack(appRoot) {
   supervisor = new Supervisor(appRoot, sendStatus);
   await supervisor.startAll();
+  // The API holds keys in memory only, so they are re-pushed on every boot.
+  try {
+    const count = await credentialStore.pushAllCredentials(
+      loadPaths(appRoot).dataDir,
+      apiV1Url(),
+    );
+    if (count) sendStatus(`Restored ${count} saved API key(s)`);
+  } catch (err) {
+    console.error("Could not restore saved API keys:", err);
+  }
 }
 
 app.whenReady().then(async () => {
