@@ -48,12 +48,13 @@ test("the credentials file is owner-only", () => {
   assert.strictEqual(mode, 0o600);
 });
 
-test("refuses to store anything when the OS cannot encrypt", () => {
+test("refuses to write plaintext when the OS cannot encrypt, and says so", () => {
   const dir = tmpDir();
   const ss = fakeSafeStorage({ available: false });
   assert.throws(
     () => store.saveCredential(dir, "openai", "sk-1", ss),
-    /cannot encrypt secrets/,
+    /session only/,
+    "the error must explain that the key still works for this session",
   );
   assert.ok(!fs.existsSync(store.credentialsFile(dir)), "wrote a file anyway");
 });
@@ -197,4 +198,86 @@ test("endpoint entries survive a reload and delete independently", () => {
   store.saveCredential(dir, b, "kb", ss);
   assert.strictEqual(store.deleteCredential(dir, a, ss), true);
   assert.deepStrictEqual(Object.keys(store.loadCredentials(dir, ss)), [b]);
+});
+
+// ── Platform encryption backends ───────────────────────────────────────────
+// Windows (DPAPI) and macOS (Keychain) are part of the OS; only Linux can
+// genuinely lack a backend, and there it can also report `basic_text`, which
+// uses a hardcoded key — obfuscation we must never label as encryption.
+
+test("Windows always has a backend once the app is ready", () => {
+  const ss = fakeSafeStorage();
+  const status = store.encryptionStatus(ss, "win32");
+  assert.strictEqual(status.available, true);
+  assert.strictEqual(status.backend, "dpapi");
+});
+
+test("macOS reports the keychain", () => {
+  const status = store.encryptionStatus(fakeSafeStorage(), "darwin");
+  assert.strictEqual(status.available, true);
+  assert.strictEqual(status.backend, "keychain");
+});
+
+test("Linux with a real keyring is available", () => {
+  const ss = { ...fakeSafeStorage(), getSelectedStorageBackend: () => "gnome_libsecret" };
+  const status = store.encryptionStatus(ss, "linux");
+  assert.strictEqual(status.available, true);
+  assert.strictEqual(status.backend, "gnome_libsecret");
+});
+
+test("Linux basic_text is treated as NOT encrypted", () => {
+  const ss = { ...fakeSafeStorage(), getSelectedStorageBackend: () => "basic_text" };
+  const status = store.encryptionStatus(ss, "linux");
+  assert.strictEqual(status.available, false, "hardcoded-key mode must not count as encryption");
+  assert.match(status.reason, /hardcoded key/);
+});
+
+test("Linux with an unknown backend is not available", () => {
+  const ss = { ...fakeSafeStorage(), getSelectedStorageBackend: () => "unknown" };
+  assert.strictEqual(store.encryptionStatus(ss, "linux").available, false);
+});
+
+test("a safeStorage that throws degrades to unavailable", () => {
+  const ss = {
+    isEncryptionAvailable: () => {
+      throw new Error("not ready");
+    },
+  };
+  assert.strictEqual(store.encryptionStatus(ss, "win32").available, false);
+});
+
+test("listCredentials surfaces the backend and reason", () => {
+  const dir = tmpDir();
+  const ss = { ...fakeSafeStorage(), getSelectedStorageBackend: () => "basic_text" };
+  const listed = store.listCredentials(dir, ss);
+  assert.strictEqual(listed.encryptionAvailable, process.platform === "linux" ? false : true);
+  assert.ok("encryptionBackend" in listed);
+});
+
+// ── Migration out of a synced DATA_DIR ─────────────────────────────────────
+
+test("an existing store is moved out of the old location", () => {
+  const oldDir = tmpDir();
+  const newDir = tmpDir();
+  const ss = fakeSafeStorage();
+  store.saveCredential(oldDir, "openai", "sk-1", ss);
+
+  assert.strictEqual(store.migrateLegacyStore(oldDir, newDir), true);
+  assert.strictEqual(fs.existsSync(store.credentialsFile(oldDir)), false, "old copy left behind");
+  assert.strictEqual(store.loadCredentials(newDir, ss).openai, "sk-1");
+  assert.strictEqual(fs.statSync(store.credentialsFile(newDir)).mode & 0o777, 0o600);
+});
+
+test("migration never overwrites an existing store and is a no-op otherwise", () => {
+  const oldDir = tmpDir();
+  const newDir = tmpDir();
+  const ss = fakeSafeStorage();
+  store.saveCredential(oldDir, "openai", "old-key", ss);
+  store.saveCredential(newDir, "openai", "new-key", ss);
+
+  assert.strictEqual(store.migrateLegacyStore(oldDir, newDir), false);
+  assert.strictEqual(store.loadCredentials(newDir, ss).openai, "new-key");
+  // Nothing to move, same directory, missing source: all safe.
+  assert.strictEqual(store.migrateLegacyStore(tmpDir(), tmpDir()), false);
+  assert.strictEqual(store.migrateLegacyStore(newDir, newDir), false);
 });

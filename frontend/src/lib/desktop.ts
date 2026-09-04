@@ -16,6 +16,10 @@ export type OrbDesktopBridge = {
   /** Which providers have a stored key. Never returns key material. */
   listCredentials?: () => Promise<{
     encryptionAvailable: boolean;
+    /** "keychain" (macOS), "dpapi" (Windows), or the Linux backend name. */
+    encryptionBackend?: string;
+    /** Why encryption is unavailable, when it is. */
+    encryptionReason?: string;
     providers: Array<{ provider: string; configured: boolean }>;
     endpoints?: string[];
     error?: string;
@@ -24,13 +28,26 @@ export type OrbDesktopBridge = {
   setCredential?: (
     provider: string,
     apiKey: string,
-  ) => Promise<{ ok: boolean; provider?: string; error?: string }>;
+  ) => Promise<{
+    ok: boolean;
+    provider?: string;
+    /** False when the key works now but could not be written to disk. */
+    persisted?: boolean;
+    warning?: string;
+    error?: string;
+  }>;
   deleteCredential?: (provider: string) => Promise<{ ok: boolean; error?: string }>;
   /** Same, for an OpenAI-compatible endpoint keyed by its URL. */
   setEndpointCredential?: (
     baseUrl: string,
     apiKey: string,
-  ) => Promise<{ ok: boolean; baseUrl?: string; error?: string }>;
+  ) => Promise<{
+    ok: boolean;
+    baseUrl?: string;
+    persisted?: boolean;
+    warning?: string;
+    error?: string;
+  }>;
   deleteEndpointCredential?: (
     baseUrl: string,
   ) => Promise<{ ok: boolean; error?: string }>;

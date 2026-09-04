@@ -89,12 +89,52 @@ function getSafeStorage(injected) {
   return require("electron").safeStorage;
 }
 
-function encryptionAvailable(injected) {
+/**
+ * Whether this machine can genuinely encrypt secrets, and with what.
+ *
+ * Windows (DPAPI) and macOS (Keychain) are part of the OS and are always
+ * available once the app is ready. Only Linux can lack a backend — and there it
+ * can also report `basic_text`, which derives the key from a hardcoded constant.
+ * That is obfuscation, not encryption, so we treat it as unavailable rather than
+ * telling the user their key is protected when it is not.
+ */
+function encryptionStatus(injected, platform = process.platform) {
+  const ss = getSafeStorage(injected);
+  let available = false;
   try {
-    return Boolean(getSafeStorage(injected)?.isEncryptionAvailable?.());
+    available = Boolean(ss?.isEncryptionAvailable?.());
   } catch (_) {
-    return false;
+    available = false;
   }
+
+  if (platform !== "linux") {
+    return {
+      available,
+      backend: platform === "darwin" ? "keychain" : "dpapi",
+      reason: available ? "" : "The operating system reported no encryption backend.",
+    };
+  }
+
+  let backend = "unknown";
+  try {
+    backend = ss?.getSelectedStorageBackend?.() || "unknown";
+  } catch (_) {
+    backend = "unknown";
+  }
+  const real = available && backend !== "basic_text" && backend !== "unknown";
+  return {
+    available: real,
+    backend,
+    reason: real
+      ? ""
+      : backend === "basic_text"
+        ? "No system keyring was found, so Electron would encrypt with a hardcoded key — that is not real protection."
+        : "No system keyring (gnome-keyring, kwallet) is available.",
+  };
+}
+
+function encryptionAvailable(injected, platform = process.platform) {
+  return encryptionStatus(injected, platform).available;
 }
 
 /** Read and decrypt all stored keys. Returns {} when absent or unreadable. */
@@ -122,10 +162,11 @@ function loadCredentials(dataDir, injected) {
 }
 
 function writeCredentials(dataDir, secrets, injected) {
-  if (!encryptionAvailable(injected)) {
+  const status = encryptionStatus(injected);
+  if (!status.available) {
     throw new Error(
-      "This system cannot encrypt secrets (no OS keychain available), so Orb " +
-        "will not store API keys on disk.",
+      `${status.reason} Orb will not write API keys to disk unencrypted, so keys ` +
+        "are kept for this session only.",
     );
   }
   const file = credentialsFile(dataDir);
@@ -164,8 +205,11 @@ function deleteCredential(dataDir, provider, injected) {
 /** Which providers and endpoints have a stored key — never the keys themselves. */
 function listCredentials(dataDir, injected) {
   const secrets = loadCredentials(dataDir, injected);
+  const status = encryptionStatus(injected);
   return {
-    encryptionAvailable: encryptionAvailable(injected),
+    encryptionAvailable: status.available,
+    encryptionBackend: status.backend,
+    encryptionReason: status.reason,
     providers: KNOWN_PROVIDERS.map((name) => ({
       provider: name,
       configured: Boolean(secrets[name]),
@@ -175,6 +219,30 @@ function listCredentials(dataDir, injected) {
       .map((id) => id.slice(ENDPOINT_PREFIX.length))
       .sort(),
   };
+}
+
+/**
+ * Move an existing store out of a previous location.
+ *
+ * The first implementation kept `credentials.enc` in DATA_DIR, which is commonly
+ * a synced folder (OneDrive, NAS) — uploading ciphertext that only this machine
+ * can read is pointless, so the store now lives in the app's local userData.
+ */
+function migrateLegacyStore(fromDir, toDir) {
+  try {
+    if (!fromDir || !toDir || path.resolve(fromDir) === path.resolve(toDir)) return false;
+    const from = credentialsFile(fromDir);
+    const to = credentialsFile(toDir);
+    if (!fs.existsSync(from) || fs.existsSync(to)) return false;
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.copyFileSync(from, to);
+    fs.chmodSync(to, 0o600);
+    fs.unlinkSync(from);
+    return true;
+  } catch (err) {
+    console.error(`Could not migrate credentials store: ${err.message}`);
+    return false;
+  }
 }
 
 function request(apiBase, method, providerPath, body) {
@@ -264,6 +332,8 @@ module.exports = {
   normalizeProvider,
   isKnownProvider,
   encryptionAvailable,
+  encryptionStatus,
+  migrateLegacyStore,
   loadCredentials,
   saveCredential,
   deleteCredential,

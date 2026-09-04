@@ -29,6 +29,8 @@ export function CredentialsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [encryptionAvailable, setEncryptionAvailable] = useState(true);
+  const [encryptionReason, setEncryptionReason] = useState<string>("");
+  const [sessionOnly, setSessionOnly] = useState<string | null>(null);
 
   const bridge = getDesktopBridge();
   const canStore = Boolean(bridge?.setCredential);
@@ -47,6 +49,7 @@ export function CredentialsPanel() {
       try {
         const listed = await bridge.listCredentials();
         setEncryptionAvailable(listed.encryptionAvailable);
+        setEncryptionReason(listed.encryptionReason || "");
       } catch {
         /* non-fatal */
       }
@@ -67,6 +70,8 @@ export function CredentialsPanel() {
       const result = await bridge!.setCredential!(provider, key);
       if (!result?.ok) throw new Error(result?.error || "Could not save the key");
       setDrafts((d) => ({ ...d, [provider]: "" }));
+      // The key may be usable now yet impossible to store (Linux, no keyring).
+      setSessionOnly(result.persisted === false ? provider : null);
       setSaved(provider);
       setTimeout(() => setSaved(null), 2500);
       await refresh();
@@ -100,8 +105,9 @@ export function CredentialsPanel() {
         </h2>
       </div>
       <p className="text-xs text-white/40">
-        Stored encrypted in your operating system&apos;s keychain, never in your notes
-        or data folder. Keys are never shown again after saving.
+        Stored encrypted by your operating system — Keychain on macOS, DPAPI on
+        Windows, gnome-keyring or kwallet on Linux — in the app&apos;s local folder,
+        never in your notes or data folder. Keys are never shown again after saving.
       </p>
 
       {!canStore && (
@@ -111,9 +117,23 @@ export function CredentialsPanel() {
         </p>
       )}
       {canStore && !encryptionAvailable && (
-        <p className="rounded-xl border border-red-500/25 bg-red-500/5 px-4 py-3 text-xs text-red-200/90">
-          This system has no available keychain, so Orb will not store API keys on
-          disk. On Linux, install a secret service (e.g. gnome-keyring) and restart.
+        <div className="space-y-1 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-xs text-amber-100/85">
+          <p>
+            <span className="font-medium">Keys will work but won&apos;t be saved.</span>{" "}
+            {encryptionReason ||
+              "No system keyring is available on this machine."}{" "}
+            Orb will not write keys to disk unencrypted, so you&apos;ll re-enter them
+            after a restart.
+          </p>
+          <p className="text-amber-100/60">
+            To keep them: install a keyring (gnome-keyring or kwallet) and restart, or
+            set the key as an environment variable before launching Orb.
+          </p>
+        </div>
+      )}
+      {sessionOnly && (
+        <p className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100/80">
+          Saved for this session only — it could not be written to the keychain.
         </p>
       )}
       {error && (

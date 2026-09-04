@@ -331,8 +331,35 @@ ipcMain.handle("reveal-in-folder", (_e, filePath) => {
 
 // ── Cloud API keys (OS keychain via safeStorage) ────────────────────────────
 // The renderer can set and clear keys but never read them back.
+//
+// The store lives in the app's own userData directory, which is always local to
+// this machine — DATA_DIR is frequently a synced folder (OneDrive, NAS), and
+// uploading ciphertext only this machine can decrypt serves no purpose.
 function credentialsDataDir() {
-  return loadPaths(getAppRoot()).dataDir;
+  return app.getPath("userData");
+}
+
+/**
+ * Store a key, falling back to session-only when this machine cannot encrypt.
+ *
+ * Losing durable storage must not make a provider unusable: the key is still
+ * pushed to the running API, so the app works until the next restart. Only
+ * Linux without a keyring reaches this path — Windows (DPAPI) and macOS
+ * (Keychain) always have a backend.
+ */
+async function storeAndPushCredential(id, apiKey) {
+  const key = String(apiKey || "").trim();
+  let persisted = true;
+  let warning = "";
+  try {
+    credentialStore.saveCredential(credentialsDataDir(), id, key);
+  } catch (err) {
+    persisted = false;
+    warning = String(err.message || err);
+  }
+  // Always push: a key that cannot be stored is still usable this session.
+  await credentialStore.pushCredential(apiV1Url(), id, key);
+  return { ok: true, persisted, warning };
 }
 
 ipcMain.handle("credentials:list", () => {
@@ -345,10 +372,12 @@ ipcMain.handle("credentials:list", () => {
 
 ipcMain.handle("credentials:set", async (_event, provider, apiKey) => {
   try {
-    const dataDir = credentialsDataDir();
-    const name = credentialStore.saveCredential(dataDir, provider, apiKey);
-    await credentialStore.pushCredential(apiV1Url(), name, String(apiKey).trim());
-    return { ok: true, provider: name };
+    const name = credentialStore.normalizeProvider(provider);
+    if (!credentialStore.isKnownProvider(name)) {
+      throw new Error(`Unknown provider '${provider}'`);
+    }
+    if (!String(apiKey || "").trim()) throw new Error("API key must not be empty");
+    return { ...(await storeAndPushCredential(name, apiKey)), provider: name };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
@@ -368,13 +397,13 @@ ipcMain.handle("credentials:delete", async (_event, provider) => {
 ipcMain.handle("credentials:set-endpoint", async (_event, baseUrl, apiKey) => {
   try {
     const id = credentialStore.endpointCredentialId(baseUrl);
-    const dataDir = credentialsDataDir();
     // Servers such as llama-server accept any token; store a placeholder so the
     // endpoint is still remembered as configured.
     const key = String(apiKey || "").trim() || "not-needed";
-    credentialStore.saveCredential(dataDir, id, key);
-    await credentialStore.pushCredential(apiV1Url(), id, key);
-    return { ok: true, baseUrl: id.slice(credentialStore.ENDPOINT_PREFIX.length) };
+    return {
+      ...(await storeAndPushCredential(id, key)),
+      baseUrl: id.slice(credentialStore.ENDPOINT_PREFIX.length),
+    };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };
   }
@@ -468,8 +497,13 @@ async function bootStack(appRoot) {
   await supervisor.startAll();
   // The API holds keys in memory only, so they are re-pushed on every boot.
   try {
-    const count = await credentialStore.pushAllCredentials(
+    // Earlier builds kept the store in DATA_DIR (often a synced folder).
+    credentialStore.migrateLegacyStore(
       loadPaths(appRoot).dataDir,
+      credentialsDataDir(),
+    );
+    const count = await credentialStore.pushAllCredentials(
+      credentialsDataDir(),
       apiV1Url(),
     );
     if (count) sendStatus(`Restored ${count} saved API key(s)`);
