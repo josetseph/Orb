@@ -14,12 +14,21 @@ Product overview and installers: [root README](../README.md).
 ## Development
 
 ```bash
-cd desktop && npm install && npm start
+cd desktop && npm install && npm run dev
 ```
 
-Uses repo `backend/.venv` (or system Python) and `frontend` via `next dev`.
+`npm run dev` runs the repo's `backend/` and `frontend/` directly, with `next dev`
+for live reload. It points `ORB_RESOURCES` at a path that does not exist so the
+packaged trees under `desktop/resources/` are ignored.
 
-Optional: `ORB_FRONTEND_DEV=1` forces dev server even when a standalone build exists.
+**Use `npm run dev`, not `npm start`.** `npm start` prefers `desktop/resources/`
+whenever that folder exists, so it serves the last *built* backend and UI — edits
+to `backend/app` or `frontend/src` simply do not appear, with no error to explain
+why. `npm start` is for testing the packaged layout after `prepare-dist`.
+
+`npm run dev` borrows the interpreter from `resources/backend/python` (it has the
+dependencies installed). Without one, set `ORB_PYTHON` to any Python that has
+`backend/requirements.txt` installed.
 
 ## Installers (.dmg / .exe)
 

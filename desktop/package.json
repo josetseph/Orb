@@ -9,7 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test *.test.js",
-    "dev": "electron .",
+    "dev": "ORB_RESOURCES=/nonexistent ORB_PYTHON=\"$PWD/resources/backend/python/bin/python3\" electron .",
     "prefetch-binaries": "node scripts/prefetch-binaries.js",
     "prefetch-firefly": "node scripts/prefetch-firefly.js",
     "build-frontend": "node scripts/build-frontend.js",

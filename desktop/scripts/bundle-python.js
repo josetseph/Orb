@@ -7,6 +7,7 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const { execFileSync, spawnSync } = require("child_process");
+const { writeStamp, SOURCE_ROOTS } = require("./source-stamp");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const backendSrc = path.join(repoRoot, "backend");
@@ -95,7 +96,33 @@ function run(python, args, opts = {}) {
 }
 
 function copyBackendSources() {
+  // Remove first: a rename or deletion in backend/app must not leave a stale
+  // module behind in the bundle.
+  rmrf(path.join(outBackend, "app"));
   copyDir(path.join(backendSrc, "app"), path.join(outBackend, "app"));
+  const stamp = writeStamp(outBackend, SOURCE_ROOTS.backend);
+  console.log("  backend source stamp", stamp.hash.slice(0, 16));
+}
+
+/**
+ * Can we keep the interpreter that is already there?
+ *
+ * Re-downloading Python and rebuilding llama-cpp-python takes 10-20 minutes, so
+ * a source-only change used to tempt people into running individual stages by
+ * hand — which is exactly how trees drift out of sync. Reuse a bundle whose
+ * imports still pass; force a full rebuild with ORB_REBUILD_PYTHON=1.
+ */
+function existingPythonIsUsable() {
+  if (process.env.ORB_REBUILD_PYTHON === "1") return false;
+  const pyRoot = path.join(outBackend, "python");
+  if (!fs.existsSync(pyRoot)) return false;
+  try {
+    const python = resolvePythonExe(pyRoot);
+    validateImports(python);
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 function llamaInstallEnv() {
@@ -218,6 +245,15 @@ function pruneBackendTree() {
 async function main() {
   if (!fs.existsSync(path.join(backendSrc, "requirements.txt"))) {
     throw new Error(`Missing ${backendSrc}/requirements.txt`);
+  }
+
+  if (existingPythonIsUsable()) {
+    console.log("Existing Python bundle passes its import check — reusing it.");
+    console.log("(set ORB_REBUILD_PYTHON=1 to force a full reinstall)");
+    copyBackendSources();
+    pruneBackendTree();
+    console.log("Backend sources refreshed at", outBackend);
+    return;
   }
 
   fs.mkdirSync(tmpDir, { recursive: true });

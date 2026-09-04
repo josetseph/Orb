@@ -10,6 +10,7 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 const { apiUrl } = require("../ports");
+const { writeStamp, SOURCE_ROOTS } = require("./source-stamp");
 
 const repoRoot = path.resolve(__dirname, "..", "..");
 const frontendDir = path.join(repoRoot, "frontend");
@@ -114,7 +115,11 @@ function main() {
     throw new Error("Frontend bundle missing node_deps/next after rename");
   }
 
+  // Record which sources produced this bundle so a later packaging run can
+  // refuse to ship a UI that no longer matches frontend/src.
+  const stamp = writeStamp(outDir, SOURCE_ROOTS.frontend);
   console.log("Frontend standalone ready at", outDir);
+  console.log("  source stamp", stamp.hash.slice(0, 16));
 }
 
 main();

@@ -9,11 +9,15 @@
  *      with an empty site-packages, and the app then hangs on the splash;
  *   3. every local module reachable from the shell entry points is covered by
  *      the `files` allow-list — a new require() that nobody adds to it
- *      produces "Cannot find module" the moment the packaged app starts.
+ *      produces "Cannot find module" the moment the packaged app starts;
+ *   4. each packaged tree was built from the sources currently on disk —
+ *      prepare-dist stops at the first failing stage, so a partial run leaves
+ *      fresh and stale trees side by side and every other check passes.
  */
 const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
+const { checkStamp, SOURCE_ROOTS } = require("./source-stamp");
 
 const desktopDir = path.join(__dirname, "..");
 const root = path.join(desktopDir, "resources");
@@ -146,6 +150,19 @@ for (const rel of localRequires(entryPoints)) {
     failures.push(
       `${rel} is require()d by the shell but no "files" pattern includes it — ` +
         "the packaged app would fail with \"Cannot find module\".",
+    );
+  }
+}
+
+// ── 4. Packaged trees must match the sources on disk ────────────────────────
+for (const [tree, roots] of Object.entries(SOURCE_ROOTS)) {
+  const outDir = path.join(root, tree === "frontend" ? "frontend" : "backend");
+  if (!fs.existsSync(outDir)) continue; // already reported as missing above
+  const { fresh, reason } = checkStamp(outDir, roots, `resources/${tree}`);
+  if (!fresh) {
+    failures.push(
+      `${reason}\n      Packaging now would ship a stale ${tree}. ` +
+        "Run: npm run prepare-dist",
     );
   }
 }

@@ -243,14 +243,22 @@ resources/firefly/app
 resources/node/{node.exe | bin/node}
 ```
 
-It then runs two checks that existence alone cannot cover — both were added after each failure shipped a broken 0.2.0 build on 2026-09-04:
+It then runs three checks that existence alone cannot cover — all added after the corresponding failure shipped a broken 0.2.0 build on 2026-09-04:
 
 1. **The bundled Python must import the backend's dependencies.** A `pip install` that dies part way leaves a valid-looking `backend/python/bin/python3` beside an empty `site-packages`; the path check passed, electron-builder produced a 272 MB `.dmg`, and the installed app hung on the splash for 120 s before "Could not start local services". The gate now imports `uvicorn`, `fastapi`, `pydantic`, `sqlalchemy`, `aiosqlite`, `kuzu`, `qdrant_client`, `meilisearch`, `llama_cpp` and `greenlet` with that interpreter (120 s timeout, `cwd = resources/backend`).
 2. **Every local `require()` from the shell must be covered by `build.files`.** That list is an allow-list, so a new top-level module nobody adds to it is silently dropped and the packaged app dies immediately with `Cannot find module './credentials'` — which is exactly what happened. The gate walks the relative requires reachable from `main.js` and `preload.js` (transitively) and matches each against the `files` globs with a small glob→RegExp translation supporting `*`, `**/*` and `!` negation. `package.json` is exempt because electron-builder always bundles it.
 
 Missing entries are listed and the process exits 1 with `Run: npm run prepare-dist`. It still does not verify `resources/firefly/php`, marker contents, or that the Python tree matches the target arch.
 
-> CI runs `npx electron-builder` directly and therefore bypasses this gate entirely (§3). Both failure modes above would ship unnoticed from CI; the protection only applies to `npm run dist*` locally.
+3. **Each packaged tree must match the sources on disk.** `prepare-dist` runs its stages in sequence and stops at the first failure, so a partial run leaves fresh and stale trees side by side — a `bundle-python` failure left `resources/frontend` three weeks old while the backend was current, and the app served a UI with none of that day's features. Every other check passed. `scripts/source-stamp.js` hashes the build inputs (`backend/app`; `frontend/src` + `public` + `next.config.ts`), each stage writes `.orb-source-stamp.json` into its output tree, and this gate recomputes and compares. Content hashing rather than mtimes means a `git checkout` does not produce a spurious "stale" verdict.
+
+> CI runs `npx electron-builder` directly and therefore bypasses this gate entirely (§3). All three failure modes above would ship unnoticed from CI; the protection only applies to `npm run dist*` locally.
+
+### 4.6b Reusing an existing Python bundle
+
+`bundle-python.js` used to `rmrf` its output and re-download CPython plus rebuild `llama-cpp-python` on every run — 10–20 minutes for a one-line backend change. That cost is what pushed people into running single stages by hand, which is the drift the stamps now catch.
+
+It now validates the interpreter already in `resources/backend/python` with the same `validateImports()` list used after a fresh install. If those imports pass it keeps the interpreter, re-copies `backend/app` (deleting the old copy first, so a renamed or removed module cannot linger), rewrites the stamp, and returns — about 2 seconds. `ORB_REBUILD_PYTHON=1` forces the full download-and-reinstall path, which is what you want after editing `requirements.txt`.
 
 ### 4.7 Optional — `prefetch-binaries.js`
 
