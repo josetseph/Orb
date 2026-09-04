@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "private": true,
   "author": "Joseph Etse <projects@josetseph.com>",
-  "description": "Orb desktop — supervisor for vault notes, search engines, and API",
+  "description": "Orb desktop \u2014 supervisor for vault notes, search engines, and API",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -33,20 +33,15 @@
       "output": "dist"
     },
     "files": [
-      "main.js",
-      "supervisor.js",
-      "paths.js",
-      "ports.js",
-      "download-binaries.js",
-      "firefly-runtime.js",
-      "preload.js",
+      "*.js",
+      "!*.test.js",
       "splash.html",
       "wizard.html",
       "assets/**/*",
       "binaries/**/*",
       "build/icon.png",
-      "scripts/notarize.js",
-      "build/entitlements.mac.plist"
+      "build/entitlements.mac.plist",
+      "scripts/notarize.js"
     ],
     "extraResources": [
       {
