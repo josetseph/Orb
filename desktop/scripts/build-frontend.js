@@ -16,6 +16,27 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 const frontendDir = path.join(repoRoot, "frontend");
 const outDir = path.join(__dirname, "..", "resources", "frontend");
 
+/**
+ * Environment for a nested npm call.
+ *
+ * `npm run` exports its whole resolved config as `npm_config_*` variables, and
+ * a nested npm reads those as if they had been passed on the command line. A
+ * user-level `.npmrc` carrying `allow-scripts` therefore makes `npm ci` fail
+ * with EALLOWSCRIPTS ("not allowed in project-scoped installs") — but only when
+ * the build is started through `npm run prepare-dist`, never when the script is
+ * run directly, which makes it look like the build is haunted.
+ *
+ * Strip the keys that are invalid for a project install and leave the rest of
+ * the user's npm configuration (registry, auth, proxy) untouched.
+ */
+function npmEnv() {
+  const env = { ...process.env };
+  for (const key of ["npm_config_allow_scripts", "npm_config_allowscripts"]) {
+    delete env[key];
+  }
+  return env;
+}
+
 function rmrf(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -51,13 +72,18 @@ require("./server.js");
 function main() {
   console.log("Building frontend standalone…");
   const npm = process.platform === "win32" ? "npm.cmd" : "npm";
-  execFileSync(npm, ["ci"], { cwd: frontendDir, stdio: "inherit", shell: true });
+  execFileSync(npm, ["ci"], {
+    cwd: frontendDir,
+    stdio: "inherit",
+    shell: true,
+    env: npmEnv(),
+  });
   execFileSync(npm, ["run", "build"], {
     cwd: frontendDir,
     stdio: "inherit",
     shell: true,
     env: {
-      ...process.env,
+      ...npmEnv(),
       NEXT_PUBLIC_API_URL: "/api/v1",
       API_PROXY_TARGET: apiUrl(),
       FILES_PROXY_TARGET: apiUrl(),

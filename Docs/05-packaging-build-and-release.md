@@ -260,6 +260,26 @@ Missing entries are listed and the process exits 1 with `Run: npm run prepare-di
 
 It now validates the interpreter already in `resources/backend/python` with the same `validateImports()` list used after a fresh install. If those imports pass it keeps the interpreter, re-copies `backend/app` (deleting the old copy first, so a renamed or removed module cannot linger), rewrites the stamp, and returns — about 2 seconds. `ORB_REBUILD_PYTHON=1` forces the full download-and-reinstall path, which is what you want after editing `requirements.txt`.
 
+### 4.6c Nested npm calls and inherited config
+
+`npm run` exports its entire resolved configuration to child processes as
+`npm_config_*` environment variables, and a nested `npm` reads those as if they
+had been passed on the command line. A user-level `~/.npmrc` containing
+`allow-scripts` (npm writes one when a global package needs install scripts —
+`allow-scripts=@anthropic-ai/claude-code`, for instance) therefore makes the
+`npm ci` inside `build-frontend.js` fail with:
+
+```
+npm error code EALLOWSCRIPTS
+npm error --allow-scripts is not allowed in project-scoped installs.
+```
+
+The symptom is confusing because it depends on *how* the build was started:
+`node scripts/build-frontend.js` succeeds while `npm run prepare-dist` fails,
+with the same code and the same machine. `npmEnv()` strips only the keys that
+are invalid for a project-scoped install and passes the rest of the user's npm
+configuration (registry, auth, proxy) through unchanged.
+
 ### 4.7 Optional — `prefetch-binaries.js`
 
 `npm run prefetch-binaries` calls `ensureBinaries(ORB_DATA_DIR || desktop/data)` from `download-binaries.js` to pre-download Qdrant (`ORB_QDRANT_VERSION`, default `v1.18.2`) and Meilisearch (`ORB_MEILI_VERSION`, default `v1.49.0`) into `<dataDir>/bin/<triple>/`. This is **not** part of `prepare-dist`, its output is **not** under `resources/`, and electron-builder does not pick it up (`binaries/**/*` in `files` only matches `desktop/binaries/README.md`). Its only practical use is warming a dev data dir or a CI cache; end users get the same download on first launch (splash progress). GGUF models are never prefetched by any script — the Python setup API downloads them into `MODELS_DIR/gguf/`.
