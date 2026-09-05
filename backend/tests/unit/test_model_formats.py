@@ -238,3 +238,32 @@ class TestChatCapableFlag:
         d = hf_dir(tmp_path / "c", config={"architectures": ["Qwen3ForCausalLM"]})
         model = mf.describe(d)
         assert (model.chat_capable, model.runnable) == (True, True)
+
+
+class TestMediaArchitecturesAreNotChatModels:
+    """ForConditionalGeneration alone is too permissive: Marlin and Whisper use it."""
+
+    def test_marlin_video_model_is_rejected(self, tmp_path):
+        d = hf_dir(
+            tmp_path / "marlin-2b",
+            config={"model_type": "qwen3_5", "architectures": ["MarlinForConditionalGeneration"]},
+        )
+        model = mf.describe(d)
+        assert model.chat_capable is False
+        assert "video-understanding" in model.unsupported_reason
+
+    def test_a_real_conditional_generation_chat_model_still_passes(self, tmp_path):
+        d = hf_dir(
+            tmp_path / "chat",
+            config={"model_type": "t5", "architectures": ["T5ForConditionalGeneration"]},
+        )
+        assert mf.describe(d).chat_capable is True
+
+    def test_label_prefers_the_folder_over_model_type(self, tmp_path):
+        """A Marlin checkout reports model_type "qwen3_5", which tells nobody anything."""
+        d = hf_dir(tmp_path / "marlin-2b", config={"model_type": "qwen3_5"})
+        assert mf.describe(d).name == "marlin-2b"
+
+    def test_explicit_name_still_wins(self, tmp_path):
+        d = hf_dir(tmp_path / "x", config={"_name_or_path": "org/Real-Name-7B"})
+        assert mf.describe(d).name == "Real-Name-7B"

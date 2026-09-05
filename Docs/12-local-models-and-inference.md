@@ -714,6 +714,20 @@ Throughput levers (all env, see §14): `ORB_LLAMA_N_GPU_LAYERS` (−1 = all laye
 
 These live in `local_models.py` and are covered by `backend/tests/unit/test_local_runtime_budget.py` and `test_model_load_clock.py`.
 
+**Three chat runtimes, one at a time.** `model_formats.detect_format` decides the layout and `chat_runtimes` serves the two that are not GGUF:
+
+| Layout | Runtime | Where |
+|---|---|---|
+| GGUF | `llama-cpp-python` (`LocalLlamaRuntime`) | everywhere |
+| MLX (`weights.npz`, or a `quantization` block) | `mlx_lm` (`MlxChatRuntime`) | Apple Silicon |
+| Hugging Face safetensors | `transformers` (`TransformersChatRuntime`) | wherever torch runs |
+
+`LocalLlamaRuntime.resolve_chat_model()` returns `(path, format)` and `create_chat_completion` dispatches on it, returning the same response shape either way — `llm.py` and the OpenAI-compatible shim never learn which backend answered. Exclusive residency is symmetric: loading a GGUF unloads the MLX/transformers runtimes, and loading either of those unloads the GGUF chat/embed models, the reranker and the multimodal stack. The idle watcher frees all of them.
+
+Both non-GGUF runtimes reuse the GGUF budgeting rules: the prompt is rendered with the model's own chat template (falling back to a plain `Role: content` transcript when there is none), and `max_tokens` is sized from `context − prompt − 32`, raising `PromptTooLongError` below 256 remaining rather than truncating.
+
+**Not every model folder is a chat model.** Orb's own media models live in `MODELS_DIR`, so discovery skips the Florence, Whisper and Marlin directories outright. Beyond that, `chat_capability_problem` rejects a folder whose architecture belongs to a media family — `ForConditionalGeneration` alone is too permissive, since Marlin (`MarlinForConditionalGeneration`) and Whisper both use it while T5 is a legitimate chat model. Labels prefer the folder name over `config.json`'s `model_type`, because a Marlin checkout reports `qwen3_5`.
+
 **Any GGUF on disk is selectable.** The curated catalog (`model_catalog.py`) recommends *downloads*; it no longer gates *selection*.
 
 - `services/gguf_metadata.py` reads a GGUF's header with `struct` alone — no dependency, no weight load (0.1–0.3 s for a 7 GB file). It yields architecture, name, size label, context length and `pooling_type`, and guards against corrupt or hostile headers (caps on KV count, string length and array size; truncation raises `GgufError`).

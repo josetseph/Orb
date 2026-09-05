@@ -52,6 +52,18 @@ _NON_CHAT_MODEL_TYPES = {
     "xlm-roberta": "an embedding model",
 }
 
+# ``ForConditionalGeneration`` alone is too permissive — Marlin (video) and
+# Whisper (audio) both use it. Match the architecture family instead, which is
+# what actually distinguishes them from a chat model.
+_NON_CHAT_ARCHITECTURES = {
+    "marlin": "a video-understanding model",
+    "whisper": "a speech-recognition model",
+    "florence": "a vision model",
+    "clip": "an image-embedding model",
+    "blip": "an image-captioning model",
+    "siglip": "an image-embedding model",
+}
+
 
 class ModelFormat(str, Enum):
     GGUF = "gguf"
@@ -236,6 +248,13 @@ def chat_capability_problem(path: Path, model_format: ModelFormat) -> str | None
         )
     architectures = config.get("architectures")
     if isinstance(architectures, list) and architectures:
+        for arch in architectures:
+            if not isinstance(arch, str):
+                continue
+            lowered = arch.lower()
+            for family, description in _NON_CHAT_ARCHITECTURES.items():
+                if lowered.startswith(family):
+                    return f"{path.name} is {description} ({arch}), not a chat model."
         if not any(
             isinstance(a, str) and a.endswith(_CAUSAL_SUFFIXES) for a in architectures
         ):
@@ -268,10 +287,11 @@ def model_display_name(path: Path, model_format: ModelFormat) -> str:
         stem = SHARD_RE.match(target.name)
         return stem.group("stem") if stem else target.stem
     config = _read_config(path)
-    for key in ("_name_or_path", "model_type"):
-        value = config.get(key)
-        if isinstance(value, str) and value.strip():
-            return Path(value).name
+    # The folder name beats model_type: a Marlin checkout reports "qwen3_5",
+    # which tells the user nothing about what they are looking at.
+    value = config.get("_name_or_path")
+    if isinstance(value, str) and value.strip():
+        return Path(value).name
     return path.name
 
 

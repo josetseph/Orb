@@ -227,6 +227,20 @@ def clear_cache() -> None:
     _cache.clear()
 
 
+def _is_orb_support_model(path: Path) -> bool:
+    """True for the media models Orb downloads for itself."""
+    try:
+        from app.services.multimodal_models import multimodal_model_path
+
+        resolved = path.resolve()
+        return any(
+            multimodal_model_path(kind).resolve() == resolved
+            for kind in ("florence", "whisper", "marlin")
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        return False
+
+
 def discover_chat_models(
     models_dir: Path | None = None, *, include_unrunnable: bool = True
 ) -> list[LocalModel]:
@@ -251,6 +265,10 @@ def discover_chat_models(
             models.append(describe_local_model(info, root))
             continue
 
+        if _is_orb_support_model(path):
+            # Florence, Whisper and Marlin live in MODELS_DIR by design; they
+            # are Orb's own media models, never chat options.
+            continue
         described = model_formats.describe(path)
         if described is None:
             continue

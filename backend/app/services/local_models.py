@@ -975,6 +975,12 @@ class LocalLlamaRuntime:
                     local_gguf_reranker.unload_if_idle(limit)
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     logger.warning(f"Reranker idle unload check failed: {exc}")
+                try:
+                    from app.services.chat_runtimes import unload_if_idle
+
+                    unload_if_idle(limit)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.warning(f"Chat-runtime idle unload check failed: {exc}")
 
         threading.Thread(
             target=_loop, name="orb-model-idle", daemon=True
@@ -1029,6 +1035,12 @@ class LocalLlamaRuntime:
                 logger.debug("Reranker unload before GGUF skipped: %s", exc)
         if keep != "multimodal":
             _unload_multimodal_families()
+        try:
+            from app.services.chat_runtimes import unload_chat_runtimes
+
+            unload_chat_runtimes()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Chat-runtime unload before GGUF skipped: %s", exc)
 
     def load(self, chat_gguf: Path, embed_gguf: Path | None = None) -> dict:
         """Load chat GGUF only (exclusive). Embed loads on demand and replaces chat.
@@ -1238,10 +1250,47 @@ class LocalLlamaRuntime:
             if error:
                 raise RuntimeError(error)
             return path_ref
+        # Folders (MLX / safetensors) are resolved by resolve_chat_model.
 
         if name != (settings.LLM_MODEL or ""):
             logger.warning("Unknown local chat model %r — using the Setup selection", name)
         return None
+
+    def resolve_chat_model(self, model: str | None):
+        """``(path, format)`` for any supported layout, or ``(None, None)``.
+
+        Extends :meth:`resolve_chat_gguf` to folders: an MLX bundle or a plain
+        Hugging Face checkpoint resolves here and is served by
+        ``chat_runtimes``. ``(None, None)`` means "use the Setup selection".
+        """
+        from app.services import model_formats
+        from app.services.model_discovery import resolve_model_ref
+
+        name = (model or "").strip()
+        if not name or name == "local-chat":
+            return None, None
+
+        # A catalog id or a .gguf path ref still goes through the GGUF path.
+        try:
+            gguf = self.resolve_chat_gguf(name)
+        except RuntimeError:
+            gguf = None
+            if not Path(name).expanduser().is_dir():
+                raise
+        if gguf is not None:
+            return gguf, model_formats.ModelFormat.GGUF
+
+        candidate = resolve_model_ref(name)
+        if candidate is None:
+            candidate = Path(name).expanduser()
+            if not candidate.is_absolute():
+                candidate = resolve_models_dir() / name
+        described = model_formats.describe(candidate)
+        if described is None:
+            return None, None
+        if not described.runnable:
+            raise RuntimeError(described.unsupported_reason)
+        return model_formats.loadable_path(candidate, described.format), described.format
 
     def count_tokens(self, text: str) -> int:
         """Token count using whichever GGUF is resident; heuristic when none is.
@@ -1367,7 +1416,26 @@ class LocalLlamaRuntime:
         max_tokens: int | None = None,
         model: str | None = None,
     ) -> SimpleNamespace:
-        self.ensure_chat_loaded(self.resolve_chat_gguf(model))
+        from app.services import chat_runtimes
+        from app.services.model_formats import ModelFormat
+
+        target, model_format = self.resolve_chat_model(model)
+        if model_format is not None and model_format is not ModelFormat.GGUF:
+            # MLX / safetensors: a different backend answers, with the same
+            # response shape, and evicts the GGUF models as it loads.
+            runtime = chat_runtimes.runtime_for(model_format)
+            runtime.ensure_loaded(target)
+            return _openaiish_chat_response(
+                runtime.create_chat_completion(
+                    messages=messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    model=model,
+                ),
+                model or settings.LLM_MODEL or "local-chat",
+            )
+
+        self.ensure_chat_loaded(target)
         assert self._chat is not None
         if max_tokens is None:
             max_tokens = _default_chat_max_tokens()
