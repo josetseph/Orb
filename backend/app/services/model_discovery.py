@@ -25,6 +25,7 @@ from pathlib import Path
 from app.core.log import get_logger
 from app.core.paths import resolve_models_dir
 from app.services.gguf_metadata import GgufInfo, try_read_gguf_metadata
+from app.services import model_formats
 
 logger = get_logger("ModelDiscovery")
 
@@ -46,7 +47,7 @@ _MAX_SCAN_DEPTH = 4
 
 @dataclass(frozen=True)
 class LocalModel:
-    """A chat-capable GGUF found on disk."""
+    """A local model found on disk, in any supported layout."""
 
     ref: str  # what a KB stores (relative to MODELS_DIR when possible)
     path: str
@@ -55,6 +56,11 @@ class LocalModel:
     size_gb: float
     context_length: int | None
     shards: int
+    # "gguf" | "mlx" | "transformers"
+    format: str = "gguf"
+    #: False when this machine cannot run the layout (reason below).
+    runnable: bool = True
+    unsupported_reason: str | None = None
     # Non-blocking advisories, e.g. a file that looks like a reranker.
     warnings: tuple[str, ...] = ()
 
@@ -146,11 +152,13 @@ def describe_local_model(
     )
 
 
-def scan_dir_for_gguf(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path]:
-    """Every candidate GGUF under ``root``, excluding junk and shard continuations.
+def scan_dir_for_models(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path]:
+    """Every candidate model under ``root``: GGUF files and model folders.
 
     Walks with pruning rather than ``rglob`` so a virtualenv or cache directory
-    under MODELS_DIR is never descended into.
+    under MODELS_DIR is never descended into. A folder holding ``config.json``
+    is a candidate in its own right (MLX / Hugging Face layouts) and is not
+    descended into further.
     """
     if not root.is_dir():
         return []
@@ -159,6 +167,11 @@ def scan_dir_for_gguf(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         current = Path(dirpath)
         depth = len(current.parts) - root_depth
+        # A model folder is a leaf: never walk into its shards or subfolders.
+        if "config.json" in filenames and current != root:
+            found.append(current)
+            dirnames[:] = []
+            continue
         # Prune in place — os.walk honours mutation of ``dirnames``.
         if depth >= max_depth:
             dirnames[:] = []
@@ -174,6 +187,10 @@ def scan_dir_for_gguf(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path
                 continue
             found.append(path)
     return sorted(found)
+
+
+# Back-compat alias for callers that only wanted GGUFs.
+scan_dir_for_gguf = scan_dir_for_models
 
 
 class _MetadataCache:
@@ -210,24 +227,79 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def discover_chat_models(models_dir: Path | None = None) -> list[LocalModel]:
-    """All chat-capable GGUFs under MODELS_DIR, sorted by name.
+def discover_chat_models(
+    models_dir: Path | None = None, *, include_unrunnable: bool = True
+) -> list[LocalModel]:
+    """Every local chat model under MODELS_DIR, in any layout, sorted by name.
 
-    Embedding models are excluded: they cannot serve chat at all. Rerankers are
-    included with a warning, because nothing in the file distinguishes them.
+    Embedding models are excluded outright — a GGUF embedder is identified by
+    ``pooling_type`` and an HF one by its architecture, and neither can chat.
+    Layouts this machine cannot run are listed with ``runnable=False`` and a
+    reason instead of being hidden, so "where did my model go?" never happens.
     """
     root = (models_dir or resolve_models_dir()).resolve()
     models: list[LocalModel] = []
-    for path in scan_dir_for_gguf(root):
-        info = _cache.get(path)
-        if info is None:
+    for path in scan_dir_for_models(root):
+        if path.is_file():
+            # GGUF: the header carries pooling_type and the context window.
+            info = _cache.get(path)
+            if info is None:
+                continue
+            if info.is_embedding_model:
+                logger.debug("Skipping embedding model %s", path.name)
+                continue
+            models.append(describe_local_model(info, root))
             continue
-        if info.is_embedding_model:
-            logger.debug("Skipping embedding model %s", path.name)
+
+        described = model_formats.describe(path)
+        if described is None:
             continue
-        models.append(describe_local_model(info, root))
+        if not described.chat_capable:
+            # Whisper, Florence and encoders live in MODELS_DIR too; listing
+            # them as "blocked chat models" is noise, not information.
+            logger.debug("Skipping non-chat model %s", path.name)
+            continue
+        if not include_unrunnable and not described.runnable:
+            continue
+        models.append(
+            LocalModel(
+                ref=model_ref_for(path, root),
+                path=str(path),
+                label=described.name,
+                architecture=described.format.value,
+                size_gb=described.size_gb,
+                context_length=None,
+                shards=1,
+                format=described.format.value,
+                runnable=described.runnable,
+                unsupported_reason=described.unsupported_reason,
+                warnings=described.warnings,
+            )
+        )
     models.sort(key=lambda m: m.label.lower())
     return models
+
+
+def inspect_any_chat_model(path: Path) -> tuple[object | None, str | None]:
+    """Validate any supported layout for chat. Returns ``(info, error)``.
+
+    GGUF keeps its header-based checks; other layouts go through
+    ``model_formats``, which reports why an MLX or Hugging Face folder cannot
+    run here rather than failing later inside a loader.
+    """
+    if not path.exists():
+        return None, f"No such file: {path}"
+    if path.is_file():
+        return inspect_chat_model(path)
+    described = model_formats.describe(path)
+    if described is None:
+        return None, (
+            f"{path.name} does not look like a model folder — expected a .gguf "
+            "file, or config.json beside weights."
+        )
+    if not described.runnable:
+        return described, described.unsupported_reason
+    return described, None
 
 
 def inspect_chat_model(path: Path) -> tuple[GgufInfo | None, str | None]:

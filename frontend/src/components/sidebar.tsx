@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { Home, MessageSquare, FileText, Box, Database, Settings, Wallet, Link2, Sparkles } from "lucide-react";
+import { Home, MessageSquare, FileText, Box, Database, Settings, Wallet, Link2, Sparkles, Cpu } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useKB } from "@/lib/kb-context";
 import { SystemStatusIndicator } from "@/components/system-status-indicator";
@@ -16,6 +16,7 @@ const navigation = [
   { name: "Graph", href: "/graph-3d", icon: Box },
   { name: "Finance", href: "/finance", icon: Wallet },
   { name: "Knowledge Bases", href: "/kb", icon: Database },
+  { name: "Models", href: "/models", icon: Cpu },
   { name: "Setup", href: "/setup", icon: Sparkles },
   { name: "Settings", href: "/settings", icon: Settings },
 ];

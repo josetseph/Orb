@@ -98,6 +98,10 @@ class LocalModel:
     size_bytes: int
     #: Set when the layout cannot run on this machine.
     unsupported_reason: str | None = None
+    #: False when this is not a chat model at all (Whisper, Florence, an
+    #: encoder). Distinct from a runtime that is merely unavailable here:
+    #: a scanner should hide the former and surface the latter.
+    chat_capable: bool = True
     warnings: tuple[str, ...] = ()
 
     @property
@@ -277,10 +281,11 @@ def describe(path: str | Path) -> LocalModel | None:
     model_format = detect_format(target)
     if model_format is None:
         return None
-    _runtime, reason = resolve_runtime(model_format)
+    _runtime, runtime_reason = resolve_runtime(model_format)
     # A layout Orb could run, holding a model that cannot chat, is still
     # unsupported — and saying which kind of model it is beats a generic error.
-    reason = reason or chat_capability_problem(target, model_format)
+    capability_reason = chat_capability_problem(target, model_format)
+    reason = runtime_reason or capability_reason
     loadable = loadable_path(target, model_format)
     size = loadable.stat().st_size if loadable.is_file() else _dir_size(target)
 
@@ -297,5 +302,6 @@ def describe(path: str | Path) -> LocalModel | None:
         name=model_display_name(target, model_format),
         size_bytes=size,
         unsupported_reason=reason,
+        chat_capable=capability_reason is None,
         warnings=tuple(warnings),
     )

@@ -1,5 +1,9 @@
 import axios from "axios";
 import type {
+  InspectedModel,
+  ModelsPageState,
+} from "@/lib/models-types";
+import type {
   KBLLMConfig,
   ChatConversation,
   ChatMessageRecord,
@@ -339,7 +343,13 @@ export const api = {
   /** Empty strings / null clear a field back to "inherit Settings". */
   async updateKBLLM(
     id: string,
-    data: { provider?: string | null; model?: string | null; ingestion_model?: string | null },
+    data: {
+      provider?: string | null;
+      model?: string | null;
+      ingestion_model?: string | null;
+      /** Only meaningful for provider="openai_compat". */
+      base_url?: string | null;
+    },
   ): Promise<KBLLMConfig> {
     return http.patch(`/kb/${id}/llm`, data);
   },
@@ -645,6 +655,17 @@ export const api = {
     base_url?: string;
   }): Promise<{ provider: string; model: string; ingestion_model: string; base_url: string }> {
     return http.patch("/settings", data);
+  },
+
+  // ── Models page (one read for every model control) ────────────────────────
+
+  async getModelsPage(kb = "default"): Promise<ModelsPageState> {
+    return http.get("/models", withKb(kb));
+  },
+
+  /** Describe a browsed-to path before saving it, so errors are specific. */
+  async inspectModelPath(path: string): Promise<InspectedModel> {
+    return http.post("/models/inspect", { path });
   },
 
   // ── Cloud credentials (write-only; keys are never returned) ───────────────

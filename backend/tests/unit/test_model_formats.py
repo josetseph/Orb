@@ -211,3 +211,30 @@ class TestGgufMagic:
         gguf_file(d / "Real.gguf")
         (d / "._Real.gguf").write_bytes(b"\x00\x05\x16\x07" + b"\0" * 4092)
         assert mf.loadable_path(d, ModelFormat.GGUF).name == "Real.gguf"
+
+
+class TestChatCapableFlag:
+    """A scanner hides the wrong *kind* of model but surfaces a missing runtime."""
+
+    def test_wrong_kind_of_model_is_not_chat_capable(self, tmp_path):
+        d = hf_dir(tmp_path / "w", config={"model_type": "whisper"})
+        model = mf.describe(d)
+        assert model.chat_capable is False
+        assert model.runnable is False
+
+    def test_unavailable_runtime_stays_chat_capable(self, tmp_path, monkeypatch):
+        """An MLX chat model on Linux is still a chat model — just not runnable here."""
+        monkeypatch.setattr(mf, "is_apple_silicon", lambda: False)
+        d = hf_dir(
+            tmp_path / "mlx",
+            config={"quantization": {"bits": 4}, "architectures": ["LlamaForCausalLM"]},
+        )
+        model = mf.describe(d)
+        assert model.chat_capable is True
+        assert model.runnable is False
+        assert "Apple Silicon" in model.unsupported_reason
+
+    def test_ordinary_chat_model_is_both(self, tmp_path):
+        d = hf_dir(tmp_path / "c", config={"architectures": ["Qwen3ForCausalLM"]})
+        model = mf.describe(d)
+        assert (model.chat_capable, model.runnable) == (True, True)

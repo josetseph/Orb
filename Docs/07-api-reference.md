@@ -1250,6 +1250,13 @@ Validation, in order:
 4. If the effective provider is `openai_compat`, an endpoint URL is required (body `base_url`, else `settings.LLM_BASE_URL`) and normalised by `credentials.normalize_base_url` (400 on a non-http(s) URL); a `model` is also required, since there is no catalogue to fall back to. Switching to any other provider clears a stale `base_url`.
 5. `kb_registry.set_llm_config(...)` persists the row (400 on `ValueError`, 404 if the KB does not exist).
 
+### Models page routes (`api/models.py`)
+
+| Method | Path | Notes |
+|---|---|---|
+| `GET` | `/api/v1/models?kb=` | Everything the Models page renders in one read: `global` (system provider/model/base_url/configured), `kb` (the active KB's override + effective config), `local` (models_dir, `installed[]` from disk in any layout, `downloadable[]` from the catalog with a `downloaded` flag, hardware profile, auto-chosen embed/reranker), and `cloud` (stored endpoints, the two providers the UI offers, and `all_providers` — the native SDKs still used internally). Composes existing state; it does not duplicate any write path. |
+| `POST` | `/api/v1/models/inspect` | `{path}` → describes a browsed-to file or folder (`ref`, `name`, `format`, `size_gb`, `warnings`) or 400 with the reason it cannot be used — an embedding model, a Whisper/Florence folder, a runtime missing on this platform, or a shard continuation. Called before anything is saved so failures are specific and early. |
+
 ### Credential routes (`api/credentials.py`)
 
 Key material is **write-only** across this API: nothing here ever returns a key.

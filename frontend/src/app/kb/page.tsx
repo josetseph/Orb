@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import {
     Plus,
     Trash2,
+    Cpu,
     Database,
     Check,
     Loader2,
@@ -18,7 +19,22 @@ import { cn } from "@/lib/utils";
 import { ShaderBackground } from "@/components/shader-background";
 import { getDesktopBridge, pickDesktopDirectory } from "@/lib/desktop";
 import type { KnowledgeBase } from "@/lib/types";
-import { KBModelPanel } from "./_components/KBModelPanel";
+
+/** Read-only note of which model a KB resolves to; editing lives on /models. */
+function KBModelSummary({ kb }: { kb: KnowledgeBase }) {
+    const eff = kb.effective_llm;
+    if (!eff) return null;
+    const where =
+        eff.provider === "openai_compat"
+            ? (eff.base_url ? new URL(eff.base_url).host : "no endpoint")
+            : "on this device";
+    return (
+        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
+            <Cpu className="h-3 w-3" />
+            {eff.inherited ? "inherits" : "pinned"} · {where} · {eff.model ?? "not set"}
+        </p>
+    );
+}
 
 export default function KBPage() {
     const { currentKB, setCurrentKB, setCurrentKBName } = useKB();
@@ -241,9 +257,8 @@ export default function KBPage() {
                     </div>
                     <p className="text-white/50 text-sm">
                         Each knowledge base has its own notes vault folder, graph, and search
-                        index. Every KB follows the chat model from Settings unless you pin a
-                        different one below; embedding, reranking, and media models from Setup
-                        are always shared.
+                        index. To change which model a knowledge base uses, switch to it and
+                        open <a href="/models" className="underline underline-offset-2 hover:text-white/70">Models</a>.
                     </p>
                 </motion.div>
 
@@ -462,7 +477,7 @@ export default function KBPage() {
                                                     Original knowledge base — always available
                                                 </p>
                                             )}
-                                            <KBModelPanel kb={kb} onSaved={fetchKBs} onError={setError} />
+                                            <KBModelSummary kb={kb} />
                                         </div>
 
                                         {/* Actions */}

@@ -12,6 +12,7 @@ from app.api import (
     graph,
     health,
     kb,
+    models,
     notes,
     settings,
     vault,
@@ -25,6 +26,7 @@ def register_all_routers(app: FastAPI) -> None:
     app.include_router(health.router)
     app.include_router(settings.router)
     app.include_router(credentials.router)
+    app.include_router(models.router)
     app.include_router(files.router)
     app.include_router(chat.router)
     app.include_router(graph.router)

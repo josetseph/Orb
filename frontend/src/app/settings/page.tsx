@@ -7,7 +7,6 @@ import {
     Check,
     Loader2,
     AlertCircle,
-    ChevronDown,
     RefreshCw,
     Calendar,
     Trash2,
@@ -18,35 +17,10 @@ import {
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { ShaderBackground } from "@/components/shader-background";
-import { CredentialsPanel } from "./_components/CredentialsPanel";
-import { EndpointPanel } from "./_components/EndpointPanel";
 import { useKB } from "@/lib/kb-context";
 import type { SetupStatus } from "@/lib/types";
 
 const LOCAL_PROVIDERS = new Set(["local", "ollama", "lm_studio"]);
-
-const PROVIDERS = [
-    { value: "local", label: "Local (on this device)" },
-    { value: "openai_compat", label: "OpenAI-compatible endpoint (any URL)" },
-    { value: "openai", label: "OpenAI (cloud)" },
-    { value: "gemini", label: "Google Gemini (cloud)" },
-    { value: "anthropic", label: "Anthropic (cloud)" },
-];
-
-const CLOUD_MODEL_HINTS: Record<string, { chat: string; examples: string }> = {
-    openai: {
-        chat: "OpenAI model id for Chat.",
-        examples: "e.g. gpt-4.1, gpt-4o-mini",
-    },
-    gemini: {
-        chat: "Gemini model id for Chat.",
-        examples: "e.g. gemini-2.5-pro, gemini-2.5-flash",
-    },
-    anthropic: {
-        chat: "Anthropic model id for Chat.",
-        examples: "e.g. claude-sonnet-4-5, claude-haiku-4-5",
-    },
-};
 
 interface LLMSettings {
     provider: string;
@@ -357,114 +331,22 @@ export default function SettingsPage() {
                         transition={{ delay: 0.05 }}
                         className="space-y-6"
                     >
-                        {/* Provider */}
-                        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
+                        {/* Models moved to their own page: one place for one decision. */}
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-3">
                             <h2 className="text-sm font-semibold text-white/70 uppercase tracking-wide">
-                                AI provider
+                                AI models
                             </h2>
                             <p className="text-xs text-white/40">
-                                Who answers Chat and powers note ingestion. Local keeps everything on this
-                                machine; cloud sends prompts to an API.
+                                Choosing a model — on this device or a cloud endpoint, for the
+                                whole app or for one knowledge base — now lives in one place.
                             </p>
-                            <div className="relative">
-                                <select
-                                    value={form.provider}
-                                    onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
-                                    className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-10 text-sm text-white outline-none transition focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30"
-                                >
-                                    {PROVIDERS.map((p) => (
-                                        <option key={p.value} value={p.value} className="bg-[#0d0d12]">
-                                            {p.label}
-                                        </option>
-                                    ))}
-                                </select>
-                                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-                            </div>
-
-                            {isLocal ? (
-                                <div className="space-y-2 rounded-xl border border-teal-500/20 bg-teal-500/5 px-4 py-3 text-xs text-teal-100/80">
-                                    <p>
-                                        <span className="font-medium text-teal-100">Local mode:</span> Orb
-                                        loads your downloaded GGUF in-process (no Ollama / LM Studio / server
-                                        URL). Embed + rerank models for search are chosen automatically.
-                                    </p>
-                                    <p>
-                                        Pick which chat GGUF to use and download it in{" "}
-                                        <a href="/setup" className="underline underline-offset-2 text-amber-200/90">
-                                            Setup → Local models
-                                        </a>
-                                        . Models sit on disk until Chat or ingest needs them, then unload after
-                                        idle.
-                                    </p>
-                                </div>
-                            ) : (
-                                <div className="space-y-2 rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs text-amber-100/80">
-                                    <p>
-                                        <span className="font-medium text-amber-100">Cloud mode:</span> Chat and
-                                        ingestion call {PROVIDERS.find((p) => p.value === form.provider)?.label || "the provider"} over the internet.
-                                    </p>
-                                    <p>
-                                        Add the API key under <span className="font-medium text-amber-100">Cloud API keys</span>{" "}
-                                        below — it is encrypted into your OS keychain. Then set the model
-                                        names to match that provider&apos;s catalog.
-                                    </p>
-                                </div>
-                            )}
+                            <a
+                                href="/models"
+                                className="inline-flex items-center gap-2 rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2.5 text-sm text-purple-200 transition hover:bg-purple-500/20"
+                            >
+                                Open Models →
+                            </a>
                         </div>
-
-                        {/* Models — cloud only; local GGUF is chosen in Setup */}
-                        {!isLocal && (
-                            <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
-                                <h2 className="text-sm font-semibold text-white/70 uppercase tracking-wide">
-                                    Cloud models
-                                </h2>
-                                <p className="text-xs text-white/40">
-                                    Exact model ids from your provider. Wrong ids usually show up as API errors
-                                    in Chat.
-                                </p>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-xs text-white/40">Chat model</label>
-                                    <input
-                                        type="text"
-                                        value={form.model}
-                                        onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-                                        placeholder={
-                                            CLOUD_MODEL_HINTS[form.provider]?.examples || "e.g. gemini-2.5-pro"
-                                        }
-                                        className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder-white/25 outline-none transition focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30"
-                                    />
-                                    <p className="text-xs text-white/30">
-                                        {CLOUD_MODEL_HINTS[form.provider]?.chat ||
-                                            "Used for all chat queries."}
-                                    </p>
-                                </div>
-
-                                <div className="space-y-1.5">
-                                    <label className="text-xs text-white/40">Ingestion model</label>
-                                    <input
-                                        type="text"
-                                        value={form.ingestion_model}
-                                        onChange={(e) =>
-                                            setForm((f) => ({ ...f, ingestion_model: e.target.value }))
-                                        }
-                                        placeholder={
-                                            CLOUD_MODEL_HINTS[form.provider]?.examples ||
-                                            "Same as chat, or leave blank"
-                                        }
-                                        className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder-white/25 outline-none transition focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30"
-                                    />
-                                    <p className="text-xs text-white/30">
-                                        Used when notes are ingested (extraction, entities). Leave blank to reuse
-                                        the chat model — a cheaper/faster model here can save cost.
-                                    </p>
-                                </div>
-                            </div>
-                        )}
-
-                        <CredentialsPanel />
-
-                        <EndpointPanel />
 
                         {/* Maintenance */}
                         <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 space-y-4">
