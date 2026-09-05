@@ -46,6 +46,16 @@ _LLM_META_KEYS = (
 )
 
 
+def finance_enabled_for(meta: dict) -> bool:
+    """Finance is on unless a KB was explicitly switched off.
+
+    Rows written before this column existed read back as NULL, and those KBs
+    already have Firefly groups — defaulting them to off would hide real data.
+    """
+    value = meta.get("finance_enabled")
+    return True if value is None else bool(value)
+
+
 def _clean_override(value) -> str | None:
     text = (str(value) if value is not None else "").strip()
     return text or None
@@ -159,6 +169,7 @@ class KBContext:
     llm_model: str | None = None
     llm_ingestion_model: str | None = None
     llm_base_url: str | None = None
+    finance_enabled: bool = True
     _llm: object = field(default=None, repr=False)
     _llm_built_for: tuple | None = field(default=None, repr=False)
 
@@ -282,7 +293,8 @@ def _connect() -> sqlite3.Connection:
             llm_provider TEXT,
             llm_model TEXT,
             llm_ingestion_model TEXT,
-            llm_base_url TEXT
+            llm_base_url TEXT,
+            finance_enabled INTEGER NOT NULL DEFAULT 1
         )
         """
     )
@@ -302,6 +314,7 @@ def _ensure_optional_columns(conn: sqlite3.Connection) -> None:
         ("llm_model", "TEXT"),
         ("llm_ingestion_model", "TEXT"),
         ("llm_base_url", "TEXT"),
+        ("finance_enabled", "INTEGER NOT NULL DEFAULT 1"),
     ):
         if name not in colnames:
             conn.execute(f"ALTER TABLE knowledge_bases ADD COLUMN {name} {sqltype}")
@@ -484,6 +497,7 @@ class KBRegistry:
                         llm_model=_clean_override(meta.get("llm_model")),
                         llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
                         llm_base_url=_clean_override(meta.get("llm_base_url")),
+                        finance_enabled=finance_enabled_for(meta),
                     )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[KBRegistry] Failed to load from SQLite: {exc}")
@@ -496,8 +510,9 @@ class KBRegistry:
             (id, name, slug, vault_path, kuzu_path, qdrant_col_cores,
              qdrant_col_rels, qdrant_col_contexts, typesense_collection, created_at,
              firefly_group_id, firefly_group_title,
-             llm_provider, llm_model, llm_ingestion_model, llm_base_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             llm_provider, llm_model, llm_ingestion_model, llm_base_url,
+             finance_enabled)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
               name=excluded.name,
               vault_path=excluded.vault_path,
@@ -507,7 +522,8 @@ class KBRegistry:
               llm_provider=excluded.llm_provider,
               llm_model=excluded.llm_model,
               llm_ingestion_model=excluded.llm_ingestion_model,
-              llm_base_url=excluded.llm_base_url
+              llm_base_url=excluded.llm_base_url,
+              finance_enabled=excluded.finance_enabled
             """,
             (
                 meta["id"],
@@ -526,6 +542,7 @@ class KBRegistry:
                 meta.get("llm_model"),
                 meta.get("llm_ingestion_model"),
                 meta.get("llm_base_url"),
+                1 if finance_enabled_for(meta) else 0,
             ),
         )
         conn.commit()
@@ -541,6 +558,7 @@ class KBRegistry:
                     "vault_path": self._cache[DEFAULT_KB_ID].vault_path,
                     "kuzu_path": str(settings.KUZU_DB_PATH),
                     "created_at": None,
+                    "finance_enabled": 1,
                 }
             ]
 
@@ -570,6 +588,7 @@ class KBRegistry:
             "qdrant_col_contexts": f"{slug}_node_isolated_contexts",
             "typesense_collection": f"{slug}_nodes",
             "created_at": datetime.utcnow().isoformat(),
+            "finance_enabled": 1,
         }
 
         with self._lock:
@@ -765,6 +784,35 @@ class KBRegistry:
             )
             return dict(meta)
 
+    def set_finance_enabled(self, kb_id: str, enabled: bool) -> dict | None:
+        """Turn finance on or off for one KB, leaving its Firefly group intact.
+
+        Switching off hides the section rather than deleting anything, so a KB
+        turned back on still has its accounts and transactions.
+        """
+        with self._lock:
+            if kb_id == DEFAULT_KB_ID and DEFAULT_KB_ID not in self._metadata:
+                self._ensure_default_row()
+            meta = self._metadata.get(kb_id)
+            if meta is None:
+                return None
+            meta["finance_enabled"] = 1 if enabled else 0
+            self._save_row(meta)
+            ctx = self._cache.get(kb_id)
+            if ctx is not None:
+                ctx.finance_enabled = bool(enabled)
+            logger.info(
+                "[KBRegistry] Finance %s for '%s'",
+                "enabled" if enabled else "disabled",
+                meta.get("name"),
+            )
+            return dict(meta)
+
+    def finance_enabled(self, kb_id: str) -> bool:
+        with self._lock:
+            meta = self._metadata.get(kb_id)
+        return True if meta is None else finance_enabled_for(meta)
+
     def effective_llm(self, kb_id: str) -> dict | None:
         with self._lock:
             meta = self._metadata.get(kb_id)
@@ -817,6 +865,7 @@ class KBRegistry:
             llm_model=_clean_override(meta.get("llm_model")),
             llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
             llm_base_url=_clean_override(meta.get("llm_base_url")),
+            finance_enabled=finance_enabled_for(meta),
         )
 
     def _cleanup_stores(self, meta: dict) -> None:

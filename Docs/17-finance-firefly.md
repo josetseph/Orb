@@ -308,7 +308,8 @@ Caching: **none** at the HTTP level; the only memoised state is `_switched_group
 | Any other exception (connection refused while `artisan serve` is not up yet, timeout) | `starting` | false/false | exception string |
 | 200 | `ready` | true/true | "Embedded Firefly III is running", plus `about: payload.data` (Firefly version/api version/php version/os/driver) and `url` |
 
-`get_workspace(kb)`:
+`get_workspace(kb)` is reached through the route in `api_desktop.py`, which short-circuits first: if `kb.finance_enabled` is false it returns `{"exists": False, "ready": False, "status": "kb_disabled", "detail": "Finance is turned off for '<name>'…", "scope": "kb", "kb_id", "kb_name"}` without touching Firefly. `kb_disabled` is deliberately **not** the `disabled` above — that one means `FIREFLY_BASE_URL` is unset for the whole install, which no per-KB switch can fix. Every other `/api/v1/finance` route resolves its KB through `deps.get_finance_kb` and returns **403** instead. Otherwise:
+
 1. `status()`; if not ready → `{"exists": False, "ready": False, "status", "detail", "scope": "kb", "kb_id", "kb_name", "firefly_url": base_url}`.
 2. Else under `_run_scoped` (this **creates the administration as a side effect**): `GET /currencies/primary` and `GET /user-groups`; pick the group whose `id == group_id` (else the first); `currency = primary.attributes.code or group.attributes.primary_currency_code`; `administration_title = registry title or group.attributes.title`. Returns the ready shape shown in [07](07-api-reference.md#finance-workspace).
 3. Any exception in step 2 (PHP missing, group creation failure, Firefly 5xx) → same not-ready shape with `status: "error"` and `detail: str(exc)`; the route never 500s for `GET /finance/workspace`.
@@ -318,12 +319,14 @@ The frontend maps these onto screens (`FinancePage` + `FinanceNotReady`):
 ```mermaid
 stateDiagram-v2
     [*] --> Loading: page mount / KB switch (useFinanceWorkspace.refresh)
+    Loading --> KBDisabled: status=kb_disabled (finance off for this KB)
     Loading --> Disabled: status=disabled (FIREFLY_BASE_URL unset)
     Loading --> Bootstrapping: status=bootstrapping (no apiToken yet)
     Loading --> Starting: status=starting (artisan serve not answering)
     Loading --> AuthMismatch: status=auth_mismatch (401/403 on /about)
     Loading --> Error: status=error (non-auth HTTP error, or scoped load threw)
     Loading --> Ready: ready=true (administration exists, primary currency known)
+    KBDisabled --> Loading: finance switched back on in /kb, then KB switch or reload
     Disabled --> Loading: Refresh button
     Bootstrapping --> Loading: Refresh button
     Starting --> Loading: Refresh button
@@ -337,6 +340,7 @@ stateDiagram-v2
 
 Notes on the diagram:
 - The not-ready card's heading switches on `workspace.status`: `starting` → "Firefly is starting", `bootstrapping` → "Finishing first-time setup", `auth_mismatch` → "Finance auth needs attention", otherwise (incl. `disabled`, `error`) → "Finance is not ready yet"; body text is `workspace.detail`. The `auth_mismatch` state alone gets the amber `statusTone`.
+- `kb_disabled` does not use the not-ready card at all: `FinancePage` branches to `FinanceDisabled`, which explains that nothing was deleted and links to `/kb`. Offering the currency form there would be wrong — there is no setup to finish, only a switch to flip. See [08 §19.1](08-knowledge-bases-and-vaults.md).
 - The not-ready card always offers the currency form. Submitting it while Firefly is *not* ready will fail (`set_primary_currency` → `_run_scoped` → PHP/HTTP error → 502/500) and the error banner shows; it is only useful in the transient window where `/about` works but the scoped load failed.
 - There is **no polling**; the user presses Refresh. (Other pages poll status endpoints; finance does not.)
 - `exists` is always equal to `ready` in current code; the UI keys off `ready` only.

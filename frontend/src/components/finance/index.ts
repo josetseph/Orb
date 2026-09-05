@@ -12,6 +12,7 @@ export { BasicSummaryList } from "./BasicSummaryList";
 export { ChartList } from "./ChartList";
 
 export { FinanceHeader } from "./FinanceHeader";
+export { FinanceDisabled } from "./FinanceDisabled";
 export { FinanceNotReady } from "./FinanceNotReady";
 export { FinanceWorkspaceBar } from "./FinanceWorkspaceBar";
 export { FinanceTabs } from "./FinanceTabs";

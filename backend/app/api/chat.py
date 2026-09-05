@@ -30,7 +30,7 @@ async def _answer_chat_query(
     progress_callback,
 ) -> dict:
     """Run finance-aware chat or standard retrieval chat."""
-    if firefly_service.looks_like_finance_query(query):
+    if kb.finance_enabled and firefly_service.looks_like_finance_query(query):
         progress_callback("Checking finance data and notes")
         note_ctx = await kb.get_chat_workflow().retrieve_for_query(
             query,

@@ -8,6 +8,7 @@ import {
   AccountsTab,
   BudgetsTab,
   CategoriesTab,
+  FinanceDisabled,
   FinanceHeader,
   FinanceNotReady,
   FinanceTabs,
@@ -53,6 +54,8 @@ export default function FinancePage() {
           <div className="flex items-center gap-2 text-white/50">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
+        ) : ws.workspace?.status === "kb_disabled" ? (
+          <FinanceDisabled kbName={currentKB} />
         ) : !ws.workspace?.ready ? (
           <FinanceNotReady
             workspace={ws.workspace}

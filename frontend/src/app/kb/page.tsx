@@ -5,6 +5,7 @@ import {
     Plus,
     Trash2,
     Cpu,
+    Wallet,
     Database,
     Check,
     Loader2,
@@ -36,6 +37,45 @@ function KBModelSummary({ kb }: { kb: KnowledgeBase }) {
     );
 }
 
+/** Per-KB finance switch. Off hides the section; it deletes nothing. */
+function KBFinanceToggle({
+    kb,
+    busy,
+    onToggle,
+}: {
+    kb: KnowledgeBase;
+    busy: boolean;
+    onToggle: (next: boolean) => void;
+}) {
+    // Rows written before this setting existed come back undefined, and those
+    // KBs may already hold finance data — treat anything but false as on.
+    const on = kb.finance_enabled !== false;
+    return (
+        <button
+            type="button"
+            disabled={busy}
+            onClick={() => onToggle(!on)}
+            title={
+                on
+                    ? `Turn finance off for "${kb.name}" — nothing is deleted`
+                    : `Turn finance on for "${kb.name}"`
+            }
+            className={`mt-2 ml-1.5 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] transition disabled:opacity-40 ${
+                on
+                    ? "border-teal-500/25 bg-teal-500/10 text-teal-200/80 hover:border-teal-500/50"
+                    : "border-white/10 bg-white/5 text-white/35 hover:border-white/25 hover:text-white/60"
+            }`}
+        >
+            {busy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+                <Wallet className="h-3 w-3" />
+            )}
+            finance {on ? "on" : "off"}
+        </button>
+    );
+}
+
 export default function KBPage() {
     const { currentKB, setCurrentKB, setCurrentKBName } = useKB();
     const [kbs, setKBs] = useState<KnowledgeBase[]>([]);
@@ -49,6 +89,7 @@ export default function KBPage() {
     const [renameValue, setRenameValue] = useState("");
     const [isRenaming, setIsRenaming] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const [financeBusyId, setFinanceBusyId] = useState<string | null>(null);
     const canBrowse = Boolean(getDesktopBridge()?.pickDirectory);
 
     const fetchKBs = useCallback(async () => {
@@ -108,6 +149,23 @@ export default function KBPage() {
             await fetchKBs();
         } finally {
             setIsCreating(false);
+        }
+    }
+
+    async function handleToggleFinance(kb: KnowledgeBase, next: boolean) {
+        setFinanceBusyId(kb.id);
+        setError(null);
+        try {
+            await api.setKBFinance(kb.id, next);
+            setKBs((prev) =>
+                prev.map((k) => (k.id === kb.id ? { ...k, finance_enabled: next } : k)),
+            );
+        } catch {
+            setError(
+                `Failed to turn finance ${next ? "on" : "off"} for "${kb.name}".`,
+            );
+        } finally {
+            setFinanceBusyId(null);
         }
     }
 
@@ -478,6 +536,13 @@ export default function KBPage() {
                                                 </p>
                                             )}
                                             <KBModelSummary kb={kb} />
+                                            <KBFinanceToggle
+                                                kb={kb}
+                                                busy={financeBusyId === kb.id}
+                                                onToggle={(next) =>
+                                                    void handleToggleFinance(kb, next)
+                                                }
+                                            />
                                         </div>
 
                                         {/* Actions */}

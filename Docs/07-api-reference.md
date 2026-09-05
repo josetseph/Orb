@@ -1192,9 +1192,9 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 
 ---
 
-## 14. Addendum — uncommitted working-tree routes (2026-09-02)
+## 14. Per-KB overrides: LLM and finance
 
-The working tree adds a per-knowledge-base LLM override that was not part of commit `02ac9d3`. It lives in `backend/app/api/kb.py`, `backend/app/services/kb_registry.py` (`LLM_PROVIDERS`, `effective_llm_config`, `set_llm_config`, `KBContext.llm`, `KBContext.has_llm_override`) and `backend/app/models/kb.py` (columns `llm_provider`, `llm_model`, `llm_ingestion_model`, all nullable; NULL = inherit `Settings`). Scope is chat + ingestion only; embeddings, reranking and multimodal stay system-wide because Qdrant vector dimensions are shared across KBs.
+A per-knowledge-base LLM override lives in `backend/app/api/kb.py`, `backend/app/services/kb_registry.py` (`LLM_PROVIDERS`, `effective_llm_config`, `set_llm_config`, `KBContext.llm`, `KBContext.has_llm_override`) and `backend/app/models/kb.py` (columns `llm_provider`, `llm_model`, `llm_ingestion_model`, all nullable; NULL = inherit `Settings`). Scope is chat + ingestion only; embeddings, reranking and multimodal stay system-wide because Qdrant vector dimensions are shared across KBs.
 
 ### 14.1 `GET /api/v1/kb` (changed)
 
@@ -1275,4 +1275,24 @@ Response: same shape as `GET …/llm`.
 
 Side effects: subsequent chat and ingestion for this KB use `KBContext.llm` (a per-KB `LLMService`); `ai_gate.require_ai(kb)` treats a KB with a pinned provider as usable whenever that provider is configured, regardless of the global `AI_SETUP_MODE`. Local pins swap the resident chat GGUF via `local_models.resolve_chat_gguf` / `ensure_chat_loaded(chat_gguf)`.
 
-Frontend: `api.getKBLLM(kbId)`, `api.updateKBLLM(kbId, body)`, types `EffectiveLLM`, `KBLLMConfig` (`frontend/src/lib/types.ts`), UI `frontend/src/app/kb/_components/KBModelPanel.tsx`. See [20](20-frontend-chat-graph-and-pages.md) and [13](13-llm-providers-and-prompting.md).
+Frontend: `api.getKBLLM(kbId)`, `api.updateKBLLM(kbId, body)`, types `EffectiveLLM`, `KBLLMConfig` (`frontend/src/lib/types.ts`). Editing happens on `frontend/src/app/models/page.tsx` (the single Models page); `/kb` shows a read-only `KBModelSummary` chip. See [20](20-frontend-chat-graph-and-pages.md) and [13](13-llm-providers-and-prompting.md).
+
+### 14.4 `PATCH /api/v1/kb/{kb_id}/finance`
+
+Turns the finance section on or off for one KB. Body (`KBFinanceInput`): `{ "enabled": true | false }` — required boolean. Response `{ "kb_id": "…", "finance_enabled": true }`. Unknown KB → 404.
+
+Nothing is deleted either way: the KB keeps its `firefly_group_id`, so turning finance back on restores the same administration with its accounts and transactions. Contrast `POST /api/v1/finance/reset-administration`, which does destroy data.
+
+The flag is stored as `knowledge_bases.finance_enabled INTEGER NOT NULL DEFAULT 1`. Rows written before the column existed read back as `NULL`, which `kb_registry.finance_enabled_for(meta)` maps to **true** — a KB that already has finance data must not silently lose it on upgrade. `GET /api/v1/kb` rows carry the normalised boolean as `finance_enabled` (the raw column is `0`/`1`).
+
+**Effect on the finance routes.** All 49 routes under `/api/v1/finance` except `GET /api/v1/finance/workspace` depend on `deps.get_finance_kb`, which resolves the KB and then raises **403** `Finance is turned off for the '<name>' knowledge base.` when the flag is off. `GET /api/v1/finance/workspace` deliberately keeps plain `get_kb` and reports the state instead:
+
+```json
+{ "exists": false, "ready": false, "status": "kb_disabled",
+  "detail": "Finance is turned off for 'Research'. Turn it on from Knowledge Bases.",
+  "scope": "kb", "kb_id": "…", "kb_name": "Research" }
+```
+
+`kb_disabled` is distinct from the pre-existing `disabled`, which means `FIREFLY_BASE_URL` is unset for the whole install — a different problem with a different fix. See [17 §8](17-finance-firefly.md).
+
+**Effect on chat.** `api/chat.py` only takes the finance answering path when `kb.finance_enabled and firefly_service.looks_like_finance_query(query)`, so a finance-sounding question in a KB with finance off is answered from notes instead of erroring.

@@ -22,6 +22,7 @@ from app.services.kb_registry import (
     effective_llm_config,
     kb_registry,
 )
+from app.services.kb_registry import finance_enabled_for
 from app.services.vault import clear_vault_contents, ensure_vault
 
 logger = get_logger("API")
@@ -41,6 +42,12 @@ class RenameKBInput(BaseModel):
     name: str
 
 
+class KBFinanceInput(BaseModel):
+    """Turn the finance section on or off for one knowledge base."""
+
+    enabled: bool
+
+
 class KBLLMInput(BaseModel):
     """Per-KB LLM override. Empty / null / "inherit" fields fall back to Settings."""
 
@@ -57,7 +64,11 @@ def _inherit(value: str | None) -> str | None:
 
 
 def _with_effective_llm(row: dict) -> dict:
-    return {**row, "effective_llm": effective_llm_config(row)}
+    return {
+        **row,
+        "effective_llm": effective_llm_config(row),
+        "finance_enabled": finance_enabled_for(row),
+    }
 
 
 def _local_chat_models() -> list[dict]:
@@ -127,6 +138,21 @@ def _kb_llm_payload(kb_id: str) -> dict:
 async def list_knowledge_bases():
     """List all registered knowledge bases (with their effective LLM)."""
     return {"knowledge_bases": [_with_effective_llm(r) for r in kb_registry.list_kbs()]}
+
+
+@router.patch("/api/v1/kb/{kb_id}/finance")
+async def update_kb_finance(kb_id: str, body: KBFinanceInput):
+    """Turn finance on or off for one KB.
+
+    Nothing is deleted either way: a KB switched off keeps its Firefly group,
+    so turning it back on restores the accounts and transactions it had.
+    """
+    if kb_id != "default" and not kb_registry.get_metadata(kb_id):
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
+    meta = kb_registry.set_finance_enabled(kb_id, body.enabled)
+    if meta is None:
+        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
+    return {"kb_id": kb_id, "finance_enabled": body.enabled}
 
 
 @router.get("/api/v1/kb/{kb_id}/llm")

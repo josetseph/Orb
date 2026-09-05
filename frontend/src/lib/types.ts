@@ -93,6 +93,8 @@ export interface KnowledgeBase {
     llm_model?: string | null;
     llm_ingestion_model?: string | null;
     effective_llm?: EffectiveLLM;
+    /** Whether the Finance section is available for this KB (default true). */
+    finance_enabled?: boolean;
 }
 
 /** A local chat GGUF Orb found on this machine. */

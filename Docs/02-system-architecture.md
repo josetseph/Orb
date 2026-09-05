@@ -118,7 +118,7 @@ A KB is addressed three different ways, and each layer uses a different one:
 
 | Identifier | Used by |
 |---|---|
-| `id` (UUID, or the literal `default`) | SQLite `kb_id` columns, `/vault-files/<id>/…` URLs embedded in markdown, `DELETE`/`PATCH /api/v1/kb/{kb_id}`, `/kb/{kb_id}/llm` |
+| `id` (UUID, or the literal `default`) | SQLite `kb_id` columns, `/vault-files/<id>/…` URLs embedded in markdown, `DELETE`/`PATCH /api/v1/kb/{kb_id}`, `/kb/{kb_id}/llm`, `/kb/{kb_id}/finance` |
 | `slug` (`[a-z0-9_-]`, immutable, derived from the name at creation) | vault dir, Kuzu dir, Qdrant collection and Meili index names, the value the frontend stores and sends as `?kb=` |
 | `name` (display, renamable) | UI labels; also accepted by `?kb=` |
 
@@ -206,7 +206,7 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 | Video understanding | transformers (Qwen3.5 backbone) Marlin-2B | `lunahr/Marlin-2B-ungated` | `multimodal_runtime.py` |
 | Cloud alternatives | OpenAI / Gemini / Anthropic / HuggingFace / any OpenAI-compatible `LLM_BASE_URL` | – | `llm.py` |
 
-Three independent provider axes: chat (`LLM_PROVIDER` + `CHAT_MODEL`), ingestion (`INGESTION_PROVIDER` + `INGESTION_MODEL`, defaulting to chat), embeddings (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `AI_SETUP_MODE` (`none | local | cloud`) gates chat/ingest in the UI and API (`ai_gate.ai_is_configured`). In the current working tree a KB can additionally **pin its own chat/ingestion provider and model** (`knowledge_bases.llm_provider/llm_model/llm_ingestion_model`, `GET/PATCH /api/v1/kb/{id}/llm`); embeddings and reranking stay system-wide because Qdrant vector dimensions are shared. Long notes are split for extraction by `workflows/extraction_chunking.py` so the JSON output never overflows the context window. Chat GGUF defaults that are locked by experience on Metal: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`; see [26](26-decisions-and-constraints.md).
+Three independent provider axes: chat (`LLM_PROVIDER` + `CHAT_MODEL`), ingestion (`INGESTION_PROVIDER` + `INGESTION_MODEL`, defaulting to chat), embeddings (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `AI_SETUP_MODE` (`none | local | cloud`) gates chat/ingest in the UI and API (`ai_gate.ai_is_configured`). In the current working tree a KB can additionally **pin its own chat/ingestion provider and model** (`knowledge_bases.llm_provider/llm_model/llm_ingestion_model`, `GET/PATCH /api/v1/kb/{id}/llm`); embeddings and reranking stay system-wide because Qdrant vector dimensions are shared. A KB can also have finance switched off entirely (`knowledge_bases.finance_enabled`, `PATCH /api/v1/kb/{id}/finance`), which gates every `/api/v1/finance` route and the finance chat path without deleting the KB's Firefly administration. Long notes are split for extraction by `workflows/extraction_chunking.py` so the JSON output never overflows the context window. Chat GGUF defaults that are locked by experience on Metal: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`; see [26](26-decisions-and-constraints.md).
 
 Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructure` runs at startup, and a mismatch **mid-ingest raises** rather than silently recreating collections.
 

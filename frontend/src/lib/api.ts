@@ -336,6 +336,14 @@ export const api = {
     return http.del(`/kb/${id}`);
   },
 
+  /** Turn the finance section on or off for one KB. Nothing is deleted either way. */
+  async setKBFinance(
+    id: string,
+    enabled: boolean,
+  ): Promise<{ kb_id: string; finance_enabled: boolean }> {
+    return http.patch(`/kb/${id}/finance`, { enabled });
+  },
+
   async getKBLLM(id: string): Promise<KBLLMConfig> {
     return http.get(`/kb/${id}/llm`);
   },

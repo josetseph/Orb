@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_kb
+from app.api.deps import get_finance_kb, get_kb
 from app.core.database import get_db
 from app.core.paths import (
     resolve_data_dir,
@@ -486,13 +486,25 @@ def _finance_error(exc: Exception) -> HTTPException:
 
 @router.get("/api/v1/finance/workspace")
 async def get_finance_workspace(kb: KBContext = Depends(get_kb)):
+    if not kb.finance_enabled:
+        return {
+            "exists": False,
+            "ready": False,
+            # Not "disabled" — that status already means FIREFLY_BASE_URL is
+            # unset for the whole install, which the user cannot fix per KB.
+            "status": "kb_disabled",
+            "detail": f"Finance is turned off for '{kb.name}'. Turn it on from Knowledge Bases.",
+            "scope": "kb",
+            "kb_id": kb.kb_id,
+            "kb_name": kb.name,
+        }
     return await firefly_service.get_workspace(kb)
 
 
 @router.post("/api/v1/finance/workspace")
 async def create_finance_workspace(
     body: CreateWorkspaceInput,
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
 ):
     try:
         return await firefly_service.set_primary_currency(kb, body.currency)
@@ -501,7 +513,7 @@ async def create_finance_workspace(
 
 
 @router.post("/api/v1/finance/reset-administration")
-async def reset_finance_administration(kb: KBContext = Depends(get_kb)):
+async def reset_finance_administration(kb: KBContext = Depends(get_finance_kb)):
     """Destroy this KB's Firefly administration (ledger + UserGroup)."""
     try:
         result = await firefly_service.destroy_kb_administration(kb)
@@ -519,12 +531,12 @@ async def reset_finance_administration(kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/accounts")
-async def list_accounts(kb: KBContext = Depends(get_kb)):
+async def list_accounts(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_accounts(kb)
 
 
 @router.post("/api/v1/finance/accounts")
-async def create_account(body: CreateAccountInput, kb: KBContext = Depends(get_kb)):
+async def create_account(body: CreateAccountInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_account(
             kb,
@@ -539,7 +551,7 @@ async def create_account(body: CreateAccountInput, kb: KBContext = Depends(get_k
 
 @router.get("/api/v1/finance/transactions")
 async def list_transactions(
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
     account_id: str | None = None,
 ):
     return await firefly_service.list_recent_transactions(kb, account_id=account_id)
@@ -548,7 +560,7 @@ async def list_transactions(
 @router.post("/api/v1/finance/transactions")
 async def create_transaction(
     body: CreateTransactionInput,
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
 ):
     try:
         return await firefly_service.create_transaction(
@@ -569,7 +581,7 @@ async def create_transaction(
 
 
 @router.delete("/api/v1/finance/transactions/{transaction_id}")
-async def delete_transaction(transaction_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_transaction(transaction_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_transaction(kb, transaction_id)
         return {"ok": True}
@@ -579,14 +591,14 @@ async def delete_transaction(transaction_id: str, kb: KBContext = Depends(get_kb
 
 @router.get("/api/v1/finance/budgets")
 async def list_budgets(
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
     days: int = Query(default=30, ge=1, le=365),
 ):
     return await firefly_service.list_budgets(kb, days=days)
 
 
 @router.post("/api/v1/finance/budgets")
-async def create_budget(body: CreateBudgetInput, kb: KBContext = Depends(get_kb)):
+async def create_budget(body: CreateBudgetInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_budget(
             kb,
@@ -599,12 +611,12 @@ async def create_budget(body: CreateBudgetInput, kb: KBContext = Depends(get_kb)
 
 
 @router.get("/api/v1/finance/categories")
-async def list_categories(kb: KBContext = Depends(get_kb)):
+async def list_categories(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_categories(kb)
 
 
 @router.post("/api/v1/finance/categories")
-async def create_category(body: CreateCategoryInput, kb: KBContext = Depends(get_kb)):
+async def create_category(body: CreateCategoryInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_category(kb, name=body.name, notes=body.notes)
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -612,7 +624,7 @@ async def create_category(body: CreateCategoryInput, kb: KBContext = Depends(get
 
 
 @router.delete("/api/v1/finance/categories/{category_id}")
-async def delete_category(category_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_category(category_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_category(kb, category_id)
         return {"ok": True}
@@ -621,12 +633,12 @@ async def delete_category(category_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/bills")
-async def list_bills(kb: KBContext = Depends(get_kb)):
+async def list_bills(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_bills(kb)
 
 
 @router.post("/api/v1/finance/bills")
-async def create_bill(body: CreateBillInput, kb: KBContext = Depends(get_kb)):
+async def create_bill(body: CreateBillInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_bill(
             kb,
@@ -641,7 +653,7 @@ async def create_bill(body: CreateBillInput, kb: KBContext = Depends(get_kb)):
 
 
 @router.delete("/api/v1/finance/bills/{bill_id}")
-async def delete_bill(bill_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_bill(bill_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_bill(kb, bill_id)
         return {"ok": True}
@@ -650,12 +662,12 @@ async def delete_bill(bill_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/piggy-banks")
-async def list_piggy_banks(kb: KBContext = Depends(get_kb)):
+async def list_piggy_banks(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_piggy_banks(kb)
 
 
 @router.post("/api/v1/finance/piggy-banks")
-async def create_piggy_bank(body: CreatePiggyInput, kb: KBContext = Depends(get_kb)):
+async def create_piggy_bank(body: CreatePiggyInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_piggy_bank(
             kb,
@@ -671,7 +683,7 @@ async def create_piggy_bank(body: CreatePiggyInput, kb: KBContext = Depends(get_
 
 
 @router.delete("/api/v1/finance/piggy-banks/{piggy_id}")
-async def delete_piggy_bank(piggy_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_piggy_bank(piggy_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_piggy_bank(kb, piggy_id)
         return {"ok": True}
@@ -680,12 +692,12 @@ async def delete_piggy_bank(piggy_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/tags")
-async def list_tags(kb: KBContext = Depends(get_kb)):
+async def list_tags(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_tags(kb)
 
 
 @router.post("/api/v1/finance/tags")
-async def create_tag(body: CreateTagInput, kb: KBContext = Depends(get_kb)):
+async def create_tag(body: CreateTagInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_tag(kb, tag=body.tag, description=body.description)
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -693,7 +705,7 @@ async def create_tag(body: CreateTagInput, kb: KBContext = Depends(get_kb)):
 
 
 @router.delete("/api/v1/finance/tags/{tag_id}")
-async def delete_tag(tag_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_tag(tag_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_tag(kb, tag_id)
         return {"ok": True}
@@ -702,12 +714,12 @@ async def delete_tag(tag_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/recurrences")
-async def list_recurrences(kb: KBContext = Depends(get_kb)):
+async def list_recurrences(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_recurrences(kb)
 
 
 @router.post("/api/v1/finance/recurrences")
-async def create_recurrence(body: CreateRecurrenceInput, kb: KBContext = Depends(get_kb)):
+async def create_recurrence(body: CreateRecurrenceInput, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_recurrence(
             kb,
@@ -725,7 +737,7 @@ async def create_recurrence(body: CreateRecurrenceInput, kb: KBContext = Depends
 
 
 @router.delete("/api/v1/finance/recurrences/{recurrence_id}")
-async def delete_recurrence(recurrence_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_recurrence(recurrence_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_recurrence(kb, recurrence_id)
         return {"ok": True}
@@ -734,12 +746,12 @@ async def delete_recurrence(recurrence_id: str, kb: KBContext = Depends(get_kb))
 
 
 @router.get("/api/v1/finance/rule-groups")
-async def list_rule_groups(kb: KBContext = Depends(get_kb)):
+async def list_rule_groups(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_rule_groups(kb)
 
 
 @router.post("/api/v1/finance/rule-groups")
-async def create_rule_group(body: dict, kb: KBContext = Depends(get_kb)):
+async def create_rule_group(body: dict, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_rule_group(
             kb,
@@ -751,7 +763,7 @@ async def create_rule_group(body: dict, kb: KBContext = Depends(get_kb)):
 
 
 @router.delete("/api/v1/finance/rule-groups/{rule_group_id}")
-async def delete_rule_group(rule_group_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_rule_group(rule_group_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_rule_group(kb, rule_group_id)
         return {"ok": True}
@@ -760,12 +772,12 @@ async def delete_rule_group(rule_group_id: str, kb: KBContext = Depends(get_kb))
 
 
 @router.get("/api/v1/finance/rules")
-async def list_rules(kb: KBContext = Depends(get_kb)):
+async def list_rules(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_rules(kb)
 
 
 @router.post("/api/v1/finance/rules")
-async def create_rule(body: dict, kb: KBContext = Depends(get_kb)):
+async def create_rule(body: dict, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_rule(
             kb,
@@ -783,7 +795,7 @@ async def create_rule(body: dict, kb: KBContext = Depends(get_kb)):
 
 
 @router.delete("/api/v1/finance/rules/{rule_id}")
-async def delete_rule(rule_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_rule(rule_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_rule(kb, rule_id)
         return {"ok": True}
@@ -792,12 +804,12 @@ async def delete_rule(rule_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/webhooks")
-async def list_webhooks(kb: KBContext = Depends(get_kb)):
+async def list_webhooks(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_webhooks(kb)
 
 
 @router.post("/api/v1/finance/webhooks")
-async def create_webhook(body: dict, kb: KBContext = Depends(get_kb)):
+async def create_webhook(body: dict, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_webhook(
             kb,
@@ -813,7 +825,7 @@ async def create_webhook(body: dict, kb: KBContext = Depends(get_kb)):
 
 
 @router.delete("/api/v1/finance/webhooks/{webhook_id}")
-async def delete_webhook(webhook_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_webhook(webhook_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_webhook(kb, webhook_id)
         return {"ok": True}
@@ -822,12 +834,12 @@ async def delete_webhook(webhook_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/object-groups")
-async def list_object_groups(kb: KBContext = Depends(get_kb)):
+async def list_object_groups(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_object_groups(kb)
 
 
 @router.post("/api/v1/finance/object-groups")
-async def create_object_group(body: dict, kb: KBContext = Depends(get_kb)):
+async def create_object_group(body: dict, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_object_group(kb, title=str(body.get("title") or ""))
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -835,7 +847,7 @@ async def create_object_group(body: dict, kb: KBContext = Depends(get_kb)):
 
 
 @router.put("/api/v1/finance/object-groups/{group_id}")
-async def update_object_group(group_id: str, body: dict, kb: KBContext = Depends(get_kb)):
+async def update_object_group(group_id: str, body: dict, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.update_object_group(
             kb, group_id, title=str(body.get("title") or "")
@@ -845,7 +857,7 @@ async def update_object_group(group_id: str, body: dict, kb: KBContext = Depends
 
 
 @router.delete("/api/v1/finance/object-groups/{group_id}")
-async def delete_object_group(group_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_object_group(group_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_object_group(kb, group_id)
         return {"ok": True}
@@ -854,12 +866,12 @@ async def delete_object_group(group_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/exchange-rates")
-async def list_exchange_rates(kb: KBContext = Depends(get_kb)):
+async def list_exchange_rates(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_exchange_rates(kb)
 
 
 @router.post("/api/v1/finance/exchange-rates")
-async def create_exchange_rate(body: dict, kb: KBContext = Depends(get_kb)):
+async def create_exchange_rate(body: dict, kb: KBContext = Depends(get_finance_kb)):
     try:
         return await firefly_service.create_exchange_rate(
             kb,
@@ -873,7 +885,7 @@ async def create_exchange_rate(body: dict, kb: KBContext = Depends(get_kb)):
 
 
 @router.delete("/api/v1/finance/exchange-rates/{rate_id}")
-async def delete_exchange_rate(rate_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_exchange_rate(rate_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_exchange_rate(kb, rate_id)
         return {"ok": True}
@@ -882,13 +894,13 @@ async def delete_exchange_rate(rate_id: str, kb: KBContext = Depends(get_kb)):
 
 
 @router.get("/api/v1/finance/attachments")
-async def list_attachments(kb: KBContext = Depends(get_kb)):
+async def list_attachments(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_attachments(kb)
 
 
 @router.post("/api/v1/finance/attachments")
 async def create_attachment(
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
     filename: str = Form(...),
     attachable_type: str = Form(...),
     attachable_id: str = Form(...),
@@ -912,7 +924,7 @@ async def create_attachment(
 
 
 @router.get("/api/v1/finance/attachments/{attachment_id}/download")
-async def download_attachment(attachment_id: str, kb: KBContext = Depends(get_kb)):
+async def download_attachment(attachment_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         content, filename = await firefly_service.download_attachment(kb, attachment_id)
         return Response(
@@ -925,7 +937,7 @@ async def download_attachment(attachment_id: str, kb: KBContext = Depends(get_kb
 
 
 @router.delete("/api/v1/finance/attachments/{attachment_id}")
-async def delete_attachment(attachment_id: str, kb: KBContext = Depends(get_kb)):
+async def delete_attachment(attachment_id: str, kb: KBContext = Depends(get_finance_kb)):
     try:
         await firefly_service.delete_attachment(kb, attachment_id)
         return {"ok": True}
@@ -935,7 +947,7 @@ async def delete_attachment(attachment_id: str, kb: KBContext = Depends(get_kb))
 
 @router.get("/api/v1/finance/search")
 async def finance_search(
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
     query: str = Query(...),
     kind: str = Query(default="transactions"),
 ):
@@ -947,7 +959,7 @@ async def finance_search(
 
 @router.get("/api/v1/finance/summary")
 async def get_finance_summary(
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
     days: int = Query(default=30, ge=1, le=365),
 ):
     return await firefly_service.summary(kb, days=days)
@@ -955,7 +967,7 @@ async def get_finance_summary(
 
 @router.get("/api/v1/finance/report")
 async def get_finance_report(
-    kb: KBContext = Depends(get_kb),
+    kb: KBContext = Depends(get_finance_kb),
     start: str | None = None,
     end: str | None = None,
 ):
@@ -966,7 +978,7 @@ async def get_finance_report(
 
 
 @router.post("/api/v1/finance/open")
-async def open_finance_workspace(kb: KBContext = Depends(get_kb)):
+async def open_finance_workspace(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.prepare_open(kb)
 
 
