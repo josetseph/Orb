@@ -13,7 +13,12 @@ timm>=1.0.24
 qwen-vl-utils>=0.0.14
 av
 # CUDA-only extras (not for macOS): flash-linear-attention, causal-conv1d
-# Apple Silicon: transcribe on the GPU. CTranslate2 and PyTorch have no Metal
-# path, so "auto" device selection resolves to CPU on a Mac — measured 0.71x
-# realtime at 420% CPU against 3.07x at 6% CPU with MLX.
+# Apple Silicon only, via PEP 508 environment markers: pip simply skips these
+# on every other platform, so a bare install stays correct everywhere.
+#
+# Transcription on the GPU. CTranslate2 and PyTorch have no Metal path, so
+# "auto" device selection resolves to CPU on a Mac — measured 0.71x realtime at
+# 420% CPU against 3.07x at 6% CPU with MLX.
 mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'
+# Chat with MLX-format models (mlx-community and anything converted by mlx_lm).
+mlx-lm>=0.20; sys_platform == 'darwin' and platform_machine == 'arm64'
