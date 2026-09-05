@@ -187,6 +187,21 @@ export default function ModelsPage() {
     }
   }
 
+  /** Florence / Whisper / Marlin — fetched together, in the background. */
+  async function downloadMedia() {
+    setBusy("media");
+    setError(null);
+    try {
+      await api.downloadModels(true, undefined, { multimodalOnly: true });
+      flash("media");
+      await load();
+    } catch (err) {
+      setError(describeError(err, "Could not download the media models."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function download(id: string) {
     setBusy(`dl-${id}`);
     setError(null);
@@ -423,7 +438,11 @@ export default function ModelsPage() {
           {/* 4 — downloads */}
           <Card
             title="Download a model"
-            subtitle={local?.budget_note ?? ""}
+            subtitle={
+              local?.hardware
+                ? `Chat models Orb can fetch for you. ~${local.hardware.usable_model_gb} GB of ${local.hardware.ram_gb} GB is usable for models on this machine; anything larger is marked "may be tight" and can still be chosen.`
+                : ""
+            }
           >
             <div className="space-y-1.5">
               {(local?.downloadable ?? []).map((m) => (
@@ -483,17 +502,71 @@ export default function ModelsPage() {
           {/* 5 — shared support models */}
           <Card
             title="Search and media models"
-            subtitle="Sized automatically from your hardware and shared by every knowledge base. Embedding dimensions are tied to the search index, so these are not per-KB."
+            subtitle="Chosen automatically and shared by every knowledge base. Embedding dimensions are tied to the search index, so these are deliberately not per-KB."
           >
             <div className="grid gap-2 sm:grid-cols-2">
               <Readonly label="Embedding" value={local?.embed?.label ?? "—"} />
               <Readonly label="Reranker" value={local?.reranker?.label ?? "—"} />
             </div>
-            <p className="text-[11px] text-white/25">
-              {local?.hardware
-                ? `${local.hardware.ram_gb} GB RAM · ${local.hardware.accel.backend} · ~${local.hardware.usable_model_gb} GB usable for models`
-                : ""}
-            </p>
+            <div className="space-y-1.5">
+              {(local?.media ?? []).map((m) => (
+                <div
+                  key={m.kind}
+                  className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5"
+                >
+                  <span
+                    className={cn(
+                      "mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full",
+                      m.installed ? "bg-green-400/70" : "bg-white/20",
+                    )}
+                    title={m.installed ? "Downloaded" : "Not downloaded"}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-sm text-white/80">{m.label}</span>
+                      <span className="truncate font-mono text-[10px] text-white/30">
+                        {m.name}
+                      </span>
+                      {m.engine_note && (
+                        <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] text-purple-300">
+                          {m.engine_note}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-white/35">{m.purpose}</p>
+                  </div>
+                  {!m.installed && (
+                    <span className="shrink-0 text-[10px] text-white/30">
+                      downloads on first use
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-[11px] text-white/25">
+                {local?.hardware
+                  ? `${local.hardware.ram_gb} GB RAM · ${local.hardware.accel.backend} · ~${local.hardware.usable_model_gb} GB usable for models`
+                  : ""}
+              </p>
+              {(local?.media ?? []).some((m) => !m.installed) && (
+                <div className="flex shrink-0 items-center gap-2">
+                  <SavedTick show={saved === "media"} />
+                  <button
+                    type="button"
+                    onClick={() => void downloadMedia()}
+                    disabled={busy === "media"}
+                    className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
+                  >
+                    {busy === "media" ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      "Download media models"
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
           </Card>
         </div>
       </div>

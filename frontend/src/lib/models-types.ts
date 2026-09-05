@@ -68,6 +68,16 @@ export interface ModelsPageState {
     budget_note: string;
     embed: { label: string; size_gb: number } | null;
     reranker: { label: string; size_gb: number } | null;
+    /** Florence / Whisper / Marlin — the models run on attachments. */
+    media: Array<{
+      kind: string;
+      label: string;
+      purpose: string;
+      name: string;
+      installed: boolean;
+      engine?: string | null;
+      engine_note?: string;
+    }>;
   };
   cloud: { endpoints: string[]; providers: string[]; all_providers: string[] };
 }

@@ -1,6 +1,13 @@
 "use client";
 
-import { AlertTriangle, Check, ChevronDown, FolderOpen, Loader2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  ChevronDown,
+  File as FileIcon,
+  FolderOpen,
+  Loader2,
+} from "lucide-react";
 import { getDesktopBridge, pickDesktopFile, pickDesktopDirectory } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import type { InstalledModel } from "@/lib/models-types";
@@ -38,6 +45,9 @@ export function ModelPicker({
   disabled?: boolean;
 }) {
   const canBrowse = Boolean(getDesktopBridge()?.pickFile);
+  // "local-chat" is the backend placeholder for "whatever is selected", not a
+  // model anyone picked; showing it as a chosen entry is misleading.
+  const isPlaceholder = !value || value === "local-chat";
   const known = models.some((m) => m.ref === value);
   const selected = models.find((m) => m.ref === value);
 
@@ -63,9 +73,13 @@ export function ModelPicker({
             onChange={(e) => onChange(e.target.value)}
             className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-9 text-sm text-white outline-none transition focus:border-purple-500/50 disabled:opacity-50"
           >
-            {allowInherit && (
+            {(allowInherit || isPlaceholder) && (
               <option value="" className="bg-[#0d0d12]">
-                {inheritLabel ?? "Use the system model"}
+                {allowInherit
+                  ? (inheritLabel ?? "Use the system model")
+                  : models.length
+                    ? "Choose a model…"
+                    : "No models on this machine yet"}
               </option>
             )}
             {models.map((m) => (
@@ -79,9 +93,9 @@ export function ModelPicker({
                 {m.runnable ? "" : " — cannot run here"}
               </option>
             ))}
-            {!known && value && (
+            {!known && !isPlaceholder && (
               <option value={value} className="bg-[#0d0d12]">
-                {value.split("/").pop()} (chosen)
+                {value.split("/").pop()} (added by path)
               </option>
             )}
           </select>
@@ -93,28 +107,39 @@ export function ModelPicker({
               type="button"
               disabled={disabled || browsing}
               onClick={() => void browse("file")}
-              title="Choose a model file (.gguf)"
-              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
+              title="Pick a single .gguf file"
+              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
             >
               {browsing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
               ) : (
-                <FolderOpen className="h-4 w-4" />
+                <span className="flex items-center gap-1.5">
+                  <FileIcon className="h-3.5 w-3.5" /> .gguf file
+                </span>
               )}
             </button>
             <button
               type="button"
               disabled={disabled || browsing}
               onClick={() => void browse("folder")}
-              title="Choose a model folder (MLX or safetensors)"
-              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
+              title="Pick a model folder — MLX or safetensors, or a folder holding a .gguf"
+              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
             >
-              Folder…
+              <span className="flex items-center gap-1.5">
+                <FolderOpen className="h-3.5 w-3.5" /> folder
+              </span>
             </button>
           </>
         )}
       </div>
 
+      {canBrowse && (
+        <p className="text-[11px] text-white/25">
+          Point at a <span className="font-mono">.gguf</span> file, or a folder
+          holding GGUF, MLX or safetensors weights — Orb detects the format and
+          says so if it cannot run it here.
+        </p>
+      )}
       {selected && (
         <p className="text-[11px] text-white/30">
           {FORMAT_LABEL[selected.format] ?? selected.format}

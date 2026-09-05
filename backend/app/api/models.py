@@ -36,6 +36,56 @@ class InspectPathInput(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
+def _media_state() -> dict:
+    """Florence, Whisper and Marlin — the models Orb runs on attachments.
+
+    Reported read-only alongside embed/rerank so the page accounts for every
+    model on the machine, not just the chat one. Whisper additionally reports
+    which engine will serve it, since that differs by platform.
+    """
+    from app.services import whisper_engine
+    from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
+
+    rows: list[dict] = []
+    labels = {
+        "florence": ("Florence-2", "Image descriptions and PDF page reading"),
+        "whisper": ("Whisper", "Audio and video transcription"),
+        "marlin": ("Marlin", "Video understanding"),
+    }
+    for kind, (label, purpose) in labels.items():
+        try:
+            path = multimodal_model_path(kind)
+        except Exception:  # pylint: disable=broad-exception-caught
+            continue
+        row = {
+            "kind": kind,
+            "label": label,
+            "purpose": purpose,
+            "name": path.name,
+            "installed": is_hf_snapshot_ready(path),
+        }
+        if kind == "whisper":
+            try:
+                choice = whisper_engine.choose(
+                    path.parent, preferred_engine=settings_whisper_engine()
+                )
+                row["engine"] = choice.engine
+                row["engine_note"] = (
+                    "GPU via MLX" if choice.engine == whisper_engine.ENGINE_MLX
+                    else "CPU/torch"
+                )
+            except Exception:  # pylint: disable=broad-exception-caught
+                row["engine"] = None
+        rows.append(row)
+    return {"models": rows}
+
+
+def settings_whisper_engine() -> str:
+    from app.core.config import settings
+
+    return settings.WHISPER_ENGINE
+
+
 def _local_state() -> dict:
     """Installed models, what can be downloaded, and the fixed support models."""
     from app.core.paths import resolve_models_dir
@@ -72,6 +122,7 @@ def _local_state() -> dict:
         # what search and media use without offering a footgun.
         "embed": stack.get("embed"),
         "reranker": stack.get("reranker"),
+        "media": _media_state()["models"],
     }
 
 
