@@ -15,11 +15,39 @@ from app.core.paths import (
 logger = get_logger("MultimodalModels")
 
 
+def _whisper_repo_and_dir() -> tuple[str, str]:
+    """Whisper's repo depends on the engine this machine will actually use.
+
+    An explicit MODEL_WHISPER_HF still wins, so a pinned deployment is
+    unaffected; otherwise the platform default is chosen (MLX on Apple Silicon).
+    """
+    from app.services import whisper_engine
+
+    configured_repo = (settings.MODEL_WHISPER_HF or "").strip()
+    configured_dir = (settings.MODEL_WHISPER_LOCAL or "").strip()
+    if configured_repo and configured_dir:
+        return configured_repo, configured_dir
+
+    choice = whisper_engine.choose(
+        resolve_models_dir(), preferred_engine=settings.WHISPER_ENGINE
+    )
+    if choice.model_path is not None:
+        return (
+            configured_repo or whisper_engine.DEFAULT_REPO[choice.engine],
+            choice.model_path.name,
+        )
+    engine = choice.engine
+    return (
+        configured_repo or whisper_engine.DEFAULT_REPO[engine],
+        configured_dir or whisper_engine.DEFAULT_LOCAL_DIR[engine],
+    )
+
+
 def _hf_repo_and_dir(kind: str) -> tuple[str, str]:
     if kind == "florence":
         return settings.MODEL_FLORENCE_HF, settings.MODEL_FLORENCE_LOCAL
     if kind == "whisper":
-        return settings.MODEL_WHISPER_HF, settings.MODEL_WHISPER_LOCAL
+        return _whisper_repo_and_dir()
     if kind == "marlin":
         return settings.MODEL_MARLIN_HF, settings.MODEL_MARLIN_LOCAL
     raise ValueError(f"Unknown multimodal model kind: {kind}")

@@ -491,6 +491,14 @@ class MultimodalRuntime:
             raise RuntimeError(
                 f"Whisper model not found at {path}. Download multimodal models in Setup."
             )
+        if "turbo" in path.name.lower():
+            # Measured on distant-mic audio: turbo's shallow decoder invents
+            # text in low-signal stretches where large-v3 stays quiet.
+            logger.warning(
+                "Using %s — the turbo decoder hallucinates on noisy audio. "
+                "Download whisper-large-v3 in Setup for reliable transcripts.",
+                path.name,
+            )
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
         self._unload_ggufs()
@@ -627,6 +635,32 @@ class MultimodalRuntime:
         return self._load_audio_mono_16k_pyav(audio_path)
 
     def transcribe_audio_path(self, audio_path: str) -> str:
+        """Transcribe with the best engine this machine has.
+
+        On Apple Silicon with mlx-whisper installed this runs on the GPU and
+        never loads the PyTorch model at all, so no accelerator memory is taken
+        from the resident chat/embed model.
+        """
+        from app.core.config import settings
+        from app.services import whisper_engine
+
+        choice = whisper_engine.choose(
+            multimodal_model_path("whisper").parent,
+            preferred_engine=settings.WHISPER_ENGINE,
+        )
+        if choice.engine == whisper_engine.ENGINE_MLX and choice.ready:
+            # mlx-whisper holds its own weights; drop any resident torch model
+            # first so both are not in memory at once.
+            with self._lock:
+                self._unload_except("")
+            return whisper_engine.transcribe_with_mlx(
+                choice.model_path, audio_path, language=settings.WHISPER_LANGUAGE
+            )
+        return self._transcribe_with_transformers(audio_path)
+
+    def _transcribe_with_transformers(self, audio_path: str) -> str:
+        from app.core.config import settings
+
         with self._lock:
             self._load_whisper()
             assert self._whisper_model is not None and self._whisper_processor is not None
@@ -640,7 +674,9 @@ class MultimodalRuntime:
             generated_ids = self._whisper_model.generate(
                 input_features,
                 generation_config=self._whisper_model.generation_config,
-                language="en",
+                # None lets Whisper detect the language; forcing "en" on
+                # non-English audio is a known source of invented transcripts.
+                language=settings.WHISPER_LANGUAGE,
                 task="transcribe",
             )
             return self._whisper_processor.batch_decode(
