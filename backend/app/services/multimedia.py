@@ -208,8 +208,11 @@ class MultimediaService:
                     return text
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.warning(f"Local image description failed: {exc}")
-            # Cloud vision only when not in local-only AI mode.
-            if (settings.AI_SETUP_MODE or "").lower() not in ("local", "none"):
+            # Cloud vision only when the chosen chat model is not local —
+            # someone running fully local should not have images leave the box.
+            from app.services.ai_gate import chat_is_local_only
+
+            if not chat_is_local_only():
                 cloud = self._describe_image_cloud(local_path)
                 if cloud:
                     return cloud

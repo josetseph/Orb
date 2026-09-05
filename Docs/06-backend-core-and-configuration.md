@@ -47,7 +47,7 @@
 | `backend/app/api/deps.py` | `?kb=` query-param dependency | `get_kb` |
 | `backend/app/api/health.py` | `/` and `/health` | `router` |
 | `backend/app/api/settings.py` | `GET/PATCH /api/v1/settings` runtime LLM settings | `router`, `LLMSettings` |
-| `backend/app/services/ai_gate.py` | `AI_SETUP_MODE` gating | `ai_is_configured`, `require_ai` |
+| `backend/app/services/ai_gate.py` | AI readiness derived from real configuration | `ai_is_configured`, `require_ai`, `chat_is_local_only`, `derived_setup_mode` |
 | `backend/app/services/local_storage.py` | Vault attachment upload/remove and URL→rel-path mapping | `vault_rel_from_url`, `store_upload`, `remove_upload` |
 | `backend/.env.example` | Documented example of every env var | — |
 | `backend/requirements.txt`, `backend/requirements-multimodal.txt` | Python dependencies (core / optional multimodal) | — |
@@ -261,7 +261,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `MODELS_DIR` | str | `_default_models_dir()` | `config.py` bottom (copied to `MODELS_PATH`), `paths.sync_settings_paths` |
 | `MODELS_PATH` | str | `"models"` then **overwritten** with `MODELS_DIR` | not read by name anywhere else (legacy; kept in sync) |
 | `DATABASE_BACKEND` | str | `"sqlite"` | `database.py`, `api_desktop.setup_status` |
-| `AI_SETUP_MODE` | str | `"none"` | `ai_gate`, `multimedia.py` (cloud vision only when mode not in `local`/`none`), `api_desktop.setup_status`, `runtime_config.apply_to_settings` |
+| `AI_SETUP_MODE` | str | `"none"` | **No longer read by `ai_gate` or `multimedia.py`** (both derive from actual configuration). Still persisted by `runtime_config.apply_to_settings` and the shell wizard; `api_desktop.setup_status` reports `ai_gate.derived_setup_mode()` instead. |
 | `KUZU_DB_PATH` | str | `DEFAULT_KUZU_DB_PATH` then **overwritten** with `<DATA_DIR>/kuzu/kuzu_graph` | `kb_registry` (default KB), `graph.GraphService` default |
 
 **LLM — chat axis**
@@ -753,15 +753,15 @@ Purpose: let Orb run in an "Obsidian-like limited mode" (notes, wikilinks, vault
 
 ### `ai_is_configured(kb=None) -> bool`
 
-1. **Per-KB short-circuit (working tree):** if `kb` has a truthy `llm_provider`, return `provider_is_configured(kb.llm_provider)` — a KB pinned to Gemini with a key works even when global `AI_SETUP_MODE=none`.
-2. `mode = (settings.AI_SETUP_MODE or "none").lower().strip()`; `none` / `""` / `skip` → `False`.
-3. `local` → GGUFs present (same check as above).
-4. `cloud` / `hybrid` →
-   - `True` if any provider in `credentials.CLOUD_PROVIDERS` has a key in the credential store — which now **does** include `huggingface`, and covers keys pushed from the keychain as well as env-seeded ones;
-   - else `True` if `LLM_PROVIDER` is not one of `local`, `ollama`, `lm_studio`, `none`, `""` (i.e. any other provider name counts as "configured" even without a key — `LLMService` will then raise on first use);
-   - else `True` if `LLM_BASE_URL` is set and `LLM_API_KEY` is a real key (not `local` / `lm-studio` / `ollama`);
-   - else `bool(settings.LLM_BASE_URL)` — which is **always `True`** because the default is `http://127.0.0.1:8080`. Net effect: `AI_SETUP_MODE=cloud|hybrid` is always considered configured unless `LLM_BASE_URL` is explicitly blanked.
-5. Any other mode string → `False`.
+**`AI_SETUP_MODE` is not consulted.** It was a second source of truth that could contradict the Models page in both directions: `none` blocked a model that was present and working, and `local` claimed readiness with no weights on disk. What matters is whether a model is actually reachable, so the gate asks that directly:
+
+1. **Per-KB short-circuit:** if `kb` has a truthy `llm_provider`, return `provider_is_configured(kb.llm_provider)`.
+2. `_local_models_present()` → `local_models.gguf_paths_if_present() is not None`.
+3. Any provider in `credentials.CLOUD_PROVIDERS` holding a key (keychain-pushed or env-seeded; includes `huggingface`).
+4. `_endpoint_is_configured()` → a non-empty `LLM_BASE_URL`. No key is required: llama-server and LM Studio need none, and a remote endpoint missing its key fails loudly on first call, which is a better error than "AI is not configured".
+5. Otherwise `False`.
+
+Two helpers come out of the same source of truth: `chat_is_local_only()` (effective chat provider runs on this device — used to keep media off the network) and `derived_setup_mode()` → `local` / `cloud` / `none`, reported by `setup_status` for display only.
 
 ### `require_ai(kb=None)`
 
@@ -778,7 +778,7 @@ Raises `HTTPException(503, detail={"error": "ai_not_configured", "message": "AI 
 | `POST /api/v1/notes/reingest-vault` (`api_desktop.py`) | `require_ai(kb)` | whole request |
 | `api/graph.py` (two sites) | `ai_is_configured()` (no kb) | entity enrichment/details are skipped, not 503'd, when AI is off |
 | `api_desktop.setup_status` | `ai_is_configured()` | reported as `ai_configured` |
-| `services/multimedia.py` | reads `AI_SETUP_MODE` directly | cloud image captioning only when mode not in (`local`, `none`) |
+| `services/multimedia.py` | calls `ai_gate.chat_is_local_only()` | cloud image captioning only when the chosen chat provider is not local |
 
 Not gated: note CRUD, vault file ops, wikilinks graph, finance, KB management, settings, model downloads. The vault watcher never ingests, so it needs no gate.
 
@@ -842,8 +842,8 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 | `sync_embedding_infrastructure` raises (Qdrant down, manifest missing) | Warning `"Embedding infrastructure sync skipped"`; startup continues; embedding dims stay at the `Settings` default (`1024`) until the next successful sync. |
 | `start_vault_watchers` raises (watchdog missing, vault path unreadable) | Warning `"Vault watcher not started"`; external edits are not detected until restart. |
 | `?kb=` unknown | 404 `Knowledge base '<x>' not found` before the handler runs. |
-| `AI_SETUP_MODE=local` but GGUFs missing | `require_ai` → 503 `ai_not_configured`; `setup_status.needs_model_download = true`. |
-| `AI_SETUP_MODE=cloud` with no keys | Considered configured (§14 step 4); `LLMService.init_clients` raises `ValueError("<PROVIDER>_API_KEY not set")` on first use → 500 from the route. |
+| No model anywhere (no GGUFs, no key, no endpoint) | `require_ai` → 503 `ai_not_configured`; `setup_status.ai_setup_mode` reports `none`. |
+| An endpoint URL set with no key | Considered configured (step 4); a remote endpoint then fails on first call with the server's own error, which names the real problem. |
 | SQLite `database is locked` during status polling | `GET /notes/{id}/status` returns 503 with retry hint; other routes surface a 500. |
 | `PATCH /settings` with unsupported provider | Persisted and applied; `init_clients()` raises `ValueError("Unsupported LLM provider")` → 500, and the bad value remains in `runtime_config.json` until patched again. |
 | `X-Request-Id` supplied by client | Echoed verbatim (no length/charset validation). |

@@ -227,7 +227,7 @@ Create `frontend/src/app/<route>/page.tsx` (`"use client"`), add the entry to th
 
 ### Debug "chat/ingest says AI not configured"
 
-`AI_SETUP_MODE` is `none`, or it is `local` but the chat+embed GGUFs are not on disk (`gguf_paths_if_present()`), or a per-KB provider override points at a cloud provider without a key. Check `GET /api/v1/setup/status`.
+Nothing is reachable: no chat+embed GGUFs on disk (`gguf_paths_if_present()`), no cloud key in the credential store, no `LLM_BASE_URL` — or a per-KB provider override points at a cloud provider without a key. Pick a model on the Models page. Check `GET /api/v1/setup/status`.
 
 ---
 

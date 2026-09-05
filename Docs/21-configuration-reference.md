@@ -63,7 +63,7 @@ flowchart LR
 | Qdrant | `127.0.0.1:17433` (injected) | `qdrant:6333` | default `127.0.0.1:6333` |
 | Meili | `127.0.0.1:17470`, key from `DATA_DIR/meili_master_key` | `meilisearch:7700`, `orb-dev-key` | `127.0.0.1:7700`, `orb-dev-key` |
 | Firefly | `FIREFLY_BASE_URL=http://127.0.0.1:17412`, `FIREFLY_RUNTIME_FILE=DATA_DIR/firefly/runtime.json` | not configured (finance unavailable) | not configured unless set |
-| AI mode | `AI_SETUP_MODE` from `paths.json` via shell (default `none`) | whatever `.env` says (default `none` → AI 503) | same |
+| AI mode | derived from configuration (`ai_gate.derived_setup_mode()`); `AI_SETUP_MODE` is persisted but not read | same | same |
 | CORS | `http://127.0.0.1:17400,http://localhost:17400` | default 3700/3701 list (frontend served on 3700) | default |
 | Logs | `DATA_DIR/logs/*.log` + supervisor `backend.log` | `/data/logs` inside container + docker logs | `DATA_DIR/logs` + terminal |
 
@@ -237,7 +237,7 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 | `COMMUNITY_DETECTION_ENABLED` | bool / **`False`** (`.env.example` says `true`) | `workflows/ingestion.py`, `services/ingestion_tracker.py` | Post-ingest community detection and the idle-timer auto-recompute; `POST /admin/rebuild-communities` still works manually |
 | `TEMPORAL_DIGESTS_ENABLED` | bool / **`False`** | `workflows/ingestion.py` | Debounced digest rebuild after ingest; `build_temporal_digests` no-ops when false |
 | `TEMPORAL_DIGEST_PERIOD` | str / `"month"` (`week`/`year` accepted) | `workflows/ingestion.py`, `api/admin.py` | Default granularity |
-| `AI_SETUP_MODE` | str / `"none"` (`local` \| `cloud` \| `hybrid` \| `none`/`skip`) | `Settings`; `ai_gate`, `multimedia.py`, `api_desktop`, `runtime_config` | Gates chat/ingest (§14 of [06](06-backend-core-and-configuration.md)); `local`/`none` also disables cloud image captions | runtime > supervisor (from `paths.json.ai_setup_mode` via `desktop/main.js`, default `none`) > .env |
+| `AI_SETUP_MODE` | str / `"none"` (`local` \| `cloud` \| `hybrid` \| `none`/`skip`) | `Settings`; `runtime_config`, desktop shell | **Gates nothing.** `ai_gate` derives readiness from real configuration and `api_desktop` reports `derived_setup_mode()`; the key persists only for the shell wizard. (§14 of [06](06-backend-core-and-configuration.md)); `local`/`none` also disables cloud image captions | runtime > supervisor (from `paths.json.ai_setup_mode` via `desktop/main.js`, default `none`) > .env |
 
 ### 3.14 Firefly III
 

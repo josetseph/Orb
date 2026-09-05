@@ -143,7 +143,7 @@ All chat routes except `status` and `export` take the `kb` query parameter via `
 | GET | `/api/v1/chat/status/{request_id}` | none | Reads `_chat_status[request_id]`; unknown id → `{"stage":"Waiting","model":null,"done":false}` |
 | GET | `/api/v1/chat/conversations/{id}/export?format=markdown\|json` | none (desktop router) | Broken (500) — see §4.6 |
 
-`require_ai(kb)` (`services/ai_gate.py`) raises **503** `{"error":"ai_not_configured","message":...}` unless AI is usable. Resolution order: if the KB pins its own `llm_provider` (per-KB LLM override, see §5.5), the gate passes iff that provider is configured (`provider_is_configured`: local → chat+embed GGUFs on disk; cloud → its API key set). Otherwise the global `AI_SETUP_MODE` applies: `none`/`skip` → blocked; `local` → chat+embed GGUFs must be on disk; `cloud`/`hybrid` → any provider key, or a non-local `LLM_PROVIDER`, or a custom `LLM_BASE_URL`.
+`require_ai(kb)` (`services/ai_gate.py`) raises **503** `{"error":"ai_not_configured","message":...}` unless AI is usable. Resolution order: if the KB pins its own `llm_provider` (per-KB LLM override, see §5.5), the gate passes iff that provider is configured (`provider_is_configured`: local → chat+embed GGUFs on disk; cloud → its API key set). Otherwise the gate asks whether anything is reachable at all: chat+embed GGUFs on disk, **or** any cloud provider key in the credential store, **or** a non-empty `LLM_BASE_URL`. `AI_SETUP_MODE` is not consulted.
 
 ### 4.2 Request id and conversation resolution
 
@@ -307,7 +307,7 @@ The working tree adds a per-KB chat/ingestion model override that changes how ch
 - `RetrievalService._llm` (property) returns the override or lazily imports the global `llm_service`; `hybrid_search` and `retrieve_with_iterative_loop` call `self._llm.analyze_query` / `self._llm.iterative_step`. `ChatWorkflow._llm` is used for `rewrite_follow_up_query`. **Embedding and reranking remain system-wide** (embedding dims are shared across every KB's Qdrant collections — a deliberate constraint stated in `kb_registry.py`).
 - `LLMService.get_chat_model()` precedence is now: instance `_chat_model_override` → `settings.CHAT_MODEL` → provider-specific key (`LLM_MODEL` for local, `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL`).
 - For local per-KB models, `LocalLlamaRuntime.create_chat_completion(model=...)` calls `resolve_chat_gguf(model)` (catalog id or `.gguf` path → on-disk file; unknown id → Setup selection with a warning; known-but-not-downloaded → `RuntimeError`) and `ensure_chat_loaded(path)` **swaps the resident chat GGUF** when a different KB's model is requested. Chatting alternately in two KBs pinned to different local models therefore costs a full model reload per switch.
-- `require_ai(kb)`: a KB with a pinned provider bypasses the global `AI_SETUP_MODE` check (see §4.1).
+- `require_ai(kb)`: a KB with a pinned provider is checked against that provider alone (see §4.1).
 
 ## 6. The research loop, step by step (`retrieve_with_iterative_loop`)
 
@@ -679,7 +679,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `MODEL_RERANKER_LOCAL` | `qwen3-reranker-0.6b` | logs, progress stage | **Label only**; the file used is `reranker_gguf_path()` |
 | `QDRANT_COLLECTION_NODE_CORES` / `_RELATIONSHIPS` / `_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | `QdrantService` | Base names; per-KB contexts use per-KB collection names — retrieval detects hit kind by substring `"relationships"` / `"isolated_context"` in the collection name, so renaming collections without those substrings breaks merge logic |
 | `MEILI_INDEX_NAME` | `orb_nodes` | `MeilisearchService` | BM25 index (per-KB variants) |
-| `AI_SETUP_MODE` | `none` | `ai_gate` | Chat endpoints 503 unless `local` (GGUFs present) or `cloud`/`hybrid` (key/URL) — bypassed by a KB-pinned provider |
+| — | — | `ai_gate` | Chat endpoints 503 only when nothing is reachable: no GGUFs, no cloud key, no `LLM_BASE_URL`. `AI_SETUP_MODE` no longer gates. |
 | `LOG_LEVEL` | `INFO` | `core/log.py` | `DEBUG` enables `_log_retrieval_details` (full texts sent to LLM) and per-candidate reranker lines |
 | `ORB_MODEL_IDLE_SECONDS` | `300` | `local_models.model_idle_seconds` | Idle unload of resident GGUF (0 = keep) |
 | `ORB_RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | Reranker context; long candidate texts beyond it are truncated by llama.cpp |
@@ -838,7 +838,7 @@ Historical benchmark runs under `Results/**/…Logs/` also contain a `reranker.l
 
 | Situation | Behaviour | Surface |
 |---|---|---|
-| AI not configured (`AI_SETUP_MODE=none`, GGUFs missing, no cloud key) and no KB-pinned provider | `require_ai(kb)` → 503 before anything is persisted | Frontend `startChat` rejects → `fail()` → generic error bubble |
+| AI not configured (GGUFs missing, no cloud key, no endpoint) and no KB-pinned provider | `require_ai(kb)` → 503 before anything is persisted | Frontend `startChat` rejects → `fail()` → generic error bubble |
 | Unknown `?kb=` | 404 from `get_kb` | same |
 | Empty `query` | 422 (pydantic `min_length=1`) | same |
 | Kuzu unavailable / KB has no Kuzu path | `KBContext.graph` raises `RuntimeError` when the retrieval service is first built (`_ensure_lazy`) → job `Failed` | Error bubble; `api.log` traceback |

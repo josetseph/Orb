@@ -139,7 +139,7 @@ Output: pages joined by `\n\n`; empty → the literal string `"PDF contains no e
 1. `_describe_image_local(path)` → `multimodal_runtime.describe_image_path(path)`:
    - `PIL.Image.open`, convert to RGB, `_resize_for_florence`: if `w*h > FLORENCE_MAX_IMAGE_PIXELS` (default 1 500 000) scale down by `sqrt(max/pixels)` with LANCZOS `thumbnail`; then pad to a **square** black canvas (Florence's remote vision encoder asserts square feature maps).
    - Task prompt `"<MORE_DETAILED_CAPTION>"`; pixels via `processor.image_processor(images=…)`, text via `processor._construct_prompts([prompt])` + tokenizer; greedy decode `generate(max_new_tokens=256, num_beams=1, do_sample=False, use_cache=False)` (beam search is very slow on MPS); `post_process_generation(task=prompt, image_size=(w,h))[prompt]`.
-2. If local returns empty or raises and `AI_SETUP_MODE` is not `local`/`none`: `_describe_image_cloud` — base64 data URL (`image/png` if `.png` else `image/jpeg`), OpenAI `chat.completions` (`OPENAI_MODEL or gpt-4o-mini`, `max_tokens=400`, text "Describe this image briefly.") when `OPENAI_API_KEY`, else Gemini `generate_content` (`GEMINI_MODEL or gemini-2.0-flash`) when `GEMINI_API_KEY`. Errors → `""`.
+2. If local returns empty or raises and `ai_gate.chat_is_local_only()` is false: `_describe_image_cloud` — base64 data URL (`image/png` if `.png` else `image/jpeg`), OpenAI `chat.completions` (`OPENAI_MODEL or gpt-4o-mini`, `max_tokens=400`, text "Describe this image briefly.") when `OPENAI_API_KEY`, else Gemini `generate_content` (`GEMINI_MODEL or gemini-2.0-flash`) when `GEMINI_API_KEY`. Errors → `""`.
 3. Still nothing → `RuntimeError("Image description failed (local Florence unavailable)")`.
 
 The agent then emits the block with a placeholder title `{{ORB_IMAGE_TITLE_n}}`; titles for all images of the note are generated in one LLM call after every model phase (`_batch_image_titles`, phase 5; stage `"Naming images"`), falling back to the filename per image. GIFs: only the first frame is captioned (PIL default).
@@ -277,7 +277,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 | `MODEL_FLORENCE_HF` / `MODEL_FLORENCE_LOCAL` | `microsoft/Florence-2-large` / `florence-2-large` | `multimodal_models.py` | HF repo and `MODELS_DIR` folder name. |
 | `MODEL_WHISPER_HF` / `MODEL_WHISPER_LOCAL` | `openai/whisper-large-v3-turbo` / `whisper-large-v3-turbo` | same | — |
 | `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | `lunahr/Marlin-2B-ungated` / `marlin-2b` | same | — |
-| `AI_SETUP_MODE` | `none` | `describe_image` | Cloud vision fallback only when not `local`/`none`. |
+| `LLM_PROVIDER` (via `ai_gate.chat_is_local_only`) | `local` | `describe_image` | Cloud vision fallback only when the chosen chat provider is not local. |
 | `OPENAI_API_KEY`, `OPENAI_MODEL` (`gpt-4o-mini`), `GEMINI_API_KEY`, `GEMINI_MODEL` (`gemini-2.0-flash`) | unset | `_describe_image_cloud` | Fallback vision providers (OpenAI preferred). |
 | env `FORCE_QWENVL_VIDEO_READER`, `VIDEO_MAX_PIXELS`, `FPS`, `FPS_MAX_FRAMES`, `FPS_MIN_FRAMES` | `pyav`, `200704`, `2.0`, `240`, `4` | `multimodal_runtime.py` import (`setdefault`) | Marlin/Qwen-VL frame sampling. Process env only. |
 | `MODELS_DIR` (paths.json) | — | `multimodal_model_path` | Where snapshots live; `is_hf_snapshot_ready` must be True or the handler raises. |
@@ -309,7 +309,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 | Recognise `attachments/…` relative links | Extend `_URL` in `multimodal_node` and teach `_download_temp_file` to join the note's vault (it currently only understands `/vault-files/<kb>/…`). |
 | Long-audio support | `transcribe_audio_path`: pass `return_timestamps=True` / chunked long-form generation, or slice the numpy signal into 30 s windows and concatenate; then decide a timestamp line format for the `[Audio Transcript]` block. |
 | Different Florence task (OCR, region captions) | `_describe_pil` prompt (`<OCR>`, `<DETAILED_CAPTION>`, …) and `post_process_generation(task=…)`. |
-| Skip cloud vision entirely | `describe_image`: the `AI_SETUP_MODE` check. |
+| Skip cloud vision entirely | `describe_image`: the `chat_is_local_only()` check — a local chat model keeps images on the device. |
 | Cache per-attachment results across re-ingests | Would need a store keyed by file hash; today nothing persists except the final block in the `.md`. |
 
 ### 8.3 History / rationale

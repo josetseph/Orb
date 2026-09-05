@@ -348,7 +348,7 @@ First-run and re-configuration page for paths, AI mode and local model download.
 
 `status: SetupStatus`, `dataDir`, `modelsDir`, `vaultPath`, `aiMode: "local"|"cloud"|"hybrid"|"none"`, `saving`, `saved`, `error`, `catalog: ModelCatalog`, `chatId`, `downloadMsg`, `downloading`, `mmBusy`; `canBrowse` as on `/kb`.
 
-- Mount: `GET /setup/status` → seeds `dataDir`, `modelsDir`, `vaultPath = default_vault_path || active_vault_path || ""`, `aiMode = ai_setup_mode || "none"`. Error: "Could not load setup status."
+- Mount: `GET /setup/status` → seeds `dataDir`, `modelsDir`, `vaultPath = default_vault_path || active_vault_path || ""`. Error: "Could not load setup status." The page no longer has an AI-mode picker or any model UI: it is paths plus a link to `/models`, and the footer line shows the **derived** mode as a read-only observation.
 - When `aiMode === "local"`: `GET /setup/model-catalog` → `ModelCatalog {hardware{ram_gb, usable_model_gb, accel?{backend}}, embed, reranker, chat_options[], suggested_chat, selected_chat?, budget_note}`; `chatId` is chosen as `prev || selected_chat.id || suggested_chat.id || first option with fits_budget !== false || first option` — the saved selection wins so reopening Setup does not snap back to the suggested model. Error: "Could not load model catalog."
 
 ### 8.2 UI
@@ -356,7 +356,7 @@ First-run and re-configuration page for paths, AI mode and local model download.
 - **Paths** section: Notes vault folder, Data directory (required), Models directory (required); each with desktop "Browse…" (`pickDirectory` with `defaultPath`). Inputs disabled while downloading. Subtitle: "restart the desktop app after changing paths".
 - **AI setup** cards: Full local (`local`), Cloud / hybrid (`cloud`; also highlighted when stored mode is `hybrid`), Skip for now (`none`). Copy explains that without AI the app works "like Obsidian" (notes, wikilinks, finance) and that chat/ingest/entity graph stay unavailable.
 - **Local models** (only `local` + catalog loaded): `budget_note`, auto-selected Embed and Reranker labels, static multimedia line (Florence-2 · Whisper large-v3-turbo · Marlin-2B), and the chat-model list: each option shows label, "suggested" tag, "may be tight" when `fits_budget === false`, family / `~size_gb GB download` / `needs ~min_ram_gb GB`. Clicking sets `chatId` and fires `POST /setup/select-chat-model {chat_id}` (errors ignored). Empty list → hint to free memory or set `ORB_RAM_GB`.
-- **Save setup** (form submit): `POST /setup/paths {data_dir, models_dir, default_vault_path?, ai_setup_mode}` then `GET /setup/status`; error "Failed to save paths. Check that directories are writable."
+- **Save setup** (form submit): `POST /setup/paths {data_dir, models_dir, default_vault_path?}` — `ai_setup_mode` is no longer sent, so `save_paths_file` preserves whatever is on disk — then `GET /setup/status`; error "Failed to save paths. Check that directories are writable."
 - **Download button** (local only; disabled when saving/downloading/no `chatId`): label cycles "Download selected models" → "Downloading…" → "Multimedia still downloading…"; reads "Re-download / verify models on disk" when `status.local_models_ready`.
 - Status line: `Backend: <database_backend> · AI mode · models: ready|missing · configured: yes|no`.
 - Download banner (amber) shows while `downloading || mmBusy || downloadMsg` with an indeterminate pulse bar.

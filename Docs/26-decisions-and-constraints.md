@@ -65,7 +65,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B7. Cloud providers remain available but are opt-in
 - Rationale: privacy-first default; some users want frontier quality.
-- Enforced: `AI_SETUP_MODE` gating (`ai_gate.py`), keys only in `.env`, never in `runtime_config.json`.
+- Enforced: AI gating derived from real configuration (`ai_gate.py`) rather than a stored `AI_SETUP_MODE`; keys never in `runtime_config.json`.
 
 ### B8. Multimodal stack is one shared torch + transformers ≥ 5.7 install
 - Rejected: a second transformers major just for Marlin; separate venvs per model.

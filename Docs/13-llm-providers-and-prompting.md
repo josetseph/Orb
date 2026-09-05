@@ -263,20 +263,21 @@ provider_is_configured(provider) -> bool
 
 ai_is_configured(kb=None) -> bool
     if kb.llm_provider is pinned → provider_is_configured(kb.llm_provider)   # KB usable whenever its provider is
-    mode = settings.AI_SETUP_MODE  ("none" | "" | "skip" → False)
-    "local"          → gguf_paths_if_present() is not None
-    "cloud"|"hybrid" → any of OPENAI/GEMINI/ANTHROPIC key set
-                       or LLM_PROVIDER not in (local, ollama, lm_studio, none, "")
-                       or (LLM_BASE_URL and LLM_API_KEY not in (local, lm-studio, ollama))
-                       or bool(LLM_BASE_URL)              # LLM_BASE_URL has a non-empty default → effectively True
-    other            → False
+    # AI_SETUP_MODE is NOT read — readiness is derived from what exists
+    _local_models_present()          → gguf_paths_if_present() is not None
+    or any(credentials.has(p) for p in CLOUD_PROVIDERS)
+    or _endpoint_is_configured()     → bool(LLM_BASE_URL)   # local servers need no key
+    else False
+
+chat_is_local_only() -> bool         # LLM_PROVIDER in (local, ollama, lm_studio, none, "")
+derived_setup_mode() -> "local" | "cloud" | "none"          # display only, nothing gates on it
 
 require_ai(kb=None)  → HTTPException 503 {"error": "ai_not_configured", "message": "AI is not configured. Notes, wikilinks, and finance still work. Open Setup to enable local models or a cloud provider."}
 ```
 
-Used by `POST /api/v1/chat`, `POST /api/v1/chat/start`, `POST /api/v1/notes/reingest-vault`, note ingestion endpoints (`api/notes.py`), admin re-ingest (`api/admin.py`) — all now pass the resolved `KBContext` so a KB pinned to a configured cloud provider works even when `AI_SETUP_MODE=none`. `/setup/status.ai_configured` calls it with no KB. Note that a KB pinning only `llm_model` (no provider) is still gated by the global mode. The `"hybrid"`/`"cloud"` heuristic is effectively always true because `LLM_BASE_URL` defaults to `http://127.0.0.1:8080`; the mode itself is the real switch.
+Used by `POST /api/v1/chat`, `POST /api/v1/chat/start`, `POST /api/v1/notes/reingest-vault`, note ingestion endpoints (`api/notes.py`), admin re-ingest (`api/admin.py`) — all pass the resolved `KBContext` so a KB pinned to a configured provider works regardless of what is set globally. `/setup/status.ai_configured` calls it with no KB.
 
-`AI_SETUP_MODE` is written by `POST /setup/paths` (into `paths.json` **and** `runtime_config.json` **and** live `settings`), read at startup via `runtime_config.apply_to_settings`, and forwarded by the desktop supervisor as an env default of `none`.
+`AI_SETUP_MODE` is still written by `POST /setup/paths` (into `paths.json`, `runtime_config.json` and live `settings`) and forwarded by the desktop supervisor, because the shell wizard and `resolveBootPath` read it. **Nothing in the backend gates on it** — Setup no longer asks for a mode, since choosing a model on the Models page already answers the question. See [12](12-local-models-and-inference.md).
 
 ### 8.2 `GET/PATCH /api/v1/settings` (`api/settings.py`) and `runtime_config.py`
 

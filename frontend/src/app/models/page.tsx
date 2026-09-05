@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Cloud, Cpu, Download, Loader2, RotateCcw, Sparkles } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronDown,
+  Cloud,
+  Cpu,
+  Download,
+  Loader2,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
 import { useKB } from "@/lib/kb-context";
@@ -599,6 +608,10 @@ function CloudFields({
   const [models, setModels] = useState<string[] | null>(null);
   const [probing, setProbing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // Endpoints that list hundreds of models are still worth typing into, and a
+  // fetched list can omit one the server accepts — so typing stays available.
+  const [typing, setTyping] = useState(false);
+  const showList = !typing && models !== null && models.length > 0;
 
   async function probe() {
     if (!url.trim()) return;
@@ -606,8 +619,13 @@ function CloudFields({
     setNote(null);
     try {
       const data = await api.getEndpointModels(url.trim());
-      setModels(data.models);
-      if (!data.models.length) setNote("That endpoint listed no models — type the name.");
+      const sorted = [...data.models].sort((a, b) => a.localeCompare(b));
+      setModels(sorted);
+      setTyping(false);
+      if (!sorted.length) setNote("That endpoint listed no models — type the name.");
+      else if (model && !sorted.includes(model)) {
+        setNote(`"${model}" is not in this endpoint's list — keeping it anyway.`);
+      }
     } catch {
       setNote("This endpoint has no model list. Type the model name instead.");
     } finally {
@@ -634,32 +652,71 @@ function CloudFields({
 
       <label className="text-xs text-white/45">Model name</label>
       <div className="flex gap-2">
-        <input
-          type="text"
-          list="orb-endpoint-models"
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="gemini-2.5-flash"
-          className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-        />
+        {showList ? (
+          <div className="relative min-w-0 flex-1">
+            <select
+              value={models.includes(model) ? model : ""}
+              onChange={(e) => {
+                if (e.target.value === "__type__") {
+                  setTyping(true);
+                  return;
+                }
+                setModel(e.target.value);
+              }}
+              className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-9 font-mono text-xs text-white outline-none transition focus:border-purple-500/50"
+            >
+              <option value="" className="bg-[#0d0d12]">
+                {model ? `${model} (not in list)` : "Choose a model…"}
+              </option>
+              {models.map((m) => (
+                <option key={m} value={m} className="bg-[#0d0d12]">
+                  {m}
+                </option>
+              ))}
+              <option value="__type__" className="bg-[#0d0d12]">
+                Type a name instead…
+              </option>
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+          </div>
+        ) : (
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            placeholder="gemini-2.5-flash"
+            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
+          />
+        )}
         <button
           type="button"
           onClick={() => void probe()}
           disabled={probing || !url.trim()}
+          title="Ask the endpoint which models it serves"
           className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
         >
-          {probing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "List models"}
+          {probing ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : models === null ? (
+            "List models"
+          ) : (
+            "Refresh"
+          )}
         </button>
       </div>
-      <datalist id="orb-endpoint-models">
-        {(models ?? []).map((m) => (
-          <option key={m} value={m} />
-        ))}
-      </datalist>
-      {models && models.length > 0 && (
+      {showList && (
         <p className="text-[11px] text-white/35">
-          {models.length} model{models.length === 1 ? "" : "s"} available.
+          {models.length} model{models.length === 1 ? "" : "s"} from this endpoint.
         </p>
+      )}
+      {typing && models && models.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setTyping(false)}
+          className="text-[11px] text-purple-300/70 underline-offset-2 hover:underline"
+        >
+          ← Back to the {models.length} listed models
+        </button>
       )}
       {note && <p className="text-[11px] text-amber-300/80">{note}</p>}
     </div>

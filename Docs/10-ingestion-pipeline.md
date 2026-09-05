@@ -572,7 +572,7 @@ Title prompt (`llm_service.generate_title`): system `"Generate a concise, descri
 | `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | `True` | — | **Unused** in backend. |
 | `QDRANT_COLLECTION_NODE_CORES` / `_RELATIONSHIPS` / `_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | default KB `QdrantService` | Other KBs use `{slug}_…` names from the registry. |
 | `MEILI_INDEX_NAME` | `orb_nodes` | default KB `MeilisearchService` | Other KBs `{slug}_nodes`. |
-| `AI_SETUP_MODE` | `"none"` | `require_ai(kb)`, cloud-vision fallback in `multimedia.describe_image` | `local`/`cloud`/`hybrid`/`none`. |
+| `LLM_PROVIDER` (via `ai_gate`) | `"local"` | `require_ai(kb)` derives readiness from GGUFs / keys / `LLM_BASE_URL`; `chat_is_local_only()` decides the cloud-vision fallback in `multimedia.describe_image` | `AI_SETUP_MODE` no longer gates either. |
 | `PDF_VISUAL_*`, `FLORENCE_MAX_IMAGE_PIXELS`, `MODEL_*_LOCAL/HF`, `VIDEO_MAX_PIXELS`, `FPS*` | see [11](11-multimedia-enrichment.md) | multimedia | — |
 
 ## 12. Interfaces with other subsystems

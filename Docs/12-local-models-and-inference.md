@@ -45,7 +45,7 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/app/core/inference_device.py` | torch device/dtype selection and the Qwen3.5 fast-path shim. Imports `torch` at module top — only import it lazily. | `resolve_torch_device`, `resolve_torch_dtype`, `prepare_qwen3_5_inference` |
 | `backend/app/core/paths.py` | (shared) `resolve_models_dir`, `looks_like_network_volume`, `local_download_staging_dir` used by both download paths. | see [06](06-backend-core-and-configuration.md) |
 | `backend/app/api_desktop.py` (setup section) | HTTP surface: `/api/v1/setup/status`, `/model-catalog`, `/download-models`, `/select-chat-model`, `/start-local-llm`, `/start-multimodal-services`, `/multimodal-status`, `/paths`. | route handlers |
-| `backend/app/services/ai_gate.py` | `ai_is_configured()` treats `AI_SETUP_MODE=local` as configured only when `gguf_paths_if_present()` is truthy. | `ai_is_configured`, `require_ai` (details in [13](13-llm-providers-and-prompting.md)) |
+| `backend/app/services/ai_gate.py` | `ai_is_configured()` reports ready when `gguf_paths_if_present()` is truthy (or a cloud key / `LLM_BASE_URL` exists); `AI_SETUP_MODE` is not read. | `ai_is_configured`, `require_ai` (details in [13](13-llm-providers-and-prompting.md)) |
 | `backend/app/main.py` | Startup hook calls `sync_embedding_infrastructure()` after applying runtime-config overrides. | `startup_event` |
 | `backend/app/workflows/ingestion.py` | Consumes the model-load clock for per-note `[Timing]` lines; passes a per-KB `llm` into the agent (see §13.2). Older revisions unloaded all models after a batch drained — that block has been removed. | — |
 | `backend/requirements.txt` | `llama-cpp-python>=0.3.0`, `huggingface_hub>=0.34.0,<1.0`, `av` (video probing). | — |
@@ -796,7 +796,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `MODEL_FLORENCE_HF/LOCAL`, `MODEL_WHISPER_HF/LOCAL`, `MODEL_MARLIN_HF/LOCAL` | see §6.2 | repo ids and folder names |
 | `FLORENCE_MAX_IMAGE_PIXELS` | `1500000` | downscale threshold |
 | `LLM_MODEL` | `local-chat` | placeholder meaning "Setup selection"; set to the chat catalog id after a download |
-| `AI_SETUP_MODE` | `none` | `local` requires GGUFs on disk to count as configured |
+| `AI_SETUP_MODE` | `none` | Persisted for the shell wizard only; readiness is derived from GGUFs on disk, a cloud key, or `LLM_BASE_URL` |
 | `MULTIMEDIA_CONCURRENCY` | `1` | semaphore around the multimodal node |
 | `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | `True` | declared; not consulted by current code |
 

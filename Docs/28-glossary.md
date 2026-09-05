@@ -24,7 +24,7 @@
 | **prepare-dist** | `npm run prepare-dist`: bundle Python, build frontend standalone, bundle Node, prefetch Firefly seed. | [05](05-packaging-build-and-release.md) |
 | **node_deps** | The frontend standalone's dependency folder, renamed from `node_modules` because electron-builder strips `node_modules` from `extraResources`. | [05](05-packaging-build-and-release.md) |
 | **orbDesktop bridge** | `window.orbDesktop`, the preload-exposed IPC surface for the renderer. | [18](18-frontend-architecture.md) |
-| **AI setup mode** | `AI_SETUP_MODE` ∈ `none | local | cloud` (code also tolerates `hybrid`/`skip`); gates chat/ingest features. | [13](13-llm-providers-and-prompting.md) |
+| **AI setup mode** | `AI_SETUP_MODE` ∈ `none | local | cloud`. Historical: the backend derives readiness from actual configuration and no longer gates on this key; `ai_gate.derived_setup_mode()` reports it for display. | [13](13-llm-providers-and-prompting.md) |
 | **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`. | [21](21-configuration-reference.md) |
 
 ## Knowledge bases, vaults, notes

@@ -102,7 +102,7 @@ Notes:
 
 ### 3.7 AI gate
 
-`services/ai_gate.ai_is_configured()` returns `True` when `AI_SETUP_MODE` is `local` **and** chat+embed GGUFs are present on disk (`gguf_paths_if_present()`), or when it is `cloud`/`hybrid` and a provider key / custom base URL is set. `require_ai()` raises the 503 above. Routes gated: `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest` (unless `skip_ingestion`), `POST /api/v1/admin/reingest-all`, `POST /api/v1/notes/reingest-vault`. Routes that silently degrade instead of erroring: `GET /api/v1/graph/entities/search` (returns `[]`), `POST /api/v1/graph/entities/note-subgraph` (returns nodes but no edges).
+`services/ai_gate.ai_is_configured()` returns `True` when anything is actually reachable — chat+embed GGUFs on disk (`gguf_paths_if_present()`), any cloud provider key in the credential store, or a non-empty `LLM_BASE_URL`. `AI_SETUP_MODE` is not consulted; set. `require_ai()` raises the 503 above. Routes gated: `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest` (unless `skip_ingestion`), `POST /api/v1/admin/reingest-all`, `POST /api/v1/notes/reingest-vault`. Routes that silently degrade instead of erroring: `GET /api/v1/graph/entities/search` (returns `[]`), `POST /api/v1/graph/entities/note-subgraph` (returns nodes but no edges).
 
 ### 3.8 Background work and polling patterns
 
@@ -381,7 +381,7 @@ No params. Calls `gguf_paths_if_present()` (`services/local_models.py`), `is_hf_
 }
 ```
 
-`default_vault_path` comes from `paths.json`/env (`""` if unset); `active_vault_path` is what the default KB row actually points at. `needs_model_download = (ai_setup_mode == "local") and not local_models_ready`. `multimodal_ready` requires all three snapshots.
+`default_vault_path` comes from `paths.json`/env (`""` if unset); `active_vault_path` is what the default KB row actually points at. `ai_setup_mode` is `ai_gate.derived_setup_mode()` — an observation of what is configured, not a stored choice; `needs_model_download = (derived mode == "local") and not local_models_ready`. `multimodal_ready` requires all three snapshots.
 
 #### GET /api/v1/setup/model-catalog
 

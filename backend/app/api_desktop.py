@@ -50,7 +50,7 @@ async def setup_status():
         paths_json_location,
         resolve_default_vault_path,
     )
-    from app.services.ai_gate import ai_is_configured
+    from app.services.ai_gate import ai_is_configured, derived_setup_mode
     from app.services.local_models import gguf_paths_if_present
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
     gguf = gguf_paths_if_present()
@@ -59,7 +59,7 @@ async def setup_status():
         is_hf_snapshot_ready(multimodal_model_path(k))
         for k in ("florence", "whisper", "marlin")
     )
-    mode = (settings.AI_SETUP_MODE or "none").lower().strip()
+    mode = derived_setup_mode()
     vault = resolve_default_vault_path()
     default_kb = kb_registry.get_kb_by_name("default")
     return {
@@ -68,7 +68,9 @@ async def setup_status():
         "paths_json": str(paths_json_location()),
         "default_vault_path": str(vault) if vault else "",
         "active_vault_path": (default_kb.vault_path if default_kb else "") or "",
-        "ai_setup_mode": settings.AI_SETUP_MODE,
+        # Derived from what is actually configured (see ai_gate), not from a
+        # mode the user picks — Setup no longer asks.
+        "ai_setup_mode": mode,
         "ai_configured": ai_is_configured(),
         "local_models_ready": local_models_ready,
         "multimodal_ready": multimodal_ready,

@@ -1,20 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Sparkles, FolderOpen, Brain, Cloud, SkipForward, Check } from "lucide-react";
+import { Sparkles, FolderOpen, Check } from "lucide-react";
 import { api } from "@/lib/api";
 import { pickDesktopDirectory, getDesktopBridge } from "@/lib/desktop";
 import { ShaderBackground } from "@/components/shader-background";
 import type { SetupStatus } from "@/lib/types";
-
-type AiMode = "local" | "cloud" | "hybrid" | "none";
 
 export default function SetupPage() {
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [dataDir, setDataDir] = useState("");
   const [modelsDir, setModelsDir] = useState("");
   const [vaultPath, setVaultPath] = useState("");
-  const [aiMode, setAiMode] = useState<AiMode>("none");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +25,6 @@ export default function SetupPage() {
         setDataDir(s.data_dir);
         setModelsDir(s.models_dir);
         setVaultPath(s.default_vault_path || s.active_vault_path || "");
-        setAiMode((s.ai_setup_mode as AiMode) || "none");
       })
       .catch(() => setError("Could not load setup status."));
   }, []);
@@ -55,7 +51,6 @@ export default function SetupPage() {
         data_dir: dataDir,
         models_dir: modelsDir,
         default_vault_path: vaultPath || undefined,
-        ai_setup_mode: aiMode,
       });
       setSaved(true);
       const s = await api.getSetupStatus();
@@ -166,71 +161,19 @@ export default function SetupPage() {
           </section>
 
           <section className="rounded-2xl border border-white/10 bg-black/40 p-6 space-y-3">
-            <h2 className="text-lg font-medium">AI setup</h2>
-            <p className="text-sm text-white/50">
-              You can skip AI and use Orb like Obsidian (notes, wikilinks, finance). Chat,
-              ingest, and entity graph stay unavailable until AI is configured.
+            <h2 className="text-lg font-medium">AI models</h2>
+            <p className="text-xs text-white/45">
+              Everything model-related — local or cloud, system-wide or per
+              knowledge base — lives on one page. Orb works without AI too:
+              notes, wikilinks and finance never need a model.
             </p>
-            {(
-              [
-                {
-                  id: "local" as const,
-                  icon: Brain,
-                  title: "Full local",
-                  desc: "Pick a chat GGUF; Qwen3 embed + reranker size to your RAM automatically.",
-                },
-                {
-                  id: "cloud" as const,
-                  icon: Cloud,
-                  title: "Cloud / hybrid",
-                  desc: "OpenAI / Gemini / Anthropic in Settings; optional local multimodal",
-                },
-                {
-                  id: "none" as const,
-                  icon: SkipForward,
-                  title: "Skip for now",
-                  desc: "Obsidian-like limited mode — set up AI later in Settings",
-                },
-              ] as const
-            ).map((opt) => {
-              const Icon = opt.icon;
-              const active = aiMode === opt.id || (opt.id === "cloud" && aiMode === "hybrid");
-              return (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setAiMode(opt.id)}
-                  className={`flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition ${
-                    active
-                      ? "border-amber-400/40 bg-amber-400/10"
-                      : "border-white/10 bg-black/30 hover:border-white/20"
-                  }`}
-                >
-                  <Icon className="mt-0.5 h-5 w-5 shrink-0 text-amber-200" />
-                  <div>
-                    <div className="font-medium">{opt.title}</div>
-                    <div className="text-xs text-white/45">{opt.desc}</div>
-                  </div>
-                </button>
-              );
-            })}
+            <a
+              href="/models"
+              className="inline-flex items-center gap-2 rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2.5 text-sm text-purple-200 transition hover:bg-purple-500/20"
+            >
+              Open Models →
+            </a>
           </section>
-
-          {aiMode === "local" && (
-            <section className="rounded-2xl border border-white/10 bg-black/40 p-6 space-y-3">
-              <h2 className="text-lg font-medium">Local models</h2>
-              <p className="text-xs text-white/45">
-                Downloading a chat model, choosing which one each knowledge base
-                uses, and cloud endpoints all live on one page now.
-              </p>
-              <a
-                href="/models"
-                className="inline-flex items-center gap-2 rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2.5 text-sm text-purple-200 transition hover:bg-purple-500/20"
-              >
-                Open Models →
-              </a>
-            </section>
-          )}
 
           <button
             type="submit"
@@ -244,7 +187,7 @@ export default function SetupPage() {
 
           {status && (
             <p className="text-xs text-white/35">
-              Backend: {status.database_backend} · AI mode: {status.ai_setup_mode || "none"} ·
+              Backend: {status.database_backend} · AI: {status.ai_setup_mode || "none"} ·
               models: {status.local_models_ready ? "ready" : "missing"} · configured:{" "}
               {status.ai_configured ? "yes" : "no"}
             </p>

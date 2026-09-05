@@ -99,7 +99,7 @@ backend/
 │   │   ├── multimedia.py       attachment discovery + PDF / image / audio / video / doc enrichment
 │   │   ├── ingestion_tracker.py    ingestion bookkeeping + idle-triggered Leiden recompute
 │   │   ├── firefly_service.py  Firefly III HTTP client, per-KB administration scoping
-│   │   └── ai_gate.py          AI_SETUP_MODE gating
+│   │   └── ai_gate.py          AI readiness, derived from real configuration
 │   ├── workflows/
 │   │   ├── ingestion.py        IngestionWorkflow — extraction, graph persistence, embedding, indexing
 │   │   ├── chat.py             ChatWorkflow — research loop + attribution
