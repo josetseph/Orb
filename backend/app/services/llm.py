@@ -23,6 +23,25 @@ from pydantic import BaseModel
 logger = get_logger("LLMService")
 
 
+def describe_call_failure(exc: Exception) -> str:
+    """One line naming what actually failed, not just the SDK's summary.
+
+    The OpenAI SDK collapses every transport problem into "Connection error."
+    — DNS, TLS, refused, reset and dropped connections all read identically,
+    which makes a real outage indistinguishable from a misconfigured endpoint.
+    The useful detail is in the exception chain.
+    """
+    parts = [f"{type(exc).__name__}: {exc}".strip()]
+    seen = {id(exc)}
+    cause = exc.__cause__ or exc.__context__
+    while cause is not None and id(cause) not in seen and len(parts) < 4:
+        seen.add(id(cause))
+        text = str(cause).strip()
+        parts.append(f"{type(cause).__name__}{': ' + text if text else ''}")
+        cause = cause.__cause__ or cause.__context__
+    return " ← ".join(parts)
+
+
 class LLMService:
     """Multi-provider LLM client supporting structured extraction, generation, and ingestion routing."""
 
@@ -1254,7 +1273,11 @@ class LLMService:
             return response.choices[0].message.content.strip()
 
         except Exception as e:
-            logger.error(f"[LLM] generate() failed: {e}")
+            logger.error(
+                "[LLM] generate() failed via %s: %s",
+                self.get_base_url() or self.provider,
+                describe_call_failure(e),
+            )
             raise
 
     async def iterative_step(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
@@ -1744,7 +1767,11 @@ class LLMService:
             }
 
         except Exception as e:
-            logger.error(f"[LLM] ingestion_generate() failed: {e}")
+            logger.error(
+                "[LLM] ingestion_generate() failed via %s: %s",
+                self.get_base_url() or self.ingestion_provider,
+                describe_call_failure(e),
+            )
             raise
 
     def ingestion_count_tokens(self, text: str) -> int:
