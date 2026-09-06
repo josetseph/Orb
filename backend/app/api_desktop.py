@@ -984,6 +984,38 @@ async def open_finance_workspace(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.prepare_open(kb)
 
 
+# Python's mimetypes guesses types no browser will decode: .m4a becomes
+# "audio/mp4a-latm" (a LATM/LOAS packaging, not the MP4 container), and .aac
+# / .flac / .wav get "x-" prefixed forms. A <video>/<audio> element trusts
+# Content-Type, so the wrong one fails to play with no useful error. Map the
+# formats we serve to what browsers actually accept.
+_MEDIA_CONTENT_TYPES = {
+    ".m4a": "audio/mp4",
+    ".m4b": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".wav": "audio/wav",
+    ".oga": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".m4v": "video/mp4",
+    ".ogv": "video/ogg",
+    ".mov": "video/quicktime",
+    ".mp4": "video/mp4",
+    ".webm": "video/webm",
+    ".avif": "image/avif",
+    ".webp": "image/webp",
+    ".svg": "image/svg+xml",
+    ".md": "text/markdown; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+    ".csv": "text/csv; charset=utf-8",
+    ".tsv": "text/tab-separated-values; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".pdf": "application/pdf",
+}
+
+
 @router.get("/vault-files/{kb_id}/{file_path:path}")
 async def serve_vault_file(kb_id: str, file_path: str):
     from app.services.vault_ops import safe_vault_join
@@ -998,4 +1030,7 @@ async def serve_vault_file(kb_id: str, file_path: str):
         raise HTTPException(status_code=404, detail="File not found") from exc
     if not full.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(full)
+    media_type = _MEDIA_CONTENT_TYPES.get(full.suffix.lower())
+    # Range requests let a player seek without downloading the whole file;
+    # FileResponse handles them, but only the browser will ask.
+    return FileResponse(full, media_type=media_type) if media_type else FileResponse(full)

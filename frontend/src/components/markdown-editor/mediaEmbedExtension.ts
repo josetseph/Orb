@@ -11,6 +11,8 @@ import {
   isVideoUrl,
   isAudioUrl,
   isPdfUrl,
+  isTextUrl,
+  isTabularUrl,
   resolveFileUrl,
   encodeFileUrl,
   fetchMediaObjectUrl,
@@ -31,7 +33,15 @@ const MEDIA_RE = new RegExp(
   "g",
 );
 
-type MediaKind = "image" | "video" | "audio" | "pdf" | "youtube" | "vimeo";
+type MediaKind =
+  | "image"
+  | "video"
+  | "audio"
+  | "pdf"
+  | "youtube"
+  | "vimeo"
+  | "text"
+  | "table";
 
 function kindForUrl(url: string): MediaKind | null {
   const cleaned = url.trim();
@@ -41,7 +51,70 @@ function kindForUrl(url: string): MediaKind | null {
   if (isVideoUrl(cleaned)) return "video";
   if (isAudioUrl(cleaned)) return "audio";
   if (isPdfUrl(cleaned)) return "pdf";
+  // Ingested but previously invisible: a .csv or .md attachment was a chip you
+  // could not look at without leaving the app.
+  if (isTabularUrl(cleaned)) return "table";
+  if (isTextUrl(cleaned)) return "text";
   return null;
+}
+
+/** Cap the preview so a huge log file cannot lock up the editor. */
+const TEXT_PREVIEW_BYTES = 64 * 1024;
+const TABLE_PREVIEW_ROWS = 50;
+
+function buildTable(text: string, sep: string): HTMLElement {
+  const table = document.createElement("table");
+  table.className = "cm-media-embed-table";
+  const rows = text.split(/\r?\n/).filter((r) => r.length > 0);
+  const shown = rows.slice(0, TABLE_PREVIEW_ROWS);
+  shown.forEach((row, i) => {
+    const tr = document.createElement("tr");
+    for (const cell of row.split(sep)) {
+      const td = document.createElement(i === 0 ? "th" : "td");
+      td.textContent = cell.replace(/^"|"$/g, "");
+      tr.appendChild(td);
+    }
+    table.appendChild(tr);
+  });
+  if (rows.length > shown.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.className = "cm-media-embed-more";
+    td.textContent = `… ${rows.length - shown.length} more rows`;
+    tr.appendChild(td);
+    table.appendChild(tr);
+  }
+  return table;
+}
+
+/** Fetch a text-ish attachment and show it inline; never throws. */
+function renderTextPreview(src: string, tabular: boolean, host: HTMLElement) {
+  void (async () => {
+    try {
+      const res = await fetch(src);
+      if (!res.ok) throw new Error(String(res.status));
+      const full = await res.text();
+      const text = full.slice(0, TEXT_PREVIEW_BYTES);
+      host.textContent = "";
+      if (tabular) {
+        host.appendChild(buildTable(text, src.toLowerCase().includes(".tsv") ? "\t" : ","));
+      } else {
+        const pre = document.createElement("pre");
+        pre.className = "cm-media-embed-pre";
+        pre.textContent = text;
+        host.appendChild(pre);
+      }
+      if (full.length > text.length) {
+        const note = document.createElement("div");
+        note.className = "cm-media-embed-more";
+        note.textContent = "… truncated preview";
+        host.appendChild(note);
+      }
+    } catch {
+      host.textContent = "Could not load this file.";
+      host.classList.add("cm-media-embed-error");
+    }
+  })();
 }
 
 class MediaWidget extends WidgetType {
@@ -93,6 +166,19 @@ class MediaWidget extends WidgetType {
       iframe.loading = "lazy";
       wrap.appendChild(caption);
       wrap.appendChild(iframe);
+      return wrap;
+    }
+
+    if (this.kind === "text" || this.kind === "table") {
+      const caption = document.createElement("div");
+      caption.className = "cm-media-embed-caption";
+      caption.textContent = this.label || "File";
+      const body = document.createElement("div");
+      body.className = "cm-media-embed-text";
+      body.textContent = "Loading…";
+      wrap.appendChild(caption);
+      wrap.appendChild(body);
+      renderTextPreview(this.src, this.kind === "table", body);
       return wrap;
     }
 

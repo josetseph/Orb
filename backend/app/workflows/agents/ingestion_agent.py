@@ -560,6 +560,36 @@ async def multimodal_node(
             )
             and not item["lower_url"].endswith(video_exts)
         ]
+        # Images embedded in a .docx used to be invisible: the same picture
+        # attached directly got described, but inside a Word file it was lost.
+        # Expand them here, before the phases run, so they ride the existing
+        # Florence pass rather than forcing the model to reload later.
+        docx_temp_images: list[str] = []
+        for item in list(docx_files):
+            try:
+                for path in await asyncio.to_thread(
+                    multimedia_service.extract_docx_images, item["url"]
+                ):
+                    docx_temp_images.append(path)
+                    embedded = {
+                        "emoji": "📎",
+                        "filename": f"{item['filename']} — embedded image",
+                        "url": path,
+                        "lower_url": path.lower(),
+                    }
+                    attachments.append(embedded)
+                    images.append(embedded)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Could not extract images from %s: %s", item["filename"], exc
+                )
+        if docx_temp_images:
+            logger.info(
+                "Found %d embedded image(s) across %d Word document(s)",
+                len(docx_temp_images),
+                len(docx_files),
+            )
+
         # Classify by extension — do not require emoji 📎 (same marker as images).
         videos = [
             item
@@ -591,12 +621,31 @@ async def multimodal_node(
             await _set_status("Unloading video model", "Marlin")
             await asyncio.to_thread(multimedia_service.unload_marlin)
 
+        for path in docx_temp_images:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
         supported_ids = {
             id(item)
             for item in pdfs + images + docx_files + spreadsheets + audio_files + videos
         }
         for item in attachments:
             if id(item) not in supported_ids:
+                if item["lower_url"].endswith(".doc"):
+                    # python-docx reads OOXML only; the old binary format needs
+                    # a converter Orb does not ship.
+                    logger.warning(
+                        "Skipped legacy Word file %s — Orb reads .docx, not .doc. "
+                        "Re-save it as .docx to have it ingested.",
+                        item["filename"],
+                    )
+                    _append(
+                        f"\n\n[Unsupported ({item['filename']})]: legacy .doc format — "
+                        "re-save as .docx for Orb to read it."
+                    )
+                    continue
                 logger.info(f"Skipped (Unsupported Type): {item['url']}")
 
         # Title images in one call now that no multimodal model is resident —

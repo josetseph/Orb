@@ -2,6 +2,7 @@
 
 # pylint: disable=wrong-import-order,import-outside-toplevel
 import os
+import tempfile
 import csv
 from collections.abc import Callable
 
@@ -522,7 +523,14 @@ class MultimediaService:
                 os.remove(local_path)
 
     def extract_text_from_docx(self, docx_path: str) -> str:
-        """Extract text from a Word document (.docx) using native parsing only."""
+        """Extract text from a Word document (.docx) using native parsing only.
+
+        Covers the document body, tables, headers/footers and text boxes.
+        ``python-docx`` walks only ``document.paragraphs`` by default, so
+        anything in a header, footer or floating text box is invisible to it —
+        which for many real documents is where the title, author and captions
+        live.
+        """
         local_path = self._download_temp_file(docx_path)
         parts = []
 
@@ -545,6 +553,24 @@ class MultimediaService:
                     if rows:
                         parts.append(f"--- Table {idx} ---\n" + "\n".join(rows))
 
+                # Headers and footers, deduped: repeating the same running head
+                # on every section adds nothing but tokens.
+                seen_chrome: set[str] = set()
+                for label, attr in (("Header", "header"), ("Footer", "footer")):
+                    lines = []
+                    for section in document.sections:
+                        for para in getattr(section, attr).paragraphs:
+                            text = para.text.strip()
+                            if text and text not in seen_chrome:
+                                seen_chrome.add(text)
+                                lines.append(text)
+                    if lines:
+                        parts.append(f"--- {label} ---\n" + "\n".join(lines))
+
+                box_text = self._docx_text_boxes(document)
+                if box_text:
+                    parts.append("--- Text boxes ---\n" + "\n".join(box_text))
+
                 full_text = "\n\n".join(parts).strip()
                 if not full_text:
                     return "Word document contains no extractable text."
@@ -562,7 +588,71 @@ class MultimediaService:
             if self._is_ephemeral_download(docx_path, local_path) and os.path.exists(
                 local_path
             ):
-                os.remove(local_path)
+                try:
+                    os.remove(local_path)
+                except OSError:
+                    pass
+
+    @staticmethod
+    def _docx_text_boxes(document) -> list[str]:
+        """Text inside floating shapes, which python-docx has no API for."""
+        ns = {
+            "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        }
+        seen: set[str] = set()
+        out: list[str] = []
+        try:
+            for node in document.element.body.findall(".//w:txbxContent", ns):
+                runs = [t.text or "" for t in node.findall(".//w:t", ns)]
+                text = "".join(runs).strip()
+                if text and text not in seen:
+                    seen.add(text)
+                    out.append(text)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"DOCX text-box scan failed: {exc}")
+        return out
+
+    def extract_docx_images(self, docx_path: str, max_images: int = 20) -> list[str]:
+        """Write a .docx's embedded images to temp files and return their paths.
+
+        A diagram inside a Word document used to be invisible to the pipeline
+        while the same file attached directly got described by Florence. The
+        caller is responsible for deleting the returned paths.
+        """
+        local_path = self._download_temp_file(docx_path)
+        written: list[str] = []
+        try:
+            import docx
+
+            document = docx.Document(local_path)
+            for name, part in document.part.related_parts.items():
+                if len(written) >= max_images:
+                    logger.info(
+                        "DOCX image cap reached (%d) — skipping the rest", max_images
+                    )
+                    break
+                if "image" not in getattr(part, "content_type", ""):
+                    continue
+                blob = getattr(part, "blob", None)
+                # Skip spacers and bullets; they describe as noise.
+                if not blob or len(blob) < 8192:
+                    continue
+                ext = os.path.splitext(str(getattr(part, "partname", name)))[1] or ".png"
+                fd, tmp = tempfile.mkstemp(suffix=ext, prefix="orb_docx_img_")
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(blob)
+                written.append(tmp)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"DOCX image extraction failed: {exc}")
+        finally:
+            if self._is_ephemeral_download(docx_path, local_path) and os.path.exists(
+                local_path
+            ):
+                try:
+                    os.remove(local_path)
+                except OSError:
+                    pass
+        return written
 
     def extract_text_from_spreadsheet(
         self, sheet_path: str

@@ -27,22 +27,43 @@ export function resolveFileUrl(url: string, kbId = "default"): string {
 
 /** Returns true if the URL points to an image file. */
 export function isImageUrl(url: string): boolean {
-  return /\.(jpg|jpeg|png|gif|webp|svg)(\?|$)/i.test(decodeURIComponentSafe(url));
+  // Chromium decodes all of these. HEIC/HEIF are deliberately absent — Safari
+  // shows them, Chromium does not, so an <img> would just break.
+  return /\.(jpg|jpeg|png|gif|webp|svg|avif|bmp|ico)(\?|$)/i.test(
+    decodeURIComponentSafe(url),
+  );
 }
 
 /** Returns true if the URL points to a video file. */
 export function isVideoUrl(url: string): boolean {
-  return /\.(mp4|webm|mov|mkv|m4v)(\?|$)/i.test(decodeURIComponentSafe(url));
+  // .mkv and .avi are intentionally excluded: ingestion accepts them, but
+  // Chromium cannot demux Matroska or AVI, so a <video> element renders a
+  // permanently broken player. They stay as download chips instead.
+  return /\.(mp4|webm|mov|m4v|ogv)(\?|$)/i.test(decodeURIComponentSafe(url));
 }
 
 /** Returns true if the URL points to an audio file. */
 export function isAudioUrl(url: string): boolean {
-  return /\.(m4a|mp3|wav|ogg|aac|flac)(\?|$)/i.test(decodeURIComponentSafe(url));
+  return /\.(m4a|m4b|mp3|wav|ogg|oga|opus|aac|flac|weba)(\?|$)/i.test(
+    decodeURIComponentSafe(url),
+  );
 }
 
 /** Returns true if the URL points to a PDF. */
 export function isPdfUrl(url: string): boolean {
   return /\.pdf(\?|$)/i.test(decodeURIComponentSafe(url));
+}
+
+/** Plain-text-ish files we can show inline without a parser. */
+export function isTextUrl(url: string): boolean {
+  return /\.(txt|md|markdown|log|json|ya?ml|xml|ini|cfg|toml)(\?|$)/i.test(
+    decodeURIComponentSafe(url),
+  );
+}
+
+/** Delimited files worth rendering as a table rather than raw text. */
+export function isTabularUrl(url: string): boolean {
+  return /\.(csv|tsv)(\?|$)/i.test(decodeURIComponentSafe(url));
 }
 
 

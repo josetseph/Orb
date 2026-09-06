@@ -48,7 +48,7 @@ flowchart TD
     D -->|.jpg .jpeg .png .webp .gif| P2[Phase 1b: describe_image → Florence caption<br/>placeholder title token]
     P1 --> U1[unload florence]
     P2 --> U1
-    D -->|.docx| P3[Phase 2a: extract_text_from_docx]
+    D -->|.docx| P3[Phase 2a: extract_text_from_docx<br/>images hoisted into Phase 1]
     D -->|.xlsx .xls .csv .tsv| P4[Phase 2b: extract_text_from_spreadsheet]
     D -->|audio ext or 🎤| P5[Phase 3a: transcribe_audio → Whisper]
     D -->|.mp4 .mov .webm .mkv .avi| P6[Phase 3b: transcribe_video_audio → Whisper]
@@ -174,7 +174,13 @@ The agent then emits the block with a placeholder title `{{ORB_IMAGE_TITLE_n}}`;
 
 ### 5.5 Word — `extract_text_from_docx(path) -> str`
 
-`python-docx`: non-empty paragraph texts, then each table as `--- Table k ---` followed by rows rendered `cell | cell | cell` (rows with all-empty cells skipped); parts joined by blank lines. Empty → `"Word document contains no extractable text."`. Missing library → `RuntimeError("Word extraction unavailable: python-docx is not installed.")`; other errors → `RuntimeError("Word extraction failed: …")`. Headers/footers, images and footnotes are ignored.
+`python-docx`, in this order: non-empty paragraph texts; each table as `--- Table k ---` with rows rendered `cell | cell | cell` (all-empty rows skipped); `--- Header ---` and `--- Footer ---` blocks; and `--- Text boxes ---`. Parts joined by blank lines. Empty → `"Word document contains no extractable text."`. Missing library → `RuntimeError("Word extraction unavailable: python-docx is not installed.")`; other errors → `RuntimeError("Word extraction failed: …")`.
+
+`python-docx` walks `document.paragraphs` only, so the last two blocks are reached deliberately: headers/footers via `section.header/.footer` (deduped, since a running head repeated on every section is pure token cost), and text boxes via `_docx_text_boxes` — an XPath over `.//w:txbxContent//w:t`, because floating shapes have no python-docx API. That matters because a document's title, author and figure captions frequently live in exactly those places.
+
+**Embedded images** — `extract_docx_images(path, max_images=20) -> list[str]` writes each embedded image part to a temp file and returns the paths (caller deletes them). Parts under 8 KB are skipped as chrome: bullets, rules and spacers describe as noise. `ingestion_agent` calls this **before** the phase loop and appends each image to the `images` list, so they ride the existing Florence pass rather than forcing a reload in a later phase — previously a diagram inside a Word file was invisible while the same file attached directly got described. Failures are logged and yield `[]`; extraction never blocks the text path.
+
+**Footnotes/endnotes and comments are still ignored**, and legacy `.doc` is not readable by python-docx at all — `ingestion_agent` now logs a warning and appends `[Unsupported (<name>)]: legacy .doc format — re-save as .docx` instead of skipping in silence. Converting `.docx` → PDF was considered and rejected: it needs LibreOffice, Word (via `docx2pdf`) or pandoc — none bundleable — to recover data python-docx can already read.
 
 ### 5.6 Spreadsheets — `extract_text_from_spreadsheet(path) -> str`
 
@@ -188,7 +194,7 @@ The agent then emits the block with a placeholder title `{{ORB_IMAGE_TITLE_n}}`;
 |---|---|---|---|---|
 | `.pdf` | 1a | `extract_text_from_pdf` | PyMuPDF (+ Florence-2 for embedded images and sparse page renders) | `[PDF Extraction (<filename>)]: <pages>` |
 | `.jpg .jpeg .png .webp .gif` | 1b (+5) | `describe_image` | Florence-2 (`<MORE_DETAILED_CAPTION>`); OpenAI/Gemini vision fallback; chat LLM for the title | `[Image: <title>]\nThe image titled "<title>" shows the following: <caption>` |
-| `.docx` | 2a | `extract_text_from_docx` | none (python-docx) | `[Word Extraction (<filename>)]: <text>` |
+| `.docx` | 2a (+ 1 for its images) | `extract_text_from_docx`, `extract_docx_images` | none for text; Florence-2 for embedded images | `[Word Extraction (<filename>)]: <text>`, plus one `[Image: …]` block per embedded image |
 | `.xlsx .csv .tsv` (`.xls` errors) | 2b | `extract_text_from_spreadsheet` | none (openpyxl / csv) | `[Spreadsheet Extraction (<filename>)]: <text>` |
 | `.m4a .mp3 .wav .ogg .aac` or `🎤` | 3a | `transcribe_audio` | Whisper large-v3-turbo (ffmpeg/pydub or PyAV decode) | `[Audio Transcript (<filename>)]: <text>` |
 | `.mp4 .mov .webm .mkv .avi` | 3b | `transcribe_video_audio` | Whisper | `[Video Audio Transcript (<filename>)]:\n\n<text>` (omitted when empty) |
@@ -205,7 +211,7 @@ Blocks are appended, in phase order, to the end of the (stripped) user body. Eac
 |---|---|---|
 | `[PDF Extraction (<filename>)]` | `: ` | page blocks (`--- Page 1 ---\n\nNative text:\n…\n\nImage descriptions:\nImage 1: …\nPage render: …`) |
 | `[Image: <title>]` | `\n` | `The image titled "<title>" shows the following: <caption>` |
-| `[Word Extraction (<filename>)]` | `: ` | paragraphs / `--- Table k ---` |
+| `[Word Extraction (<filename>)]` | `: ` | paragraphs / `--- Table k ---` / `--- Header ---` / `--- Footer ---` / `--- Text boxes ---` |
 | `[Spreadsheet Extraction (<filename>)]` | `: ` | `--- Sheet: name ---` rows |
 | `[Audio Transcript (<filename>)]` | `: ` | transcript |
 | `[Video Audio Transcript (<filename>)]` | `:\n\n` | transcript |
