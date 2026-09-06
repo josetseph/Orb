@@ -205,7 +205,19 @@ The agent then emits the block with a placeholder title `{{ORB_IMAGE_TITLE_n}}`;
 
 ### 6.1 Exact format
 
-Blocks are appended, in phase order, to the end of the (stripped) user body. Each starts with `\n\n` followed by a bracketed marker:
+Each block is placed **directly beneath the attachment it came from**, wrapped in delimiters that name that attachment:
+
+```markdown
+[📎 Agenda (v2).pdf](/vault-files/kb/attachments/Agenda%20(v2).pdf)
+
+<!-- orb:extract src="/vault-files/kb/attachments/Agenda%20(v2).pdf" -->
+[PDF Extraction (Agenda (v2).pdf)]: --- Page 1 --- ...
+<!-- /orb:extract -->
+```
+
+`place_extraction(content, src_url, section)` inserts after the line holding the link, falling back to appending at the end when the URL is not found (a note edited mid-ingest). `src` is what lets one block be replaced on its own, independent of ordering. HTML comments render as nothing; the editor collapses them to a labelled rule (`extractMarkerExtension.ts`) and shows raw text only on the line being edited.
+
+Inside the delimiters the body is unchanged — each starts with a bracketed marker:
 
 | Marker | Separator after marker | Body |
 |---|---|---|
@@ -223,20 +235,23 @@ The final body is `content.strip()`-ed before extraction, and the vault gets the
 
 ### 6.2 Strip on re-ingest
 
+Re-ingest **replaces**: prior blocks are removed, then regenerated. It never appends to or skips an existing block, and is idempotent.
+
 ```python
-_ENRICHMENT_BLOCK_RE = re.compile(
-    r"\n\n\[(?:"
-    r"PDF Extraction \([^\]]+\)|"
-    r"Image:[^\]]+|"
-    r"Audio Transcript \([^\]]+\)|"
-    r"Video Audio Transcript \([^\]]+\)|"
-    r"Video Visual Analysis \([^\]]+\)|"
-    r"Word Extraction \([^\]]+\)|"
-    r"Spreadsheet Extraction \([^\]]+\)"
-    r")\]"
+EXTRACT_BLOCK_RE = re.compile(
+    r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->", re.S
 )
-def _strip_prior_multimedia_enrichment(content):  # content[: first_match.start()].rstrip()
+def _strip_prior_multimedia_enrichment(content):
+    cleaned = EXTRACT_BLOCK_RE.sub("", content)   # each block, wherever it sits
+    match = _ENRICHMENT_BLOCK_RE.search(cleaned)  # pre-marker notes only
+    if match:
+        cleaned = cleaned[: match.start()]
+    return cleaned.rstrip()
 ```
+
+Removing blocks **individually** is what makes text written *below* an extraction survive. The previous rule cut from the first block header to the end of the note, so anything after it was silently deleted on the next ingest.
+
+`_ENRICHMENT_BLOCK_RE` still exists for notes enriched before delimiters. Those blocks have no closing marker, so "first header to end of note" remains the only boundary available, and its data loss still applies to them — until one re-ingest rewrites them with delimiters. It matches `PDF Extraction`, `Image:`, `Audio Transcript`, `Video Audio Transcript`, `Video Visual Analysis`, `Word Extraction`, `Spreadsheet Extraction` and `Unsupported`.
 
 Detection is by the **first** marker preceded by a blank line; everything from there to the end of the note is discarded. Therefore: (a) blocks are assumed to be a trailing section — user text written after the first block is lost on re-ingest; (b) a marker without a preceding blank line (e.g. at the top of the file, or after a single newline) is not detected and gets re-extracted as user text plus a second copy appended; (c) a user paragraph that happens to start with `[Image: …]` is treated as a block. `content_changed` is True when stripping alone changed the body, so a re-ingest of a note whose attachments were removed still rewrites the `.md` without the stale blocks.
 
