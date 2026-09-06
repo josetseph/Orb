@@ -336,10 +336,8 @@ Who parses them:
 | `[[Title\|shown text]]` | yes | `Title` / `shown text` |
 | `[[Title#Heading]]`, `[[Title#Heading\|alias]]` | **no** — `#` is excluded from group 1 and nothing consumes it before `]]` | not a link for `extract_wikilinks`, not decorated in the editor, not an edge in the notes graph. Only `_WIKILINK_TARGET_RE` (move rewriting) understands `#…` and preserves it. |
 | `[[]]`, `[[ ]]` | no / target stripped to empty → dropped | — |
-| `[Title]` (single brackets) | not a wikilink — but see below | the editor makes it **clickable** when `Title` resolves to an existing note |
+| `[Title]` (single brackets) | no | ordinary markdown: CodeMirror paints a shortcut reference link blue and underlined, but Orb does nothing with it. `[[Title]]` is the only note-link syntax. |
 | `![[embed]]` | matched as a normal link (the `!` is ignored) | Obsidian embeds are treated as links, not rendered |
-
-**Single-bracket `[Note]` (editor only).** Typing `[` auto-closes to `[]`, so reaching for a wikilink and typing the name lands on single brackets. CodeMirror's markdown parser tags that as a shortcut reference link and paints it blue and underlined — it *looks* like a working link while being completely inert, which is a trap worth removing rather than documenting. `createWikilinkDecorations(getNotes)` therefore runs a second pass with `SHORTCUT_REF_RE = /(?<!\[)\[([^[\]\n]+)\](?![[(:\]])/g` (excludes `[[wiki]]`, `[text](url)` and `[ref]:` definitions) and decorates a match **only when `WikilinkResolver` finds a note by that name** — so `[TODO]` and `[1]` keep their ordinary styling and stay inert, and nothing is ever auto-created from a loose bracket. Matches are skipped where a real `[[wikilink]]` already claimed the range. Styled `.cm-wikilink-loose`: the same teal, dotted rather than solid, with a tooltip naming `[[…]]` as the real syntax. This is **editor-only** — `extract_wikilinks`, `note_links`, and the notes graph still require `[[…]]`, so a single-bracket link is navigable but is not a graph edge.
 
 Aliases are ignored for resolution and for `note_links` (only the target is stored).
 

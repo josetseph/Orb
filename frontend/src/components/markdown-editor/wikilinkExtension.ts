@@ -13,25 +13,12 @@ import {
 } from "@codemirror/autocomplete";
 import type { Note } from "@/lib/types";
 import {
-  WikilinkResolver,
   suggestWikilinkNotes,
   type WikilinkSuggestion,
 } from "@/app/notes/_lib/wikilinks";
 import { visibleLineChunks } from "./visibleLineChunks";
 
 const WIKILINK_RE = /\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g;
-
-/**
- * A lone `[Some Note]` — not `[[wiki]]`, not `[text](url)`, not `[ref]:`.
- *
- * Typing `[` auto-closes to `[]`, so someone reaching for a wikilink and then
- * typing the name lands on single brackets. CodeMirror's markdown parser tags
- * that as a shortcut reference link and paints it blue and underlined, so it
- * looks like a working link while being completely inert. We make it clickable
- * when — and only when — it names a note that exists; anything else (`[TODO]`,
- * `[1]`) keeps its ordinary markdown styling and stays inert.
- */
-const SHORTCUT_REF_RE = /(?<!\[)\[([^[\]\n]+)\](?![[(:\]])/g;
 
 /** True when the cursor is inside an unclosed `[[wikilink` (not the alias). */
 export function wikilinkQueryAt(
@@ -146,7 +133,7 @@ class WikilinkWidget extends WidgetType {
  * On inactive lines: hide brackets and show only the display text (colored + underlined).
  * On the active (editing) line: show full [[syntax]] with mark styling.
  */
-export function createWikilinkDecorations(getNotes?: () => Note[]) {
+export function createWikilinkDecorations() {
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
@@ -167,9 +154,6 @@ export function createWikilinkDecorations(getNotes?: () => Note[]) {
 
       build(view: EditorView): DecorationSet {
         const marks: ReturnType<Decoration["range"]>[] = [];
-        // Built once per pass, only when there is something to resolve against.
-        const notes = getNotes?.() ?? [];
-        const resolver = notes.length ? new WikilinkResolver(notes) : null;
         const activeLine = view.state.doc.lineAt(
           view.state.selection.main.head,
         ).number;
@@ -205,29 +189,7 @@ export function createWikilinkDecorations(getNotes?: () => Note[]) {
               );
             }
           }
-
-          if (!resolver) continue;
-          SHORTCUT_REF_RE.lastIndex = 0;
-          let ref: RegExpExecArray | null;
-          while ((ref = SHORTCUT_REF_RE.exec(chunk.text)) !== null) {
-            const target = ref[1].trim();
-            if (!target || !resolver.resolve(target)) continue;
-            const from = chunk.offset + ref.index;
-            // A [[wikilink]] on this line already claimed these characters.
-            if (marks.some((mk) => from >= mk.from && from < mk.to)) continue;
-            marks.push(
-              Decoration.mark({
-                class: "cm-wikilink cm-wikilink-loose",
-                attributes: {
-                  "data-wikilink-target": target,
-                  "data-wikilink-alias": "",
-                  title: `${target} — link to this note with [[${target}]]`,
-                },
-              }).range(from, from + ref[0].length),
-            );
-          }
         }
-        marks.sort((a, b) => a.from - b.from || a.to - b.to);
         return Decoration.set(marks, true);
       }
     },
