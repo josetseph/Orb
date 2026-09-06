@@ -748,6 +748,7 @@ Purpose: let Orb run in an "Obsidian-like limited mode" (notes, wikilinks, vault
 ### `provider_is_configured(provider) -> bool` (working tree)
 
 - `local` / `ollama` / `lm_studio` → `local_models.gguf_paths_if_present() is not None` (chat + embed GGUFs exist per the manifest selection or legacy default names; chat file > 1 MB).
+- `openai_compat` → `_endpoint_is_configured(base_url)`: a non-empty URL, taking the **per-KB** `llm_base_url` when one is passed, else `settings.LLM_BASE_URL`. It cannot be a credential lookup: endpoint keys are stored under `endpoint:<url>`, never under the literal `"openai_compat"`, so `credentials.has("openai_compat")` was always `False` and a KB pinned to a working endpoint got a 503 from `require_ai`. A key is not required (llama-server and LM Studio need none); a remote endpoint missing one fails loudly on first call.
 - `openai` / `gemini` / `anthropic` / `huggingface` → the matching `settings.*_API_KEY` is truthy (`_CLOUD_KEYS` lambdas).
 - Anything else → `False`.
 
@@ -755,7 +756,7 @@ Purpose: let Orb run in an "Obsidian-like limited mode" (notes, wikilinks, vault
 
 **`AI_SETUP_MODE` is not consulted.** It was a second source of truth that could contradict the Models page in both directions: `none` blocked a model that was present and working, and `local` claimed readiness with no weights on disk. What matters is whether a model is actually reachable, so the gate asks that directly:
 
-1. **Per-KB short-circuit:** if `kb` has a truthy `llm_provider`, return `provider_is_configured(kb.llm_provider)`.
+1. **Per-KB short-circuit:** if `kb` has a truthy `llm_provider`, return `provider_is_configured(kb.llm_provider, kb.llm_base_url)` — the pin is judged against its own endpoint, not the system one.
 2. `_local_models_present()` → `local_models.gguf_paths_if_present() is not None`.
 3. Any provider in `credentials.CLOUD_PROVIDERS` holding a key (keychain-pushed or env-seeded; includes `huggingface`).
 4. `_endpoint_is_configured()` → a non-empty `LLM_BASE_URL`. No key is required: llama-server and LM Studio need none, and a remote endpoint missing its key fails loudly on first call, which is a better error than "AI is not configured".

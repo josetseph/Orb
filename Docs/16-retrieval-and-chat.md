@@ -143,7 +143,7 @@ All chat routes except `status` and `export` take the `kb` query parameter via `
 | GET | `/api/v1/chat/status/{request_id}` | none | Reads `_chat_status[request_id]`; unknown id → `{"stage":"Waiting","model":null,"done":false}` |
 | GET | `/api/v1/chat/conversations/{id}/export?format=markdown\|json` | none (desktop router) | Broken (500) — see §4.6 |
 
-`require_ai(kb)` (`services/ai_gate.py`) raises **503** `{"error":"ai_not_configured","message":...}` unless AI is usable. Resolution order: if the KB pins its own `llm_provider` (per-KB LLM override, see §5.5), the gate passes iff that provider is configured (`provider_is_configured`: local → chat+embed GGUFs on disk; cloud → its API key set). Otherwise the gate asks whether anything is reachable at all: chat+embed GGUFs on disk, **or** any cloud provider key in the credential store, **or** a non-empty `LLM_BASE_URL`. `AI_SETUP_MODE` is not consulted.
+`require_ai(kb)` (`services/ai_gate.py`) raises **503** `{"error":"ai_not_configured","message":...}` unless AI is usable. Resolution order: if the KB pins its own `llm_provider` (per-KB LLM override, see §5.5), the gate passes iff that provider is configured (`provider_is_configured`: local → chat+embed GGUFs on disk; `openai_compat` → the KB's own `llm_base_url` (or the system one) is non-empty; other cloud → its API key set). Otherwise the gate asks whether anything is reachable at all: chat+embed GGUFs on disk, **or** any cloud provider key in the credential store, **or** a non-empty `LLM_BASE_URL`. `AI_SETUP_MODE` is not consulted.
 
 ### 4.2 Request id and conversation resolution
 

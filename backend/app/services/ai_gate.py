@@ -7,8 +7,8 @@ from fastapi import HTTPException
 from app.core.config import settings
 
 
-def provider_is_configured(provider: str | None) -> bool:
-    """Can ``provider`` answer right now (key present / GGUFs on disk)?"""
+def provider_is_configured(provider: str | None, base_url: str | None = None) -> bool:
+    """Can ``provider`` answer right now (endpoint set / key present / GGUFs on disk)?"""
     name = (provider or "").lower().strip()
     if name in ("local", "ollama", "lm_studio"):
         try:
@@ -17,6 +17,14 @@ def provider_is_configured(provider: str | None) -> bool:
             return gguf_paths_if_present() is not None
         except Exception:  # pylint: disable=broad-exception-caught
             return False
+    if name == "openai_compat":
+        # An endpoint's credential is stored under "endpoint:<url>", never under
+        # the literal "openai_compat", so the credential lookup below always
+        # missed and a KB pinned to a working endpoint was refused with a 503.
+        # What makes it usable is having a URL to call; a key is optional
+        # (llama-server and LM Studio need none) and a remote endpoint missing
+        # one fails loudly on the first call, which is the better error.
+        return _endpoint_is_configured(base_url)
     from app.services.credentials import credentials
 
     return credentials.has(name)
@@ -31,14 +39,15 @@ def _local_models_present() -> bool:
         return False
 
 
-def _endpoint_is_configured() -> bool:
+def _endpoint_is_configured(base_url: str | None = None) -> bool:
     """An OpenAI-compatible endpoint the user actually filled in.
 
-    A key is not required: llama-server and LM Studio need none, and a remote
-    endpoint missing its key fails loudly on the first call, which is a better
-    error than "AI is not configured".
+    ``base_url`` lets a per-KB pin be judged on its own endpoint rather than the
+    system one. A key is not required: llama-server and LM Studio need none, and
+    a remote endpoint missing its key fails loudly on the first call, which is a
+    better error than "AI is not configured".
     """
-    return bool((settings.LLM_BASE_URL or "").strip())
+    return bool((base_url or settings.LLM_BASE_URL or "").strip())
 
 
 def chat_is_local_only() -> bool:
@@ -63,7 +72,9 @@ def ai_is_configured(kb=None) -> bool:
     # A KB that pins its own provider is usable whenever that provider is.
     kb_provider = getattr(kb, "llm_provider", None) if kb is not None else None
     if kb_provider:
-        return provider_is_configured(kb_provider)
+        return provider_is_configured(
+            kb_provider, getattr(kb, "llm_base_url", None)
+        )
 
     if _local_models_present():
         return True

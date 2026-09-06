@@ -84,3 +84,44 @@ class TestDerivedMode:
         monkeypatch.setattr(config.settings, "LLM_PROVIDER", "openai_compat")
         monkeypatch.setattr(config.settings, "LLM_BASE_URL", "https://api.example.com/v1")
         assert ai_gate.derived_setup_mode() == "cloud"
+
+
+class TestOpenAICompatKBPin:
+    """A KB pinned to an OpenAI-compatible endpoint must not be refused.
+
+    Endpoint credentials are stored under "endpoint:<url>", never under the
+    literal "openai_compat", so a credential lookup by provider name always
+    missed and require_ai returned 503 for a KB that was correctly configured.
+    """
+
+    @staticmethod
+    def _kb(base_url):
+        class KB:
+            llm_provider = "openai_compat"
+            llm_base_url = base_url
+            name = "Intelligent Computing Systems"
+
+        return KB()
+
+    def test_pinned_endpoint_is_configured(self):
+        kb = self._kb("https://generativelanguage.googleapis.com/v1beta/openai")
+        assert ai_gate.ai_is_configured(kb) is True
+
+    def test_require_ai_lets_it_through(self):
+        kb = self._kb("https://generativelanguage.googleapis.com/v1beta/openai")
+        ai_gate.require_ai(kb)  # must not raise
+
+    def test_no_credential_named_openai_compat_is_needed(self):
+        """The old failure: has("openai_compat") is always False."""
+        from app.services.credentials import credentials
+
+        assert credentials.has("openai_compat") is False
+        assert ai_gate.provider_is_configured("openai_compat", "http://127.0.0.1:8080/v1")
+
+    def test_kb_endpoint_wins_over_an_unset_system_url(self, monkeypatch):
+        monkeypatch.setattr(config.settings, "LLM_BASE_URL", "")
+        assert ai_gate.ai_is_configured(self._kb("https://api.example.com/v1")) is True
+
+    def test_pin_with_no_endpoint_anywhere_is_still_refused(self, monkeypatch):
+        monkeypatch.setattr(config.settings, "LLM_BASE_URL", "")
+        assert ai_gate.ai_is_configured(self._kb(None)) is False
