@@ -44,6 +44,9 @@ export default function ModelsPage() {
   const [kbModel, setKbModel] = useState("");
   const [kbUrl, setKbUrl] = useState("");
   const [kbCloudModel, setKbCloudModel] = useState("");
+  // Empty = ingestion follows the chat model above. Kept opt-in: one model is
+  // the right default, and the page exists to make model choices legible.
+  const [kbIngestModel, setKbIngestModel] = useState("");
 
   // System draft
   const [sysMode, setSysMode] = useState<Mode>("local");
@@ -72,6 +75,7 @@ export default function ModelsPage() {
       setKbUrl(ov?.base_url ?? "");
       if (ov?.provider === "openai_compat") setKbCloudModel(ov?.model ?? "");
       else setKbModel(ov?.model ?? "");
+      setKbIngestModel(ov?.ingestion_model ?? "");
       setError(null);
     } catch {
       setError("Could not load models. Is the backend running?");
@@ -130,14 +134,14 @@ export default function ModelsPage() {
         await api.updateKBLLM(state.kb.id, {
           provider: "local",
           model: kbModel,
-          ingestion_model: "",
+          ingestion_model: kbIngestModel,
           base_url: "",
         });
       } else {
         await api.updateKBLLM(state.kb.id, {
           provider: "openai_compat",
           model: kbCloudModel,
-          ingestion_model: "",
+          ingestion_model: kbIngestModel,
           base_url: kbUrl,
         });
       }
@@ -326,6 +330,44 @@ export default function ModelsPage() {
               />
             )}
 
+            {kbMode !== "inherit" && (
+              <div className="space-y-1.5 border-t border-white/5 pt-3">
+                <label className="flex items-center gap-2 text-xs text-white/45">
+                  <input
+                    type="checkbox"
+                    checked={kbIngestModel !== ""}
+                    onChange={(e) =>
+                      setKbIngestModel(
+                        e.target.checked
+                          ? kbMode === "cloud"
+                            ? kbCloudModel
+                            : kbModel
+                          : "",
+                      )
+                    }
+                    className="h-3.5 w-3.5 accent-purple-500"
+                  />
+                  Use a different model for note ingestion
+                </label>
+                {kbIngestModel === "" ? (
+                  <p className="text-[11px] text-white/25">
+                    Ingestion uses the model above. Extraction emits strict JSON
+                    that the whole graph is built from — a cheaper model here
+                    saves on the highest-volume calls, but weak structured
+                    output costs more than it saves.
+                  </p>
+                ) : (
+                  <input
+                    type="text"
+                    value={kbIngestModel}
+                    onChange={(e) => setKbIngestModel(e.target.value)}
+                    placeholder="model name for extraction"
+                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
+                  />
+                )}
+              </div>
+            )}
+
             <div className="flex items-center justify-between pt-1">
               <p className="text-[11px] text-white/30">
                 Now using:{" "}
@@ -335,6 +377,15 @@ export default function ModelsPage() {
                     : `on this device · ${effective?.model ?? "—"}`}
                 </span>
                 {effective?.inherited ? " (inherited)" : " (pinned)"}
+                {effective?.ingestion_model &&
+                  effective.ingestion_model !== effective.model && (
+                    <>
+                      {" · ingestion: "}
+                      <span className="text-white/60">
+                        {effective.ingestion_model}
+                      </span>
+                    </>
+                  )}
               </p>
               <div className="flex items-center gap-2">
                 <SavedTick show={saved === "kb"} />
