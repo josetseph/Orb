@@ -1,7 +1,14 @@
 import type { NoteAttachment } from "./types";
 
-const ATTACHMENT_REGEX =
-  /(?:!\[([^\]]*)\]\(([^)]+)\)|\[([📎🖇🎤][^\]]+)\]\(([^)]+)\))/g;
+// A markdown URL may contain balanced parentheses — "Report (2026).pdf" is a
+// valid link target. Matching [^)]+ stopped at the first ")" and dropped the
+// attachment entirely, so a note with two PDFs rendered only the one whose
+// name had no brackets. One nesting level covers real filenames.
+const URL_PART = "(?:[^()\\n]|\\([^()\\n]*\\))+";
+const ATTACHMENT_REGEX = new RegExp(
+  `(?:!\\[([^\\]]*)\\]\\((${URL_PART})\\)|\\[([📎🖇🎤][^\\]]+)\\]\\((${URL_PART})\\))`,
+  "g",
+);
 
 export function parseNoteAttachments(content: string): NoteAttachment[] {
   const attachments: NoteAttachment[] = [];

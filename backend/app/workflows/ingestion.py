@@ -2111,7 +2111,10 @@ class IngestionWorkflow:
                     system_prompt=(
                         "You are a knowledge synthesis assistant. "
                         "Summarize the main topics, events, and themes from the provided "
-                        "notes into a concise paragraph. "
+                        "documents into a concise paragraph. They may be personal notes, "
+                        "course material, meeting records, or reference material — "
+                        "describe what they contain, without assuming who wrote them "
+                        "or why. "
                         "Return only the summary paragraph — no headers, no bullet points."
                     ),
                     user_prompt=(

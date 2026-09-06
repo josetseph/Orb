@@ -462,7 +462,10 @@ def _attachment_rels_from_note_body(body: str) -> list[str]:
 
     rels: list[str] = []
     seen: set[str] = set()
-    for match in _re.finditer(r"!?\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)", body or ""):
+    # Balanced parentheses are legal in a markdown URL ("Report (2026).pdf");
+    # matching [^)\s]+ truncated those and left the file orphaned on disk.
+    _link = r"!?\[[^\]]*\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+\"[^\"]*\")?\)"
+    for match in _re.finditer(_link, body or ""):
         raw = match.group(1).rstrip("/")
         rel = vault_rel_from_url(raw)
         if not rel and raw.startswith("attachments/"):

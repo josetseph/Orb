@@ -70,6 +70,7 @@ def _build_extraction_prompt(extraction_content: str) -> str:
 
 ## CORE RULES
 
+- The note may be anything: personal notes, lecture or course material, company or technical documentation, meeting records, research. Extract what the text says. Do not assume the reader wrote it, and do not describe it as someone's personal knowledge.
 - Extract **every** entity, no matter how minor. Do not skip implicit or background entities.
 - Do **not** use outside knowledge. Every piece of context must be grounded in the note.
 - Do **not** hallucinate relationships. If it isn't stated or strongly implied by the text, it doesn't exist.
@@ -210,6 +211,19 @@ Now apply this entire process to the following note and return only the JSON out
 {extraction_content}
 """
 
+
+# Unified file link parsing (vault-files + optional remote http(s)):
+#   [📎 Filename](/vault-files/...) · [🎤 Voice Recording](...) · ![alt](...)
+#
+# URLs may contain unencoded spaces and commas (common for uploaded filenames),
+# so the pattern does not stop at whitespace. They may also contain *balanced*
+# parentheses — "Report (2026).pdf" is a legal markdown link target. Stopping at
+# the first ")" truncated the URL, so the attachment was silently dropped: the
+# file never reached PDF/image extraction and never rendered in the note. One
+# level of nesting covers real filenames.
+_ATTACHMENT_URL = r"(?:https?://|/vault-files/)(?:[^()\n]|\([^()\n]*\))+"
+ATTACHMENT_LINK_RE = re.compile(rf"\[(📎|🎤)\s*(.*?)\]\(({_ATTACHMENT_URL})\)")
+IMAGE_LINK_RE = re.compile(rf"!\[([^\]]*)\]\(({_ATTACHMENT_URL})\)")
 
 _MAX_EXTRACTION_ATTEMPTS = 3
 _MAX_SPLIT_DEPTH = 3
@@ -373,19 +387,8 @@ async def multimodal_node(
         pending_image_titles: list[dict[str, str]] = []
         _llm = _wf._llm
 
-        # Unified file link parsing (vault-files + optional remote http(s)):
-        # - [📎 Filename](/vault-files/...)
-        # - [🎤 Voice Recording](...)
-        # - ![alt](...) image markdown from the notes UI
-        # URLs may contain unencoded spaces/commas (common for uploaded filenames);
-        # stop at ')' only — not at whitespace.
         import os
-        import re
         from urllib.parse import unquote
-
-        _URL = r"(?:https?://[^)]+|/(?:vault-files)/[^)]+)"
-        _ATTACH_RE = re.compile(rf"\[(📎|🎤)\s*(.*?)\]\(({_URL})\)")
-        _IMAGE_MD_RE = re.compile(rf"!\[([^\]]*)\]\(({_URL})\)")
 
         attachments: list[dict[str, str]] = []
         seen_urls: set[str] = set()
@@ -408,9 +411,9 @@ async def multimodal_node(
                 }
             )
 
-        for emoji, filename, url in _ATTACH_RE.findall(content):
+        for emoji, filename, url in ATTACHMENT_LINK_RE.findall(content):
             _add_attachment(emoji, filename, url)
-        for alt, url in _IMAGE_MD_RE.findall(content):
+        for alt, url in IMAGE_LINK_RE.findall(content):
             _add_attachment("📎", alt, url)
 
         video_exts = (".mp4", ".mov", ".webm", ".mkv", ".avi")

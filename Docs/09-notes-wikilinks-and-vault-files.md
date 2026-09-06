@@ -287,7 +287,7 @@ Used by note delete (attachment discovery), `remove_upload`, `GET /api/v1/vault/
 ### 8.5 Client helpers (`frontend/src/lib/utils.ts`)
 
 - `resolveFileUrl(url, kbId)`: repairs doubled `attachments/attachments/`; `attachments/x` → `/vault-files/<kbId>/attachments/x` (kbId is whatever the caller has — the **slug** from `useKB`, which the server accepts); `/vault-files/…` passthrough.
-- `encodeFileUrl(url)`: per-segment `encodeURIComponent` after a safe decode, keeping the `/vault-files/<kb>/` prefix intact. The editor inserts encoded URLs; the backend's `rewrite_refs_in_text`/`strip_refs_in_text` handle both encoded and raw forms for this reason.
+- `encodeFileUrl(url)`: per-segment `encodePathSegment` (an `encodeURIComponent` that additionally escapes `(`, `)`, `[`, `]` as `%28 %29 %5B %5D`) after a safe decode, keeping the `/vault-files/<kb>/` prefix intact. `encodeURIComponent` leaves `!'()*` alone by design, and a bare `)` closes a `[label](url)` link early — so a filename with brackets used to produce a link that pointed at a truncated path and rendered as raw text. Every consumer below also accepts balanced parentheses, so links written before this are read correctly without rewriting the vault. The editor inserts encoded URLs; the backend's `rewrite_refs_in_text`/`strip_refs_in_text` handle both encoded and raw forms for this reason.
 
 ## 9. Attachment discovery regexes and markers (editor ↔ ingestion contract)
 
@@ -303,10 +303,10 @@ Who parses them:
 
 | Consumer | Pattern | Notes |
 |---|---|---|
-| `ingestion_agent.multimodal_node` | `_URL = (?:https?://[^)]+\|/(?:vault-files)/[^)]+)`; `_ATTACH_RE = \[(📎\|🎤)\s*(.*?)\]\((URL)\)`; `_IMAGE_MD_RE = !\[([^\]]*)\]\((URL)\)` | URL runs to the closing `)` — spaces/commas allowed (uploaded filenames). Dedup by lower-cased, unquoted URL sans query. Type is decided by **extension** (`video .mp4 .mov .webm .mkv .avi`; `audio .m4a .mp3 .wav .ogg .aac`; `image .jpg .jpeg .png .webp .gif`; spreadsheets `.xlsx .xls .csv .tsv`; plus PDF/Word handled in the same node) — `🎤` only forces audio when the extension is unknown. Remote `http(s)` URLs are also accepted (guarded against SSRF/oversize elsewhere). `🖇` is **not** recognised by the backend. |
-| `api/notes._attachment_rels_from_note_body` (delete) | `!?\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)` | any link/image whose URL maps to a vault rel; stops at whitespace (so URLs with raw spaces are missed → those attachments are **not** deleted with the note). |
-| `parse-note-attachments.ts` (attachments strip) | `(?:!\[([^\]]*)\]\(([^)]+)\)\|\[([📎🖇🎤][^\]]+)\]\(([^)]+)\))` | label stripped of the leading marker. |
-| `mediaEmbedExtension.ts` (inline embeds) | `(?:!\[([^\]]*)\]\(([^)\n]+)\)\|\[([📎🖇🎤]?[^\]]*)\]\(([^)\n]+)\))` | plain links without a marker only embed for YouTube/Vimeo. |
+| `ingestion_agent` (module-level `ATTACHMENT_LINK_RE` / `IMAGE_LINK_RE`) | `_ATTACHMENT_URL = (?:https?://\|/vault-files/)(?:[^()\n]|\([^()\n]*\))+`; `ATTACHMENT_LINK_RE = \[(📎\|🎤)\s*(.*?)\]\((URL)\)`; `IMAGE_LINK_RE = !\[([^\]]*)\]\((URL)\)` | URL runs to the closing `)` — spaces/commas allowed (uploaded filenames), and **balanced parentheses** are kept, so `Report (2026).pdf` survives (one nesting level). Dedup by lower-cased, unquoted URL sans query. Type is decided by **extension** (`video .mp4 .mov .webm .mkv .avi`; `audio .m4a .mp3 .wav .ogg .aac`; `image .jpg .jpeg .png .webp .gif`; spreadsheets `.xlsx .xls .csv .tsv`; plus PDF/Word handled in the same node) — `🎤` only forces audio when the extension is unknown. Remote `http(s)` URLs are also accepted (guarded against SSRF/oversize elsewhere). `🖇` is **not** recognised by the backend. |
+| `api/notes._attachment_rels_from_note_body` (delete) | `!?\[[^\]]*\]\(((?:[^()\s]\|\([^()\s]*\))+)(?:\s+"[^"]*")?\)` | any link/image whose URL maps to a vault rel; balanced parentheses allowed, but still stops at whitespace (so URLs with raw spaces are missed → those attachments are **not** deleted with the note). |
+| `parse-note-attachments.ts` (attachments strip) | `URL_PART = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((URL_PART)\)\|\[([📎🖇🎤][^\]]+)\]\((URL_PART)\))` | label stripped of the leading marker. |
+| `mediaEmbedExtension.ts` (inline embeds) | `MEDIA_URL = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((MEDIA_URL)\)\|\[([📎🖇🎤]?[^\]]*)\]\((MEDIA_URL)\))` | plain links without a marker only embed for YouTube/Vimeo. |
 | `segmented-note-content.tsx`, `chat/page.tsx` | `text.startsWith("📎"/"🎤")` | render attachment buttons / inline media in read views and chat citations. |
 
 **Enrichment blocks.** After multimodal extraction, the ingestion agent appends sections to the note body and persists them into the `.md`. The block headers are the only markers; `_ENRICHMENT_BLOCK_RE` matches the first of:
@@ -336,7 +336,10 @@ Who parses them:
 | `[[Title\|shown text]]` | yes | `Title` / `shown text` |
 | `[[Title#Heading]]`, `[[Title#Heading\|alias]]` | **no** — `#` is excluded from group 1 and nothing consumes it before `]]` | not a link for `extract_wikilinks`, not decorated in the editor, not an edge in the notes graph. Only `_WIKILINK_TARGET_RE` (move rewriting) understands `#…` and preserves it. |
 | `[[]]`, `[[ ]]` | no / target stripped to empty → dropped | — |
+| `[Title]` (single brackets) | not a wikilink — but see below | the editor makes it **clickable** when `Title` resolves to an existing note |
 | `![[embed]]` | matched as a normal link (the `!` is ignored) | Obsidian embeds are treated as links, not rendered |
+
+**Single-bracket `[Note]` (editor only).** Typing `[` auto-closes to `[]`, so reaching for a wikilink and typing the name lands on single brackets. CodeMirror's markdown parser tags that as a shortcut reference link and paints it blue and underlined — it *looks* like a working link while being completely inert, which is a trap worth removing rather than documenting. `createWikilinkDecorations(getNotes)` therefore runs a second pass with `SHORTCUT_REF_RE = /(?<!\[)\[([^[\]\n]+)\](?![[(:\]])/g` (excludes `[[wiki]]`, `[text](url)` and `[ref]:` definitions) and decorates a match **only when `WikilinkResolver` finds a note by that name** — so `[TODO]` and `[1]` keep their ordinary styling and stay inert, and nothing is ever auto-created from a loose bracket. Matches are skipped where a real `[[wikilink]]` already claimed the range. Styled `.cm-wikilink-loose`: the same teal, dotted rather than solid, with a tooltip naming `[[…]]` as the real syntax. This is **editor-only** — `extract_wikilinks`, `note_links`, and the notes graph still require `[[…]]`, so a single-bracket link is navigable but is not a graph edge.
 
 Aliases are ignored for resolution and for `note_links` (only the target is stored).
 

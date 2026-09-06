@@ -299,7 +299,7 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
 
   ```
   You are a precision knowledge extraction engine. Your sole function is to decompose any input note into a fully structured knowledge graph — extracting every entity, every relationship, and generating an isolated contextual description for each entity as it exists *within the note only*.
-  ## CORE RULES  (extract every entity; no outside knowledge; no hallucinated relationships; mandatory co-reference resolution; directional relationships -> / <->; canonical names)
+  ## CORE RULES  (the note may be personal notes, course material, company/technical docs, meeting records — extract what the text says, do not assume the reader wrote it; extract every entity; no outside knowledge; no hallucinated relationships; mandatory co-reference resolution; directional relationships -> / <->; canonical names)
   ## STEP-BY-STEP PROCESS
   ### STEP 1 — Entity Extraction  (name, type ∈ examples Person/Place/Organization/Event/Work/Thing/Concept/Time Period — "not an exhaustive list", type_reasoning)
   ### STEP 2 — Relationship Extraction (source_name, target_name, snake_case relationship_type, natural_language, reasoning citing the text)
@@ -312,6 +312,8 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
   ```
 - **Model-specific**: none in the prompt; local vs cloud differ only in chunk budget (`ingestion_context_tokens`: `ORB_LLAMA_N_CTX` for local, 128000 for cloud) and truncation detection.
 
+
+**Source-neutral framing.** Orb is used for personal notes, course material, company and technical documentation and meeting records, so no prompt describes the corpus as the reader's own. The extraction prompt's first CORE RULE says so explicitly ("Do not assume the reader wrote it, and do not describe it as someone's personal knowledge"), the query rewriter says "document collection", and the temporal-digest summariser says "documents … without assuming who wrote them or why". Keep new prompts neutral: a model told it is reading a personal knowledge base narrates a company's meeting minutes as if they were a diary.
 ### 9.2 Batched image titling — `ingestion_agent.py::_batch_image_titles(llm, items)`
 
 - **Purpose**: name each Florence-described image once per note so the enrichment block reads `[Image: <title>]` (placeholder tokens `{{ORB_IMAGE_TITLE_n}}` are substituted; filename fallback). Batched deliberately: calling the chat GGUF per image evicted Florence each time.
@@ -362,7 +364,7 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
 
 - **Purpose**: turn a follow-up into a standalone retrieval query (pronoun resolution) before retrieval.
 - **Call**: `_reason_step_sync` (system `"You are a precise query rewriter. Output only the rewritten query."`), OpenAI-shaped providers only.
-- **Prompt**: `"You rewrite follow-up questions into standalone search queries for a personal knowledge base.\n\nCONVERSATION:\n{User:/Assistant: lines, last 24 turns, each content truncated to 600 chars}\n\nLATEST USER MESSAGE: {latest}\n\nReturn ONE standalone search query that captures what the user is asking now, resolving pronouns and references from the conversation.\nDo not answer the question. Do not add explanation.\nReply with only the rewritten query."`
+- **Prompt**: `"You rewrite follow-up questions into standalone search queries for a document collection.e.\n\nCONVERSATION:\n{User:/Assistant: lines, last 24 turns, each content truncated to 600 chars}\n\nLATEST USER MESSAGE: {latest}\n\nReturn ONE standalone search query that captures what the user is asking now, resolving pronouns and references from the conversation.\nDo not answer the question. Do not add explanation.\nReply with only the rewritten query."`
 - **Format**: single line; quotes stripped; accepted if ≤ 300 chars; else original query. Skipped entirely when there is no history. Tested in `test_chat_context.py`.
 
 ### 9.10 Iterative research step — `LLMService.iterative_step(...)`

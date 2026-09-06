@@ -927,7 +927,7 @@ class LLMService:
 
         prompt = (
             "You rewrite follow-up questions into standalone search queries for a "
-            "personal knowledge base.\n\n"
+            "document collection.\n\n"
             "CONVERSATION:\n"
             + "\n".join(lines)
             + "\n\n"
@@ -1554,8 +1554,10 @@ class LLMService:
         """
 
     # ── General KB mode rules (BENCHMARK_MODE=False) ──────────────────────────
-    # Used for personal knowledge bases where the goal is a thorough,
-    # natural-language answer — not a single extracted fact.
+    # Used when the goal is a thorough, natural-language answer rather than a
+    # single extracted fact. A collection may be personal notes, course
+    # material, or company documents — the rules stay source-neutral so the
+    # model does not narrate someone's meeting minutes as a diary.
 
     _REASONING_RULES_GENERAL = """
         REASONING RULES:

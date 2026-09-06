@@ -500,7 +500,7 @@ export default function ChatPage() {
               <Sparkles className="mb-4 h-12 w-12 text-purple-400" />
               <h2 className="mb-2 text-2xl font-bold text-white">{greeting}</h2>
               <p className="mb-8 text-center text-white/60">
-                Ask me anything about your notes, thoughts, and knowledge graph
+                Ask me anything about your notes, documents, and knowledge graph
               </p>
               <div className="flex flex-wrap justify-center gap-2">
                 {suggestions.map((suggestion, index) => (

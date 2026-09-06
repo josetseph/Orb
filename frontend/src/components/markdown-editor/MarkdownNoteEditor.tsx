@@ -302,7 +302,7 @@ const MarkdownNoteEditor = forwardRef<
       ...liveMarkdownExtensions,
       createLivePreviewHideMarks(),
       cmPlaceholder(placeholder),
-      createWikilinkDecorations(),
+      createWikilinkDecorations(() => notesRef.current),
       createMediaEmbedDecorations(kb),
       entityDecorationsCompartment.of(
         createEntityDecorations(scannedEntities),

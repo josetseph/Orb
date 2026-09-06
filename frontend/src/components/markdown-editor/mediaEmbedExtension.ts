@@ -23,8 +23,13 @@ import { visibleLineChunks } from "./visibleLineChunks";
  * URLs may contain spaces (unencoded filenames) — match until `)`.
  * Accepts 📎 (paperclip) and 🖇 (paperclips) markers used by older/newer inserts.
  */
-const MEDIA_RE =
-  /(?:!\[([^\]]*)\]\(([^)\n]+)\)|\[([📎🖇🎤]?[^\]]*)\]\(([^)\n]+)\))/g;
+// A markdown URL may hold balanced parentheses ("Report (2026).pdf"), so
+// [^)\n]+ stopped mid-filename and the embed silently did not render.
+const MEDIA_URL = "(?:[^()\\n]|\\([^()\\n]*\\))+";
+const MEDIA_RE = new RegExp(
+  `(?:!\\[([^\\]]*)\\]\\((${MEDIA_URL})\\)|\\[([📎🖇🎤]?[^\\]]*)\\]\\((${MEDIA_URL})\\))`,
+  "g",
+);
 
 type MediaKind = "image" | "video" | "audio" | "pdf" | "youtube" | "vimeo";
 

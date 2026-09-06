@@ -98,6 +98,22 @@ function decodeURIComponentSafe(value: string): string {
 }
 
 /** Encode each path segment of a vault/file URL for safe markdown links. */
+/**
+ * Percent-encode one path segment for use inside a markdown link.
+ *
+ * ``encodeURIComponent`` deliberately leaves ``!'()*`` alone, but an unescaped
+ * ``)`` closes a ``[label](url)`` link early — so a file called
+ * ``Report (2026).pdf`` produced a link that pointed at ``Report (2026`` and
+ * rendered as raw text. Brackets get the same treatment for the label's sake.
+ */
+function encodePathSegment(segment: string): string {
+  return encodeURIComponent(segment)
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29")
+    .replace(/\[/g, "%5B")
+    .replace(/\]/g, "%5D");
+}
+
 export function encodeFileUrl(url: string): string {
   if (!url) return url;
   if (url.startsWith("/vault-files/")) {
@@ -108,13 +124,13 @@ export function encodeFileUrl(url: string): string {
     const path = rest.slice(slash + 1);
     return `/vault-files/${encodeURIComponent(kb)}/${path
       .split("/")
-      .map((p) => encodeURIComponent(decodeURIComponentSafe(p)))
+      .map((p) => encodePathSegment(decodeURIComponentSafe(p)))
       .join("/")}`;
   }
   if (url.startsWith("attachments/") || !url.includes("://")) {
     return url
       .split("/")
-      .map((p) => encodeURIComponent(decodeURIComponentSafe(p)))
+      .map((p) => encodePathSegment(decodeURIComponentSafe(p)))
       .join("/");
   }
   return url;

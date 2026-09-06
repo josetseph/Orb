@@ -129,6 +129,12 @@ const editorTheme = EditorView.theme(
       textDecorationColor: "rgba(94, 234, 212, 0.7)",
       cursor: "pointer",
     },
+    /* A single-bracket [Note] that happens to name a real note: clickable,
+       but dotted so it reads as "this works, though [[…]] is the real syntax". */
+    ".cm-wikilink-loose": {
+      textDecorationStyle: "dotted",
+      textDecorationColor: "rgba(94, 234, 212, 0.45)",
+    },
     /* Inline media embeds (images / video / audio) */
     ".cm-media-embed": {
       display: "block",

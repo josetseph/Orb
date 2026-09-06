@@ -524,7 +524,7 @@ Only the note's own `.md` (enriched body via `note_files.persist_note_body`, whi
 Extraction (`_build_extraction_prompt(extraction_content)`, ~1.9k tokens of fixed text; full text in `ingestion_agent.py`):
 
 ```
-You are a precision knowledge extraction engine. …
+You are a precision knowledge extraction engine. … (CORE RULES open by naming the corpus as possibly personal notes, course material, company docs or meeting records — prompts stay source-neutral; see [13 §9.1](13-llm-providers-and-prompting.md))
 ## CORE RULES  (extract every entity; no outside knowledge; no hallucinated relationships;
                 co-reference resolution; directional relationships; canonical names)
 ## STEP-BY-STEP PROCESS
