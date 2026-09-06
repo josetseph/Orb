@@ -129,6 +129,24 @@ const editorTheme = EditorView.theme(
       textDecorationColor: "rgba(94, 234, 212, 0.7)",
       cursor: "pointer",
     },
+    /* Generated-extraction delimiters: a rule with a quiet label, not markup */
+    ".cm-extract-marker": {
+      display: "block",
+      borderTop: "1px solid rgba(94, 234, 212, 0.18)",
+      marginTop: "6px",
+      paddingTop: "3px",
+      fontSize: "10px",
+      letterSpacing: "0.04em",
+      textTransform: "uppercase",
+      color: "rgba(94, 234, 212, 0.45)",
+      userSelect: "none",
+    },
+    ".cm-extract-marker-end": {
+      borderTop: "1px dashed rgba(94, 234, 212, 0.14)",
+      marginTop: "3px",
+      paddingTop: "0",
+      height: "0",
+    },
     /* Inline media embeds (images / video / audio) */
     ".cm-media-embed": {
       display: "block",

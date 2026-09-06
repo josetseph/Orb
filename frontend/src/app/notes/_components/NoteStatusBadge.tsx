@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import type { Note } from "@/lib/types";
 import {
   getProcessingLabel,
+  getProcessingStage,
   isActiveProcessingNote,
   isPendingReingestNote,
 } from "../_lib/processing-status";
@@ -36,7 +37,7 @@ export function NoteStatusBadge({ note }: NoteStatusBadgeProps) {
         title={getProcessingLabel(note)}
       >
         <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-        Ingesting…
+        <span className="truncate">{getProcessingStage(note)}</span>
       </span>
     );
   }

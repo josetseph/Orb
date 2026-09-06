@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import type { Note } from "@/lib/types";
 import {
   getProcessingLabel,
+  getProcessingStage,
   isActiveProcessingNote,
 } from "../_lib/processing-status";
 import { NoteStatusBadge } from "./NoteStatusBadge";
@@ -93,7 +94,9 @@ export function NoteEditorHeader({
             {selectedNote && isActiveProcessingNote(selectedNote) ? (
               <>
                 <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                <span className="whitespace-nowrap">Ingesting…</span>
+                <span className="max-w-[16rem] truncate">
+                  {getProcessingStage(selectedNote)}
+                </span>
               </>
             ) : isSaving ? (
               <>

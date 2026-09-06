@@ -7,6 +7,22 @@ export function getProcessingLabel(
   return note.processing_model ? `${stage} (${note.processing_model})` : stage;
 }
 
+/**
+ * Short stage name for a badge, without the model suffix.
+ *
+ * The pipeline reports real stages ("Reading PDF pages and images",
+ * "Transcribing audio", "Unloading image model"), which is the difference
+ * between "something is happening" and knowing a 20-minute transcription is
+ * under way. Falls back to "Ingesting…" before the first stage lands.
+ */
+export function getProcessingStage(
+  note: Pick<Note, "processing_stage" | "processing_model">,
+): string {
+  const stage = (note.processing_stage || "").trim();
+  if (!stage || stage === "Saved") return "Ingesting…";
+  return stage;
+}
+
 export function isPendingReingestNote(note: Note) {
   const stage = note.processing_stage || "";
   return (

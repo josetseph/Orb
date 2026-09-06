@@ -39,6 +39,20 @@ multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY
 
 # Blocks appended by multimodal_node — strip before re-processing so re-ingest
 # does not duplicate Florence/Whisper/Marlin output in the vault .md.
+# Extraction output is delimited and carries the attachment it came from, so a
+# block can be found, replaced or removed on its own — and can sit directly
+# under its attachment instead of being piled at the end of the note. HTML
+# comments render as nothing, so the note reads as if they were not there.
+EXTRACT_OPEN = '<!-- orb:extract src="{src}" -->'
+EXTRACT_CLOSE = "<!-- /orb:extract -->"
+EXTRACT_BLOCK_RE = re.compile(
+    r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->",
+    re.S,
+)
+
+# Pre-marker format: blocks were appended contiguously at the end with no
+# closing delimiter, so "first header to end of note" is the only boundary
+# available. Kept so notes enriched before markers still re-ingest cleanly.
 _ENRICHMENT_BLOCK_RE = re.compile(
     r"\n\n\[(?:"
     r"PDF Extraction \([^\]]+\)|"
@@ -47,19 +61,47 @@ _ENRICHMENT_BLOCK_RE = re.compile(
     r"Video Audio Transcript \([^\]]+\)|"
     r"Video Visual Analysis \([^\]]+\)|"
     r"Word Extraction \([^\]]+\)|"
-    r"Spreadsheet Extraction \([^\]]+\)"
+    r"Spreadsheet Extraction \([^\]]+\)|"
+    r"Unsupported \([^\]]+\)"
     r")\]"
 )
 
 
 def _strip_prior_multimedia_enrichment(content: str) -> str:
-    """Remove previously appended extraction/transcript blocks; keep user body + links."""
+    """Remove previously generated extraction blocks; keep everything the user wrote.
+
+    Delimited blocks are removed individually wherever they sit, so text
+    written *below* an extraction survives a re-ingest — under the old
+    truncate-from-the-first-header rule it was silently deleted.
+    """
     if not content:
         return content or ""
-    match = _ENRICHMENT_BLOCK_RE.search(content)
-    if not match:
+    cleaned = EXTRACT_BLOCK_RE.sub("", content)
+    # Anything left in the pre-marker format has no closing delimiter, so the
+    # old boundary still applies to it.
+    match = _ENRICHMENT_BLOCK_RE.search(cleaned)
+    if match:
+        cleaned = cleaned[: match.start()]
+    return cleaned.rstrip()
+
+
+def place_extraction(content: str, src_url: str, section: str) -> str:
+    """Put one extraction block directly beneath the attachment it came from.
+
+    Falls back to appending when the link cannot be located — a note edited
+    mid-ingest, or an attachment reached by a different spelling of its URL.
+    """
+    body = section.strip("\n")
+    if not body.strip():
         return content
-    return content[: match.start()].rstrip()
+    block = f"\n\n{EXTRACT_OPEN.format(src=src_url)}\n{body}\n{EXTRACT_CLOSE}"
+    idx = content.find(src_url) if src_url else -1
+    if idx == -1:
+        return content.rstrip() + block
+    line_end = content.find("\n", idx)
+    if line_end == -1:
+        return content.rstrip() + block
+    return content[:line_end] + block + content[line_end:]
 
 
 def _build_extraction_prompt(extraction_content: str) -> str:
@@ -421,9 +463,9 @@ async def multimodal_node(
         image_exts = (".jpg", ".jpeg", ".png", ".webp", ".gif")
         spreadsheet_exts = (".xlsx", ".xls", ".csv", ".tsv")
 
-        def _append(section: str) -> None:
+        def _append(section: str, src_url: str = "") -> None:
             nonlocal content, content_changed
-            content += section
+            content = place_extraction(content, src_url, section)
             content_changed = True
 
         async def _run_phase(
@@ -442,7 +484,7 @@ async def multimodal_node(
                 try:
                     section = await handler(item)
                     if section:
-                        _append(section)
+                        _append(section, item["url"])
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     logger.error(f"[{phase_name}] File Processing Failed: {e}")
                     media_errors.append(f"{filename}: {e}")
@@ -642,8 +684,9 @@ async def multimodal_node(
                         item["filename"],
                     )
                     _append(
-                        f"\n\n[Unsupported ({item['filename']})]: legacy .doc format — "
-                        "re-save as .docx for Orb to read it."
+                        f"[Unsupported ({item['filename']})]: legacy .doc format — "
+                        "re-save as .docx for Orb to read it.",
+                        item["url"],
                     )
                     continue
                 logger.info(f"Skipped (Unsupported Type): {item['url']}")

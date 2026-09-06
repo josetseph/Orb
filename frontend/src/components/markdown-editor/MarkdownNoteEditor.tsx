@@ -1,5 +1,6 @@
 "use client";
 
+import { createExtractMarkerDecorations } from "./extractMarkerExtension";
 import {
   forwardRef,
   useCallback,
@@ -304,6 +305,7 @@ const MarkdownNoteEditor = forwardRef<
       cmPlaceholder(placeholder),
       createWikilinkDecorations(),
       createMediaEmbedDecorations(kb),
+      createExtractMarkerDecorations(),
       entityDecorationsCompartment.of(
         createEntityDecorations(scannedEntities),
       ),

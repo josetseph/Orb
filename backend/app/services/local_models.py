@@ -497,14 +497,18 @@ def save_selection(
         "embed_id": embed_id,
         "reranker_id": reranker_id,
         "embedding_dims": int(embedding_dims),
-        # Preserve paths if still relevant
-        **(
-            {
-                k: prev[k]
-                for k in ("chat_path", "embed_path", "reranker_path")
-                if k in prev
-            }
-        ),
+        # Keep a recorded path only where the model it belongs to is unchanged.
+        # Carrying them across a re-selection pointed the new id at the old
+        # file, so the manifest disagreed with itself until the next download.
+        **{
+            path_key: prev[path_key]
+            for path_key, id_key, new_id in (
+                ("chat_path", "chat_id", chat_id),
+                ("embed_path", "embed_id", embed_id),
+                ("reranker_path", "reranker_id", reranker_id),
+            )
+            if path_key in prev and prev.get(id_key) == new_id
+        },
     }
     save_manifest(man)
     result = sync_embedding_infrastructure(
@@ -721,35 +725,84 @@ def ensure_chat_and_embed_models(
         "embed_id": resolved["embed_id"],
         "reranker_id": resolved["reranker_id"],
         "embedding_dims": resolved["embedding_dims"],
-        "chat_path": str(chat),
-        "embed_path": str(embed),
-        "reranker_path": str(rerank),
+        "chat_path": store_model_path(chat),
+        "embed_path": store_model_path(embed),
+        "reranker_path": store_model_path(rerank),
     }
     save_manifest(man)
     return {"chat": chat, "embed": embed, "reranker": rerank}
 
 
-def selected_gguf(path_str: str | None) -> Path | None:
-    """Resolve a manifest selection path, tolerating a moved models directory.
+def store_model_path(path: Path | str) -> str:
+    """How a selection path is written to the manifest.
 
-    The manifest records absolute paths, so moving MODELS_DIR (an external
-    drive to the local disk, say) leaves every selection pointing at a file
-    that is no longer there — and the user is told the model "is not
-    downloaded" while it sits in the new directory. The basename is stable, so
-    fall back to it under the current MODELS_DIR before giving up.
+    Relative to MODELS_DIR when the file lives under it, absolute otherwise.
+    The models directory is meant to be the single place models are resolved
+    from, so recording an absolute path inside it defeats the setting: move the
+    directory and every selection points at a file that is no longer there,
+    while the user is told the model "is not downloaded". Same rule per-KB
+    model pins already use.
+    """
+    p = Path(path)
+    try:
+        return str(p.resolve().relative_to(resolve_models_dir().resolve()))
+    except (ValueError, OSError):
+        return str(p)
+
+
+def selected_gguf(path_str: str | None) -> Path | None:
+    """Resolve a manifest selection path against the current MODELS_DIR.
+
+    Handles, in order: a relative path (the current format), an absolute path
+    that still exists (a model kept outside MODELS_DIR), and — for manifests
+    written before this was relative — the same basename under the current
+    models directory, which is what makes a moved directory recoverable
+    instead of looking like three missing downloads.
     """
     if not path_str:
         return None
     recorded = Path(path_str)
+    if not recorded.is_absolute():
+        resolved = resolve_models_dir() / recorded
+        return resolved if resolved.exists() else None
     if recorded.exists():
         return recorded
     moved = resolve_models_dir() / "gguf" / recorded.name
     if moved.exists():
         logger.info(
-            "[LocalModels] %s moved: %s → %s", recorded.name, recorded.parent, moved.parent
+            "[LocalModels] %s moved: %s → %s — rewriting manifest",
+            recorded.name,
+            recorded.parent,
+            moved.parent,
         )
         return moved
     return None
+
+
+def _heal_selection_paths(sel: dict) -> None:
+    """Rewrite stale absolute paths in the manifest once they are resolved.
+
+    Without this the fallback runs on every read and the manifest stays wrong,
+    so the next thing to read it directly (or a fresh install reading an old
+    file) still sees paths into a directory that no longer exists.
+    """
+    fixed = {}
+    for key in ("chat_path", "embed_path", "reranker_path"):
+        raw = sel.get(key)
+        found = selected_gguf(raw)
+        if found and raw and str(found) != str(raw):
+            fixed[key] = store_model_path(found)
+    if not fixed:
+        return
+    try:
+        man = load_manifest()
+        current = man.get("selection") or {}
+        current.update(fixed)
+        man["selection"] = current
+        save_manifest(man)
+        logger.info("[LocalModels] Manifest paths repaired: %s", ", ".join(fixed))
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[LocalModels] Could not repair manifest paths: %s", exc)
 
 
 def gguf_paths_if_present() -> dict[str, Path] | None:
@@ -759,6 +812,7 @@ def gguf_paths_if_present() -> dict[str, Path] | None:
     chat = selected_gguf(sel.get("chat_path"))
     embed = selected_gguf(sel.get("embed_path"))
     if chat and embed:
+        _heal_selection_paths(sel)
         if chat.stat().st_size > 1_000_000:
             out = {"chat": chat, "embed": embed}
             rp = selected_gguf(sel.get("reranker_path"))
