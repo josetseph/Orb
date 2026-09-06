@@ -51,7 +51,7 @@ class RerankerService:  # pylint: disable=too-few-public-methods
             path = reranker_gguf_path()
             if not path:
                 logger.warning(
-                    "[Reranker] No GGUF selected — download/select a reranker in Setup"
+                    "[Reranker] No GGUF selected — download/select a reranker on the Models page"
                 )
                 return []
 

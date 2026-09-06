@@ -123,7 +123,7 @@ def ensure_multimodal_services(
         return {
             "started": False,
             "mode": "in_process",
-            "error": "Download Florence + Whisper in Setup first",
+            "error": "Download Florence + Whisper on the Models page first",
             "models": models,
             "paths": {
                 "florence": str(florence),

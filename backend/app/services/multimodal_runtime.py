@@ -313,7 +313,7 @@ class MultimodalRuntime:
         path = multimodal_model_path("florence")
         if not is_hf_snapshot_ready(path):
             raise RuntimeError(
-                f"Florence model not found at {path}. Download multimodal models in Setup."
+                f"Florence model not found at {path}. Download the media models on the Models page."
             )
         from transformers import AutoModelForCausalLM, AutoProcessor
 
@@ -489,14 +489,14 @@ class MultimodalRuntime:
         path = multimodal_model_path("whisper")
         if not is_hf_snapshot_ready(path):
             raise RuntimeError(
-                f"Whisper model not found at {path}. Download multimodal models in Setup."
+                f"Whisper model not found at {path}. Download the media models on the Models page."
             )
         if "turbo" in path.name.lower():
             # Measured on distant-mic audio: turbo's shallow decoder invents
             # text in low-signal stretches where large-v3 stays quiet.
             logger.warning(
                 "Using %s — the turbo decoder hallucinates on noisy audio. "
-                "Download whisper-large-v3 in Setup for reliable transcripts.",
+                "Download whisper-large-v3 on the Models page for reliable transcripts.",
                 path.name,
             )
         from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
@@ -712,7 +712,7 @@ class MultimodalRuntime:
         path = multimodal_model_path("marlin")
         if not is_hf_snapshot_ready(path):
             raise RuntimeError(
-                f"Marlin model not found at {path}. Download multimodal models in Setup."
+                f"Marlin model not found at {path}. Download the media models on the Models page."
             )
         from transformers import AutoModelForCausalLM
 

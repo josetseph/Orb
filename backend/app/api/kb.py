@@ -236,7 +236,7 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
                 if not chat_model_downloaded(opt):
                     raise HTTPException(
                         status_code=400,
-                        detail=f"{opt.label} is not downloaded — download it in Setup first.",
+                        detail=f"{opt.label} is not downloaded — download it on the Models page first.",
                     )
                 continue
             # Not a catalog id: accept any GGUF on disk, but prove it can chat.

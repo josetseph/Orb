@@ -312,10 +312,10 @@ export default function SettingsPage() {
                         Choose where Chat and note ingestion get their AI from. Changes apply immediately.
                     </p>
                     <a
-                        href="/setup"
+                        href="/models"
                         className="mt-3 inline-flex text-sm text-amber-300/90 underline-offset-2 hover:underline"
                     >
-                        Open Setup (paths + local GGUF download) →
+                        Open Models (local models + cloud endpoints) →
                     </a>
                 </motion.div>
 

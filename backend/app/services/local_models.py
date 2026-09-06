@@ -729,19 +729,41 @@ def ensure_chat_and_embed_models(
     return {"chat": chat, "embed": embed, "reranker": rerank}
 
 
+def selected_gguf(path_str: str | None) -> Path | None:
+    """Resolve a manifest selection path, tolerating a moved models directory.
+
+    The manifest records absolute paths, so moving MODELS_DIR (an external
+    drive to the local disk, say) leaves every selection pointing at a file
+    that is no longer there — and the user is told the model "is not
+    downloaded" while it sits in the new directory. The basename is stable, so
+    fall back to it under the current MODELS_DIR before giving up.
+    """
+    if not path_str:
+        return None
+    recorded = Path(path_str)
+    if recorded.exists():
+        return recorded
+    moved = resolve_models_dir() / "gguf" / recorded.name
+    if moved.exists():
+        logger.info(
+            "[LocalModels] %s moved: %s → %s", recorded.name, recorded.parent, moved.parent
+        )
+        return moved
+    return None
+
+
 def gguf_paths_if_present() -> dict[str, Path] | None:
     """Return chat/embed paths from selection/manifest if files exist."""
     man = load_manifest()
     sel = man.get("selection") or {}
-    chat_p = sel.get("chat_path")
-    embed_p = sel.get("embed_path")
-    if chat_p and embed_p:
-        chat, embed = Path(chat_p), Path(embed_p)
-        if chat.exists() and embed.exists() and chat.stat().st_size > 1_000_000:
+    chat = selected_gguf(sel.get("chat_path"))
+    embed = selected_gguf(sel.get("embed_path"))
+    if chat and embed:
+        if chat.stat().st_size > 1_000_000:
             out = {"chat": chat, "embed": embed}
-            rp = sel.get("reranker_path")
-            if rp and Path(rp).exists():
-                out["reranker"] = Path(rp)
+            rp = selected_gguf(sel.get("reranker_path"))
+            if rp:
+                out["reranker"] = rp
             return out
 
     # Legacy fallback: env defaults
@@ -755,9 +777,9 @@ def gguf_paths_if_present() -> dict[str, Path] | None:
 def reranker_gguf_path() -> Path | None:
     man = load_manifest()
     sel = man.get("selection") or {}
-    rp = sel.get("reranker_path")
-    if rp and Path(rp).exists():
-        return Path(rp)
+    rp = selected_gguf(sel.get("reranker_path"))
+    if rp:
+        return rp
     default = resolve_models_dir() / "gguf" / RERANK_MODEL_ID.rsplit("/", 1)[-1]
     if default.exists():
         return default
@@ -1202,7 +1224,7 @@ class LocalLlamaRuntime:
             if not present:
                 raise RuntimeError(
                     "Local GGUF models are not downloaded. "
-                    "Open Setup → Download selected models."
+                    "Open Models to download one."
                 )
             target = Path(chat_gguf) if chat_gguf else Path(present["chat"])
             if self._chat is not None:
@@ -1241,7 +1263,7 @@ class LocalLlamaRuntime:
                 return candidate
             raise RuntimeError(
                 f"Chat model '{opt.label}' is not downloaded. "
-                "Download it in Setup → Local models, or pick another model."
+                "Download it on the Models page, or pick another model."
             )
 
         path_ref = resolve_model_ref(name)
@@ -1342,7 +1364,7 @@ class LocalLlamaRuntime:
             if not present or not present.get("embed"):
                 raise RuntimeError(
                     "Local embed GGUF is not downloaded. "
-                    "Open Setup → Download selected models."
+                    "Open Models to download one."
                 )
             embed_path = Path(present["embed"])
             self._unload_peers_for_gguf()

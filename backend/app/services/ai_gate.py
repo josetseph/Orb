@@ -106,7 +106,7 @@ def require_ai(kb=None) -> None:
                 "error": "ai_not_configured",
                 "message": (
                     "AI is not configured. Notes, wikilinks, and finance still work. "
-                    "Open Setup to enable local models or a cloud provider."
+                    "Open Models to choose a local model or a cloud endpoint."
                 ),
             },
         )
