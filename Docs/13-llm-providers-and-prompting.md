@@ -301,10 +301,10 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
   You are a precision knowledge extraction engine. Your sole function is to decompose any input note into a fully structured knowledge graph — extracting every entity, every relationship, and generating an isolated contextual description for each entity as it exists *within the note only*.
   ## CORE RULES  (the note may be personal notes, course material, company/technical docs, meeting records — extract what the text says, do not assume the reader wrote it; extract every entity; no outside knowledge; no hallucinated relationships; mandatory co-reference resolution; directional relationships -> / <->; canonical names)
   ## STEP-BY-STEP PROCESS
-  ### STEP 1 — Entity Extraction  (name, type ∈ examples Person/Place/Organization/Event/Work/Thing/Concept/Time Period — "not an exhaustive list", type_reasoning)
-  ### STEP 2 — Relationship Extraction (source_name, target_name, snake_case relationship_type, natural_language, reasoning citing the text)
+  ### STEP 1 — Entity Extraction  (name, type ∈ examples Person/Place/Organization/Event/Work/Thing/Concept/Time Period — "not an exhaustive list")
+  ### STEP 2 — Relationship Extraction (source_name, target_name, snake_case relationship_type, natural_language)
   ### STEP 3 — Node Context Generation (entity-centric, complete sentences, only from the note, unlimited length)
-  ## OUTPUT FORMAT  {"title": …, "nodes": [{name,type,type_reasoning,isolated_context}], "relationships": [{source_name,target_name,relationship_type,natural_language,reasoning}]}
+  ## OUTPUT FORMAT  {"title": …, "nodes": [{name,type,isolated_context}], "relationships": [{source_name,target_name,relationship_type,natural_language}]}
   ## WORKED EXAMPLE  ("Ama and Kofi are friends…" → 6 nodes, 8 relationships)
   Now apply this entire process to the following note and return only the JSON output, nothing else:
 
@@ -312,6 +312,10 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
   ```
 - **Model-specific**: none in the prompt; local vs cloud differ only in chunk budget (`ingestion_context_tokens`: `ORB_LLAMA_N_CTX` for local, 128000 for cloud) and truncation detection.
 
+
+**No per-item justification fields.** The prompt used to ask for `type_reasoning` on every node and `reasoning` on every relationship. Both came *after* the decision they explained — `type` then `type_reasoning`, `relationship_type` then `reasoning` — and JSON generates left to right, so the decision token was already committed and unchangeable. That is rationalisation, not chain-of-thought: it cost output on every single item and could not improve the choice it described. Neither was ever persisted (`type_reasoning` and `reasoning` had zero references in `ingestion.py` and `graph.py`, against 20 each for `isolated_context` and `natural_language`). Removing them shrank the worked example ~30% and, because output is what caps chunk size, made every chunk proportionally larger.
+
+Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDING:` and `ANSWER:`, so it is real chain-of-thought, and it is accumulated into `accumulated_steps` and carried into later hops rather than discarded.
 
 **Source-neutral framing.** Orb is used for personal notes, course material, company and technical documentation and meeting records, so no prompt describes the corpus as the reader's own. The extraction prompt's first CORE RULE says so explicitly ("Do not assume the reader wrote it, and do not describe it as someone's personal knowledge"), the query rewriter says "document collection", and the temporal-digest summariser says "documents … without assuming who wrote them or why". Keep new prompts neutral: a model told it is reading a personal knowledge base narrates a company's meeting minutes as if they were a diary.
 ### 9.2 Batched image titling — `ingestion_agent.py::_batch_image_titles(llm, items)`

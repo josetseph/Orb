@@ -139,7 +139,6 @@ Identify every distinct entity in the note. For each, assign:
   - `Thing` — a physical object, document, or artifact
   - `Concept` — an abstract idea, principle, or condition (e.g., "sovereignty", "friendship")
   - `Time Period` — a specific date, duration, era, or recurring time (e.g., "Weekend", "2 March 1896")
-- `type_reasoning`: One sentence explaining why you chose this type for this entity. Be specific — mention the key clue from the note that determined the classification.
 
 ### STEP 2 — Relationship Extraction
 List every relationship between entities. For each:
@@ -147,7 +146,6 @@ List every relationship between entities. For each:
 - `target_name`: The entity the relationship points to.
 - `relationship_type`: A concise snake_case verb phrase (e.g. `attends`, `lives_in`, `is_friends_with`).
 - `natural_language`: A short natural-language description of the relationship (e.g. "attends school").
-- `reasoning`: One sentence citing the specific word, phrase, or sentence in the note that supports this relationship.
 - Only include what the text explicitly states or directly implies.
 
 ### STEP 3 — Node Context Generation
@@ -172,7 +170,6 @@ Return a single JSON object structured exactly like this:
     {{
       "name": "string — canonical entity name",
       "type": "string — the most fitting type for this entity",
-      "type_reasoning": "string — explaining why you chose this type, citing the key clue from the note",
       "isolated_context": "string — isolated, entity-centric contextual paragraph drawn entirely from the note"
     }}
   ],
@@ -181,8 +178,7 @@ Return a single JSON object structured exactly like this:
       "source_name": "string — the entity the relationship originates from",
       "target_name": "string — the entity the relationship points to",
       "relationship_type": "string — concise snake_case verb phrase (e.g. attends, lives_in, is_friends_with)",
-      "natural_language": "string — short natural-language description of the relationship",
-      "reasoning": "string — one sentence citing the specific text that supports this relationship"
+      "natural_language": "string — short natural-language description of the relationship"
     }}
   ]
 }}
@@ -201,49 +197,43 @@ Return a single JSON object structured exactly like this:
     {{
       "name": "Ama",
       "type": "Person",
-      "type_reasoning": "Ama is explicitly described as a girl, making her a human individual.",
       "isolated_context": "Ama is a girl and a student at Primary School. She is mutual friends with Kofi and shares a weekend play routine with him. She lives in the same neighborhood as Kofi. She consistently completes her homework before engaging in play."
     }},
     {{
       "name": "Kofi",
       "type": "Person",
-      "type_reasoning": "Kofi is explicitly described as a boy, making him a human individual.",
       "isolated_context": "Kofi is a boy who lives in the Neighborhood. He is mutual friends with Ama and plays with her every weekend. His play is situated within the neighborhood."
     }},
     {{
       "name": "Primary School",
       "type": "Place",
-      "type_reasoning": "Primary School is an educational institution — a physical location that Ama attends.",
       "isolated_context": "Primary School is the educational institution that Ama attends. It is the only institution mentioned in the note and defines Ama's role as a student."
     }},
     {{
       "name": "Neighborhood",
       "type": "Place",
-      "type_reasoning": "The Neighborhood is a physical geographic area where both Ama and Kofi live and play.",
       "isolated_context": "The Neighborhood is a shared residential area where both Ama and Kofi live. It is also where Kofi plays."
     }},
     {{
       "name": "Weekend",
       "type": "Time Period",
-      "type_reasoning": "Weekend is a recurring temporal interval — a defined period of time during which events in the note occur.",
       "isolated_context": "The Weekend is the recurring time period during which Ama and Kofi play together. It is contingent on Ama finishing her homework first."
     }},
     {{
       "name": "Homework",
       "type": "Thing",
-      "type_reasoning": "Homework is a concrete recurring task/artifact that Ama must complete — a physical obligation rather than an abstract concept.",
       "isolated_context": "Homework is a recurring obligation that Ama must complete before she is free to play with Kofi on the Weekend. It acts as a precondition to their shared leisure activity."
     }}
   ],
   "relationships": [
-    {{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "is_friends_with", "natural_language": "are mutual friends", "reasoning": "The note states 'Ama and Kofi are friends'."}},
-    {{"source_name": "Ama", "target_name": "Primary School", "relationship_type": "attends", "natural_language": "attends school", "reasoning": "The note says 'Ama is a girl in primary school'."}},
-    {{"source_name": "Ama", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives in the neighborhood", "reasoning": "Implied by Kofi playing 'in the neighborhood' and both sharing the same area."}},
-    {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_and_plays_in", "natural_language": "lives and plays in the neighborhood", "reasoning": "The note says 'Kofi is a boy who plays in the neighborhood'."}},
-    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Kofi during the weekend", "reasoning": "The note says 'Ama likes to play with Kofi every weekend'."}},
-    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Ama during the weekend", "reasoning": "The note says 'Ama likes to play with Kofi every weekend', making it mutual."}},
-    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "completes_before_play", "natural_language": "completes homework before weekend play", "reasoning": "The note says 'after she is done with her homework'."}},
-    {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precondition_for", "natural_language": "must be completed before weekend play begins", "reasoning": "The note says Ama plays 'after she is done with her homework', making homework a precondition to weekend play."}}
+    {{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "is_friends_with", "natural_language": "are mutual friends"}},
+    {{"source_name": "Ama", "target_name": "Primary School", "relationship_type": "attends", "natural_language": "attends school"}},
+    {{"source_name": "Ama", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives in the neighborhood"}},
+    {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_and_plays_in", "natural_language": "lives and plays in the neighborhood"}},
+    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Kofi during the weekend"}},
+    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Ama during the weekend"}},
+    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "completes_before_play", "natural_language": "completes homework before weekend play"}},
+    {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precondition_for", "natural_language": "must be completed before weekend play begins"}}
   ]
 }}
 
@@ -776,21 +766,16 @@ async def extraction_node(
 
     logger.info(f"Extraction Completed: {extraction}")
 
-    # Log per-entity type reasoning for auditability
+    # The model no longer justifies each choice: those fields came *after* the
+    # decision in the JSON, so they were rationalisation rather than reasoning,
+    # and nothing persisted them. natural_language is the auditable part.
     for n in extraction.nodes:
-        reasoning = (
-            n.type_reasoning.strip() if n.type_reasoning else "no reasoning provided"
-        )
-        logger.info(
-            f"  [Entity] name={n.name!r} type={n.type!r} reasoning={reasoning!r}"
-        )
+        logger.info(f"  [Entity] name={n.name!r} type={n.type!r}")
 
-    # Log per-relationship reasoning for auditability
     for r in extraction.relationships:
-        rel_reasoning = r.reasoning.strip() if r.reasoning else "no reasoning provided"
         logger.info(
             f"  [Relationship] {r.source_name!r} -> {r.target_name!r}"
-            f" ({r.relationship_type!r}): {rel_reasoning!r}"
+            f" ({r.relationship_type!r}): {(r.natural_language or '').strip()!r}"
         )
 
     # GARBAGE NAME HANDLING: nodes with empty/placeholder names but valid context
