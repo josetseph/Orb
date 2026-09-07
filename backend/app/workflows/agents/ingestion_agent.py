@@ -385,8 +385,36 @@ def _entities_mentioned_in(nodes, text: str):
     return [n for n in nodes if (n.name or "").strip() and n.name.lower() in lowered]
 
 
-def _entity_lines(nodes) -> str:
-    return "\n".join(f"- {n.name} ({n.type})" for n in nodes if (n.name or "").strip())
+def _entity_lines(nodes, with_type: bool = True) -> str:
+    """One entity per line. ``with_type`` off for the context pass.
+
+    Listing "Name (Type)" there and asking for the name "exactly as listed"
+    invited the model to echo the parenthetical back, which then matched no
+    entity and silently discarded every description.
+    """
+    return "\n".join(
+        f"- {n.name} ({n.type})" if with_type else f"- {n.name}"
+        for n in nodes
+        if (n.name or "").strip()
+    )
+
+
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def match_entity_name(returned: str, known: set[str]) -> str | None:
+    """Resolve a name a pass handed back to one of the known entities.
+
+    Tolerates the shapes a model reaches for when echoing a list: a trailing
+    "(Type)", a leading bullet, surrounding quotes. Returns the canonical key,
+    or None when it genuinely names something that was never extracted.
+    """
+    for candidate in (returned, _TRAILING_PAREN_RE.sub("", returned or "")):
+        cleaned = (candidate or "").strip().lstrip("-*").strip().strip("\"'")
+        key = _norm_name(cleaned)
+        if key and key in known:
+            return key
+    return None
 
 
 _MAX_EXTRACTION_ATTEMPTS = 3
@@ -502,11 +530,13 @@ async def _extract_task_split(
     )
     calls += 1
     known = {_norm_name(n.name) for n in nodes}
-    kept = [
-        r
-        for r in rels.relationships
-        if _norm_name(r.source_name) in known and _norm_name(r.target_name) in known
-    ]
+    kept = []
+    for r in rels.relationships:
+        src = match_entity_name(r.source_name, known)
+        tgt = match_entity_name(r.target_name, known)
+        if src is None or tgt is None:
+            continue
+        kept.append(r)
     dropped = len(rels.relationships) - len(kept)
     _log(
         f"[Extraction] Pass 2/3 (call 2) — {len(kept)} relationships from the whole note"
@@ -534,7 +564,7 @@ async def _extract_task_split(
             batch = present[start : start + _CONTEXT_BATCH]
             got = await _call_pass(
                 llm,
-                _build_context_prompt(piece, _entity_lines(batch)),
+                _build_context_prompt(piece, _entity_lines(batch, with_type=False)),
                 ContextPass,
                 "context pass",
             )
@@ -545,14 +575,22 @@ async def _extract_task_split(
                 f"entities over {'the whole document' if len(pieces) == 1 else f'piece {pieces.index(piece) + 1}/{len(pieces)}'}"
                 f", described {described_now}"
             )
+            unmatched = 0
             for row in got.contexts:
                 text = (row.isolated_context or "").strip()
-                key = _norm_name(row.name)
-                if not text or key not in known:
+                key = match_entity_name(row.name, known) if text else None
+                if not text or key is None:
+                    unmatched += 1 if text else 0
                     continue
                 bucket = described.setdefault(key, [])
                 if text not in bucket:
                     bucket.append(text)
+            if unmatched:
+                logger.warning(
+                    "[Extraction] %d description(s) named an entity that was "
+                    "not extracted — discarded",
+                    unmatched,
+                )
 
     for node in nodes:
         node.isolated_context = " ".join(described.get(_norm_name(node.name), []))

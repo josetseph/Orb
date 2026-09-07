@@ -241,8 +241,8 @@ class TestContextPassCost:
         _run(llm, note, budget=20)
         ctx_prompts = [p for p in llm.prompts if "context extraction engine" in p]
         # Ama is named once; she must not be asked about in every Kofi piece.
-        ama = sum(1 for p in ctx_prompts if "- Ama (Person)" in p)
-        kofi = sum(1 for p in ctx_prompts if "- Kofi (Person)" in p)
+        ama = sum(1 for p in ctx_prompts if "- Ama" in p)
+        kofi = sum(1 for p in ctx_prompts if "- Kofi" in p)
         assert ama < kofi, "absent entities should be skipped for that piece"
         assert ama >= 1, "but still asked where she does appear"
 
@@ -252,7 +252,7 @@ class TestContextPassCost:
         _run(llm, "Short note.", budget=10_000)
         ctx = [p for p in llm.prompts if "context extraction engine" in p]
         assert len(ctx) == 1
-        assert "- Ama (Person)" in ctx[0] and "- Kofi (Person)" in ctx[0]
+        assert "- Ama" in ctx[0] and "- Kofi" in ctx[0]
 
     def test_call_count_beats_plain_chunking(self):
         """The regression this guards: pieces x batches without filtering."""
@@ -299,3 +299,82 @@ class TestContextPassSeesTheWholeDocument:
 
     def test_a_tiny_context_window_still_yields_a_usable_budget(self):
         assert ia.context_pass_budget(4_000, 400, 100) >= 400
+
+
+class TestEntityNameMatching:
+    """A pass echoing the list back must still resolve to the right entity.
+
+    The real failure: the context prompt listed "Name (Type)" and asked for the
+    name "exactly as listed", so the model returned the parenthetical too. Every
+    description then matched nothing and was discarded — 135 entities described,
+    0 attached, with no error anywhere.
+    """
+
+    KNOWN = {"masters in intelligent computing systems", "ghana"}
+
+    def test_exact_name_matches(self):
+        assert ia.match_entity_name("Ghana", self.KNOWN) == "ghana"
+
+    def test_echoed_type_suffix_matches(self):
+        got = ia.match_entity_name(
+            "Masters in Intelligent Computing Systems (Program)", self.KNOWN
+        )
+        assert got == "masters in intelligent computing systems"
+
+    def test_bullet_and_quotes_are_tolerated(self):
+        assert ia.match_entity_name('- "Ghana"', self.KNOWN) == "ghana"
+
+    def test_a_genuinely_unknown_entity_is_rejected(self):
+        assert ia.match_entity_name("Atlantis (Place)", self.KNOWN) is None
+
+    def test_empty_is_rejected(self):
+        assert ia.match_entity_name("", self.KNOWN) is None
+        assert ia.match_entity_name(None, self.KNOWN) is None
+
+    def test_context_prompt_lists_bare_names(self):
+        """Not 'Name (Type)' — that is what invited the echo."""
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
+        _run(llm, "note", budget=10_000)
+        ctx = [p for p in llm.prompts if "context extraction engine" in p][0]
+        assert "- Ama\n" in ctx or ctx.rstrip().endswith("- Ama")
+        assert "- Ama (Person)" not in ctx
+
+    def test_descriptions_attach_when_the_model_echoes_the_type(self):
+        """End to end: the exact shape that produced 0/135."""
+
+        class EchoingLLM(FakeLLM):
+            async def ingestion_generate_with_meta(self, prompt, temperature=0.1):
+                if "context extraction engine" in prompt:
+                    self.prompts.append(prompt)
+                    return (
+                        json.dumps(
+                            {
+                                "contexts": [
+                                    {
+                                        "name": "Ama (Person)",
+                                        "isolated_context": "a girl",
+                                    }
+                                ]
+                            }
+                        ),
+                        {},
+                    )
+                return await super().ingestion_generate_with_meta(prompt, temperature)
+
+        llm = EchoingLLM(ENTITIES, RELS, {})
+        result, _ = _run(llm, "note", budget=10_000)
+        described = {n.name: n.isolated_context for n in result.nodes}
+        assert described["Ama"] == "a girl", "echoed type must still attach"
+
+    def test_relationships_tolerate_the_same_echo(self):
+        rels = [
+            {
+                "source_name": "Ama (Person)",
+                "target_name": "Kofi (Person)",
+                "relationship_type": "knows",
+                "natural_language": "x",
+            }
+        ]
+        llm = FakeLLM(ENTITIES, rels, {})
+        result, _ = _run(llm, "note", budget=10_000)
+        assert len(result.relationships) == 1
