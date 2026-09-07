@@ -15,8 +15,10 @@ from app.schemas.extraction import ExtractedRelationship, Extraction, Node
 
 # Output for this prompt is ~2–3× the input; keep input to ~1/3.5 of the room.
 _OUTPUT_TO_INPUT_RATIO = 2.5
-# Hard ceiling per chunk regardless of context size — cloud models have large
-# windows but bounded output limits, and very long single calls are slow to retry.
+# Starting ceiling per chunk regardless of context size — cloud models have
+# large windows but bounded output limits, and very long single calls are slow
+# to retry. This is only the seed: ``extraction_budget`` learns the real
+# ceiling per model from truncation, since nothing reports it.
 _DEFAULT_CHUNK_TOKENS = 4000
 # Below this, a truncated chunk is accepted (repaired) rather than split again.
 MIN_SPLIT_TOKENS = 400
@@ -24,15 +26,21 @@ MIN_SPLIT_TOKENS = 400
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 
 
-def chunk_token_budget(context_tokens: int, prompt_overhead_tokens: int) -> int:
-    """Largest input chunk whose prompt + expected output fits ``context_tokens``."""
-    env = os.environ.get("ORB_EXTRACTION_CHUNK_TOKENS")
-    ceiling = _DEFAULT_CHUNK_TOKENS
-    if env:
-        try:
-            ceiling = max(MIN_SPLIT_TOKENS, int(env))
-        except ValueError:
-            pass
+def chunk_token_budget(
+    context_tokens: int,
+    prompt_overhead_tokens: int,
+    model: str | None = None,
+) -> int:
+    """Largest input chunk that should come back whole.
+
+    Two limits apply. The context has to hold prompt + input + expected output,
+    which is arithmetic. The model's *output* ceiling is the one that actually
+    binds and is not reported by any API, so it is learned per model from
+    truncations; ``_DEFAULT_CHUNK_TOKENS`` is only where a new model starts.
+    """
+    from app.services.extraction_budget import learned_budget
+
+    ceiling = learned_budget(model, _DEFAULT_CHUNK_TOKENS)
     room = context_tokens - prompt_overhead_tokens - 64
     fits = int(room / (1 + _OUTPUT_TO_INPUT_RATIO))
     return max(MIN_SPLIT_TOKENS, min(ceiling, fits))

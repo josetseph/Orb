@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.log import get_logger
 from app.schemas.extraction import Extraction, NoteInput
 from app.services.multimedia import multimedia_service
+from app.services.extraction_budget import record_success, record_truncation
 from app.workflows.extraction_chunking import (
     MIN_SPLIT_TOKENS,
     chunk_token_budget,
@@ -271,7 +272,9 @@ _MAX_EXTRACTION_ATTEMPTS = 3
 _MAX_SPLIT_DEPTH = 3
 
 
-async def _extract_chunk(llm, text: str, count_tokens, depth: int = 0) -> Extraction:
+async def _extract_chunk(
+    llm, text: str, count_tokens, depth: int = 0, budget: int = 0
+) -> Extraction:
     """Extract one chunk. Truncated output → split in half and merge, so a
     long note never yields a silently repaired, half-empty graph."""
     last_error: Exception | None = None
@@ -282,8 +285,11 @@ async def _extract_chunk(llm, text: str, count_tokens, depth: int = 0) -> Extrac
             raw, meta = await llm.ingestion_generate_with_meta(
                 _build_extraction_prompt(text), temperature=0.1
             )
+            tokens = count_tokens(text)
+            model_name = llm.get_ingestion_model()
             if meta.get("truncated"):
-                tokens = count_tokens(text)
+                # The only signal any model gives about its output ceiling.
+                record_truncation(model_name, tokens)
                 if depth < _MAX_SPLIT_DEPTH and tokens > MIN_SPLIT_TOKENS:
                     logger.warning(
                         f"Extraction output truncated for a ~{tokens}-token chunk — "
@@ -294,7 +300,9 @@ async def _extract_chunk(llm, text: str, count_tokens, depth: int = 0) -> Extrac
                     )
                     if len(halves) > 1:
                         parts = [
-                            await _extract_chunk(llm, half, count_tokens, depth + 1)
+                            await _extract_chunk(
+                                llm, half, count_tokens, depth + 1, budget
+                            )
                             for half in halves
                         ]
                         return merge_extractions(parts)
@@ -302,6 +310,8 @@ async def _extract_chunk(llm, text: str, count_tokens, depth: int = 0) -> Extrac
                     "Extraction output truncated on a chunk too small to split — "
                     "repairing the partial JSON"
                 )
+            else:
+                record_success(model_name, tokens, budget)
             return Extraction.model_validate_json(llm._clean_json(raw))
         except Exception as exc:  # pylint: disable=broad-exception-caught
             last_error = exc
@@ -323,7 +333,10 @@ async def _extract_with_chunking(llm, content: str, logs: list[str]) -> tuple[Ex
     ``(extraction, chunk_count)``."""
     count = llm.ingestion_count_tokens
     overhead = count(_build_extraction_prompt(""))
-    budget = chunk_token_budget(llm.ingestion_context_tokens(), overhead)
+    model_name = llm.get_ingestion_model()
+    budget = chunk_token_budget(
+        llm.ingestion_context_tokens(), overhead, model_name
+    )
     chunks = split_for_extraction(content, budget, count) or [content]
     if len(chunks) > 1:
         note = (
@@ -336,7 +349,7 @@ async def _extract_with_chunking(llm, content: str, logs: list[str]) -> tuple[Ex
     for i, chunk in enumerate(chunks, 1):
         if len(chunks) > 1:
             logger.info(f"[Extraction] chunk {i}/{len(chunks)} (~{count(chunk)} tokens)")
-        parts.append(await _extract_chunk(llm, chunk, count))
+        parts.append(await _extract_chunk(llm, chunk, count, budget=budget))
     return (parts[0] if len(parts) == 1 else merge_extractions(parts)), len(chunks)
 
 
