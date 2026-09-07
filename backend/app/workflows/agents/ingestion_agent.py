@@ -471,14 +471,21 @@ async def _extract_task_split(
         logger.info(message)
         logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
 
-    _log("[Extraction] Note too large for one call — extracting by task")
+    _log(
+        f"[Extraction] Note is ~{count(content)} tokens, over the {budget}-token "
+        "budget — extracting by task so every pass sees all of it"
+    )
 
     entities = await _call_pass(
         llm, _build_entity_prompt(content), EntityPass, "entity pass"
     )
     calls += 1
     nodes = [n for n in entities.nodes if (n.name or "").strip()]
-    _log(f"[Extraction] Pass 1/3 — {len(nodes)} entities across the whole note")
+    sample = ", ".join(n.name for n in nodes[:8])
+    _log(
+        f"[Extraction] Pass 1/3 (call 1) — {len(nodes)} entities from the whole note"
+        + (f": {sample}{' …' if len(nodes) > 8 else ''}" if sample else "")
+    )
     if not nodes:
         # Nothing to hang relationships or contexts on; fall back rather than
         # return an empty graph for a note that clearly has content.
@@ -502,8 +509,8 @@ async def _extract_task_split(
     ]
     dropped = len(rels.relationships) - len(kept)
     _log(
-        f"[Extraction] Pass 2/3 — {len(kept)} relationships"
-        + (f" ({dropped} referenced unknown entities)" if dropped else "")
+        f"[Extraction] Pass 2/3 (call 2) — {len(kept)} relationships from the whole note"
+        + (f", {dropped} dropped for naming an unlisted entity" if dropped else "")
     )
 
     # Contexts get the whole document whenever it fits, so every entity is
@@ -532,6 +539,12 @@ async def _extract_task_split(
                 "context pass",
             )
             calls += 1
+            described_now = sum(1 for r in got.contexts if (r.isolated_context or "").strip())
+            _log(
+                f"[Extraction] Pass 3/3 (call {calls}) — asked about {len(batch)} "
+                f"entities over {'the whole document' if len(pieces) == 1 else f'piece {pieces.index(piece) + 1}/{len(pieces)}'}"
+                f", described {described_now}"
+            )
             for row in got.contexts:
                 text = (row.isolated_context or "").strip()
                 key = _norm_name(row.name)
