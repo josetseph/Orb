@@ -540,16 +540,22 @@ class IngestionWorkflow:
                 ]
                 stub_ok = self._qdrant.upsert_node_cores(_stub_cores)
                 logger.info(
-                    f"[Ontology] Seeded Qdrant stubs: "
-                    f"ok={len(_stub_cores) if stub_ok else 0} "
-                    f"fail={0 if stub_ok else len(_stub_cores)}"
+                    "[Ontology] Seeded Qdrant stubs: %d point(s) %s",
+                    len(_stub_cores),
+                    "stored" if stub_ok else "FAILED",
                 )
                 if not stub_ok:
+                    # The old message guessed at two causes and named neither
+                    # the real one; a batch is all-or-nothing, so "fail=N" also
+                    # implied N separate failures rather than one bad request.
+                    detail = (
+                        getattr(self._qdrant, "_last_upsert_error", None)
+                        or "no further detail from Qdrant"
+                    )
                     raise RuntimeError(
-                        f"Failed to seed {len(_stub_cores)} Qdrant node_cores stub(s) "
-                        "— aborting ingest to avoid Kuzu/Qdrant "
-                        "ID split-brain. Check Qdrant is up and embedding "
-                        "dimensions match collections."
+                        f"Failed to seed {len(_stub_cores)} Qdrant node_cores "
+                        f"stub(s) — aborting ingest to avoid Kuzu/Qdrant ID "
+                        f"split-brain. Qdrant said: {detail}"
                     )
 
         # 6. RELATIONSHIPS (New - Inter-node connections)

@@ -3,6 +3,7 @@
 # pylint: disable=wrong-import-order
 from __future__ import annotations
 
+import os
 import uuid
 from typing import Any
 
@@ -21,6 +22,12 @@ from qdrant_client.models import (
 )
 
 logger = get_logger("QdrantService")
+
+
+# Points per upsert request. A 2560-dim vector is ~27 KB of REST JSON, so this
+# keeps a request near 3 MB — well inside Qdrant's limit, with headroom for
+# larger embedding models. Override with ORB_QDRANT_UPSERT_BATCH.
+_UPSERT_BATCH_SIZE = max(1, int(os.environ.get("ORB_QDRANT_UPSERT_BATCH", "128")))
 
 
 class QdrantService:
@@ -159,6 +166,32 @@ class QdrantService:
             )
             settings.EMBEDDING_DIMENSIONS = vector_len
         self._ensure_collections()
+
+    #: Why the last batched upsert failed, for callers that must abort loudly.
+    _last_upsert_error: str | None = None
+
+    def _upsert_batched(self, collection_name: str, points: list) -> None:
+        """Upsert in chunks, because one request has a size ceiling.
+
+        A point with a 2560-dim vector is ~27 KB as REST JSON, so a few hundred
+        of them exceed Qdrant's request limit and the whole call is rejected
+        with 400 — losing every point in it, not just the overflow. A note
+        producing 713 new entities failed exactly this way, leaving nodes in
+        Kuzu with no Qdrant counterpart.
+
+        Failures name the batch, so a partial write says how far it got.
+        """
+        size = _UPSERT_BATCH_SIZE
+        for start in range(0, len(points), size):
+            chunk = points[start : start + size]
+            try:
+                self.client.upsert(collection_name=collection_name, points=chunk)
+            except Exception as exc:
+                raise RuntimeError(
+                    f"batch {start // size + 1} of "
+                    f"{(len(points) + size - 1) // size} "
+                    f"({len(chunk)} of {len(points)} points): {exc}"
+                ) from exc
 
     def _prepare_vector(self, vector: list[float] | None) -> list[float] | None:
         """Validate embedding dims before upsert — never recreate collections mid-ingest.
@@ -414,12 +447,13 @@ class QdrantService:
                 )
             )
         try:
-            self.client.upsert(collection_name=self._col_cores, points=points)
+            self._upsert_batched(self._col_cores, points)
             return True
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(
-                f"Qdrant upsert_node_cores failed for {len(points)} point(s): {exc}"
+                "Qdrant upsert_node_cores failed for %d point(s): %s", len(points), exc
             )
+            self._last_upsert_error = str(exc)
             return False
 
     def upsert_node_relationships(self, rels: list[dict[str, Any]]) -> None:
@@ -449,10 +483,12 @@ class QdrantService:
                 )
             )
         try:
-            self.client.upsert(collection_name=self._col_rels, points=points)
+            self._upsert_batched(self._col_rels, points)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(
-                f"Qdrant upsert_node_relationships failed for {len(points)} point(s): {exc}"
+                "Qdrant upsert_node_relationships failed for %d point(s): %s",
+                len(points),
+                exc,
             )
 
     def upsert_node_items(
@@ -505,10 +541,13 @@ class QdrantService:
                 PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload)
                 for vector, payload in prepared
             ]
-            self.client.upsert(collection_name=collection_name, points=points)
+            self._upsert_batched(collection_name, points)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(
-                f"Qdrant upsert_node_items failed for {collection_name}/{node_id}: {exc}"
+                "Qdrant upsert_node_items failed for %s/%s: %s",
+                collection_name,
+                node_id,
+                exc,
             )
 
     def append_node_item(  # pylint: disable=too-many-arguments,too-many-positional-arguments

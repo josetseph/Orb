@@ -372,6 +372,8 @@ Neither store has a notion of KB besides the name prefix; nothing prevents two K
 | `TYPESENSE_HOST` / `TYPESENSE_PORT` / `TYPESENSE_API_KEY` / `TYPESENSE_COLLECTION_NAME` | `127.0.0.1` / `7700` / `orb-dev-key` / `orb_nodes` | legacy aliases copied onto `MEILI_*` when those are at defaults |
 | `RERANKER_ENABLED` | see [16](16-retrieval-and-chat.md) | selects which vector threshold applies |
 
+**Upsert batching.** `_upsert_batched(collection, points)` chunks every multi-point upsert at `_UPSERT_BATCH_SIZE` (default 128, `ORB_QDRANT_UPSERT_BATCH`). A point carrying a 2560-dim vector is roughly 27 KB as REST JSON, so a few hundred exceed Qdrant's request-size limit and the **entire** call is rejected with `400 (Bad Request)` — losing every point in it, not just the overflow. A note yielding 713 new entities failed exactly that way, and because the stubs are what keep Kuzu and Qdrant IDs aligned, the next pass logged `missing in Qdrant node_cores but present in Kuzu` for each one. `upsert_node_cores`, `upsert_node_relationships` and `upsert_node_items` all route through it; failures name the batch and how many points were written before it (`batch 3 of 6 (128 of 713 points)`), and `_last_upsert_error` carries the reason up so `ingestion` can report what Qdrant actually said instead of guessing at causes.
+
 None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_model, base_url, ai_setup_mode`), so they cannot be changed through `runtime_config.json`; only env/`.env`/desktop-injected env and the models manifest (for dims) apply.
 
 ## 10. Interfaces with other subsystems
