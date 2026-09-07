@@ -355,6 +355,24 @@ TEXT:
 _CONTEXT_BATCH = 100
 
 
+#: Rough output cost of describing one entity, for sizing the context pass.
+_CONTEXT_TOKENS_PER_ENTITY = 80
+
+
+def context_pass_budget(context_tokens: int, overhead_tokens: int, batch: int) -> int:
+    """How much document one context call can take.
+
+    Not the extraction budget. That one is sized for the combined prompt, whose
+    output is a multiple of its input; here the output is one short description
+    per entity — a few thousand tokens for a full batch — so the document is
+    limited by the context window rather than by what can be written back.
+    Applying the extraction budget here split documents that fit whole, and
+    every extra piece costs a call per batch.
+    """
+    room = context_tokens - overhead_tokens - batch * _CONTEXT_TOKENS_PER_ENTITY - 512
+    return max(MIN_SPLIT_TOKENS, room)
+
+
 def _entities_mentioned_in(nodes, text: str):
     """Entities whose name actually occurs in this piece of text.
 
@@ -488,9 +506,20 @@ async def _extract_task_split(
         + (f" ({dropped} referenced unknown entities)" if dropped else "")
     )
 
-    # Contexts are the one pass that may still need the text in pieces. Safe
-    # now: the entity list is fixed, so a split cannot duplicate an entity.
-    pieces = split_for_extraction(content, budget, count) or [content]
+    # Contexts get the whole document whenever it fits, so every entity is
+    # described from all of it rather than from a fragment. This pass is
+    # limited by the context window, not by output, so "fits" is far more
+    # generous here than for the combined extraction.
+    ctx_overhead = count(_build_context_prompt("", ""))
+    ctx_budget = context_pass_budget(
+        llm.ingestion_context_tokens(), ctx_overhead, _CONTEXT_BATCH
+    )
+    pieces = split_for_extraction(content, ctx_budget, count) or [content]
+    if len(pieces) == 1:
+        _log(
+            f"[Extraction] Pass 3/3 — whole document per call "
+            f"(~{count(content)} tokens, budget {ctx_budget})"
+        )
     described: dict[str, list[str]] = {}
     for piece in pieces:
         present = _entities_mentioned_in(nodes, piece) if len(pieces) > 1 else nodes

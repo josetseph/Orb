@@ -19,10 +19,13 @@ ia = importlib.import_module("app.workflows.agents.ingestion_agent")
 class FakeLLM:
     """Answers each pass by looking at which prompt it was handed."""
 
-    def __init__(self, entities, relationships, contexts=None, truncated=False):
+    def __init__(
+        self, entities, relationships, contexts=None, truncated=False, context_tokens=128000
+    ):
         self.entities, self.relationships = entities, relationships
         self.contexts = contexts or {}
         self.truncated = truncated
+        self.context_tokens = context_tokens
         self.prompts = []
 
     def _clean_json(self, raw):
@@ -35,7 +38,7 @@ class FakeLLM:
         return len(text or "") // 4 + 1
 
     def ingestion_context_tokens(self):
-        return 128000
+        return self.context_tokens
 
     async def ingestion_generate_with_meta(self, prompt, temperature=0.1):
         self.prompts.append(prompt)
@@ -142,12 +145,18 @@ class TestContexts:
         by_name = {n.name: n.isolated_context for n in result.nodes}
         assert by_name["Ama"] == "a girl" and by_name["Kofi"] == "a boy"
 
-    def test_context_pass_chunks_the_text_when_needed(self):
-        """Only this pass may chunk — the entity list is already fixed."""
-        note = "\n\n".join(f"Paragraph {i} about Ama." for i in range(40))
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
+    def test_context_pass_splits_only_past_the_context_window(self):
+        """It splits when the document genuinely will not fit — and only then.
+
+        The entity list is already fixed by pass 1, so a split here cannot
+        invent an entity or strand one across two spellings.
+        """
+        note = "\n\n".join(
+            f"Paragraph {i} discusses Ama at some length here." for i in range(200)
+        )
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"}, context_tokens=1_500)
         _, calls = _run(llm, note, budget=20)
-        assert calls > 3, "long text should need several context calls"
+        assert calls > 3, "a document past the window must be split"
 
     def test_an_entity_with_nothing_said_about_it_keeps_empty_context(self):
         llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
@@ -223,10 +232,12 @@ class TestContextPassCost:
     task-splitting can end up more expensive than the chunking it replaced."""
 
     def test_only_entities_present_in_a_piece_are_asked_about(self):
-        note = "Ama appears here.\n\n" + "\n\n".join(
-            f"Kofi paragraph {i}." for i in range(30)
+        note = "Ama appears in this first paragraph only.\n\n" + "\n\n".join(
+            f"Paragraph {i} is about Kofi and says a fair amount." for i in range(200)
         )
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl", "Kofi": "a boy"})
+        llm = FakeLLM(
+            ENTITIES, RELS, {"Ama": "a girl", "Kofi": "a boy"}, context_tokens=1_200
+        )
         _run(llm, note, budget=20)
         ctx_prompts = [p for p in llm.prompts if "context extraction engine" in p]
         # Ama is named once; she must not be asked about in every Kofi piece.
@@ -246,10 +257,45 @@ class TestContextPassCost:
     def test_call_count_beats_plain_chunking(self):
         """The regression this guards: pieces x batches without filtering."""
         note = "\n\n".join(
-            f"Paragraph {i} mentions Ama." if i % 10 == 0 else f"Paragraph {i}."
-            for i in range(60)
+            f"Paragraph {i} mentions Ama and continues for a while."
+            if i % 10 == 0
+            else f"Paragraph {i} says something unrelated at length."
+            for i in range(200)
         )
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"}, context_tokens=1_200)
         _, calls = _run(llm, note, budget=30)
         pieces = len(note) // (30 * 4) + 1
         assert calls < 2 + pieces * 2, f"{calls} calls is too many for {pieces} pieces"
+
+
+class TestContextPassSeesTheWholeDocument:
+    """The context pass is limited by the context window, not by output.
+
+    Sizing it with the extraction budget split documents that fit whole, and
+    every extra piece costs a call per entity batch.
+    """
+
+    def test_budget_is_far_larger_than_the_extraction_budget(self):
+        from app.workflows.extraction_chunking import chunk_token_budget
+
+        extraction = chunk_token_budget(128_000, 1_500)
+        contexts = ia.context_pass_budget(128_000, 400, ia._CONTEXT_BATCH)
+        assert contexts > extraction * 10
+
+    def test_a_long_document_still_goes_in_whole(self):
+        """~84k tokens: split under the extraction budget, one piece here."""
+        note = "\n\n".join(f"Paragraph {i} about Ama and Kofi." for i in range(4000))
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl", "Kofi": "a boy"})
+        _, calls = _run(llm, note, budget=26_214)
+        ctx = [p for p in llm.prompts if "context extraction engine" in p]
+        assert len(ctx) == 1, "the document should not be split for contexts"
+        assert note in ctx[0], "and the call should carry all of it"
+        assert calls == 3
+
+    def test_batch_size_shrinks_the_budget(self):
+        small = ia.context_pass_budget(128_000, 400, 10)
+        large = ia.context_pass_budget(128_000, 400, 500)
+        assert small > large, "more entities per call leaves less room for text"
+
+    def test_a_tiny_context_window_still_yields_a_usable_budget(self):
+        assert ia.context_pass_budget(4_000, 400, 100) >= 400
