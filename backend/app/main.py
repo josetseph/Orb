@@ -77,6 +77,40 @@ async def startup_event():
             extra={"overrides": list(overrides.keys())},
         )
     try:
+        # Nothing is ingesting at boot, so a note still mid-pipeline was
+        # interrupted (crash, quit, restart). Left as-is the UI treats it as
+        # running forever and refuses to re-ingest it.
+        from sqlalchemy import or_, update
+
+        from app.core.database import AsyncSessionLocal
+        from app.models.note import Note
+
+        idle_stages = ("Saved", "Ingestion complete", "Ingestion failed")
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                update(Note)
+                .where(
+                    Note.processed.is_(False),
+                    Note.failed.is_(False),
+                    Note.processing_stage.is_not(None),
+                    Note.processing_stage.not_in(idle_stages),
+                    or_(
+                        Note.processing_stage.not_like("%pending%"),
+                        Note.processing_stage.is_(None),
+                    ),
+                    Note.processing_stage.not_like("Changed on disk%"),
+                )
+                .values(failed=True, processing_stage="Ingestion failed (interrupted)")
+            )
+            await session.commit()
+            if result.rowcount:
+                logger.warning(
+                    "Reset %d note(s) left mid-ingest by a restart", result.rowcount
+                )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning(f"Could not reset interrupted ingests: {exc}")
+
+    try:
         from app.services.local_models import sync_embedding_infrastructure
 
         sync_embedding_infrastructure()
