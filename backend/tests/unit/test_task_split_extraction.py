@@ -216,3 +216,40 @@ class TestRouting:
         llm = FakeLLM(ENTITIES, RELS, {})
         asyncio.run(ia._extract_with_chunking(llm, "a much longer note " * 50, []))
         assert seen.get("split") is True
+
+
+class TestContextPassCost:
+    """The context pass multiplies pieces by entity batches — the one place
+    task-splitting can end up more expensive than the chunking it replaced."""
+
+    def test_only_entities_present_in_a_piece_are_asked_about(self):
+        note = "Ama appears here.\n\n" + "\n\n".join(
+            f"Kofi paragraph {i}." for i in range(30)
+        )
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl", "Kofi": "a boy"})
+        _run(llm, note, budget=20)
+        ctx_prompts = [p for p in llm.prompts if "context extraction engine" in p]
+        # Ama is named once; she must not be asked about in every Kofi piece.
+        ama = sum(1 for p in ctx_prompts if "- Ama (Person)" in p)
+        kofi = sum(1 for p in ctx_prompts if "- Kofi (Person)" in p)
+        assert ama < kofi, "absent entities should be skipped for that piece"
+        assert ama >= 1, "but still asked where she does appear"
+
+    def test_a_single_piece_asks_about_everything(self):
+        """No filtering when the text is not split — nothing to save."""
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl", "Kofi": "a boy"})
+        _run(llm, "Short note.", budget=10_000)
+        ctx = [p for p in llm.prompts if "context extraction engine" in p]
+        assert len(ctx) == 1
+        assert "- Ama (Person)" in ctx[0] and "- Kofi (Person)" in ctx[0]
+
+    def test_call_count_beats_plain_chunking(self):
+        """The regression this guards: pieces x batches without filtering."""
+        note = "\n\n".join(
+            f"Paragraph {i} mentions Ama." if i % 10 == 0 else f"Paragraph {i}."
+            for i in range(60)
+        )
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
+        _, calls = _run(llm, note, budget=30)
+        pieces = len(note) // (30 * 4) + 1
+        assert calls < 2 + pieces * 2, f"{calls} calls is too many for {pieces} pieces"

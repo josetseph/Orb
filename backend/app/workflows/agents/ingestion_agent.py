@@ -348,9 +348,23 @@ TEXT:
 {content}"""
 
 
-#: Entities described per context call. Small enough that the response stays
-#: well inside any output limit, large enough to keep the call count sane.
-_CONTEXT_BATCH = 40
+#: Entities described per context call. Output here is one short description
+#: each — roughly 60 tokens — so 100 stays far inside any output limit while
+#: keeping the call count down. This multiplies with the number of text
+#: pieces, so it is the wrong place to be timid.
+_CONTEXT_BATCH = 100
+
+
+def _entities_mentioned_in(nodes, text: str):
+    """Entities whose name actually occurs in this piece of text.
+
+    Without this, every entity batch is asked about every piece — including
+    the pieces the entity never appears in, which cannot produce a
+    description and cost a call each. The pass then multiplies pieces by
+    batches and ends up more expensive than the chunking it replaced.
+    """
+    lowered = (text or "").lower()
+    return [n for n in nodes if (n.name or "").strip() and n.name.lower() in lowered]
 
 
 def _entity_lines(nodes) -> str:
@@ -479,8 +493,9 @@ async def _extract_task_split(
     pieces = split_for_extraction(content, budget, count) or [content]
     described: dict[str, list[str]] = {}
     for piece in pieces:
-        for start in range(0, len(nodes), _CONTEXT_BATCH):
-            batch = nodes[start : start + _CONTEXT_BATCH]
+        present = _entities_mentioned_in(nodes, piece) if len(pieces) > 1 else nodes
+        for start in range(0, len(present), _CONTEXT_BATCH):
+            batch = present[start : start + _CONTEXT_BATCH]
             got = await _call_pass(
                 llm,
                 _build_context_prompt(piece, _entity_lines(batch)),
