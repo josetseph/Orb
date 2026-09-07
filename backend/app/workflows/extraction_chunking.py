@@ -112,6 +112,16 @@ def split_for_extraction(
     return [c.strip() for c in _pack(units, max_tokens, count, "\n\n") if c.strip()]
 
 
+def normalize_entity_name(name: str) -> str:
+    """Canonical key for matching an entity across passes and chunks.
+
+    Shared with the task-split extractor on purpose: if the two disagreed, a
+    relationship or context would be dropped for referencing an entity that
+    merging considers the same one.
+    """
+    return (name or "").lstrip("#").strip().lower()
+
+
 def _norm(name: str) -> str:
     return (name or "").lstrip("#").strip().lower()
 

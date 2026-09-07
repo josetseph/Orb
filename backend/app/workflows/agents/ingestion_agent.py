@@ -11,13 +11,20 @@ from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
 from app.core.log import get_logger
-from app.schemas.extraction import Extraction, NoteInput
+from app.schemas.extraction import (
+    ContextPass,
+    EntityPass,
+    Extraction,
+    NoteInput,
+    RelationshipPass,
+)
 from app.services.multimedia import multimedia_service
 from app.services.extraction_budget import record_success, record_truncation
 from app.workflows.extraction_chunking import (
     MIN_SPLIT_TOKENS,
     chunk_token_budget,
     merge_extractions,
+    normalize_entity_name as _norm_name,
     split_for_extraction,
 )
 
@@ -258,6 +265,98 @@ _ATTACHMENT_URL = r"(?:https?://|/vault-files/)(?:[^()\n]|\([^()\n]*\))+"
 ATTACHMENT_LINK_RE = re.compile(rf"\[(📎|🎤)\s*(.*?)\]\(({_ATTACHMENT_URL})\)")
 IMAGE_LINK_RE = re.compile(rf"!\[([^\]]*)\]\(({_ATTACHMENT_URL})\)")
 
+# ── Task-split extraction ────────────────────────────────────────────────────
+#
+# Output size, not context size, is what stops a long note going up in one
+# call: the combined prompt emits several times its input as JSON. Splitting by
+# *task* rather than by *text* shrinks each response enough that the whole note
+# fits every pass — so entities and relationships are found with the entire
+# document in view, and boundaries stop existing rather than merely moving.
+#
+# Contexts are the exception and are chunked when they must be. That is safe
+# here in a way it was not before: the entity list is already fixed and
+# canonical from pass 1, so chunking a description cannot invent an entity or
+# split one across two spellings.
+
+_SHARED_RULES = """- Extract **every** entity, no matter how minor. Do not skip implicit or background entities.
+- Do **not** use outside knowledge. Everything must be grounded in the note.
+- Co-reference resolution is mandatory: map "he", "she", "the city", "the war" back to the named entity.
+- Entity names must be **canonical** — one consistent name per entity."""
+
+
+def _build_entity_prompt(content: str) -> str:
+    """Pass 1: every entity in the note, name and type only."""
+    return f"""You are a precision entity extraction engine. List every distinct entity in the note below.
+
+{_SHARED_RULES}
+
+`type` examples (not exhaustive — judge from the note): Person, Place, Organization, Event, Work, Thing, Concept, Time Period.
+
+Return ONLY this JSON:
+{{{{
+  "title": "string — descriptive title capturing the main subject of the note",
+  "nodes": [{{{{"name": "canonical entity name", "type": "most fitting type"}}}}]
+}}}}
+
+NOTE:
+{content}"""
+
+
+def _build_relationship_prompt(content: str, entity_lines: str) -> str:
+    """Pass 2: connections between entities already found, whole note in view."""
+    return f"""You are a precision relationship extraction engine. Using the entity list, state every relationship the note supports.
+
+{_SHARED_RULES}
+- Use **only** names from the entity list, spelled exactly as given.
+- Only state what the text says or directly implies. Do not invent relationships.
+- Relationships spanning distant parts of the note are expected — you can see all of it.
+
+ENTITIES:
+{entity_lines}
+
+Return ONLY this JSON:
+{{{{
+  "relationships": [{{{{
+    "source_name": "entity the relationship starts from",
+    "target_name": "entity it points to",
+    "relationship_type": "concise snake_case verb phrase (e.g. attends, lives_in)",
+    "natural_language": "short natural-language description"
+  }}}}]
+}}}}
+
+NOTE:
+{content}"""
+
+
+def _build_context_prompt(content: str, entity_lines: str) -> str:
+    """Pass 3: an entity-centric description for each named entity."""
+    return f"""You are a precision context extraction engine. Write a focused description of each listed entity, using only what this text says about it.
+
+- Describe the entity itself, not the note. Complete sentences.
+- Use only information present below. If the text says nothing about an entity, omit it entirely.
+- Do not invent detail to fill a gap.
+
+ENTITIES:
+{entity_lines}
+
+Return ONLY this JSON:
+{{{{
+  "contexts": [{{{{"name": "entity name exactly as listed", "isolated_context": "entity-centric description"}}}}]
+}}}}
+
+TEXT:
+{content}"""
+
+
+#: Entities described per context call. Small enough that the response stays
+#: well inside any output limit, large enough to keep the call count sane.
+_CONTEXT_BATCH = 40
+
+
+def _entity_lines(nodes) -> str:
+    return "\n".join(f"- {n.name} ({n.type})" for n in nodes if (n.name or "").strip())
+
+
 _MAX_EXTRACTION_ATTEMPTS = 3
 _MAX_SPLIT_DEPTH = 3
 
@@ -318,15 +417,103 @@ async def _extract_chunk(
     )
 
 
-async def _extract_with_chunking(llm, content: str, logs: list[str]) -> tuple[Extraction, int]:
-    """Split a long note into context-sized chunks, extract each, merge. Returns
-    ``(extraction, chunk_count)``."""
-    count = llm.ingestion_count_tokens
-    overhead = count(_build_extraction_prompt(""))
-    model_name = llm.get_ingestion_model()
-    budget = chunk_token_budget(
-        llm.ingestion_context_tokens(), overhead, model_name
+async def _call_pass(llm, prompt: str, model_cls, label: str):
+    """One task-split call, parsed into ``model_cls``. Never raises."""
+    try:
+        raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=0.1)
+        if meta.get("truncated"):
+            logger.warning("[Extraction] %s truncated — result may be partial", label)
+        return model_cls.model_validate_json(llm._clean_json(raw))
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[Extraction] %s failed: %s", label, exc)
+        return model_cls()
+
+
+async def _extract_task_split(
+    llm, content: str, count, budget: int, logs: list[str]
+) -> tuple[Extraction, int]:
+    """Extract by task instead of by text, so every pass sees the whole note."""
+    calls = 0
+
+    def _log(message: str) -> None:
+        logger.info(message)
+        logs.append(f"[{datetime.now().strftime('%H:%M:%S')}] {message}")
+
+    _log("[Extraction] Note too large for one call — extracting by task")
+
+    entities = await _call_pass(
+        llm, _build_entity_prompt(content), EntityPass, "entity pass"
     )
+    calls += 1
+    nodes = [n for n in entities.nodes if (n.name or "").strip()]
+    _log(f"[Extraction] Pass 1/3 — {len(nodes)} entities across the whole note")
+    if not nodes:
+        # Nothing to hang relationships or contexts on; fall back rather than
+        # return an empty graph for a note that clearly has content.
+        logger.warning("[Extraction] Entity pass found nothing — falling back to chunking")
+        merged, chunks = await _extract_by_chunks(llm, content, count, budget, logs)
+        return merged, calls + chunks
+
+    lines = _entity_lines(nodes)
+    rels = await _call_pass(
+        llm,
+        _build_relationship_prompt(content, lines),
+        RelationshipPass,
+        "relationship pass",
+    )
+    calls += 1
+    known = {_norm_name(n.name) for n in nodes}
+    kept = [
+        r
+        for r in rels.relationships
+        if _norm_name(r.source_name) in known and _norm_name(r.target_name) in known
+    ]
+    dropped = len(rels.relationships) - len(kept)
+    _log(
+        f"[Extraction] Pass 2/3 — {len(kept)} relationships"
+        + (f" ({dropped} referenced unknown entities)" if dropped else "")
+    )
+
+    # Contexts are the one pass that may still need the text in pieces. Safe
+    # now: the entity list is fixed, so a split cannot duplicate an entity.
+    pieces = split_for_extraction(content, budget, count) or [content]
+    described: dict[str, list[str]] = {}
+    for piece in pieces:
+        for start in range(0, len(nodes), _CONTEXT_BATCH):
+            batch = nodes[start : start + _CONTEXT_BATCH]
+            got = await _call_pass(
+                llm,
+                _build_context_prompt(piece, _entity_lines(batch)),
+                ContextPass,
+                "context pass",
+            )
+            calls += 1
+            for row in got.contexts:
+                text = (row.isolated_context or "").strip()
+                key = _norm_name(row.name)
+                if not text or key not in known:
+                    continue
+                bucket = described.setdefault(key, [])
+                if text not in bucket:
+                    bucket.append(text)
+
+    for node in nodes:
+        node.isolated_context = " ".join(described.get(_norm_name(node.name), []))
+    _log(
+        f"[Extraction] Pass 3/3 — described {sum(1 for n in nodes if n.isolated_context)}"
+        f"/{len(nodes)} entities over {len(pieces)} text piece(s); {calls} calls total"
+    )
+
+    return (
+        Extraction(nodes=nodes, relationships=kept, title=entities.title),
+        calls,
+    )
+
+
+async def _extract_by_chunks(
+    llm, content: str, count, budget: int, logs: list[str]
+) -> tuple[Extraction, int]:
+    """The original path: split the text, extract each piece whole, merge."""
     chunks = split_for_extraction(content, budget, count) or [content]
     if len(chunks) > 1:
         note = (
@@ -341,6 +528,23 @@ async def _extract_with_chunking(llm, content: str, logs: list[str]) -> tuple[Ex
             logger.info(f"[Extraction] chunk {i}/{len(chunks)} (~{count(chunk)} tokens)")
         parts.append(await _extract_chunk(llm, chunk, count, budget=budget))
     return (parts[0] if len(parts) == 1 else merge_extractions(parts)), len(chunks)
+
+
+async def _extract_with_chunking(llm, content: str, logs: list[str]) -> tuple[Extraction, int]:
+    """Split a long note into context-sized chunks, extract each, merge. Returns
+    ``(extraction, chunk_count)``."""
+    count = llm.ingestion_count_tokens
+    overhead = count(_build_extraction_prompt(""))
+    model_name = llm.get_ingestion_model()
+    budget = chunk_token_budget(
+        llm.ingestion_context_tokens(), overhead, model_name
+    )
+    # One call while the note fits — task-splitting a short note would triple
+    # its cost for nothing. Above that, splitting by task beats splitting the
+    # text: fewer calls than chunks, and every pass sees the whole note.
+    if count(content) > budget:
+        return await _extract_task_split(llm, content, count, budget, logs)
+    return await _extract_by_chunks(llm, content, count, budget, logs)
 
 
 async def _batch_image_titles(llm, items: list[dict[str, str]]) -> dict[str, str]:

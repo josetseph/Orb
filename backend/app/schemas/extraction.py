@@ -217,3 +217,89 @@ class NoteInput(BaseModel):
     created_at: str | None = None
     title: str | None = None  # If provided, use instead of auto-generating
     skip_ingestion: bool = False  # Save metadata/vault only; skip graph ingest
+
+
+class EntityPass(BaseModel):
+    """Pass 1 of task-split extraction: what exists, over the whole note.
+
+    Names and types only. The output is small enough that a long note fits in
+    one call, which is the point — every later pass then works from one
+    complete, canonical entity list instead of rediscovering entities per
+    chunk and hoping the names match.
+    """
+
+    title: str | None = None
+    nodes: list[Node] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_keys(cls, data: Any) -> Any:
+        if data is None:
+            return {"nodes": []}
+        if isinstance(data, list):
+            return {"nodes": data}
+        if isinstance(data, dict):
+            for key in ("entities", "nodes", "result", "data"):
+                if key in data and isinstance(data[key], list):
+                    return {"title": data.get("title"), "nodes": data[key]}
+        return data
+
+
+class RelationshipPass(BaseModel):
+    """Pass 2: how the entities connect, with the full entity list in context.
+
+    Seeing the whole note and every entity at once is what makes a relationship
+    across two distant sections expressible at all — under chunking neither
+    side could state it.
+    """
+
+    relationships: list[ExtractedRelationship] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_keys(cls, data: Any) -> Any:
+        if data is None:
+            return {"relationships": []}
+        if isinstance(data, list):
+            return {"relationships": data}
+        if isinstance(data, dict):
+            for key in ("relationships", "edges", "result", "data"):
+                if key in data and isinstance(data[key], list):
+                    return {"relationships": data[key]}
+        return data
+
+
+class NodeContext(BaseModel):
+    """One entity's description, from pass 3."""
+
+    name: str = ""
+    isolated_context: str = ""
+
+    @field_validator("name", "isolated_context", mode="before")
+    @classmethod
+    def handle_none_strings(cls, v: Any) -> Any:
+        return "" if v is None else v
+
+
+class ContextPass(BaseModel):
+    """Pass 3: descriptions for known entities.
+
+    This is the pass that may still be chunked, and safely so — a description
+    is drawn from where the entity appears, and the entity list is already
+    fixed, so chunking here cannot invent or split an entity.
+    """
+
+    contexts: list[NodeContext] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_keys(cls, data: Any) -> Any:
+        if data is None:
+            return {"contexts": []}
+        if isinstance(data, list):
+            return {"contexts": data}
+        if isinstance(data, dict):
+            for key in ("contexts", "nodes", "entities", "result", "data"):
+                if key in data and isinstance(data[key], list):
+                    return {"contexts": data[key]}
+        return data

@@ -73,11 +73,19 @@ async def test_short_note_is_one_call():
 
 @pytest.mark.asyncio
 async def test_long_note_is_chunked_on_paragraphs_and_merged(monkeypatch):
+    """The chunking path itself: split on paragraphs, merge without duplicates.
+
+    Called directly rather than through ``_extract_with_chunking``, which now
+    routes an oversized note to task-split instead. Chunking remains the
+    fallback (and the context pass), so its contract still has to hold.
+    """
     monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "400")
     paras = ["\n".join(f"p{p}w{w}" for w in range(50)) for p in range(20)]  # 1000 words
     note = "\n\n".join(paras)
     llm = _StubLLM(truncate_over=10_000)
-    extraction, chunks = await agent._extract_with_chunking(llm, note, [])
+    extraction, chunks = await agent._extract_by_chunks(
+        llm, note, llm.ingestion_count_tokens, 400, []
+    )
     assert chunks >= 3
     assert len(llm.calls) == chunks
     assert len(extraction.nodes) == 1000  # every word survived, none duplicated
