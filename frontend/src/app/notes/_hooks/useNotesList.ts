@@ -41,11 +41,17 @@ export function useNotesList({
   const [searchQuery, setSearchQuery] = useState("");
   const [processedFilter, setProcessedFilter] =
     useState<ProcessedFilter>("all");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const searchTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const fetchNotesRequestRef = useRef(0);
   const fetchAbortRef = useRef<AbortController | null>(null);
-  const prevKBRef = useRef(currentKB);
+
+  const [loadedKb, setLoadedKb] = useState(currentKB);
+  if (loadedKb !== currentKB) {
+    setLoadedKb(currentKB);
+    setIsLoading(true);
+    clearSelectionForKBSwitch();
+  }
 
   const fetchNotes = useCallback(
     async (search?: string, filter?: ProcessedFilter) => {
@@ -122,12 +128,7 @@ export function useNotesList({
   // Fetch notes once KB context is hydrated from localStorage, and re-fetch on KB switch
   useEffect(() => {
     if (!isHydrated) return;
-    if (prevKBRef.current !== currentKB) {
-      prevKBRef.current = currentKB;
-      // Don't keep editing another vault's note after switching KBs.
-      clearSelectionForKBSwitch();
-    }
-    fetchNotes(undefined, processedFilter);
+    void fetchNotes(undefined, processedFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentKB, isHydrated]);
 

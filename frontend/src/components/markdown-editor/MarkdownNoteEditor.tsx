@@ -309,6 +309,7 @@ const MarkdownNoteEditor = forwardRef<
       entityDecorationsCompartment.of(
         createEntityDecorations(scannedEntities),
       ),
+      entityDecorationsCompartment.of(createEntityDecorations([])),
       autocompletion({
         override: [
           wikilinkCompletionSource(() => notesRef.current),

@@ -3,6 +3,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type Dispatch,
@@ -74,8 +75,6 @@ export function useNotesPageController() {
     currentKB,
     setNotes: setNotesStable,
   });
-  syncBridge.current = selection.syncSelectedNoteFromList;
-  clearBridge.current = selection.clearSelectionForKBSwitch;
 
   const list = useNotesList({
     currentKB,
@@ -85,7 +84,6 @@ export function useNotesPageController() {
     onVaultListing: onVaultListingStable,
     clearSelectionForKBSwitch: clearSelectionForKBSwitchStable,
   });
-  setNotesBridge.current = list.setNotes;
 
   const autosave = useNoteAutosave({
     selectedNote: selection.selectedNote,
@@ -116,7 +114,6 @@ export function useNotesPageController() {
     setNotes: list.setNotes,
     setIsSaving: autosave.setIsSaving,
   });
-  setIngestingBridge.current = ingest.setIngestingNoteIds;
 
   const vault = useVaultTree({
     currentKB,
@@ -128,7 +125,14 @@ export function useNotesPageController() {
     refreshSelectedNote: selection.refreshSelectedNote,
     patchLocalNote: selection.patchLocalNote,
   });
-  onVaultListingBridge.current = vault.applyVaultListing;
+
+  useLayoutEffect(() => {
+    syncBridge.current = selection.syncSelectedNoteFromList;
+    clearBridge.current = selection.clearSelectionForKBSwitch;
+    setNotesBridge.current = list.setNotes;
+    setIngestingBridge.current = ingest.setIngestingNoteIds;
+    onVaultListingBridge.current = vault.applyVaultListing;
+  });
 
   useNoteRestoreEffects({
     isHydrated,
@@ -211,8 +215,7 @@ export function useNotesPageController() {
 
         await list.fetchNotes(list.searchQuery, list.processedFilter);
         selection.setSelectedNote(newNote);
-        selection.contentBeforeEditRef.current = "";
-        selection.titleBeforeEditRef.current = newNote.title || "";
+        selection.resetBeforeEdit(newNote.title || "", "");
         if (newNote?.id) {
           sessionStorage.setItem(lastNoteStorageKey(currentKB), newNote.id);
         }
@@ -237,11 +240,8 @@ export function useNotesPageController() {
 
     const deletedId = selection.selectedNote.id;
     try {
-      if (autosave.autoSaveTimeoutRef.current) {
-        clearTimeout(autosave.autoSaveTimeoutRef.current);
-        autosave.autoSaveTimeoutRef.current = undefined;
-      }
-      selection.contentBeforeEditRef.current = "";
+      autosave.cancelPendingAutosave();
+      selection.resetBeforeEdit();
       selection.setSelectedNote(null);
       list.setNotes((prev) => prev.filter((n) => n.id !== deletedId));
       batch.setSelectedNoteIds((prev) => {

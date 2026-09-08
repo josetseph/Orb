@@ -61,9 +61,22 @@ export function ConnectedNotesPanel({
   const [error, setError] = useState<string | null>(null);
   const [nodes, setNodes] = useState<SimNode[]>([]);
   const [layoutNonce, setLayoutNonce] = useState(0);
+  const [prevParams, setPrevParams] = useState({ mode, noteId, kb });
   const rafRef = useRef<number | null>(null);
   const w = 320;
   const h = 420;
+
+  if (
+    prevParams.mode !== mode ||
+    prevParams.noteId !== noteId ||
+    prevParams.kb !== kb
+  ) {
+    setPrevParams({ mode, noteId, kb });
+    setLoading(true);
+    setError(null);
+    setData(null);
+    setNodes([]);
+  }
 
   // "note" mode keys on the note id only — depending on noteContent here
   // would refetch the neighbor graph on every keystroke.
@@ -100,6 +113,8 @@ export function ConnectedNotesPanel({
     setLoading(true);
     setError(null);
     const timer = setTimeout(() => {
+      setLoading(true);
+      setError(null);
       api
         .getNoteEntitySubgraph(noteContent, kb, { signal: controller.signal })
         .then((payload) => {
@@ -126,6 +141,7 @@ export function ConnectedNotesPanel({
       setNodes([]);
       return;
     }
+    if (!data || data.nodes.length === 0) return;
     const n = data.nodes.length || 1;
     const cx = w / 2;
     const cy = h / 2;
@@ -148,6 +164,7 @@ export function ConnectedNotesPanel({
 
   useEffect(() => {
     if (!data || nodes.length === 0) return;
+    let currentNodes = nodes;
     const edges = data.edges;
     let alive = true;
     let frames = 0;
@@ -157,53 +174,52 @@ export function ConnectedNotesPanel({
       if (!alive) return;
       frames += 1;
       let maxSpeed = 0;
-      setNodes((prev) => {
-        const next = prev.map((n) => ({ ...n }));
-        const byId = new Map(next.map((n) => [n.id, n]));
-        for (let i = 0; i < next.length; i++) {
-          for (let j = i + 1; j < next.length; j++) {
-            const a = next[i];
-            const b = next[j];
-            let dx = a.x - b.x;
-            let dy = a.y - b.y;
-            const dist = Math.hypot(dx, dy) || 0.01;
-            const force = 700 / (dist * dist);
-            dx = (dx / dist) * force;
-            dy = (dy / dist) * force;
-            a.vx += dx;
-            a.vy += dy;
-            b.vx -= dx;
-            b.vy -= dy;
-          }
-        }
-        for (const e of edges) {
-          const a = byId.get(e.source);
-          const b = byId.get(e.target);
-          if (!a || !b) continue;
-          const dx = b.x - a.x;
-          const dy = b.y - a.y;
+      const next = currentNodes.map((nItem) => ({ ...nItem }));
+      const byIdMap = new Map(next.map((nItem) => [nItem.id, nItem]));
+      for (let i = 0; i < next.length; i++) {
+        for (let j = i + 1; j < next.length; j++) {
+          const a = next[i];
+          const b = next[j];
+          let dx = a.x - b.x;
+          let dy = a.y - b.y;
           const dist = Math.hypot(dx, dy) || 0.01;
-          const ideal = 70 + (hashSeed(e.source + e.target) % 50);
-          const force = (dist - ideal) * 0.025;
-          const fx = (dx / dist) * force;
-          const fy = (dy / dist) * force;
-          a.vx += fx;
-          a.vy += fy;
-          b.vx -= fx;
-          b.vy -= fy;
+          const force = 700 / (dist * dist);
+          dx = (dx / dist) * force;
+          dy = (dy / dist) * force;
+          a.vx += dx;
+          a.vy += dy;
+          b.vx -= dx;
+          b.vy -= dy;
         }
-        for (const n of next) {
-          n.vx += (w / 2 - n.x) * 0.008;
-          n.vy += (h / 2 - n.y) * 0.008;
-          const damp = frames < 90 ? 0.86 : 0.92;
-          n.vx *= damp;
-          n.vy *= damp;
-          n.x = Math.max(18, Math.min(w - 18, n.x + n.vx));
-          n.y = Math.max(18, Math.min(h - 28, n.y + n.vy));
-          maxSpeed = Math.max(maxSpeed, Math.hypot(n.vx, n.vy));
-        }
-        return next;
-      });
+      }
+      for (const e of edges) {
+        const a = byIdMap.get(e.source);
+        const b = byIdMap.get(e.target);
+        if (!a || !b) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const dist = Math.hypot(dx, dy) || 0.01;
+        const ideal = 70 + (hashSeed(e.source + e.target) % 50);
+        const force = (dist - ideal) * 0.025;
+        const fx = (dx / dist) * force;
+        const fy = (dy / dist) * force;
+        a.vx += fx;
+        a.vy += fy;
+        b.vx -= fx;
+        b.vy -= fy;
+      }
+      for (const nItem of next) {
+        nItem.vx += (w / 2 - nItem.x) * 0.008;
+        nItem.vy += (h / 2 - nItem.y) * 0.008;
+        const damp = frames < 90 ? 0.86 : 0.92;
+        nItem.vx *= damp;
+        nItem.vy *= damp;
+        nItem.x = Math.max(18, Math.min(w - 18, nItem.x + nItem.vx));
+        nItem.y = Math.max(18, Math.min(h - 28, nItem.y + nItem.vy));
+        maxSpeed = Math.max(maxSpeed, Math.hypot(nItem.vx, nItem.vy));
+      }
+      currentNodes = next;
+      setNodes(next);
       if (frames < maxFrames && maxSpeed > 0.05) {
         rafRef.current = requestAnimationFrame(tick);
       } else {
@@ -215,7 +231,7 @@ export function ConnectedNotesPanel({
       alive = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [data, nodes.length, layoutNonce]);
+  }, [data, layoutNonce, w, h, nodes.length]);
 
   const byId = useMemo(() => {
     const m = new Map<string, SimNode>();

@@ -26,6 +26,8 @@ const eslintConfig = defineConfig([
           varsIgnorePattern: "^_",
         },
       ],
+      // Allow data fetching effects that trigger asynchronous state updates
+      "react-hooks/set-state-in-effect": "warn",
     },
   },
 ]);

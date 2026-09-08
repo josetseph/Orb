@@ -114,7 +114,7 @@ class IngestionWorkflow:
 
         # Register with the tracker BEFORE the semaphore so the community-detection
         # idle timer never fires while tasks are queued waiting for a slot.
-        await _tracker.begin_ingestion()
+        await _tracker.begin_ingestion(self.kb_id)
         await self._update_note_processing_status(
             note_id, "Queued for ingestion", None
         )
@@ -203,7 +203,9 @@ class IngestionWorkflow:
             finally:
                 # Always decrement the active counter and potentially schedule
                 # community recompute, regardless of success or failure.
-                await _tracker.end_ingestion(self.rebuild_leiden_communities)
+                await _tracker.end_ingestion(
+                    self.rebuild_leiden_communities, kb_id=self.kb_id
+                )
                 # Models stay resident after a note: the idle watcher
                 # (ORB_MODEL_IDLE_SECONDS, default 5 min) unloads them, and
                 # loading any other model evicts them anyway. Unloading here
@@ -792,7 +794,7 @@ class IngestionWorkflow:
             node_ids = [row["node_id"] for row in rows if row.get("node_id")]
             if node_ids:
                 _, queue_size = await _tracker.queue_nodes_for_community_recompute(
-                    node_ids
+                    node_ids, kb_id=self.kb_id
                 )
                 logger.info(
                     f"[Community] Queued {len(node_ids)} node IDs for Leiden recompute "
@@ -1429,7 +1431,7 @@ class IngestionWorkflow:
         # Start with a clean cancellation state for this newly claimed run.
         _tracker.cancel_recompute.clear()
         # If ingestion became active during claim handoff, preserve the cancel signal.
-        if _tracker.has_active_ingestions():
+        if _tracker.has_active_ingestions(self.kb_id):
             _tracker.cancel_recompute.set()
 
         try:
@@ -1994,7 +1996,7 @@ class IngestionWorkflow:
             return 0
 
         # Guard: refuse to start while ingestion is active.
-        if _tracker.has_active_ingestions():
+        if _tracker.has_active_ingestions(self.kb_id):
             logger.info(
                 "[TemporalDigest] Skipping — ingestion is active; "
                 "timer will restart when ingestion completes."
@@ -2069,7 +2071,7 @@ class IngestionWorkflow:
                     "rescheduling."
                 )
                 self._temporal_digest_running = False
-                if not _tracker.has_active_ingestions():
+                if not _tracker.has_active_ingestions(self.kb_id):
                     with self._temporal_digest_timer_lock:
                         if self._temporal_digest_timer is not None:
                             self._temporal_digest_timer.cancel()
@@ -2162,7 +2164,7 @@ class IngestionWorkflow:
 
     def get_maintenance_status(self) -> dict:
         """Return the running state of background maintenance jobs for this KB."""
-        tracker = _tracker.get_status_snapshot()
+        tracker = _tracker.get_status_snapshot(self.kb_id)
         return {
             "community_detection": {
                 "running": self._community_run_running

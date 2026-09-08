@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import subprocess
 import time
 from datetime import date, datetime, timedelta, timezone
@@ -2337,28 +2338,48 @@ class FireflyService:
 
     @staticmethod
     def looks_like_finance_query(query: str) -> bool:
-        text = (query or "").lower()
-        keywords = (
-            "balance",
-            "balances",
-            "transaction",
-            "transactions",
-            "spending",
-            "spent",
-            "income",
-            "expense",
-            "expenses",
-            "budget",
-            "cash",
-            "account",
-            "accounts",
-            "finance",
-            "financial",
-            "report",
-            "net worth",
-            "savings",
+        """Heuristic check whether a query is asking about financial/Firefly III data.
+
+        Avoids false positives on common note words like 'account', 'report', 'balance'
+        when used in non-financial contexts (e.g. 'project report', 'user account', 'work-life balance').
+        """
+        text = (query or "").lower().strip()
+        if not text:
+            return False
+
+        # Strong standalone financial signals (matched as whole words)
+        strong_financial_terms = (
+            r"\bnet\s+worth\b",
+            r"\bfirefly\b",
+            r"\btransactions?\b",
+            r"\bspend(ing|t)?\b",
+            r"\bexpenses?\b",
+            r"\bbudgets?\b",
+            r"\bfinancial\b",
+            r"\bincome\b",
+            r"\bcash\s+flow\b",
+            r"\bhow\s+much\s+did\s+i\s+spend\b",
+            r"\bhow\s+much\s+have\s+i\s+spent\b",
         )
-        return any(word in text for word in keywords)
+        for pattern in strong_financial_terms:
+            if re.search(pattern, text):
+                return True
+
+        # Compound context checks for ambiguous words like 'account', 'balance', 'report', 'cash'
+        # e.g., 'bank account', 'account balance', 'financial report', 'spending report'
+        compound_patterns = (
+            r"\b(bank|checking|savings|credit\s+card|brokerage)\s+accounts?\b",
+            r"\baccounts?\s+(balances?|statements?)\b",
+            r"\b(account|bank|wallet|card)\s+balances?\b",
+            r"\b(financial|spending|expense|budget|annual|quarterly)\s+reports?\b",
+            r"\b(petty\s+cash|cash\s+on\s+hand|in\s+cash)\b",
+            r"\b(saved|saving)\s+money\b",
+            r"\bhow\s+much\s+money\b",
+            # Possessive forms: "my balance", "the accounts", "my savings".
+            r"\b(my|our|the)\s+(balances?|accounts?|savings)\b",
+            r"\bsavings\b",
+        )
+        return any(re.search(pat, text) for pat in compound_patterns)
 
 
 firefly_service = FireflyService()

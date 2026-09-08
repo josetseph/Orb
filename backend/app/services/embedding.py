@@ -66,7 +66,28 @@ class EmbeddingService:
         return self.embeddings.embed_documents(texts)
 
     def get_dimension(self) -> int:
-        """Return embedding dimension via a cheap probe vector."""
+        """Return embedding dimension without loading the embedding model.
+
+        Reads the GGUF header instead of embedding a dummy string, which would
+        evict whatever heavy model currently holds the single in-process slot.
+        """
+        try:
+            from app.services.local_models import gguf_paths_if_present
+            from app.services.gguf_metadata import try_read_gguf_metadata
+
+            present = gguf_paths_if_present()
+            if present and "embed" in present:
+                info = try_read_gguf_metadata(present["embed"])
+                if info and info.embedding_length:
+                    return info.embedding_length
+        except Exception as exc:
+            logger.debug(
+                "Could not read embedding dimension from GGUF metadata: %s", exc
+            )
+
+        if getattr(settings, "EMBEDDING_DIMENSIONS", None):
+            return int(settings.EMBEDDING_DIMENSIONS)
+
         dummy_vec = self.embed_documents(["test"])[0]
         return len(dummy_vec)
 

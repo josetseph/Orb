@@ -191,12 +191,18 @@ export function useNoteSelection({ currentKB, setNotes }: UseNoteSelectionArgs) 
     [setNotes],
   );
 
+  const resetBeforeEdit = useCallback((title: string = "", content: string = "") => {
+    contentBeforeEditRef.current = content;
+    titleBeforeEditRef.current = title;
+  }, []);
+
   return {
     selectedNote,
     setSelectedNote,
     contentBeforeEditRef,
     titleBeforeEditRef,
     selectedNoteRef,
+    resetBeforeEdit,
     syncSelectedNoteFromList,
     patchLocalNote,
     openNoteById,

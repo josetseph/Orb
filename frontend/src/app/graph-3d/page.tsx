@@ -37,7 +37,7 @@ export default function Graph3DPage() {
     searchResults,
     searchInputRef,
     searchOpenRef,
-  } = useGraphSearch(nodesRef);
+  } = useGraphSearch(nodesRef, graphData.nodes);
 
   const { graphRef, flyToNode, handleNodeClick } = useGraph3DCamera({
     nodeCount: graphData.nodes.length,

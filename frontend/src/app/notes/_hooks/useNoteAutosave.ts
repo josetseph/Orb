@@ -163,11 +163,19 @@ export function useNoteAutosave({
       window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [selectedNoteRef, currentKBRef, contentBeforeEditRef, titleBeforeEditRef]);
 
+  const cancelPendingAutosave = useCallback(() => {
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+      autoSaveTimeoutRef.current = undefined;
+    }
+  }, []);
+
   return {
     isSaving,
     setIsSaving,
     handleSaveNote,
     autoSaveTimeoutRef,
+    cancelPendingAutosave,
   };
 }
 

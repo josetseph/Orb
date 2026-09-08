@@ -1,28 +1,24 @@
 "use client";
 
-import { useEffect, useRef, useState, type MutableRefObject } from "react";
+import { useMemo, useRef, useState, type MutableRefObject } from "react";
 
 export function useGraphSearch(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  nodesRef: MutableRefObject<any[]>,
+  _nodesRef: MutableRefObject<any[]>,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  nodes: any[],
 ) {
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const [searchResults, setSearchResults] = useState<any[]>([]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchOpenRef = useRef(false);
 
   // ── Search results — filter nodes client-side as user types ──
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    if (!searchQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
     const q = searchQuery.toLowerCase();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const results = (nodesRef.current as any[])
+    const list = Array.isArray(nodes) ? nodes : [];
+    return list
       .filter((n) => (n.name ?? "").toLowerCase().includes(q))
       .sort((a, b) => {
         const aStarts = (a.name ?? "").toLowerCase().startsWith(q);
@@ -32,8 +28,7 @@ export function useGraphSearch(
         return (a.name ?? "").localeCompare(b.name ?? "");
       })
       .slice(0, 8);
-    setSearchResults(results);
-  }, [searchQuery]); // nodesRef is a stable ref mirror of graph nodes
+  }, [searchQuery, nodes]);
 
   return {
     searchOpen,

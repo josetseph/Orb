@@ -43,12 +43,20 @@ export function EntityDetailPanel({
 }: EntityDetailPanelProps) {
   const [detail, setDetail] = useState<EntityDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [prevNodeId, setPrevNodeId] = useState<string | null>(nodeId);
+
+  if (prevNodeId !== nodeId) {
+    setPrevNodeId(nodeId);
+    setDetail(null);
+    setIsLoading(Boolean(nodeId));
+  }
 
   useEffect(() => {
     if (!nodeId) {
       setDetail(null);
       return;
     }
+    if (!nodeId) return;
     let cancelled = false;
     setIsLoading(true);
     setDetail(null);

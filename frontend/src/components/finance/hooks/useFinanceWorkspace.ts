@@ -93,6 +93,13 @@ export function useFinanceWorkspace(
     [accounts],
   );
 
+  const [loadedKb, setLoadedKb] = useState(currentKB);
+  if (loadedKb !== currentKB) {
+    setLoadedKb(currentKB);
+    setLoading(true);
+    setError(null);
+  }
+
   const refresh = useCallback(async () => {
     const kb = currentKB;
     setLoading(true);

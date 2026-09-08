@@ -282,13 +282,12 @@ export default function ChatPage() {
     }
     return ids;
   }, [messages]);
-  const [greeting, setGreeting] = useState("Hello!");
-  useEffect(() => {
+  const [greeting] = useState(() => {
     const hour = new Date().getHours();
-    if (hour < 12) setGreeting("Good morning!");
-    else if (hour < 18) setGreeting("Good afternoon!");
-    else setGreeting("Good evening!");
-  }, []);
+    if (hour < 12) return "Good morning!";
+    if (hour < 18) return "Good afternoon!";
+    return "Good evening!";
+  });
 
   useEffect(() => {
     if (!isHydrated) return;
@@ -310,7 +309,7 @@ export default function ChatPage() {
     setInput("");
   };
 
-  const handleNoteReference = async (noteId: string) => {
+  const _handleNoteReference = async (noteId: string) => {
     try {
       const fullNote = await api.getNote(noteId, currentKB);
       setPreviewNote({

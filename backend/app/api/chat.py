@@ -5,6 +5,9 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+from collections import OrderedDict
+import time
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_kb
@@ -18,7 +21,61 @@ from app.services.kb_registry import KBContext
 logger = get_logger("API")
 router = APIRouter()
 
-_chat_status: dict[str, dict] = {}
+class _BoundedChatStatus:
+    """Bounded, TTL-expiring store for chat job status.
+
+    Prevents memory leaks from indefinite retention of full query/result payloads.
+    """
+
+    def __init__(self, max_size: int = 200, ttl_seconds: float = 1800.0):
+        self._statuses: OrderedDict[str, dict] = OrderedDict()
+        self._timestamps: dict[str, float] = {}
+        self._max_size = max_size
+        self._ttl_seconds = ttl_seconds
+
+    def _cleanup(self, now: float) -> None:
+        expired = [
+            req_id
+            for req_id, ts in self._timestamps.items()
+            if now - ts > self._ttl_seconds
+        ]
+        for req_id in expired:
+            self._statuses.pop(req_id, None)
+            self._timestamps.pop(req_id, None)
+
+    def _evict_oldest_if_needed(self) -> None:
+        while len(self._statuses) > self._max_size:
+            oldest_id, _ = self._statuses.popitem(last=False)
+            self._timestamps.pop(oldest_id, None)
+
+    def __setitem__(self, key: str, value: dict) -> None:
+        now = time.time()
+        self._cleanup(now)
+        self._statuses[key] = value
+        self._statuses.move_to_end(key)
+        self._timestamps[key] = now
+        self._evict_oldest_if_needed()
+
+    def __getitem__(self, key: str) -> dict:
+        now = time.time()
+        self._cleanup(now)
+        return self._statuses[key]
+
+    def get(self, key: str, default: dict | None = None) -> dict:
+        now = time.time()
+        self._cleanup(now)
+        return self._statuses.get(key, default if default is not None else {})
+
+    def __contains__(self, key: str) -> bool:
+        now = time.time()
+        self._cleanup(now)
+        return key in self._statuses
+
+    def __len__(self) -> int:
+        return len(self._statuses)
+
+
+_chat_status = _BoundedChatStatus()
 _chat_job_lock = asyncio.Lock()
 _chat_tasks: set[asyncio.Task] = set()
 

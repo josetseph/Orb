@@ -226,7 +226,7 @@ export function useProximityLabels({
 
     rafId = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(rafId);
-  }, [nodeCount, linkCount, currentKB]); // graphRef/nodesRef/linksRef are stable
+  }, [nodeCount, linkCount, currentKB, graphRef, linksRef, nodesRef]);
 
   return { proximityLabels, linkLabels };
 }

@@ -9,6 +9,12 @@ export function useGraph3DData(currentKB: string, isHydrated: boolean) {
     links: object[];
   }>({ nodes: [], links: [] });
   const [loading, setLoading] = useState(true);
+  const [prevKB, setPrevKB] = useState(currentKB);
+
+  if (prevKB !== currentKB) {
+    setPrevKB(currentKB);
+    setLoading(true);
+  }
 
   // Mirror nodes and links into refs so the rAF label loop never has a stale closure
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -27,6 +33,7 @@ export function useGraph3DData(currentKB: string, isHydrated: boolean) {
   useEffect(() => {
     nodesRef.current = graphData.nodes as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
   }, [graphData.nodes]);
+
   useEffect(() => {
     linksRef.current = graphData.links as any[]; // eslint-disable-line @typescript-eslint/no-explicit-any
   }, [graphData.links]);

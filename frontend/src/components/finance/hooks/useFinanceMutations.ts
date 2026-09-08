@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent, type MutableRefObject } from "react";
+import { useLayoutEffect, useState, type FormEvent, type MutableRefObject } from "react";
 import { api } from "@/lib/api";
 import { errMessage, monthStartIso, todayIso, tomorrowIso } from "../utils";
 import type { FinanceWorkspaceState, FormSeeders } from "./useFinanceWorkspace";
@@ -65,7 +65,9 @@ export function useFinanceMutations(
   const [reportEnd, setReportEnd] = useState(todayIso());
 
   // Keep ref always current so workspace refresh can seed default account/rule-group ids.
-  formSeedersRef.current = { setTxForm, setRecurrenceForm, setRuleForm };
+  useLayoutEffect(() => {
+    formSeedersRef.current = { setTxForm, setRecurrenceForm, setRuleForm };
+  }, [formSeedersRef, setTxForm, setRecurrenceForm, setRuleForm]);
 
   async function setPrimaryCurrency(e: FormEvent) {
     e.preventDefault();

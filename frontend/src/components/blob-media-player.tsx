@@ -21,39 +21,35 @@ export function BlobMediaPlayer({
   kind: "video" | "audio";
   className?: string;
 }) {
-  const [src, setSrc] = useState<string | null>(null);
+  const yt = youtubeEmbedUrl(url);
+  const vimeo = vimeoEmbedUrl(url);
+  const directUrl = !yt && !vimeo ? encodeFileUrl(resolveFileUrl(url, kbId)) : null;
+
+  const [src, setSrc] = useState<string | null>(directUrl);
   const [error, setError] = useState<string | null>(null);
+
+  const [prevUrl, setPrevUrl] = useState(url);
+  if (prevUrl !== url) {
+    setPrevUrl(url);
+    setSrc(directUrl);
+    setError(null);
+  }
+
   const objectUrlRef = useRef<string | null>(null);
   const blobTriedRef = useRef(false);
   const disposedRef = useRef(false);
-  const yt = youtubeEmbedUrl(url);
-  const vimeo = vimeoEmbedUrl(url);
 
   useEffect(() => {
-    if (yt || vimeo) return;
-    let cancelled = false;
-    blobTriedRef.current = false;
-    if (objectUrlRef.current) {
-      URL.revokeObjectURL(objectUrlRef.current);
-      objectUrlRef.current = null;
-    }
-    setSrc(null);
-    setError(null);
-
-    const direct = encodeFileUrl(resolveFileUrl(url, kbId));
-    // Prefer direct URL (Range + faststart). Blob-fetch only if playback fails.
-    if (!cancelled) setSrc(direct);
-
     disposedRef.current = false;
+    blobTriedRef.current = false;
     return () => {
-      cancelled = true;
       disposedRef.current = true;
       if (objectUrlRef.current) {
         URL.revokeObjectURL(objectUrlRef.current);
         objectUrlRef.current = null;
       }
     };
-  }, [url, kbId, yt, vimeo]);
+  }, [url, kbId]);
 
   const onMediaError = () => {
     if (blobTriedRef.current || !src || src.startsWith("blob:")) {

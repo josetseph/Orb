@@ -4,8 +4,8 @@ import {
     createContext,
     useContext,
     useState,
-    useEffect,
     useCallback,
+    useSyncExternalStore,
     type ReactNode,
 } from "react";
 
@@ -39,6 +39,7 @@ const KBContext = createContext<KBContextValue>({
 });
 
 function readStorage(): StoredKB {
+    if (typeof window === "undefined") return { slug: "default", name: "default" };
     try {
         let raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) {
@@ -69,14 +70,11 @@ function writeStorage(kb: StoredKB) {
     }
 }
 
-export function KBProvider({ children }: { children: ReactNode }) {
-    const [current, setCurrent] = useState<StoredKB>({ slug: "default", name: "default" });
-    const [isHydrated, setIsHydrated] = useState(false);
+const emptySubscribe = () => () => {};
 
-    useEffect(() => {
-        setCurrent(readStorage());
-        setIsHydrated(true);
-    }, []);
+export function KBProvider({ children }: { children: ReactNode }) {
+    const [current, setCurrent] = useState<StoredKB>(readStorage);
+    const isHydrated = useSyncExternalStore(emptySubscribe, () => true, () => false);
 
     const setCurrentKB = useCallback((slug: string, displayName?: string) => {
         const normalized = slug.trim() || "default";

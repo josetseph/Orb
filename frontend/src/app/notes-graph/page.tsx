@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { cn, youtubeEmbedUrl, vimeoEmbedUrl } from "@/lib/utils";
 import { ShaderBackground } from "@/components/shader-background";
 import type { Note, NotesGraphPayload } from "@/lib/types";
+import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 
 const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
   ssr: false,
@@ -226,7 +227,7 @@ export default function NotesGraphPage() {
   const [showControls, setShowControls] = useState(false);
   const [controls, setControls] = useState<Controls>(DEFAULT_CONTROLS);
   const [groupDraft, setGroupDraft] = useState("");
-  const graphRef = useRef<any>(null);
+  const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
   const loadGenRef = useRef(0);
   const loadAbortRef = useRef<AbortController | null>(null);
@@ -436,8 +437,8 @@ export default function NotesGraphPage() {
   );
 
   const paintNode = useCallback(
-    (node: any, ctx: CanvasRenderingContext2D, globalScale: number) => {
-      const n = node as GraphNode;
+    (node: NodeObject, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const n = node as unknown as GraphNode;
       const c = controlsRef.current;
       const r = (n.group === "Missing" ? 4 : 6) * c.nodeSize;
       const color = colorFor(n);
@@ -564,12 +565,13 @@ export default function NotesGraphPage() {
             nodeId="id"
             nodeLabel={() => ""}
             nodeCanvasObject={paintNode}
-            nodePointerAreaPaint={(node: any, color, ctx) => {
+            nodePointerAreaPaint={(node: NodeObject, color, ctx) => {
+              const n = node as unknown as GraphNode;
               const r =
-                ((node as GraphNode).group === "Missing" ? 4 : 6) *
+                (n.group === "Missing" ? 4 : 6) *
                 controlsRef.current.nodeSize;
               ctx.beginPath();
-              ctx.arc(node.x, node.y, r + 2, 0, 2 * Math.PI);
+              ctx.arc(node.x ?? 0, node.y ?? 0, r + 2, 0, 2 * Math.PI);
               ctx.fillStyle = color;
               ctx.fill();
             }}
@@ -581,7 +583,7 @@ export default function NotesGraphPage() {
             d3VelocityDecay={0.3}
             cooldownTicks={120}
             enableNodeDrag
-            onNodeClick={(node: any) => void handleNodeClick(node as GraphNode)}
+            onNodeClick={(node: NodeObject) => void handleNodeClick(node as unknown as GraphNode)}
             onBackgroundClick={() => {
               setSelectedNode(null);
             }}

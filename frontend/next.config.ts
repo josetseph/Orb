@@ -5,7 +5,7 @@ import type { NextConfig } from "next";
 const apiProxyTarget =
   process.env.API_PROXY_TARGET ??
   (process.env.NODE_ENV === "development"
-    ? "http://localhost:8700"
+    ? "http://127.0.0.1:17401"
     : "http://backend:8000");
 
 const filesProxyTarget =

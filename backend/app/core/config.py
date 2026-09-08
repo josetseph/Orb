@@ -42,7 +42,8 @@ class Settings(BaseSettings):
     # Include 127.0.0.1 — Electron desktop loads that origin (≠ localhost for CORS)
     CORS_ORIGINS: str = (
         "http://localhost:3700,http://localhost:3701,"
-        "http://127.0.0.1:3700,http://127.0.0.1:3701"
+        "http://127.0.0.1:3700,http://127.0.0.1:3701,"
+        "http://localhost:17400,http://127.0.0.1:17400"
     )
     CORS_ALLOW_ORIGIN_REGEX: str | None = None
 

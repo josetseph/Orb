@@ -7,10 +7,38 @@ const fs = require("fs");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+const crypto = require("crypto");
 const { execFileSync } = require("child_process");
 
 const QDRANT_VERSION = process.env.ORB_QDRANT_VERSION || "v1.18.2";
 const MEILI_VERSION = process.env.ORB_MEILI_VERSION || "v1.49.0";
+
+function computeSha256(filePath) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(filePath);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("end", () => resolve(hash.digest("hex").toLowerCase()));
+    stream.on("error", reject);
+  });
+}
+
+const KNOWN_SHA256 = {
+  // Pinned release checksums if configured
+};
+
+async function verifyChecksum(filePath, assetName) {
+  const envKey =
+    "ORB_SHA256_" + assetName.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+  const expected = process.env[envKey] || KNOWN_SHA256[assetName];
+  if (!expected) return;
+  const actual = await computeSha256(filePath);
+  if (actual !== expected.toLowerCase().trim()) {
+    throw new Error(
+      `Integrity check failed for ${assetName}: SHA-256 mismatch.\nExpected: ${expected}\nActual:   ${actual}`
+    );
+  }
+}
 
 function nativeArch() {
   if (process.platform === "darwin") {
@@ -220,6 +248,8 @@ async function ensureBinaries(dataDir, onStatus) {
         status(`Downloading Qdrant… ${pct}%`);
       }
     });
+    status("Verifying Qdrant checksum…");
+    await verifyChecksum(archive, triple.qdrantAsset);
     status("Extracting Qdrant…");
     const extractTo = path.join(tmpDir, "qdrant-extract");
     fs.rmSync(extractTo, { recursive: true, force: true });
@@ -246,6 +276,8 @@ async function ensureBinaries(dataDir, onStatus) {
         status(`Downloading Meilisearch… ${pct}%`);
       }
     });
+    status("Verifying Meilisearch checksum…");
+    await verifyChecksum(dest, triple.meiliAsset);
     fs.copyFileSync(dest, meiliPath);
     chmodExec(meiliPath);
     stripQuarantine(meiliPath);
@@ -264,6 +296,8 @@ module.exports = {
   ensureBinaries,
   platformTriple,
   nativeArch,
+  computeSha256,
+  verifyChecksum,
   QDRANT_VERSION,
   MEILI_VERSION,
 };

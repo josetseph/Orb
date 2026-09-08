@@ -27,6 +27,18 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function makeEntityRegex(name: string): RegExp {
+  const escaped = escapeRegex(name);
+  const firstChar = name[0];
+  const lastChar = name[name.length - 1];
+  const startsWithWord = /[\p{L}\p{N}]/u.test(firstChar);
+  const endsWithWord = /[\p{L}\p{N}]/u.test(lastChar);
+
+  const prefix = startsWithWord ? "(?<![\\p{L}\\p{N}])" : "";
+  const suffix = endsWithWord ? "(?![\\p{L}\\p{N}])" : "";
+  return new RegExp(`${prefix}${escaped}${suffix}`, "giu");
+}
+
 /** Find word-boundary ranges for known entity names in document text. */
 export function findEntityRanges(
   content: string,
@@ -35,14 +47,18 @@ export function findEntityRanges(
   const ranges: { from: number; to: number; entity: EntitySuggestion }[] = [];
   for (const entity of entities) {
     if (!entity.name) continue;
-    const re = new RegExp(`\\b${escapeRegex(entity.name)}\\b`, "gi");
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(content)) !== null) {
-      ranges.push({
-        from: m.index,
-        to: m.index + entity.name.length,
-        entity,
-      });
+    try {
+      const re = makeEntityRegex(entity.name);
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(content)) !== null) {
+        ranges.push({
+          from: m.index,
+          to: m.index + entity.name.length,
+          entity,
+        });
+      }
+    } catch {
+      continue;
     }
   }
   ranges.sort((a, b) => a.from - b.from);
