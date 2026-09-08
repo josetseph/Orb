@@ -524,7 +524,8 @@ class LLMService:
                 return self._extract_local(
                     prompt, response_model, temperature, model=model
                 )
-            if self.provider == "openai":
+            if self.provider in ("openai", "openai_compat"):
+                # openai_compat speaks the same API; only the model name differs.
                 return self._extract_openai(prompt, response_model, temperature)
             if self.provider == "gemini":
                 return self._extract_gemini(
@@ -564,7 +565,7 @@ class LLMService:
         self, prompt: str, response_model: Type[BaseModel], temperature: float
     ) -> BaseModel:
         """OpenAI extraction with native structured outputs."""
-        model = settings.OPENAI_MODEL
+        model = self.get_chat_model()
         logger.info(f"[OpenAI] Extracting with {model} (structured outputs)")
 
         # OpenAI's beta structured outputs API
