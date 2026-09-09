@@ -249,6 +249,7 @@ class KBContext:
                 qdrant=self.qdrant,
                 meili=self.meili,
                 llm=llm,
+                kb_id=self.kb_id,
             )
         if self.chat_workflow is None:
             self.chat_workflow = ChatWorkflow(retrieval=self.retrieval_service, llm=llm)

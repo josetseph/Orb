@@ -86,7 +86,11 @@ class IngestionWorkflow:
         qdrant: QdrantService | None = None,
         meili: MeilisearchService | None = None,
         llm=None,
+        kb_id: str = "default",
     ):
+        # Namespaces tracker state so ingestion in one vault does not show up
+        # as activity in another.
+        self.kb_id = kb_id
         self._graph = graph or graph_service
         self._qdrant = qdrant or qdrant_service
         self._meili = meili or meilisearch_service
