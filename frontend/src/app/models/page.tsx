@@ -18,6 +18,7 @@ import { getDesktopBridge } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { ShaderBackground } from "@/components/shader-background";
 import type { ModelsPageState } from "@/lib/models-types";
+import { endpointName, setEndpointName } from "@/lib/endpoint-names";
 import { Card, ModelPicker, SavedTick } from "./_components/ModelPicker";
 
 type Mode = "local" | "cloud";
@@ -47,6 +48,9 @@ export default function ModelsPage() {
   // Empty = ingestion follows the chat model above. Kept opt-in: one model is
   // the right default, and the page exists to make model choices legible.
   const [kbIngestModel, setKbIngestModel] = useState("");
+  const [newName, setNewName] = useState("");
+  // Bumped when a name changes so the lists re-read localStorage.
+  const [nameNonce, setNameNonce] = useState(0);
 
   // System draft
   const [sysMode, setSysMode] = useState<Mode>("local");
@@ -180,17 +184,43 @@ export default function ModelsPage() {
     }
   }
 
+  async function removeEndpoint(url: string) {
+    if (!bridge?.deleteEndpointCredential) return;
+    if (
+      !confirm(
+        `Remove ${endpointName(url)}?\n\n${url}\n\nIts key is forgotten. Any KB pinned to it stops working until you re-add it.`,
+      )
+    )
+      return;
+    setBusy("endpoint");
+    setError(null);
+    try {
+      await bridge.deleteEndpointCredential(url);
+      setEndpointName(url, "");
+      setNameNonce((n) => n + 1);
+      await load();
+    } catch (err) {
+      setError(describeError(err, "Could not remove the endpoint."));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function addEndpoint() {
     if (!bridge?.setEndpointCredential || !newUrl.trim()) return;
     setBusy("endpoint");
     setError(null);
     try {
-      const result = await bridge.setEndpointCredential(newUrl.trim(), newKey.trim());
+      const url = newUrl.trim();
+      const result = await bridge.setEndpointCredential(url, newKey.trim());
       if (!result?.ok) throw new Error(result?.error || "Could not add the endpoint");
+      if (newName.trim()) setEndpointName(url, newName.trim());
       if (!sysUrl) setSysUrl(newUrl.trim());
       if (!kbUrl) setKbUrl(newUrl.trim());
       setNewUrl("");
       setNewKey("");
+      setNewName("");
+      setNameNonce((n) => n + 1);
       flash("endpoint");
       await load();
     } catch (err) {
@@ -452,15 +482,43 @@ export default function ModelsPage() {
               <div className="space-y-1.5">
                 {endpoints.map((e) => (
                   <div
-                    key={e}
+                    key={`${e}:${nameNonce}`}
                     className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
                   >
-                    <span className="truncate font-mono text-[11px] text-white/70">{e}</span>
+                    <input
+                      type="text"
+                      defaultValue={endpointName(e)}
+                      onBlur={(ev) => {
+                        setEndpointName(e, ev.target.value);
+                        setNameNonce((n) => n + 1);
+                      }}
+                      title="Rename this endpoint"
+                      className="w-32 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white outline-none focus:border-purple-500/50"
+                    />
+                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-white/45">
+                      {e}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void removeEndpoint(e)}
+                      disabled={busy === "endpoint" || !bridge?.deleteEndpointCredential}
+                      title="Remove this endpoint and forget its key"
+                      className="shrink-0 rounded-lg border border-red-500/20 px-2 py-1 text-xs text-red-400/70 transition hover:border-red-500/40 hover:text-red-300 disabled:opacity-40"
+                    >
+                      Remove
+                    </button>
                   </div>
                 ))}
               </div>
             )}
             <div className="space-y-2">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Name (optional — defaults to the host)"
+                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
+              />
               <input
                 type="text"
                 value={newUrl}
@@ -686,20 +744,35 @@ function CloudFields({
 
   return (
     <div className="space-y-2">
-      <label className="text-xs text-white/45">Endpoint URL</label>
-      <input
-        type="text"
-        list="orb-endpoints"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder="https://openrouter.ai/api/v1"
-        className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-      />
-      <datalist id="orb-endpoints">
-        {endpoints.map((e) => (
-          <option key={e} value={e} />
-        ))}
-      </datalist>
+      <label className="text-xs text-white/45">Endpoint</label>
+      {endpoints.length > 0 ? (
+        <div className="relative">
+          <select
+            value={endpoints.includes(url) ? url : "__custom__"}
+            onChange={(e) => setUrl(e.target.value === "__custom__" ? "" : e.target.value)}
+            className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-9 text-sm text-white outline-none transition focus:border-purple-500/50"
+          >
+            {endpoints.map((e) => (
+              <option key={e} value={e} className="bg-[#0d0d12]">
+                {endpointName(e)} — {e}
+              </option>
+            ))}
+            <option value="__custom__" className="bg-[#0d0d12]">
+              Another URL…
+            </option>
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
+        </div>
+      ) : null}
+      {(endpoints.length === 0 || !endpoints.includes(url)) && (
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://openrouter.ai/api/v1"
+          className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
+        />
+      )}
 
       <label className="text-xs text-white/45">Model name</label>
       <div className="flex gap-2">
