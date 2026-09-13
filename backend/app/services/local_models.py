@@ -790,8 +790,14 @@ def _heal_selection_paths(sel: dict) -> None:
     for key in ("chat_path", "embed_path", "reranker_path"):
         raw = sel.get(key)
         found = selected_gguf(raw)
-        if found and raw and str(found) != str(raw):
-            fixed[key] = store_model_path(found)
+        if not found or not raw:
+            continue
+        # Compare the *stored* form: `found` is always absolute, so comparing
+        # it against an already-relative entry never matches and the manifest
+        # gets rewritten on every read.
+        stored = store_model_path(found)
+        if stored != raw:
+            fixed[key] = stored
     if not fixed:
         return
     try:

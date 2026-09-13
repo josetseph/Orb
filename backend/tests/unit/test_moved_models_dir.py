@@ -87,3 +87,32 @@ class TestGgufPathsAfterAMove:
     def test_reranker_helper_follows_the_move(self, models_dir, monkeypatch):
         _manifest(monkeypatch, {"reranker_path": "/Volumes/NAS/gguf/rerank.gguf"})
         assert local_models.reranker_gguf_path() == models_dir / "gguf" / "rerank.gguf"
+
+
+class TestHealIsIdempotent:
+    """Repairing a stale path must happen once, not on every read.
+
+    `selected_gguf` returns an absolute path; the manifest stores a relative
+    one. Comparing those directly never matches, so the manifest was rewritten
+    (and the repair logged) on every single call.
+    """
+
+    def test_second_read_does_not_rewrite(self, models_dir, monkeypatch, tmp_path):
+        import json
+
+        store = tmp_path / "manifest.json"
+        sel = {
+            "chat_path": "/Volumes/NAS/gguf/chat.gguf",
+            "embed_path": "/Volumes/NAS/gguf/embed.gguf",
+        }
+        store.write_text(json.dumps({"selection": sel}))
+        monkeypatch.setattr(local_models, "load_manifest", lambda: json.loads(store.read_text()))
+        writes = []
+        monkeypatch.setattr(
+            local_models, "save_manifest", lambda m: (writes.append(1), store.write_text(json.dumps(m)))
+        )
+
+        local_models._heal_selection_paths(json.loads(store.read_text())["selection"])
+        assert writes == [1], "first read repairs"
+        local_models._heal_selection_paths(json.loads(store.read_text())["selection"])
+        assert writes == [1], "second read must be a no-op"
