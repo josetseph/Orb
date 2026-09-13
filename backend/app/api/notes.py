@@ -138,6 +138,31 @@ async def move_note(
     return {**moved, "note": _note_response(note, kb)}
 
 
+@router.post("/api/v1/notes/{note_id}/dismiss-failure")
+async def dismiss_note_failure(
+    note_id: str,
+    db: AsyncSession = Depends(get_db),
+    kb: KBContext = Depends(get_kb),
+):
+    """Clear a failed ingestion flag without re-running the pipeline.
+
+    A note that will never be ingested should not keep showing as failed.
+    Leaves processed alone — the note is simply not ingested, which is a
+    legitimate state, not an error.
+    """
+    result = await db.execute(
+        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    note.failed = False
+    note.processing_stage = "Saved"
+    note.processing_model = None
+    await db.commit()
+    return {"id": note_id, "failed": False}
+
+
 @router.post("/api/v1/notes/{note_id}/ingest")
 async def ingest_existing_note(
     note_id: str,

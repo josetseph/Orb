@@ -11,9 +11,11 @@ import {
 
 type NoteStatusBadgeProps = {
   note: Note;
+  /** Shows an × on the Failed badge. Omit in lists where it would be noise. */
+  onDismissFailure?: () => void;
 };
 
-export function NoteStatusBadge({ note }: NoteStatusBadgeProps) {
+export function NoteStatusBadge({ note, onDismissFailure }: NoteStatusBadgeProps) {
   if (note.processed) {
     return (
       <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-400">
@@ -27,6 +29,19 @@ export function NoteStatusBadge({ note }: NoteStatusBadgeProps) {
       <span className="inline-flex max-w-full items-center gap-1 truncate rounded-full bg-red-500/15 px-2 py-0.5 text-xs font-medium text-red-400">
         <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-400" />
         Failed
+        {onDismissFailure && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDismissFailure();
+            }}
+            title="Clear this — the note stays un-ingested"
+            className="-mr-0.5 ml-0.5 rounded-full px-1 text-red-300/70 transition hover:bg-red-500/20 hover:text-red-200"
+          >
+            ×
+          </button>
+        )}
       </span>
     );
   }

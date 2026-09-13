@@ -26,6 +26,7 @@ type NoteEditorHeaderProps = {
   showConnectedPanel: boolean;
   onTitleChange: (title: string) => void;
   onIngest: () => void;
+  onDismissFailure?: () => void;
   onToggleDatePicker: () => void;
   onToggleRecording: () => void;
   onToggleConnectedPanel: () => void;
@@ -40,6 +41,7 @@ export function NoteEditorHeader({
   showConnectedPanel,
   onTitleChange,
   onIngest,
+  onDismissFailure,
   onToggleDatePicker,
   onToggleRecording,
   onToggleConnectedPanel,
@@ -68,7 +70,10 @@ export function NoteEditorHeader({
               minute: "2-digit",
             })}
           </p>
-          <NoteStatusBadge note={selectedNote} />
+          <NoteStatusBadge
+            note={selectedNote}
+            onDismissFailure={onDismissFailure}
+          />
         </div>
       </div>
       <div className="flex max-w-full flex-wrap items-center justify-end gap-2">

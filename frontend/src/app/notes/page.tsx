@@ -101,6 +101,7 @@ export default function NotesPage() {
               showConnectedPanel={showConnectedPanel}
               onTitleChange={selection.handleTitleChange}
               onIngest={ingest.handleIngestNote}
+              onDismissFailure={ingest.handleDismissFailure}
               onToggleDatePicker={() =>
                 media.setShowDatePicker(!media.showDatePicker)
               }

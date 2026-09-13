@@ -40,16 +40,26 @@ def list_vault_folders(vault: Path, *, include_attachments: bool = True) -> list
 
 
 def list_attachment_files(vault: Path) -> list[dict[str, str]]:
-    """List files directly under vault/attachments/."""
+    """List files anywhere under vault/attachments/, including subfolders.
+
+    Recursive on purpose: mkdir and move already support organising
+    attachments into folders, but a flat listing made a moved file vanish
+    from the UI even though it was still there and still linked.
+    """
     att = vault / "attachments"
     if not att.is_dir():
         return []
     files: list[dict[str, str]] = []
-    for path in sorted(att.iterdir()):
-        if not path.is_file() or path.name.startswith("."):
+    for path in sorted(att.rglob("*")):
+        if not path.is_file():
             continue
-        rel = f"attachments/{path.name}"
-        files.append({"name": path.name, "rel_path": rel})
+        try:
+            sub = str(path.relative_to(att)).replace("\\", "/")
+        except ValueError:
+            continue
+        if any(part.startswith(".") for part in sub.split("/")):
+            continue
+        files.append({"name": path.name, "rel_path": f"attachments/{sub}"})
     return files
 
 

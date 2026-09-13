@@ -36,6 +36,25 @@ export function useNoteIngest({
     () => new Set(),
   );
 
+  /** Clear a failed flag on a note that will not be ingested. */
+  const handleDismissFailure = useCallback(async () => {
+    if (!selectedNote?.failed) return;
+    const id = selectedNote.id;
+    const cleared = { failed: false, processing_stage: "Saved" };
+    // Optimistic: the badge is the whole point, so it should go at once.
+    setSelectedNote((prev) => (prev && prev.id === id ? { ...prev, ...cleared } : prev));
+    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...cleared } : n)));
+    try {
+      await api.dismissNoteFailure(id, currentKB);
+    } catch (error) {
+      console.error("Could not clear the failed status:", error);
+      setSelectedNote((prev) =>
+        prev && prev.id === id ? { ...prev, failed: true } : prev,
+      );
+      setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, failed: true } : n)));
+    }
+  }, [selectedNote, currentKB, setSelectedNote, setNotes]);
+
   const handleIngestNote = useCallback(async () => {
     if (!selectedNote || !selectedNote.content.trim()) {
       alert("Cannot ingest an empty note");
@@ -186,5 +205,6 @@ export function useNoteIngest({
     ingestingNoteIds,
     setIngestingNoteIds,
     handleIngestNote,
+    handleDismissFailure,
   };
 }

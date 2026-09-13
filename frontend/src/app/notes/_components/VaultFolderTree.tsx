@@ -60,7 +60,15 @@ type TreeRow =
   | { key: string; kind: "media"; file: VaultFileEntry; depth: number; dropTarget: string }
   | { key: string; kind: "attachments-header" }
   | { key: string; kind: "attachments-empty" }
-  | { key: string; kind: "attachment"; file: VaultFileEntry };
+  | { key: string; kind: "attachment"; file: VaultFileEntry; depth: number }
+  | {
+      key: string;
+      kind: "attachment-folder";
+      path: string;
+      name: string;
+      depth: number;
+      count: number;
+    };
 
 export function VaultFolderTree({
   notes,
@@ -151,12 +159,64 @@ export function VaultFolderTree({
 
     out.push({ key: "__attachments__", kind: "attachments-header" });
     if (attachmentsOpen) {
-      if (attachmentFiles.length === 0) {
-        out.push({ key: "__attachments-empty__", kind: "attachments-empty" });
-      } else {
-        for (const f of attachmentFiles) {
-          out.push({ key: `attachment:${f.rel_path}`, kind: "attachment", file: f });
+      // Attachments nest like note folders: files keyed by the folder holding
+      // them, plus any folder that exists but is still empty.
+      const filesByFolder = new Map<string, VaultFileEntry[]>();
+      const folders = new Set<string>();
+      for (const f of attachmentFiles) {
+        const rel = f.rel_path.replace(/\\/g, "/");
+        const parent = rel.slice(0, rel.lastIndexOf("/"));
+        const list = filesByFolder.get(parent) || [];
+        list.push(f);
+        filesByFolder.set(parent, list);
+        let walk = parent;
+        while (walk && walk !== "attachments") {
+          folders.add(walk);
+          walk = walk.slice(0, walk.lastIndexOf("/"));
         }
+      }
+      for (const f of vaultFolders) {
+        if (f.startsWith("attachments/")) folders.add(f);
+      }
+
+      const emit = (parent: string, depth: number) => {
+        const children = [...folders]
+          .filter((f) => f.slice(0, f.lastIndexOf("/")) === parent)
+          .sort();
+        for (const child of children) {
+          const own = filesByFolder.get(child) || [];
+          out.push({
+            key: `attachment-folder:${child}`,
+            kind: "attachment-folder",
+            path: child,
+            name: child.slice(child.lastIndexOf("/") + 1),
+            depth,
+            count: own.length,
+          });
+          if (collapsedFolders.has(child)) continue;
+          emit(child, depth + 1);
+          for (const f of own) {
+            out.push({
+              key: `attachment:${f.rel_path}`,
+              kind: "attachment",
+              file: f,
+              depth: depth + 1,
+            });
+          }
+        }
+      };
+
+      emit("attachments", 0);
+      for (const f of filesByFolder.get("attachments") || []) {
+        out.push({
+          key: `attachment:${f.rel_path}`,
+          kind: "attachment",
+          file: f,
+          depth: 0,
+        });
+      }
+      if (attachmentFiles.length === 0 && folders.size === 0) {
+        out.push({ key: "__attachments-empty__", kind: "attachments-empty" });
       }
     }
     return out;
@@ -409,7 +469,10 @@ export function VaultFolderTree({
             <div className="flex w-full items-center gap-0.5 rounded-md pr-1 text-[13px] text-white/65 hover:bg-white/5 hover:text-white/90">
               <button
                 type="button"
-                onClick={() => onToggleFolder("attachments")}
+                onClick={() => {
+                  onSelectFolder("attachments");
+                  onToggleFolder("attachments");
+                }}
                 className="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1 text-left"
               >
                 <ChevronRight
@@ -435,16 +498,52 @@ export function VaultFolderTree({
           </p>
         );
 
+      case "attachment-folder":
+        return (
+          <div
+            className={cn(
+              (dragNoteId || dragFileRel) && "ring-1 ring-sky-500/25 rounded-md",
+            )}
+            onDragOver={allowVaultDragOver}
+            onDrop={(e) => acceptVaultDrop(e, row.path)}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                onSelectFolder(row.path);
+                onToggleFolder(row.path);
+              }}
+              style={{ paddingLeft: 8 + row.depth * 12 }}
+              className="flex w-full min-w-0 items-center gap-1 rounded-md py-1 pr-1 text-left text-[13px] text-white/65 hover:bg-white/5 hover:text-white/90"
+            >
+              <ChevronRight
+                className={cn(
+                  "h-3 w-3 shrink-0 text-white/40 transition-transform",
+                  !collapsedFolders.has(row.path) && "rotate-90",
+                )}
+              />
+              <Paperclip className="h-3.5 w-3.5 shrink-0 text-sky-300/60" />
+              <span className="truncate">{row.name}</span>
+              <span className="text-[10px] text-white/35">{row.count}</span>
+            </button>
+          </div>
+        );
+
       case "attachment":
         return (
           <div
             onDragOver={allowVaultDragOver}
-            onDrop={(e) => acceptVaultDrop(e, "attachments")}
+            onDrop={(e) =>
+              acceptVaultDrop(
+                e,
+                row.file.rel_path.slice(0, row.file.rel_path.lastIndexOf("/")),
+              )
+            }
           >
             <VaultFileRow
               name={row.file.name}
               relPath={row.file.rel_path}
-              depth={0}
+              depth={row.depth}
               isDragging={dragFileRel === row.file.rel_path}
               onDragStart={onDragFileStart}
               onDragEnd={onDragFileEnd}

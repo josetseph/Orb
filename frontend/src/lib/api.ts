@@ -231,6 +231,11 @@ export const api = {
     return http.post(`/notes/${id}/ingest${kbQuery(kb)}`);
   },
 
+  /** Clear a failed flag without re-ingesting — for notes you will not ingest. */
+  async dismissNoteFailure(id: string, kb = "default") {
+    return http.post(`/notes/${id}/dismiss-failure${kbQuery(kb)}`);
+  },
+
   /** Delete note from vault/SQLite and from the given KB's graph. */
   async deleteNote(id: string, kb = "default") {
     return http.del(`/notes/${id}${kbQuery(kb)}`);
