@@ -166,10 +166,54 @@ function createMainWindow(initialPath = "/") {
           initialPath.startsWith("/") ? initialPath : `/${initialPath}`
         }`
       : APP_URL;
-  mainWindow.loadURL(url);
+  loadWithRetry(mainWindow, url);
+  // Without these, a renderer that dies or a navigation that fails leaves
+  // Chromium's "This page couldn't load" with no record of why.
+  mainWindow.webContents.on("render-process-gone", (_e, details) => {
+    console.error(
+      `Renderer gone: reason=${details.reason} exitCode=${details.exitCode}`,
+    );
+  });
+  mainWindow.webContents.on(
+    "did-fail-load",
+    (_e, errorCode, desc, validatedURL, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3) return;
+      console.error(`Load failed (${errorCode} ${desc}): ${validatedURL}`);
+    },
+  );
+  mainWindow.on("unresponsive", () => {
+    console.error("Window unresponsive — renderer is blocked or out of memory");
+  });
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
+}
+
+/** ERR_ABORTED (-3) is a navigation we replaced, not a failure worth retrying. */
+function shouldRetryLoad(errorCode, isMainFrame) {
+  return Boolean(isMainFrame) && errorCode !== -3;
+}
+
+/**
+ * Load the app, retrying while the frontend is still coming up.
+ *
+ * The window opens before Next is listening, and a single loadURL leaves the
+ * dead "This page couldn't load" screen up for good — the servers come up
+ * seconds later and nothing goes back for them.
+ */
+function loadWithRetry(win, url, attempt = 0) {
+  const maxAttempts = 40; // ~20s at 500ms
+  win.webContents.once("did-fail-load", (_e, errorCode, desc, _u, isMainFrame) => {
+    if (!shouldRetryLoad(errorCode, isMainFrame) || win.isDestroyed()) return;
+    if (attempt >= maxAttempts) {
+      console.warn(`Giving up loading ${url} after ${attempt} attempts: ${desc}`);
+      return;
+    }
+    setTimeout(() => {
+      if (!win.isDestroyed()) loadWithRetry(win, url, attempt + 1);
+    }, 500);
+  });
+  win.loadURL(url);
 }
 
 function dirHasGguf(dir, depth = 0) {
