@@ -306,10 +306,11 @@ const MarkdownNoteEditor = forwardRef<
       createWikilinkDecorations(),
       createMediaEmbedDecorations(kb),
       createExtractMarkerDecorations(),
+      // One .of() per compartment: a second registration of the same
+      // Compartment is not resolvable, and this one seeded it empty.
       entityDecorationsCompartment.of(
         createEntityDecorations(scannedEntities),
       ),
-      entityDecorationsCompartment.of(createEntityDecorations([])),
       autocompletion({
         override: [
           wikilinkCompletionSource(() => notesRef.current),
