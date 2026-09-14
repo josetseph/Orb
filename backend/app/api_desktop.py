@@ -57,7 +57,7 @@ async def setup_status():
     local_models_ready = gguf is not None
     multimodal_ready = all(
         is_hf_snapshot_ready(multimodal_model_path(k))
-        for k in ("florence", "whisper", "marlin")
+        for k in ("whisper", "marlin")
     )
     mode = derived_setup_mode()
     vault = resolve_default_vault_path()
@@ -83,7 +83,7 @@ async def setup_status():
 class DownloadModelsInput(BaseModel):
     include_multimodal: bool = True
     chat_id: str | None = None
-    # When True, skip GGUF ensure (used for background Florence/Whisper/Marlin).
+    # When True, skip GGUF ensure (used for background Whisper/Marlin + projector).
     multimodal_only: bool = False
 
 
@@ -97,7 +97,7 @@ async def model_catalog(chat_id: str | None = None):
 
 @router.post("/api/v1/setup/download-models")
 async def download_models(body: DownloadModelsInput | None = None):
-    """Download chat/embed/rerank GGUFs (+ Florence/Whisper/Marlin weights).
+    """Download chat/embed/rerank GGUFs (+ Whisper/Marlin weights and the vision projector).
 
     Does not install multimodal Python deps — that is a separate step
     (``start-multimodal-services`` prepares the in-process runtime). Keeping
@@ -140,6 +140,20 @@ async def download_models(body: DownloadModelsInput | None = None):
             multimodal = {k: str(v) for k, v in mm_paths.items()}
         except Exception as exc:  # pylint: disable=broad-exception-caught
             multimodal_error = str(exc)
+        # The vision projector belongs to the selected chat GGUF; the full
+        # path above fetches it with the model, this one covers "media only".
+        if multimodal_only:
+            try:
+                from app.services.local_models import ensure_mmproj, resolve_selected_hf_paths
+
+                hf_chat = resolve_selected_hf_paths(chat_id)["chat"]
+                proj = await asyncio.to_thread(
+                    ensure_mmproj, hf_chat, lambda pct: on_progress("vision", pct)
+                )
+                if proj:
+                    multimodal["vision"] = str(proj)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                multimodal_error = multimodal_error or f"vision projector: {exc}"
     return {
         "status": "ok",
         "chat": str(paths.get("chat", "")),
@@ -153,7 +167,7 @@ async def download_models(body: DownloadModelsInput | None = None):
             "mode": "in_process",
             "hint": (
                 "Call /setup/start-multimodal-services?install_deps=true "
-                "to prepare the in-process Florence/Whisper/Marlin runtime"
+                "to prepare the in-process Whisper/Marlin runtime"
             ),
         },
         "multimodal_error": multimodal_error,
@@ -203,7 +217,7 @@ async def select_chat_model(body: DownloadModelsInput | None = None):
 
 @router.post("/api/v1/setup/start-multimodal-services")
 async def start_multimodal_services(install_deps: bool = Query(True)):
-    """Prepare Florence/Whisper/Marlin for in-process load (no HTTP sidecars)."""
+    """Prepare Whisper/Marlin for in-process load (no HTTP sidecars)."""
     from app.services.multimodal_services import ensure_multimodal_services
 
     try:
@@ -224,7 +238,6 @@ async def multimodal_status():
     return {
         "mode": "in_process",
         "models": {
-            "florence": is_hf_snapshot_ready(multimodal_model_path("florence")),
             "whisper": is_hf_snapshot_ready(multimodal_model_path("whisper")),
             "marlin": is_hf_snapshot_ready(multimodal_model_path("marlin")),
         },

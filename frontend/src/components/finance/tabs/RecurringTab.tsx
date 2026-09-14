@@ -3,7 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type { FinanceAccount, FinanceRecurrence, FinanceWorkspace } from "@/lib/types";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { FIELD_INPUT, money } from "../utils";
+import { DELETE_BTN, EMPTY_ROW, FIELD_INPUT, LIST_ROW, money } from "../utils";
 
 type RecurrenceForm = {
   title: string;
@@ -40,13 +40,13 @@ export function RecurringTab({
   busy: boolean;
 }) {
   return (
-    <section className="grid gap-6 xl:grid-cols-[0.95fr,1.05fr]">
+    <section className="grid gap-4 xl:grid-cols-[0.95fr,1.05fr]">
       <form
         onSubmit={onCreate}
-        className="space-y-4 rounded-2xl border border-white/10 bg-black/35 p-5"
+        className="card-outline space-y-3"
       >
-        <h2 className="flex items-center gap-2 text-lg font-medium">
-          <Plus className="h-4 w-4 text-teal-300" /> New recurring transaction
+        <h2 className="kicker flex items-center gap-1.5 text-[11px]">
+          <Plus className="h-3 w-3" /> New recurring transaction
         </h2>
         <Field label="Title">
           <input
@@ -155,40 +155,40 @@ export function RecurringTab({
           disabled={
             busy || !recurrenceForm.source_id || !recurrenceForm.destination_id
           }
-          className="rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+          className="btn btn-primary"
         >
           {busy ? "Creating…" : "Create recurring"}
         </button>
         {(recurrenceForm.type === "withdrawal" && expenseAccounts.length === 0) ||
         (recurrenceForm.type === "deposit" && revenueAccounts.length === 0) ? (
-          <p className="text-xs text-amber-200/80">
+          <p className="text-[11.5px] text-n-500">
             Create matching expense/revenue accounts first under Accounts.
           </p>
         ) : null}
       </form>
       <Panel title="Recurring transactions">
-        <ul className="space-y-2">
+        <ul>
           {recurrences.map((row) => (
             <li
               key={row.id}
-              className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
+              className={LIST_ROW}
             >
               <div className="min-w-0">
                 <div className="truncate">{row.title}</div>
-                <div className="text-xs text-white/40">
+                <div className="text-[11px] text-n-500">
                   {row.repetition_type || "—"} · {row.type || "tx"}
                   {row.first_date ? ` · from ${row.first_date}` : ""}
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-teal-200">
+                <span className="tabular-nums text-accent-300">
                   {money(row.amount, row.currency || workspace.currency)}
                 </span>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => onDelete(row.id)}
-                  className="rounded p-1 text-white/35 hover:bg-white/5 hover:text-rose-200 disabled:opacity-50"
+                  className={DELETE_BTN}
                   aria-label="Delete recurrence"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -197,7 +197,7 @@ export function RecurringTab({
             </li>
           ))}
           {recurrences.length === 0 && (
-            <li className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/40">
+            <li className={EMPTY_ROW}>
               No recurring transactions yet.
             </li>
           )}

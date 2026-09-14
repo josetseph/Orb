@@ -1,638 +1,322 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import {
-    Plus,
-    Trash2,
-    Cpu,
-    Wallet,
-    Database,
-    Check,
-    Loader2,
-    X,
-    FolderOpen,
-    Pencil,
-} from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
+import { Cpu, Loader2, Plus, Wallet } from "lucide-react";
 import { api } from "@/lib/api";
-import { useKB } from "@/lib/kb-context";
+import { kbSlug, useKB } from "@/lib/kb-context";
 import { cn } from "@/lib/utils";
-import { ShaderBackground } from "@/components/shader-background";
+import { SettingRow, SettingsShell, Toggle } from "@/components/settings-shell";
 import { getDesktopBridge, pickDesktopDirectory } from "@/lib/desktop";
 import type { KnowledgeBase } from "@/lib/types";
 
-/** Read-only note of which model a KB resolves to; editing lives on /models. */
-function KBModelSummary({ kb }: { kb: KnowledgeBase }) {
+const SWATCHES = ["bg-accent-700", "bg-accent-800", "bg-n-700", "bg-accent-600"];
+
+function modelSummary(kb: KnowledgeBase): string {
     const eff = kb.effective_llm;
-    if (!eff) return null;
-    const where =
-        eff.provider === "openai_compat"
-            ? (eff.base_url ? new URL(eff.base_url).host : "no endpoint")
-            : "on this device";
-    return (
-        <p className="mt-2 inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
-            <Cpu className="h-3 w-3" />
-            {eff.inherited ? "inherits" : "pinned"} · {where} · {eff.model ?? "not set"}
-        </p>
-    );
+    if (!eff) return "not set";
+    let where = "on this device";
+    if (eff.provider === "openai_compat") {
+        try {
+            where = eff.base_url ? new URL(eff.base_url).host : "no endpoint";
+        } catch {
+            where = eff.base_url || "no endpoint";
+        }
+    }
+    return `${eff.inherited ? "inherits" : "pinned"} · ${where} · ${eff.model ?? "not set"}`;
 }
 
-/** Per-KB finance switch. Off hides the section; it deletes nothing. */
-function KBFinanceToggle({
-    kb,
-    busy,
-    onToggle,
-}: {
-    kb: KnowledgeBase;
-    busy: boolean;
-    onToggle: (next: boolean) => void;
-}) {
-    // Rows written before this setting existed come back undefined, and those
-    // KBs may already hold finance data — treat anything but false as on.
-    const on = kb.finance_enabled !== false;
-    return (
-        <button
-            type="button"
-            disabled={busy}
-            onClick={() => onToggle(!on)}
-            title={
-                on
-                    ? `Turn finance off for "${kb.name}" — nothing is deleted`
-                    : `Turn finance on for "${kb.name}"`
-            }
-            className={`mt-2 ml-1.5 inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[10px] transition disabled:opacity-40 ${
-                on
-                    ? "border-teal-500/25 bg-teal-500/10 text-teal-200/80 hover:border-teal-500/50"
-                    : "border-white/10 bg-white/5 text-white/35 hover:border-white/25 hover:text-white/60"
-            }`}
-        >
-            {busy ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-                <Wallet className="h-3 w-3" />
-            )}
-            finance {on ? "on" : "off"}
-        </button>
-    );
+function errText(err: unknown, fallback: string): string {
+    if (err && typeof err === "object" && "response" in err) {
+        const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+        if (detail) return detail;
+    }
+    return err instanceof Error && err.message ? err.message : fallback;
 }
 
 export default function KBPage() {
-    const { currentKB, setCurrentKB, setCurrentKBName } = useKB();
-    const [kbs, setKBs] = useState<KnowledgeBase[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isCreating, setIsCreating] = useState(false);
-    const [showForm, setShowForm] = useState(false);
+    const { currentKB, currentKBRecord, kbs, refreshKBs, setCurrentKB, setCurrentKBName } = useKB();
+    const [error, setError] = useState<string | null>(null);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [name, setName] = useState("");
+    const [syncedName, setSyncedName] = useState<string | undefined>(undefined);
+    const [showForm, setShowForm] = useState(
+        () => typeof window !== "undefined" && new URLSearchParams(window.location.search).get("new") === "1",
+    );
     const [newName, setNewName] = useState("");
     const [newVaultPath, setNewVaultPath] = useState("");
-    const [deletingId, setDeletingId] = useState<string | null>(null);
-    const [renamingId, setRenamingId] = useState<string | null>(null);
-    const [renameValue, setRenameValue] = useState("");
-    const [isRenaming, setIsRenaming] = useState(false);
-    const [error, setError] = useState<string | null>(null);
-    const [financeBusyId, setFinanceBusyId] = useState<string | null>(null);
     const canBrowse = Boolean(getDesktopBridge()?.pickDirectory);
 
-    const fetchKBs = useCallback(async () => {
-        try {
-            const data = await api.listKBs();
-            setKBs(data.knowledge_bases);
-        } catch {
-            setError("Failed to load knowledge bases. Is the backend running?");
-        } finally {
-            setIsLoading(false);
-        }
-    }, []);
+    const current =
+        currentKBRecord ?? kbs.find((k) => kbSlug(k) === currentKB || k.name === currentKB) ?? null;
+    const isDefault = current?.id === "default";
 
-    useEffect(() => {
-        fetchKBs();
-    }, [fetchKBs]);
-
-    async function browseVaultFolder() {
-        const dir = await pickDesktopDirectory({
-            title: "Choose notes vault folder for this knowledge base",
-            defaultPath: newVaultPath || undefined,
-        });
-        if (dir) setNewVaultPath(dir);
+    // Re-seed the draft when the record's name changes (KB switch / rename).
+    if (syncedName !== current?.name) {
+        setSyncedName(current?.name);
+        setName(current?.name ?? "");
     }
 
-    async function handleCreate(e: React.FormEvent) {
-        e.preventDefault();
-        const name = newName.trim();
-        const vault = newVaultPath.trim();
-        if (!name) return;
-        if (!vault) {
-            setError(
-                "Choose a notes vault folder — where markdown files for this KB will be saved.",
-            );
-            return;
-        }
-        setIsCreating(true);
+    useEffect(() => {
+        if (window.location.search.includes("new=1")) window.history.replaceState({}, "", "/kb");
+    }, []);
+
+    async function run(key: string, fn: () => Promise<void>, fallback: string) {
+        setBusy(key);
         setError(null);
         try {
-            await api.createKB(name, vault);
+            await fn();
+            await refreshKBs();
+        } catch (err) {
+            setError(errText(err, fallback));
+            await refreshKBs();
+        } finally {
+            setBusy(null);
+        }
+    }
+
+    async function rename() {
+        const next = name.trim();
+        if (!current || !next || next === current.name) {
+            setName(current?.name ?? "");
+            return;
+        }
+        await run("rename", async () => {
+            await api.renameKB(current.id, next);
+            setCurrentKBName(next);
+        }, `Failed to rename "${current.name}".`);
+    }
+
+    async function handleCreate(e: FormEvent) {
+        e.preventDefault();
+        const n = newName.trim();
+        const vault = newVaultPath.trim();
+        if (!n) return;
+        if (!vault) {
+            setError("Choose a notes vault folder — where markdown files for this workspace will be saved.");
+            return;
+        }
+        await run("create", async () => {
+            await api.createKB(n, vault);
             setNewName("");
             setNewVaultPath("");
             setShowForm(false);
-            await fetchKBs();
-        } catch (err: unknown) {
-            let msg = "Failed to create knowledge base";
-            if (err && typeof err === "object" && "response" in err) {
-                const detail = (
-                    err as { response?: { data?: { detail?: string } } }
-                ).response?.data?.detail;
-                if (detail) msg = detail;
-            } else if (err instanceof Error && err.message) {
-                msg = err.message;
-            }
-            setError(msg);
-            // Create may have partially succeeded — refresh so the list matches disk/DB
-            await fetchKBs();
-        } finally {
-            setIsCreating(false);
-        }
-    }
-
-    async function handleToggleFinance(kb: KnowledgeBase, next: boolean) {
-        setFinanceBusyId(kb.id);
-        setError(null);
-        try {
-            await api.setKBFinance(kb.id, next);
-            setKBs((prev) =>
-                prev.map((k) => (k.id === kb.id ? { ...k, finance_enabled: next } : k)),
-            );
-        } catch {
-            setError(
-                `Failed to turn finance ${next ? "on" : "off"} for "${kb.name}".`,
-            );
-        } finally {
-            setFinanceBusyId(null);
-        }
-    }
-
-    async function handleRename(kb: KnowledgeBase) {
-        const name = renameValue.trim();
-        if (!name || name === kb.name) {
-            setRenamingId(null);
-            return;
-        }
-        setIsRenaming(true);
-        setError(null);
-        try {
-            await api.renameKB(kb.id, name);
-            // If this is the active KB, update the display name in context.
-            if (isActive(kb)) setCurrentKBName(name);
-            setRenamingId(null);
-            await fetchKBs();
-        } catch {
-            setError(`Failed to rename "${kb.name}".`);
-        } finally {
-            setIsRenaming(false);
-        }
-    }
-
-    function startRename(kb: KnowledgeBase) {
-        setRenamingId(kb.id);
-        setRenameValue(kb.name);
-    }
-
-    async function handleDelete(kb: KnowledgeBase) {
-        if (
-            !window.confirm(
-                `Permanently delete knowledge base "${kb.name}"?\n\n` +
-                    `This always removes:\n` +
-                    `• All notes and vault files\n` +
-                    `  ${kb.vault_path || "(no path)"}\n` +
-                    `• Graph, vector, and search indexes\n` +
-                    `• Firefly finance administration for this KB\n\n` +
-                    `This cannot be undone.`,
-            )
-        ) {
-            return;
-        }
-
-        setDeletingId(kb.id);
-        setError(null);
-        try {
-            await api.deleteKB(kb.id);
-            if (currentKB === kb.name || currentKB === kb.slug) {
-                setCurrentKB("default");
-            }
-            await fetchKBs();
-        } catch {
-            setError(`Failed to delete "${kb.name}".`);
-        } finally {
-            setDeletingId(null);
-        }
+        }, "Failed to create workspace");
     }
 
     async function handleEmpty(kb: KnowledgeBase) {
-        if (
-            !window.confirm(
-                `Empty knowledge base "${kb.name}"?\n\n` +
-                    `This always removes all notes, vault files, indexes, and Firefly ` +
-                    `data for this KB. The knowledge base itself stays.\n\n` +
-                    `Vault: ${kb.vault_path || "(no path)"}`,
-            )
-        ) {
-            return;
-        }
-        setDeletingId(kb.id);
-        setError(null);
-        try {
-            const slug =
-                kb.id === "default"
-                    ? "default"
-                    : (kb.slug ?? kb.name.toLowerCase().replace(/\s+/g, "_"));
-            await api.emptyKB(slug);
-            await fetchKBs();
-        } catch {
-            setError(`Failed to empty "${kb.name}".`);
-        } finally {
-            setDeletingId(null);
-        }
+        if (!window.confirm(`Empty "${kb.name}"?\n\nRemoves all notes, vault files, indexes and finance data. The workspace itself stays.\n\nVault: ${kb.vault_path || "(no path)"}`)) return;
+        await run(`empty-${kb.id}`, async () => {
+            await api.emptyKB(kbSlug(kb));
+        }, `Failed to empty "${kb.name}".`);
     }
 
-    async function handleDeleteAllNonDefault() {
+    async function handleDelete(kb: KnowledgeBase) {
+        if (!window.confirm(`Permanently delete "${kb.name}"?\n\nRemoves all notes and vault files (${kb.vault_path || "(no path)"}), every index, and finance data. This cannot be undone.`)) return;
+        await run(`delete-${kb.id}`, async () => {
+            await api.deleteKB(kb.id);
+            if (currentKB === kb.name || currentKB === kbSlug(kb)) setCurrentKB("default");
+        }, `Failed to delete "${kb.name}".`);
+    }
+
+    async function handleDeleteAll() {
         const extras = kbs.filter((k) => k.id !== "default");
-        if (extras.length === 0) {
-            setError("There are no other knowledge bases to delete.");
-            return;
-        }
-        if (
-            !window.confirm(
-                `Delete all ${extras.length} non-default knowledge base(s)?\n\n` +
-                    `Each one will lose notes, vault files, indexes, and Firefly data.\n` +
-                    `The default knowledge base is kept (use Empty on it separately).`,
-            )
-        ) {
-            return;
-        }
-        setDeletingId("__all__");
-        setError(null);
-        try {
+        if (!window.confirm(`Delete all ${extras.length} non-default workspace(s)?\n\nEach loses notes, vault files, indexes and finance data. The default workspace is kept.`)) return;
+        await run("delete-all", async () => {
             const result = await api.deleteAllNonDefaultKBs();
             if (currentKB !== "default") setCurrentKB("default");
-            await fetchKBs();
             if (result.errors?.length) {
-                setError(
-                    `Deleted ${result.removed_count}; ${result.errors.length} failed.`,
-                );
+                throw new Error(`Deleted ${result.removed_count}; ${result.errors.length} failed.`);
             }
-        } catch {
-            setError("Failed to delete non-default knowledge bases.");
-        } finally {
-            setDeletingId(null);
-        }
-    }
-
-    function handleSelect(kb: KnowledgeBase) {
-        const slug = kb.slug ?? kb.name.toLowerCase().replace(/\s+/g, "_");
-        setCurrentKB(kb.id === "default" ? "default" : slug, kb.name);
-    }
-
-    function isActive(kb: KnowledgeBase): boolean {
-        if (kb.id === "default") return currentKB === "default";
-        const slug = kb.slug ?? kb.name.toLowerCase().replace(/\s+/g, "_");
-        return currentKB === slug || currentKB === kb.name;
+        }, "Failed to delete non-default workspaces.");
     }
 
     return (
-        <div className="relative min-h-screen bg-black text-white">
-            <ShaderBackground />
+        <SettingsShell
+            title="Workspace"
+            intro="Each workspace is one vault folder with its own graph and index. Switch from the sidebar."
+        >
+            {error && (
+                <div className="card mb-4 flex items-center gap-3 text-[12.5px] text-danger-text">
+                    <span className="flex-1">{error}</span>
+                    <button type="button" className="btn btn-ghost btn-sm" onClick={() => setError(null)}>
+                        Dismiss
+                    </button>
+                </div>
+            )}
 
-            <div className="relative z-10 max-w-3xl mx-auto px-6 py-16">
-                {/* Header */}
-                <motion.div
-                    initial={{ opacity: 0, y: -10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    className="mb-10"
-                >
-                    <div className="flex items-center gap-3 mb-2">
-                        <Database className="h-7 w-7 text-purple-400" />
-                        <h1 className="text-3xl font-bold bg-gradient-to-r from-white to-white/60 bg-clip-text text-transparent">
-                            Knowledge Bases
-                        </h1>
+            {current ? (
+                <div className="max-w-[560px] space-y-3.5">
+                    <div className="field">
+                        <label>Name</label>
+                        <input
+                            className="input max-w-[360px]"
+                            value={name}
+                            disabled={busy === "rename"}
+                            onChange={(e) => setName(e.target.value)}
+                            onBlur={() => void rename()}
+                            onKeyDown={(e) => {
+                                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                if (e.key === "Escape") setName(current.name);
+                            }}
+                        />
                     </div>
-                    <p className="text-white/50 text-sm">
-                        Each knowledge base has its own notes vault folder, graph, and search
-                        index. To change which model a knowledge base uses, switch to it and
-                        open <a href="/models" className="underline underline-offset-2 hover:text-white/70">Models</a>.
-                    </p>
-                </motion.div>
-
-                {/* Error banner */}
-                <AnimatePresence>
-                    {error && (
-                        <motion.div
-                            initial={{ opacity: 0, y: -4 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0 }}
-                            className="mb-6 flex items-center gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300"
-                        >
-                            <span className="flex-1">{error}</span>
-                            <button onClick={() => setError(null)}>
-                                <X className="h-4 w-4" />
+                    <div className="field">
+                        <label>Vault folder — the Markdown files Orb reads and writes</label>
+                        <div className="flex gap-2">
+                            <input className="input input-mono" value={current.vault_path || ""} readOnly />
+                            <button type="button" className="btn btn-secondary" disabled title="Vault paths are fixed after creation">
+                                Choose…
                             </button>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
+                        </div>
+                    </div>
+                    <SettingRow
+                        icon={<Wallet className="h-[18px] w-[18px]" />}
+                        title="Finance"
+                        description="Adds the Finance surface for this workspace. Turning it off hides it; nothing is deleted."
+                    >
+                        <Toggle
+                            label="Finance"
+                            on={current.finance_enabled !== false}
+                            disabled={busy === "finance"}
+                            onChange={(next) =>
+                                void run("finance", async () => {
+                                    await api.setKBFinance(current.id, next);
+                                }, `Failed to turn finance ${next ? "on" : "off"}.`)
+                            }
+                        />
+                    </SettingRow>
+                    <SettingRow icon={<Cpu className="h-[18px] w-[18px]" />} title="Model" description={modelSummary(current)}>
+                        <Link href="/models" className="btn btn-secondary btn-sm no-underline">
+                            Change
+                        </Link>
+                    </SettingRow>
+                    <div className="flex gap-2 pt-3">
+                        <button type="button" className="btn btn-secondary" disabled={busy !== null} onClick={() => void handleEmpty(current)}>
+                            {busy === `empty-${current.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                            Empty workspace…
+                        </button>
+                        {!isDefault && (
+                            <button type="button" className="btn btn-danger" disabled={busy !== null} onClick={() => void handleDelete(current)}>
+                                Delete workspace…
+                            </button>
+                        )}
+                    </div>
+                </div>
+            ) : (
+                <div className="flex items-center gap-2 text-[12.5px] text-n-500">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
+                </div>
+            )}
 
-                {/* Create form */}
-                <AnimatePresence>
-                    {showForm && (
-                        <motion.form
-                            initial={{ opacity: 0, y: -8 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, y: -8 }}
-                            onSubmit={handleCreate}
-                            className="mb-6 space-y-3 rounded-2xl border border-white/10 bg-white/[0.03] p-4"
-                        >
-                            <div>
-                                <label className="text-xs text-white/45">Name</label>
-                                <input
-                                    autoFocus
-                                    type="text"
-                                    placeholder="e.g. Work, Personal, Research"
-                                    value={newName}
-                                    onChange={(e) => setNewName(e.target.value)}
-                                    className="mt-1.5 w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30"
-                                />
-                            </div>
-                            <div>
-                                <label className="text-xs text-white/45">
-                                    Notes vault folder
-                                </label>
-                                <p className="mt-1 text-xs text-white/35">
-                                    Where markdown notes for this KB are saved. Use a different
-                                    folder from your other vaults (e.g. a separate OneDrive or
-                                    Documents path).
-                                </p>
-                                <div className="mt-1.5 flex gap-2">
-                                    <input
-                                        type="text"
-                                        required
-                                        placeholder="/path/to/this-vault/notes"
-                                        value={newVaultPath}
-                                        onChange={(e) => setNewVaultPath(e.target.value)}
-                                        className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-sm text-white placeholder-white/30 outline-none focus:border-purple-500/50"
-                                    />
-                                    {canBrowse && (
-                                        <button
-                                            type="button"
-                                            onClick={() => void browseVaultFolder()}
-                                            className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white/70 transition hover:border-white/25 hover:text-white"
-                                        >
-                                            Browse…
-                                        </button>
-                                    )}
+            <div className="kicker mb-2 mt-7">All workspaces</div>
+            <div className="max-w-[560px] space-y-2">
+                {kbs.map((kb, i) => {
+                    const active = current?.id === kb.id;
+                    return (
+                        <div key={kb.id} className="flex items-center gap-3 rounded-md px-3.5 py-2.5 shadow-sm">
+                            <span
+                                className={cn(
+                                    "grid h-[22px] w-[22px] shrink-0 place-items-center rounded-[6px] text-[11px] font-medium text-accent-100",
+                                    SWATCHES[i % SWATCHES.length],
+                                )}
+                            >
+                                {kb.name.slice(0, 1).toUpperCase()}
+                            </span>
+                            <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-2 text-[13px]">
+                                    <span className="truncate">{kb.name}</span>
+                                    {kb.id === "default" && <span className="tag tag-neutral">built-in</span>}
+                                    {active && <span className="tag tag-accent">active</span>}
+                                </div>
+                                <div className="truncate font-mono text-[11px] text-n-500" title={kb.vault_path}>
+                                    {kb.vault_path || "—"}
                                 </div>
                             </div>
-                            <div className="flex justify-end gap-2 pt-1">
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setShowForm(false);
-                                        setNewName("");
-                                        setNewVaultPath("");
-                                    }}
-                                    className="rounded-xl border border-white/10 px-3 py-2.5 text-sm text-white/50 transition hover:text-white"
-                                >
-                                    Cancel
+                            {!active && (
+                                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setCurrentKB(kbSlug(kb), kb.name)}>
+                                    Switch
                                 </button>
-                                <button
-                                    type="submit"
-                                    disabled={
-                                        isCreating || !newName.trim() || !newVaultPath.trim()
-                                    }
-                                    className="flex items-center gap-2 rounded-xl bg-purple-600 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-purple-500 disabled:opacity-50"
-                                >
-                                    {isCreating ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                        <Check className="h-4 w-4" />
-                                    )}
-                                    Create vault
-                                </button>
-                            </div>
-                        </motion.form>
-                    )}
-                </AnimatePresence>
+                            )}
+                        </div>
+                    );
+                })}
 
-                {/* KB list */}
-                {isLoading ? (
-                    <div className="flex items-center justify-center py-16">
-                        <Loader2 className="h-6 w-6 animate-spin text-white/30" />
-                    </div>
-                ) : (
-                    <div className="space-y-3">
-                        <AnimatePresence initial={false}>
-                            {kbs.map((kb) => {
-                                const active = isActive(kb);
-                                const isDefault = kb.id === "default";
-                                const isDeleting = deletingId === kb.id;
-
-                                return (
-                                    <motion.div
-                                        key={kb.id}
-                                        initial={{ opacity: 0, y: 6 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, scale: 0.97 }}
-                                        className={cn(
-                                            "group relative flex items-center gap-4 rounded-2xl border p-4 transition-all duration-200",
-                                            active
-                                                ? "border-purple-500/40 bg-purple-500/10 shadow-lg shadow-purple-500/10"
-                                                : "border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/8"
-                                        )}
+                {showForm ? (
+                    <form onSubmit={handleCreate} className="card-outline space-y-3">
+                        <div className="field">
+                            <label>Name</label>
+                            <input
+                                autoFocus
+                                className="input"
+                                placeholder="e.g. Work, Personal, Research"
+                                value={newName}
+                                onChange={(e) => setNewName(e.target.value)}
+                            />
+                        </div>
+                        <div className="field">
+                            <label>Vault folder — a folder of Markdown files, separate from your other vaults</label>
+                            <div className="flex gap-2">
+                                <input
+                                    required
+                                    className="input input-mono"
+                                    placeholder="/path/to/this-vault/notes"
+                                    value={newVaultPath}
+                                    onChange={(e) => setNewVaultPath(e.target.value)}
+                                />
+                                {canBrowse && (
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() =>
+                                            void pickDesktopDirectory({
+                                                title: "Choose notes vault folder for this workspace",
+                                                defaultPath: newVaultPath || undefined,
+                                            }).then((dir) => dir && setNewVaultPath(dir))
+                                        }
                                     >
-                                        {/* Icon */}
-                                        <div
-                                            className={cn(
-                                                "flex h-11 w-11 items-center justify-center rounded-xl shrink-0",
-                                                active
-                                                    ? "bg-purple-500/20 text-purple-400"
-                                                    : "bg-white/5 text-white/40"
-                                            )}
-                                        >
-                                            {isDefault ? (
-                                                <Database className="h-5 w-5" />
-                                            ) : (
-                                                <FolderOpen className="h-5 w-5" />
-                                            )}
-                                        </div>
-
-                                        {/* Info */}
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2">
-                                                {renamingId === kb.id ? (
-                                                    <form
-                                                        onSubmit={(e) => { e.preventDefault(); handleRename(kb); }}
-                                                        className="flex items-center gap-2 flex-1"
-                                                    >
-                                                        <input
-                                                            autoFocus
-                                                            type="text"
-                                                            value={renameValue}
-                                                            onChange={(e) => setRenameValue(e.target.value)}
-                                                            onBlur={() => handleRename(kb)}
-                                                            onKeyDown={(e) => e.key === "Escape" && setRenamingId(null)}
-                                                            className="flex-1 min-w-0 rounded-lg border border-purple-500/40 bg-white/5 px-2 py-0.5 text-sm text-white outline-none focus:ring-1 focus:ring-purple-500/40"
-                                                        />
-                                                        <button
-                                                            type="submit"
-                                                            disabled={isRenaming}
-                                                            className="shrink-0 text-purple-400 hover:text-purple-300"
-                                                        >
-                                                            {isRenaming ? (
-                                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                            ) : (
-                                                                <Check className="h-3.5 w-3.5" />
-                                                            )}
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            onClick={() => setRenamingId(null)}
-                                                            className="shrink-0 text-white/30 hover:text-white/60"
-                                                        >
-                                                            <X className="h-3.5 w-3.5" />
-                                                        </button>
-                                                    </form>
-                                                ) : (
-                                                    <>
-                                                        <span className="font-semibold text-white truncate">
-                                                            {kb.name}
-                                                        </span>
-                                                        {isDefault && (
-                                                            <span className="shrink-0 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] text-white/40">
-                                                                built-in
-                                                            </span>
-                                                        )}
-                                                        {active && (
-                                                            <span className="shrink-0 flex items-center gap-1 rounded-full bg-purple-500/20 px-2 py-0.5 text-[10px] font-medium text-purple-300">
-                                                                <Check className="h-2.5 w-2.5" />
-                                                                active
-                                                            </span>
-                                                        )}
-                                                    </>
-                                                )}
-                                            </div>
-                                            {kb.created_at && (
-                                                <p className="text-xs text-white/30 mt-0.5">
-                                                    Created{" "}
-                                                    {new Date(kb.created_at).toLocaleDateString(undefined, {
-                                                        year: "numeric",
-                                                        month: "short",
-                                                        day: "numeric",
-                                                    })}
-                                                </p>
-                                            )}
-                                            {kb.vault_path && (
-                                                <p className="truncate font-mono text-[10px] text-white/25 mt-0.5" title={kb.vault_path}>
-                                                    {kb.vault_path}
-                                                </p>
-                                            )}
-                                            {isDefault && (
-                                                <p className="text-xs text-white/30 mt-0.5">
-                                                    Original knowledge base — always available
-                                                </p>
-                                            )}
-                                            <KBModelSummary kb={kb} />
-                                            <KBFinanceToggle
-                                                kb={kb}
-                                                busy={financeBusyId === kb.id}
-                                                onToggle={(next) =>
-                                                    void handleToggleFinance(kb, next)
-                                                }
-                                            />
-                                        </div>
-
-                                        {/* Actions */}
-                                        <div className="flex items-center gap-2 shrink-0">
-                                            {!active && (
-                                                <button
-                                                    onClick={() => handleSelect(kb)}
-                                                    className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs font-medium text-white/70 transition hover:border-purple-500/40 hover:bg-purple-500/10 hover:text-purple-300"
-                                                >
-                                                    Switch
-                                                </button>
-                                            )}
-                                            <button
-                                                onClick={() => void handleEmpty(kb)}
-                                                disabled={isDeleting || deletingId === "__all__"}
-                                                className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-2 py-1.5 text-xs text-amber-300/80 transition hover:border-amber-500/40 hover:bg-amber-500/10 disabled:opacity-40"
-                                                title={`Empty "${kb.name}" (keep KB)`}
-                                            >
-                                                {isDeleting ? (
-                                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                ) : (
-                                                    "Empty"
-                                                )}
-                                            </button>
-                                            {!isDefault && renamingId !== kb.id && (
-                                                <button
-                                                    onClick={() => startRename(kb)}
-                                                    className="rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-white/40 transition hover:border-white/20 hover:text-white/70"
-                                                    title={`Rename "${kb.name}"`}
-                                                >
-                                                    <Pencil className="h-3.5 w-3.5" />
-                                                </button>
-                                            )}
-                                            {!isDefault && (
-                                                <button
-                                                    onClick={() => handleDelete(kb)}
-                                                    disabled={isDeleting || deletingId === "__all__"}
-                                                    className="rounded-lg border border-red-500/20 bg-red-500/5 px-2 py-1.5 text-xs text-red-400/70 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300 disabled:opacity-40"
-                                                    title={`Delete "${kb.name}"`}
-                                                >
-                                                    {isDeleting ? (
-                                                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                                                    ) : (
-                                                        <Trash2 className="h-3.5 w-3.5" />
-                                                    )}
-                                                </button>
-                                            )}
-                                        </div>
-                                    </motion.div>
-                                );
-                            })}
-                        </AnimatePresence>
-                    </div>
-                )}
-
-                {/* Create button */}
-                {!showForm && (
-                    <motion.button
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        onClick={() => setShowForm(true)}
-                        className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 bg-white/2 py-4 text-sm text-white/40 transition hover:border-purple-500/30 hover:bg-purple-500/5 hover:text-purple-300"
-                    >
-                        <Plus className="h-4 w-4" />
-                        New knowledge base
-                    </motion.button>
-                )}
-
-                {kbs.some((k) => k.id !== "default") && (
+                                        Browse…
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <button
+                                type="button"
+                                className="btn btn-secondary"
+                                onClick={() => {
+                                    setShowForm(false);
+                                    setNewName("");
+                                    setNewVaultPath("");
+                                }}
+                            >
+                                Cancel
+                            </button>
+                            <button type="submit" className="btn btn-primary" disabled={busy === "create" || !newName.trim() || !newVaultPath.trim()}>
+                                {busy === "create" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                                Create
+                            </button>
+                        </div>
+                    </form>
+                ) : (
                     <button
                         type="button"
-                        disabled={deletingId === "__all__"}
-                        onClick={() => void handleDeleteAllNonDefault()}
-                        className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/20 bg-red-500/5 py-3 text-sm text-red-300/80 transition hover:border-red-500/40 hover:bg-red-500/10 disabled:opacity-50"
+                        onClick={() => setShowForm(true)}
+                        className="flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-n-700 py-3 text-[12.5px] text-n-400 hover:border-accent hover:text-accent"
                     >
-                        {deletingId === "__all__" ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                            <Trash2 className="h-4 w-4" />
-                        )}
-                        Delete all non-default knowledge bases
+                        <Plus className="h-3.5 w-3.5" /> New workspace
                     </button>
                 )}
 
-                {/* Usage hint */}
-                <p className="mt-8 text-center text-xs text-white/20">
-                    The active KB is used for chat, ingestion, and graph exploration.
-                    Switch any time — existing data is never moved.
-                </p>
+                {kbs.some((k) => k.id !== "default") && (
+                    <div className="pt-2">
+                        <button type="button" className="btn btn-danger btn-sm" disabled={busy !== null} onClick={() => void handleDeleteAll()}>
+                            {busy === "delete-all" ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+                            Delete all non-default workspaces
+                        </button>
+                    </div>
+                )}
             </div>
-        </div>
+        </SettingsShell>
     );
 }

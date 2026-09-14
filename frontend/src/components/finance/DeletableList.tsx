@@ -1,4 +1,5 @@
 import { Trash2 } from "lucide-react";
+import { DELETE_BTN, EMPTY_ROW, LIST_ROW } from "./utils";
 
 export function DeletableList({
   rows,
@@ -12,32 +13,25 @@ export function DeletableList({
   onDelete: (id: string) => void;
 }) {
   return (
-    <ul className="space-y-2">
+    <ul>
       {rows.map((row) => (
-        <li
-          key={row.id}
-          className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
-        >
-          <div className="min-w-0">
+        <li key={row.id} className={LIST_ROW}>
+          <div className="min-w-0 flex-1">
             <div className="truncate">{row.title}</div>
-            {row.subtitle ? <div className="text-xs text-white/40">{row.subtitle}</div> : null}
+            {row.subtitle ? <div className="text-[11px] text-n-500">{row.subtitle}</div> : null}
           </div>
           <button
             type="button"
             disabled={busy}
             onClick={() => onDelete(row.id)}
-            className="rounded p-1 text-white/35 hover:bg-white/5 hover:text-rose-200 disabled:opacity-50"
+            className={DELETE_BTN}
             aria-label={`Delete ${row.title}`}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
         </li>
       ))}
-      {rows.length === 0 && (
-        <li className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/40">
-          {empty}
-        </li>
-      )}
+      {rows.length === 0 && <li className={EMPTY_ROW}>{empty}</li>}
     </ul>
   );
 }

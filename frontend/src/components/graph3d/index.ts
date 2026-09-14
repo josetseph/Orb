@@ -14,3 +14,4 @@ export { useGraph3DData } from "@/components/graph3d/hooks/useGraph3DData";
 export { useGraphSearch } from "@/components/graph3d/hooks/useGraphSearch";
 export { useProximityLabels } from "@/components/graph3d/hooks/useProximityLabels";
 export { useGraph3DCamera } from "@/components/graph3d/hooks/useGraph3DCamera";
+export { GraphModeSwitch } from "@/components/graph3d/GraphModeSwitch";

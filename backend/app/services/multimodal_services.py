@@ -1,4 +1,4 @@
-"""Multimodal runtime readiness (in-process Florence / Whisper / Marlin).
+"""Multimodal runtime readiness (in-process Whisper / Marlin).
 
 Legacy HTTP sidecars are retired. This module verifies weights on disk and
 optionally installs torch/transformers into the *current* API interpreter so
@@ -17,8 +17,7 @@ logger = get_logger("MultimodalServices")
 
 _MULTIMODAL_PIP = [
     "torch",
-    # Marlin requires transformers>=5.7 (Qwen3.5 backbone). Florence/Whisper
-    # also run on 5.x with Orb compatibility patches.
+    # Marlin requires transformers>=5.7 (Qwen3.5 backbone); Whisper runs on 5.x too.
     "transformers>=5.7.0",
     "accelerate>=1.12.0",
     "einops>=0.8.1",
@@ -50,7 +49,7 @@ def _deps_importable() -> tuple[bool, str | None]:
         import qwen_vl_utils  # noqa: F401
         import av  # noqa: F401
 
-        # Exercise the real model entrypoints Florence/Whisper need. A bare
+        # Exercise the real model entrypoints Whisper/Marlin need. A bare
         # ``import transformers`` can succeed while AutoModel* fails (e.g. when
         # numpy/_core/tests was stripped from the desktop bundle).
         from transformers import (  # noqa: F401
@@ -97,7 +96,7 @@ def services_ready() -> dict:
     status = multimodal_runtime.status()
     return {
         "mode": "in_process",
-        "local_models": deps_ok and status["models_ready"].get("florence", False),
+        "local_models": deps_ok and status["models_ready"].get("whisper", False),
         "marlin": deps_ok and status["models_ready"].get("marlin", False),
         "deps_ok": deps_ok,
         "deps_error": deps_err,
@@ -111,25 +110,19 @@ def ensure_multimodal_services(
     start_marlin: bool = True,  # noqa: ARG001 — API compat; Marlin is in-process
 ) -> dict:
     """Prepare in-process multimodal runtime (no HTTP processes spawned)."""
-    florence = multimodal_model_path("florence")
     whisper = multimodal_model_path("whisper")
     marlin = multimodal_model_path("marlin")
     models = {
-        "florence": is_hf_snapshot_ready(florence),
         "whisper": is_hf_snapshot_ready(whisper),
         "marlin": is_hf_snapshot_ready(marlin),
     }
-    if not models["florence"] or not models["whisper"]:
+    if not models["whisper"]:
         return {
             "started": False,
             "mode": "in_process",
-            "error": "Download Florence + Whisper on the Models page first",
+            "error": "Download Whisper on the Models page first",
             "models": models,
-            "paths": {
-                "florence": str(florence),
-                "whisper": str(whisper),
-                "marlin": str(marlin),
-            },
+            "paths": {"whisper": str(whisper), "marlin": str(marlin)},
         }
 
     deps = ensure_multimodal_python_deps(install=install_deps)
@@ -150,7 +143,7 @@ def ensure_multimodal_services(
         "deps": deps,
         "services": services_ready(),
         "message": (
-            "Florence / Whisper / Marlin load in-process on demand "
+            "Whisper / Marlin load in-process on demand "
             "(no sidecar HTTP services)."
         ),
     }

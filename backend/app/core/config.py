@@ -114,8 +114,6 @@ class Settings(BaseSettings):
     TYPESENSE_API_KEY: str = "orb-dev-key"
     TYPESENSE_COLLECTION_NAME: str = "orb_nodes"
 
-    MODEL_FLORENCE_HF: str = "microsoft/Florence-2-large"
-    MODEL_FLORENCE_LOCAL: str = "florence-2-large"
     # large-v3, not turbo: turbo's 4-layer decoder invents text in low-signal
     # audio (repetition loops, foreign script, ~20% more words on identical
     # distant-mic input). Empty means "let whisper_engine pick per platform" —
@@ -130,7 +128,8 @@ class Settings(BaseSettings):
     MODEL_MARLIN_HF: str = "lunahr/Marlin-2B-ungated"
     MODEL_MARLIN_LOCAL: str = "marlin-2b"
     # Multimodal — loaded in-process (optional until first multimedia ingest).
-    FLORENCE_MAX_IMAGE_PIXELS: int = 1500000
+    # Images are downscaled to this before any model (local or cloud) sees them.
+    IMAGE_DESCRIBE_MAX_PIXELS: int = 1500000
     MODEL_RERANKER_LOCAL: str = "qwen3-reranker-0.6b"
 
     FIREFLY_BASE_URL: str | None = None

@@ -36,12 +36,12 @@ export function SuggestInput({
         autoComplete="off"
       />
       {open && filtered.length > 0 && (
-        <ul className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-lg border border-white/15 bg-[#12141c] py-1 shadow-lg">
+        <ul className="popover absolute z-20 mt-1 max-h-48 w-full overflow-auto">
           {filtered.map((item) => (
             <li key={item}>
               <button
                 type="button"
-                className="block w-full px-3 py-1.5 text-left text-sm text-white/85 hover:bg-teal-500/15"
+                className="menu-item"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => {
                   onChange(item);

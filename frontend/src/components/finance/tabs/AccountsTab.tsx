@@ -24,13 +24,13 @@ export function AccountsTab({
   busy: boolean;
 }) {
   return (
-    <section className="grid gap-6 xl:grid-cols-[0.9fr,1.1fr]">
+    <section className="grid gap-4 xl:grid-cols-[0.9fr,1.1fr]">
       <form
         onSubmit={onCreate}
-        className="space-y-4 rounded-2xl border border-white/10 bg-black/35 p-5"
+        className="card-outline space-y-3"
       >
-        <h2 className="flex items-center gap-2 text-lg font-medium">
-          <Plus className="h-4 w-4 text-teal-300" /> New account
+        <h2 className="kicker flex items-center gap-1.5 text-[11px]">
+          <Plus className="h-3 w-3" /> New account
         </h2>
         <Field label="Name">
           <input
@@ -74,12 +74,12 @@ export function AccountsTab({
         <button
           type="submit"
           disabled={busy}
-          className="rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+          className="btn btn-primary"
         >
           {busy ? "Creating…" : "Create account"}
         </button>
       </form>
-      <Panel title="All accounts" icon={<Landmark className="h-5 w-5 text-white/60" />}>
+      <Panel title="All accounts" icon={<Landmark className="h-3.5 w-3.5" />}>
         <AccountList
           accounts={accounts}
           currency={workspace.currency}

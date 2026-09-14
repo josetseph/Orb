@@ -140,7 +140,7 @@ export function useNoteMedia({
             /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(lower);
 
           // Images stay as markdown image embeds so the editor previews them;
-          // ingestion also discovers ![alt](/vault-files/...) for Florence.
+          // ingestion also discovers ![alt](/vault-files/...) for description.
           chunks.push(
             isImage
               ? `![${file.name}](${linkUrl})`

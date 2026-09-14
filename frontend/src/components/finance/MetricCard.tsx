@@ -13,12 +13,15 @@ export function MetricCard({
   currency?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/35 p-5">
-      <div className="mb-3 flex items-center gap-2 text-sm text-white/55">
+    <div className="card px-4 py-3.5">
+      <div className="card-kicker flex items-center gap-1.5 [&_svg]:h-3 [&_svg]:w-3">
         {icon}
-        <span>{label}</span>
+        {label}
       </div>
-      <div className="font-mono text-2xl text-white">{money(value, currency)}</div>
+      <div className="text-[24px] font-medium tabular-nums tracking-[-0.01em]">
+        {money(value)}
+      </div>
+      <div className="text-[11px] text-n-500">{currency || "—"}</div>
     </div>
   );
 }

@@ -1,10 +1,11 @@
+import { LIST_ROW } from "./utils";
 export function BasicSummaryList({ basic }: { basic: Record<string, unknown> }) {
   const entries = Object.entries(basic || {});
   if (!entries.length) {
-    return <p className="text-sm text-white/40">No summary data for this range.</p>;
+    return <p className="text-[12.5px] text-n-500">No summary data for this range.</p>;
   }
   return (
-    <ul className="space-y-2">
+    <ul>
       {entries.map(([key, value]) => {
         const row = value && typeof value === "object" ? (value as Record<string, unknown>) : null;
         const label = String(row?.title || row?.monetary_value || key);
@@ -15,10 +16,10 @@ export function BasicSummaryList({ basic }: { basic: Record<string, unknown> }) 
         return (
           <li
             key={key}
-            className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
+            className={LIST_ROW}
           >
-            <span className="truncate text-white/70">{label}</span>
-            <span className="font-mono text-teal-200">
+            <span className="truncate text-n-300">{label}</span>
+            <span className="tabular-nums text-accent-300">
               {amount == null ? "—" : String(amount)}
             </span>
           </li>

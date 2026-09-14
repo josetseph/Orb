@@ -15,7 +15,7 @@ export function parseNoteAttachments(content: string): NoteAttachment[] {
   let m: RegExpExecArray | null;
   const regex = new RegExp(ATTACHMENT_REGEX.source, ATTACHMENT_REGEX.flags);
   while ((m = regex.exec(content)) !== null) {
-    const label = (m[1] ?? m[3] ?? "file").replace(/^[📎🖇🎤]\s*/, "");
+    const label = (m[1] ?? m[3] ?? "file").replace(/^[📎🖇🎤]\s*/u, "");
     const url = m[2] ?? m[4] ?? "";
     if (!url) continue;
     attachments.push({ label, url, raw: m[0] });

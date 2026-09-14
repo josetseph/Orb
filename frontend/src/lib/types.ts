@@ -25,6 +25,9 @@ export interface NotePreview {
     content: string;
 }
 
+/** One per-attachment extraction job (GET /api/v1/notes/:id/attachments/jobs). */
+export type AttachmentJob = { status: "running" | "done" | "failed"; error?: string | null };
+
 /** Status shape returned by GET /api/v1/notes/:id/status */
 export type NoteStatus = {
     id: string;

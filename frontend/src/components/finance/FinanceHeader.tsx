@@ -1,15 +1,11 @@
-import { Wallet } from "lucide-react";
+import type { ReactNode } from "react";
 
-export function FinanceHeader({ currentKB }: { currentKB: string }) {
+export function FinanceHeader({ meta, children }: { meta?: string; children?: ReactNode }) {
   return (
-    <div className="mb-8 flex items-center gap-3">
-      <Wallet className="h-7 w-7 text-teal-300" />
-      <div>
-        <h1 className="text-2xl font-semibold">Finance</h1>
-        <p className="text-sm text-white/50">
-          Native Firefly III ledger — scoped to {currentKB}
-        </p>
-      </div>
+    <div className="flex items-center gap-2.5 px-7 pb-2.5 pt-3.5">
+      <h1 className="flex-1 text-[15px] font-medium">Finance</h1>
+      {meta && <span className="text-[11.5px] text-n-500">{meta}</span>}
+      {children}
     </div>
   );
 }

@@ -1798,6 +1798,94 @@ class LLMService:
         # Cloud models are far larger; output limits, not context, bind there.
         return 128000
 
+    # ── Images ────────────────────────────────────────────────────────────────
+
+    IMAGE_DESCRIBE_PROMPT = (
+        "Describe this image for a personal knowledge base. First give a one- or "
+        "two-sentence summary of what it shows. Then transcribe ALL visible text "
+        "verbatim, keeping line order (headings, dates, names, prices, links). "
+        "Note the kind of image (photo, screenshot, poster, chart, document) and "
+        "any people, places, organisations or events it refers to. Plain text only."
+    )
+
+    def describe_image(self, image_path: str) -> str:
+        """What one image shows, through the ingestion model.
+
+        Every provider that can take an image is routed here, so "the model
+        you picked" reads your pictures: a local GGUF through its vision
+        projector, or a cloud endpoint through its image input. A text-only
+        model raises with a message naming the fix.
+        """
+        from app.services.multimedia import image_data_url
+
+        model = self.get_ingestion_model()
+        provider = getattr(self, "ingestion_provider", self.provider)
+        prompt = self.IMAGE_DESCRIBE_PROMPT
+        data_url = image_data_url(image_path)
+
+        if provider == "local":
+            from app.services.local_models import local_llama_runtime
+
+            return local_llama_runtime.describe_image(data_url, prompt, model=model)
+
+        if provider == "gemini":
+            mime, b64 = data_url[5:].split(";base64,", 1)
+            import base64
+
+            response = self.i_gemini_client.models.generate_content(
+                model=model or settings.GEMINI_MODEL,
+                contents=[prompt, types.Part.from_bytes(data=base64.b64decode(b64), mime_type=mime)],
+                config=types.GenerateContentConfig(
+                    temperature=0.1,
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
+                ),
+            )
+            return (response.text or "").strip()
+
+        if provider == "anthropic":
+            mime, b64 = data_url[5:].split(";base64,", 1)
+            response = self.i_anthropic_client.messages.create(
+                model=model or settings.ANTHROPIC_MODEL,
+                max_tokens=1024,
+                temperature=0.1,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "image",
+                                "source": {"type": "base64", "media_type": mime, "data": b64},
+                            },
+                            {"type": "text", "text": prompt},
+                        ],
+                    }
+                ],
+            )
+            return response.content[0].text.strip()
+
+        # openai / openai_compat / huggingface: OpenAI image_url content parts.
+        response = self.i_chat_client.chat.completions.create(
+            model=model,
+            temperature=0.1,
+            max_tokens=1024,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+        )
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise ValueError(
+                f"{model or provider} returned no text for the image. "
+                "Check that this model accepts image input."
+            )
+        return content.strip()
+
     def ingestion_extract_structured(  # pylint: disable=too-many-return-statements
         self,
         prompt: str,

@@ -20,14 +20,13 @@ import {
   FileText,
   Info,
   Loader2,
-  Network,
+  Maximize2,
   RotateCcw,
-  Settings2,
+  Search,
   X,
 } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
 import { cn, youtubeEmbedUrl, vimeoEmbedUrl } from "@/lib/utils";
-import { ShaderBackground } from "@/components/shader-background";
+import { GraphModeSwitch } from "@/components/graph3d";
 import type { Note, NotesGraphPayload } from "@/lib/types";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 
@@ -146,20 +145,7 @@ function previewUrlTransform(url: string): string {
   return /^(https?|mailto):/i.test(url) || !url.includes(":") ? url : "";
 }
 
-const PREVIEW_PROSE =
-  "prose prose-invert prose-sm max-w-none " +
-  "prose-headings:font-semibold prose-headings:text-white " +
-  "prose-h1:mb-2 prose-h1:mt-4 prose-h1:text-xl " +
-  "prose-h2:mb-2 prose-h2:mt-3 prose-h2:text-lg " +
-  "prose-h3:mb-1.5 prose-h3:mt-3 prose-h3:text-base " +
-  "prose-p:my-2 prose-p:leading-relaxed prose-p:text-zinc-300 " +
-  "prose-strong:text-white prose-em:text-zinc-300 " +
-  "prose-a:text-teal-300 prose-a:no-underline hover:prose-a:underline " +
-  "prose-code:rounded prose-code:bg-white/10 prose-code:px-1 prose-code:text-pink-300 " +
-  "prose-code:before:content-none prose-code:after:content-none " +
-  "prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-li:text-zinc-300 " +
-  "prose-blockquote:border-teal-500/40 prose-blockquote:text-zinc-400 " +
-  "prose-hr:border-white/10";
+const PREVIEW_PROSE = "prose-orb text-[13.5px]";
 
 function toForceGraphData(payload: NotesGraphPayload): GraphData {
   const nodes: GraphNode[] = (payload.nodes || []).map((n) => ({
@@ -199,9 +185,9 @@ function Slider({
 }) {
   return (
     <label className="mb-3 block">
-      <div className="mb-1 flex justify-between text-[11px] text-white/55">
+      <div className="mb-1 flex justify-between text-[11px] text-n-500">
         <span>{label}</span>
-        <span className="font-mono text-white/40">{value}</span>
+        <span className="font-mono text-n-600">{value}</span>
       </div>
       <input
         type="range"
@@ -210,7 +196,7 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full accent-teal-400"
+        className="w-full accent-accent"
       />
     </label>
   );
@@ -224,7 +210,6 @@ export default function NotesGraphPage() {
   const [nodeDetails, setNodeDetails] = useState<Note | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
-  const [showControls, setShowControls] = useState(false);
   const [controls, setControls] = useState<Controls>(DEFAULT_CONTROLS);
   const [groupDraft, setGroupDraft] = useState("");
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
@@ -239,7 +224,9 @@ export default function NotesGraphPage() {
   const fittingRef = useRef(false);
   const [dims, setDims] = useState({ w: 0, h: 0 });
   const controlsRef = useRef(controls);
-  controlsRef.current = controls;
+  useEffect(() => {
+    controlsRef.current = controls;
+  }, [controls]);
 
   const runZoomToFit = useCallback((duration = 400, padding = 80) => {
     fittingRef.current = true;
@@ -431,7 +418,7 @@ export default function NotesGraphPage() {
       for (const g of controls.groups) {
         if (g.query && hay.includes(g.query.toLowerCase())) return g.color;
       }
-      return node.group === "Missing" ? "#71717a" : "#3b82f6";
+      return node.group === "Missing" ? "#595d6c" : "#9184d9";
     },
     [controls.groups],
   );
@@ -447,7 +434,7 @@ export default function NotesGraphPage() {
       ctx.arc(n.x || 0, n.y || 0, r, 0, 2 * Math.PI);
       ctx.fillStyle = color;
       ctx.fill();
-      ctx.strokeStyle = "rgba(255,255,255,0.35)";
+      ctx.strokeStyle = "rgba(233,233,237,0.25)";
       ctx.lineWidth = 1 / globalScale;
       ctx.stroke();
 
@@ -464,7 +451,7 @@ export default function NotesGraphPage() {
       ctx.font = `${fontSize}px Sans-Serif`;
       ctx.textAlign = "center";
       ctx.textBaseline = "top";
-      ctx.fillStyle = `rgba(255,255,255,${labelOpacity})`;
+      ctx.fillStyle = `rgba(233,233,237,${labelOpacity})`;
       ctx.fillText(label, n.x || 0, (n.y || 0) + r + 2 / globalScale);
     },
     [colorFor],
@@ -474,7 +461,6 @@ export default function NotesGraphPage() {
     const requestId = ++detailRequestRef.current;
     setSelectedNode(node);
     setNodeDetails(null);
-    setShowControls(false);
 
     if (typeof node.x === "number" && typeof node.y === "number") {
       // Treat focus zoom as user navigation so a later engine-stop fit
@@ -535,24 +521,21 @@ export default function NotesGraphPage() {
     [filtered],
   );
 
-  return (
-    <div className="relative h-screen w-full overflow-hidden bg-black">
-      <ShaderBackground />
+  const chip = (on: boolean) => cn("tag cursor-pointer", on ? "tag-accent" : "tag-neutral");
 
-      {/* Full-bleed graph host — sized to the main content area */}
-      <div ref={containerRef} className="absolute inset-0 z-0 overflow-hidden">
+  return (
+    <div className="screen relative">
+      {/* Full-bleed graph host */}
+      <div ref={containerRef} className="relative min-w-0 flex-1 overflow-hidden bg-bg">
         {loading || dims.w === 0 ? (
-          <div className="flex h-full w-full items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-purple-400" />
+          <div className="flex h-full items-center justify-center gap-2 text-[13px] text-n-500">
+            <Loader2 className="h-4 w-4 animate-spin" /> Loading graph…
           </div>
         ) : filtered.nodes.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <FileText className="h-12 w-12 text-white/20" />
-            <p className="text-white/60">No notes to graph yet</p>
-            <Link
-              href="/notes"
-              className="rounded-xl bg-white/10 px-4 py-2 text-sm text-white hover:bg-white/15"
-            >
+          <div className="flex h-full flex-col items-center justify-center gap-2.5 text-center">
+            <FileText className="h-8 w-8 text-n-700" />
+            <p className="text-[14px] text-n-300">No notes to graph yet</p>
+            <Link href="/notes" className="btn btn-primary no-underline">
               Open Notes
             </Link>
           </div>
@@ -575,7 +558,7 @@ export default function NotesGraphPage() {
               ctx.fillStyle = color;
               ctx.fill();
             }}
-            linkColor={() => "rgba(255,255,255,0.2)"}
+            linkColor={() => "rgba(233,233,237,0.14)"}
             linkWidth={() => controls.linkThickness}
             linkDirectionalArrowLength={controls.showArrows ? 3.5 : 0}
             linkDirectionalArrowRelPos={1}
@@ -595,47 +578,40 @@ export default function NotesGraphPage() {
             }}
           />
         )}
-      </div>
 
-      {/* Top bar */}
-      <div className="pointer-events-none absolute left-6 right-6 top-6 z-10 flex items-center justify-between gap-3">
-        <div className="pointer-events-auto rounded-2xl border border-white/10 bg-black/70 px-4 py-2 backdrop-blur-xl">
-          <p className="text-sm font-semibold text-white">Notes graph</p>
-          <p className="text-[11px] text-zinc-500">
-            {stats.notes} notes · {stats.missing} missing · {stats.links}{" "}
-            wikilinks
-          </p>
+        {/* Top-left: search + mode */}
+        <div className="absolute left-5 top-4 z-10 flex items-center gap-2">
+          <div className="flex h-8 w-[260px] items-center gap-1.5 rounded-md bg-surface px-2.5 shadow-sm">
+            <Search className="h-3.5 w-3.5 text-n-500" />
+            <input
+              value={controls.search}
+              onChange={(e) => patch("search", e.target.value)}
+              placeholder="Find a note"
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-n-600"
+            />
+          </div>
+          <GraphModeSwitch mode="notes" />
         </div>
-        <div className="pointer-events-auto flex items-center gap-2">
+
+        {/* Top-right: actions */}
+        <div className="absolute right-5 top-4 z-10 flex gap-1.5">
           <button
             type="button"
-            onClick={() => setShowControls((v) => !v)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-xl border px-3 py-2 text-xs backdrop-blur-xl transition",
-              showControls
-                ? "border-teal-500/40 bg-teal-500/15 text-teal-200"
-                : "border-white/10 bg-black/70 text-white/70 hover:bg-white/10 hover:text-white",
-            )}
-          >
-            <Settings2 className="h-3.5 w-3.5" />
-            Filters
-          </button>
-          <button
-            type="button"
+            title="Fit to view"
             onClick={() => {
               userNavigatedRef.current = false;
               hasFittedRef.current = false;
               runZoomToFit(400, 60);
             }}
-            className="rounded-xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/70 backdrop-blur-xl transition hover:bg-white/10 hover:text-white"
+            className="grid h-8 w-8 place-items-center rounded-md bg-surface text-n-300 shadow-sm hover:text-text"
           >
-            Fit
+            <Maximize2 className="h-[15px] w-[15px]" />
           </button>
           <button
             type="button"
             onClick={() => void handleRebuild()}
             disabled={rebuilding}
-            className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-black/70 px-3 py-2 text-xs text-white/70 backdrop-blur-xl transition hover:bg-white/10 hover:text-white disabled:opacity-50"
+            className="flex h-8 items-center gap-1.5 rounded-md bg-surface px-2.5 text-[12px] text-n-300 shadow-sm hover:text-text disabled:opacity-50"
           >
             {rebuilding ? (
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -645,430 +621,312 @@ export default function NotesGraphPage() {
             Rebuild
           </button>
         </div>
-      </div>
 
-      {/* Legend */}
-      <div className="absolute bottom-6 left-6 z-10 max-w-xs rounded-2xl border border-white/10 bg-black/80 p-5 shadow-2xl backdrop-blur-xl">
-        <div className="mb-4 flex items-center gap-2.5 border-b border-white/10 pb-3">
-          <div className="rounded-lg bg-gradient-to-br from-purple-500/20 to-purple-500/5 p-2">
-            <Network className="h-5 w-5 text-pink-400" />
-          </div>
-          <div>
-            <h3 className="text-sm font-bold text-white">Neural Graph</h3>
-            <p className="text-[10px] font-medium text-zinc-500">
-              Notes · Wikilinks
-            </p>
-          </div>
-        </div>
-        <div className="space-y-2">
-          <div className="flex items-center gap-3 rounded-lg p-1.5 text-sm text-zinc-300">
-            <span className="block h-3.5 w-3.5 shrink-0 rounded-full bg-[#3b82f6] shadow-[0_0_12px_#3b82f6]" />
-            <span className="font-semibold">Note</span>
-          </div>
-          <div className="flex items-center gap-3 rounded-lg p-1.5 text-sm text-zinc-300">
-            <span className="block h-3.5 w-3.5 shrink-0 rounded-full bg-[#71717a] shadow-[0_0_12px_#71717a]" />
-            <span className="font-semibold">Missing link target</span>
-          </div>
-          {controls.groups.map((g) => (
-            <div
-              key={g.id}
-              className="flex items-center gap-3 rounded-lg p-1.5 text-sm text-zinc-300"
-            >
-              <span
-                className="block h-3.5 w-3.5 shrink-0 rounded-full"
-                style={{
-                  background: g.color,
-                  boxShadow: `0 0 12px ${g.color}`,
-                }}
-              />
-              <span className="truncate font-semibold">{g.query}</span>
-            </div>
-          ))}
-        </div>
-        <div className="mt-3 flex items-center justify-center gap-2 border-t border-white/10 pt-3 text-[10px] text-zinc-600">
-          <div className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-          <span className="font-mono font-semibold">LIVE GRAPH</span>
+        <div className="pointer-events-none absolute bottom-4 left-5 z-10 flex items-center gap-3 text-[11px] text-n-500">
+          <span>
+            {stats.notes} notes · {stats.missing} missing · {stats.links} wikilinks
+          </span>
+          <span>·</span>
+          <span>Drag to pan · scroll to zoom · click a node</span>
         </div>
       </div>
 
-      {/* Filters / forces panel */}
-      <AnimatePresence>
-        {showControls && (
-          <motion.div
-            initial={{ opacity: 0, x: 24 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 24 }}
-            className="absolute bottom-6 right-6 top-20 z-20 flex w-[320px] max-w-[calc(100vw-7rem)] flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/85 shadow-2xl backdrop-blur-xl"
-          >
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-              <p className="text-sm font-semibold text-white">Filters & forces</p>
-              <button
-                type="button"
-                onClick={() => setShowControls(false)}
-                className="rounded-lg p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-              <input
-                value={controls.search}
-                onChange={(e) => patch("search", e.target.value)}
-                placeholder="Search notes..."
-                className="mb-3 w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-teal-500/40"
-              />
-
-              <div className="mb-3 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => patch("showMissing", !controls.showMissing)}
-                  className={cn(
-                    "rounded-lg border px-2.5 py-1 text-[11px]",
-                    controls.showMissing
-                      ? "border-teal-500/40 bg-teal-500/15 text-teal-200"
-                      : "border-white/10 text-white/50",
-                  )}
-                >
-                  Missing
-                </button>
-                <button
-                  type="button"
-                  onClick={() => patch("showOrphans", !controls.showOrphans)}
-                  className={cn(
-                    "rounded-lg border px-2.5 py-1 text-[11px]",
-                    controls.showOrphans
-                      ? "border-teal-500/40 bg-teal-500/15 text-teal-200"
-                      : "border-white/10 text-white/50",
-                  )}
-                >
-                  Orphans
-                </button>
-                <button
-                  type="button"
-                  onClick={() => patch("showArrows", !controls.showArrows)}
-                  className={cn(
-                    "rounded-lg border px-2.5 py-1 text-[11px]",
-                    controls.showArrows
-                      ? "border-teal-500/40 bg-teal-500/15 text-teal-200"
-                      : "border-white/10 text-white/50",
-                  )}
-                >
-                  Arrows
-                </button>
-              </div>
-
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/40">
-                Color groups
-              </p>
-              <div className="mb-3 flex gap-2">
-                <input
-                  value={groupDraft}
-                  onChange={(e) => setGroupDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") addGroup();
-                  }}
-                  placeholder="Match title/path…"
-                  className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-white outline-none focus:border-teal-500/40"
-                />
-                <button
-                  type="button"
-                  onClick={addGroup}
-                  className="rounded-lg bg-white/10 px-2.5 text-xs text-white hover:bg-white/15"
-                >
-                  Add
-                </button>
-              </div>
-              {controls.groups.length > 0 && (
-                <div className="mb-4 space-y-1">
-                  {controls.groups.map((g) => (
-                    <div
-                      key={g.id}
-                      className="flex items-center gap-2 rounded-lg bg-white/5 px-2 py-1.5"
-                    >
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ background: g.color }}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-xs text-white/70">
-                        {g.query}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          patch(
-                            "groups",
-                            controls.groups.filter((x) => x.id !== g.id),
-                          )
-                        }
-                        className="text-white/40 hover:text-white"
-                      >
-                        <X className="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-white/40">
-                Display
-              </p>
-              <Slider
-                label="Text fade threshold"
-                value={controls.textFade}
-                min={0}
-                max={2}
-                step={0.05}
-                onChange={(v) => patch("textFade", v)}
-              />
-              <p className="mb-3 -mt-2 text-[10px] text-white/35">
-                Labels appear when zoomed past this level
-              </p>
-              <Slider
-                label="Node size"
-                value={controls.nodeSize}
-                min={0.4}
-                max={2.5}
-                step={0.1}
-                onChange={(v) => patch("nodeSize", v)}
-              />
-              <Slider
-                label="Link thickness"
-                value={controls.linkThickness}
-                min={0.5}
-                max={4}
-                step={0.1}
-                onChange={(v) => patch("linkThickness", v)}
-              />
-
-              <p className="mb-2 mt-2 text-[11px] font-semibold uppercase tracking-wide text-white/40">
-                Forces
-              </p>
-              <Slider
-                label="Center force"
-                value={controls.centerForce}
-                min={0}
-                max={1}
-                step={0.01}
-                onChange={(v) => patch("centerForce", v)}
-              />
-              <Slider
-                label="Repel force"
-                value={controls.repelForce}
-                min={-400}
-                max={-10}
-                step={5}
-                onChange={(v) => patch("repelForce", v)}
-              />
-              <Slider
-                label="Link force"
-                value={controls.linkForce}
-                min={0}
-                max={2}
-                step={0.05}
-                onChange={(v) => patch("linkForce", v)}
-              />
-              <Slider
-                label="Link distance"
-                value={controls.linkDistance}
-                min={20}
-                max={200}
-                step={5}
-                onChange={(v) => patch("linkDistance", v)}
-              />
-
-              <button
-                type="button"
-                onClick={() => setControls({ ...DEFAULT_CONTROLS })}
-                className="mt-2 w-full rounded-lg border border-white/10 py-2 text-xs text-white/60 hover:bg-white/5 hover:text-white"
-              >
-                Reset defaults
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Node detail panel */}
-      <AnimatePresence>
-        {selectedNode && !showControls && (
-          <motion.div
-            initial={{ x: 400, opacity: 0, scale: 0.95 }}
-            animate={{ x: 0, opacity: 1, scale: 1 }}
-            exit={{ x: 400, opacity: 0, scale: 0.95 }}
-            transition={{ type: "spring", stiffness: 200, damping: 25 }}
-            className="absolute bottom-6 right-6 top-20 z-20 flex w-[420px] max-w-[calc(100vw-7rem)] flex-col rounded-2xl border border-white/10 bg-black/80 p-6 shadow-2xl backdrop-blur-xl"
-          >
-            <div className="mb-5 flex items-center justify-between border-b border-white/10 pb-4">
-              <div
-                className={cn(
-                  "rounded-lg border px-3 py-1.5 text-xs font-bold uppercase tracking-wider",
-                  selectedNode.group === "Note"
-                    ? "border-blue-500/30 bg-blue-500/15 text-blue-400"
-                    : "border-zinc-500/30 bg-zinc-500/15 text-zinc-300",
-                )}
-              >
-                {selectedNode.group}
-              </div>
+      {/* Right aside: selected note, or filters & forces */}
+      <aside className="flex w-[340px] shrink-0 flex-col border-l border-n-900 bg-bg-deep/40">
+        {selectedNode ? (
+          <>
+            <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+              <span className="kicker flex-1 text-accent">
+                {selectedNode.group === "Note" ? "Note" : "Missing note"}
+              </span>
               <button
                 type="button"
                 onClick={() => setSelectedNode(null)}
-                className="rounded-xl border border-white/5 p-2 text-zinc-400 transition hover:bg-white/5 hover:text-white"
+                className="grid h-[26px] w-[26px] place-items-center rounded-[6px] text-n-400 hover:bg-n-900"
+                aria-label="Close"
               >
-                <X className="h-5 w-5" />
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-auto px-4 pb-4">
+              <h5 className="text-[17px] font-medium leading-tight">
+                {selectedNode.title || selectedNode.name}
+              </h5>
+              {selectedNode.rel_path && (
+                <p className="mt-1 truncate font-mono text-[11px] text-n-500">
+                  {selectedNode.rel_path}
+                </p>
+              )}
+              {nodeDetails?.created_at && (
+                <p className="mt-1.5 flex items-center gap-1.5 text-[11.5px] text-n-500">
+                  <Calendar className="h-3 w-3" />
+                  {new Date(nodeDetails.created_at).toLocaleDateString(undefined, {
+                    year: "numeric",
+                    month: "long",
+                    day: "numeric",
+                  })}
+                </p>
+              )}
+
+              <div className="mt-3.5">
+                {detailLoading ? (
+                  <div className="flex items-center gap-2 py-6 text-[12px] text-n-500">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Loading details…
+                  </div>
+                ) : selectedNode.group === "Note" && nodeDetails ? (
+                  <div className="card">
+                    {(nodeDetails.content || "").trim() ? (
+                      <div className={PREVIEW_PROSE}>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          urlTransform={previewUrlTransform}
+                          components={{
+                            a: ({ href, children }) => {
+                              if (href?.startsWith("wikilink:")) {
+                                return (
+                                  <span className="rounded bg-accent-900 px-1 text-accent-200">
+                                    {children}
+                                  </span>
+                                );
+                              }
+                              const yt = href ? youtubeEmbedUrl(href) : null;
+                              const vimeo = href ? vimeoEmbedUrl(href) : null;
+                              if (yt || vimeo) {
+                                return (
+                                  <iframe
+                                    src={yt || vimeo || ""}
+                                    title={String(children || "Video")}
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                    className="my-3 aspect-video w-full rounded-md bg-bg-deep"
+                                  />
+                                );
+                              }
+                              return (
+                                <a href={href} target="_blank" rel="noreferrer">
+                                  {children}
+                                </a>
+                              );
+                            },
+                            img: ({ src, alt }) => {
+                              const href = typeof src === "string" ? src : "";
+                              const yt = href ? youtubeEmbedUrl(href) : null;
+                              const vimeo = href ? vimeoEmbedUrl(href) : null;
+                              if (yt || vimeo) {
+                                return (
+                                  <iframe
+                                    src={yt || vimeo || ""}
+                                    title={alt || "Video"}
+                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                    allowFullScreen
+                                    className="my-3 aspect-video w-full rounded-md bg-bg-deep"
+                                  />
+                                );
+                              }
+                              return (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={href || undefined}
+                                  alt={alt || ""}
+                                  className="my-2 max-h-48 rounded-md object-contain"
+                                />
+                              );
+                            },
+                          }}
+                        >
+                          {prepPreviewMarkdown(nodeDetails.content || "")}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <p className="text-[12.5px] text-n-500">(empty note)</p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="card flex gap-2.5 text-[12.5px] text-n-300">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0 text-accent-300" />
+                    <span>
+                      Linked via <code className="text-accent-200">[[wikilink]]</code> but no
+                      matching note exists yet.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {selectedNode.group === "Note" && selectedNode.uuid && (
+                <Link
+                  href={`/notes?note=${encodeURIComponent(selectedNode.uuid)}`}
+                  onClick={() => {
+                    if (selectedNode.uuid) {
+                      sessionStorage.setItem(
+                        lastNoteStorageKey(currentKB),
+                        selectedNode.uuid,
+                      );
+                    }
+                  }}
+                  className="btn btn-primary mt-4 w-full no-underline"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Open in Notes
+                </Link>
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="flex-1 overflow-auto px-4 py-3.5">
+            <h5 className="mb-1 text-[15px] font-medium">Notes graph</h5>
+            <div className="mb-3.5 text-[12px] text-n-500">
+              {stats.notes} notes · {stats.links} wikilinks
+            </div>
+
+            <div className="mb-3.5 flex flex-col gap-1 text-[12px] text-n-300">
+              <span className="flex items-center gap-2">
+                <span className="dot bg-accent" /> Note
+              </span>
+              <span className="flex items-center gap-2">
+                <span className="dot bg-n-700" /> Missing link target
+              </span>
+              {controls.groups.map((g) => (
+                <span key={g.id} className="flex items-center gap-2">
+                  <span className="dot" style={{ background: g.color }} />
+                  <span className="truncate">{g.query}</span>
+                </span>
+              ))}
+            </div>
+
+            <div className="kicker mb-1.5">Show</div>
+            <div className="mb-3.5 flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => patch("showMissing", !controls.showMissing)}
+                className={chip(controls.showMissing)}
+              >
+                Missing
+              </button>
+              <button
+                type="button"
+                onClick={() => patch("showOrphans", !controls.showOrphans)}
+                className={chip(controls.showOrphans)}
+              >
+                Orphans
+              </button>
+              <button
+                type="button"
+                onClick={() => patch("showArrows", !controls.showArrows)}
+                className={chip(controls.showArrows)}
+              >
+                Arrows
               </button>
             </div>
 
-            <h2 className="mb-3 text-2xl font-bold leading-tight text-white">
-              {selectedNode.title || selectedNode.name}
-            </h2>
-
-            {selectedNode.rel_path && (
-              <p className="mb-3 truncate text-xs text-zinc-500">
-                {selectedNode.rel_path}
-              </p>
-            )}
-
-            {nodeDetails?.created_at && (
-              <div className="mb-5 w-fit rounded-lg border border-white/5 bg-white/5 px-3 py-2">
-                <div className="flex items-center gap-2">
-                  <Calendar className="h-3.5 w-3.5 text-zinc-500" />
-                  <span className="text-xs font-medium text-zinc-400">
-                    {new Date(nodeDetails.created_at).toLocaleDateString(
-                      undefined,
-                      {
-                        year: "numeric",
-                        month: "long",
-                        day: "numeric",
-                      },
-                    )}
-                  </span>
-                </div>
+            <div className="kicker mb-1.5">Colour groups</div>
+            <div className="mb-2 flex gap-1.5">
+              <input
+                value={groupDraft}
+                onChange={(e) => setGroupDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") addGroup();
+                }}
+                placeholder="Match title or path…"
+                className="input min-h-[26px] py-1 text-[12px]"
+              />
+              <button type="button" onClick={addGroup} className="btn btn-secondary h-[26px]">
+                Add
+              </button>
+            </div>
+            {controls.groups.length > 0 && (
+              <div className="mb-3.5 flex flex-col gap-1">
+                {controls.groups.map((g) => (
+                  <div key={g.id} className="flex items-center gap-2 rounded-[6px] bg-surface px-2 py-1.5">
+                    <span className="dot" style={{ background: g.color }} />
+                    <span className="min-w-0 flex-1 truncate text-[12px] text-n-300">{g.query}</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        patch(
+                          "groups",
+                          controls.groups.filter((x) => x.id !== g.id),
+                        )
+                      }
+                      className="text-n-500 hover:text-text"
+                      aria-label={`Remove ${g.query}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-2">
-              {detailLoading ? (
-                <div className="flex flex-col items-center justify-center gap-3 py-12">
-                  <Loader2 className="h-6 w-6 animate-spin text-purple-400" />
-                  <span className="text-xs font-medium text-zinc-500">
-                    Loading details...
-                  </span>
-                </div>
-              ) : selectedNode.group === "Note" && nodeDetails ? (
-                <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-                  <div className="mb-3 flex items-center gap-2 border-b border-white/10 pb-3">
-                    <FileText className="h-4 w-4 text-pink-400" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-white">
-                      Content
-                    </span>
-                  </div>
-                  {(nodeDetails.content || "").trim() ? (
-                    <div className={PREVIEW_PROSE}>
-                      <ReactMarkdown
-                        remarkPlugins={[remarkGfm]}
-                        urlTransform={previewUrlTransform}
-                        components={{
-                          a: ({ href, children }) => {
-                            if (href?.startsWith("wikilink:")) {
-                              return (
-                                <span className="rounded bg-teal-500/15 px-1 text-teal-300">
-                                  {children}
-                                </span>
-                              );
-                            }
-                            const yt = href ? youtubeEmbedUrl(href) : null;
-                            const vimeo = href ? vimeoEmbedUrl(href) : null;
-                            if (yt || vimeo) {
-                              return (
-                                <iframe
-                                  src={yt || vimeo || ""}
-                                  title={String(children || "Video")}
-                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                  allowFullScreen
-                                  className="my-3 aspect-video w-full max-w-xl rounded-lg border border-white/10 bg-black"
-                                />
-                              );
-                            }
-                            return (
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-teal-300"
-                              >
-                                {children}
-                              </a>
-                            );
-                          },
-                          img: ({ src, alt }) => {
-                            const href = typeof src === "string" ? src : "";
-                            const yt = href ? youtubeEmbedUrl(href) : null;
-                            const vimeo = href ? vimeoEmbedUrl(href) : null;
-                            if (yt || vimeo) {
-                              return (
-                                <iframe
-                                  src={yt || vimeo || ""}
-                                  title={alt || "Video"}
-                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                  allowFullScreen
-                                  className="my-3 aspect-video w-full max-w-xl rounded-lg border border-white/10 bg-black"
-                                />
-                              );
-                            }
-                            return (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
-                                src={href || undefined}
-                                alt={alt || ""}
-                                className="my-2 max-h-48 rounded-lg border border-white/10 object-contain"
-                              />
-                            );
-                          },
-                        }}
-                      >
-                        {prepPreviewMarkdown(nodeDetails.content || "")}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <p className="text-sm text-zinc-500">(empty note)</p>
-                  )}
-                </div>
-              ) : (
-                <div className="rounded-xl border border-white/10 bg-white/5 p-5">
-                  <div className="mb-3 flex items-center gap-2">
-                    <Info className="h-4 w-4 text-pink-400" />
-                    <span className="text-xs font-bold uppercase tracking-wider text-white">
-                      Missing note
-                    </span>
-                  </div>
-                  <p className="text-sm leading-relaxed text-zinc-300">
-                    Linked via <code className="text-teal-300">[[wikilink]]</code>{" "}
-                    but no matching note exists yet.
-                  </p>
-                </div>
-              )}
-            </div>
+            <div className="kicker mb-1.5 mt-1">Display</div>
+            <Slider
+              label="Text fade threshold"
+              value={controls.textFade}
+              min={0}
+              max={2}
+              step={0.05}
+              onChange={(v) => patch("textFade", v)}
+            />
+            <Slider
+              label="Node size"
+              value={controls.nodeSize}
+              min={0.4}
+              max={2.5}
+              step={0.1}
+              onChange={(v) => patch("nodeSize", v)}
+            />
+            <Slider
+              label="Link thickness"
+              value={controls.linkThickness}
+              min={0.5}
+              max={4}
+              step={0.1}
+              onChange={(v) => patch("linkThickness", v)}
+            />
 
-            {selectedNode.group === "Note" && selectedNode.uuid && (
-              <Link
-                href={`/notes?note=${encodeURIComponent(selectedNode.uuid)}`}
-                onClick={() => {
-                  if (selectedNode.uuid) {
-                    sessionStorage.setItem(
-                      lastNoteStorageKey(currentKB),
-                      selectedNode.uuid,
-                    );
-                  }
-                }}
-                className="mt-4 flex items-center justify-center gap-2 rounded-xl bg-linear-to-br from-purple-500 to-pink-500 px-4 py-2.5 text-sm font-medium text-white transition hover:opacity-90"
-              >
-                <ExternalLink className="h-4 w-4" />
-                Open in Notes
-              </Link>
-            )}
-          </motion.div>
+            <div className="kicker mb-1.5 mt-1">Forces</div>
+            <Slider
+              label="Center force"
+              value={controls.centerForce}
+              min={0}
+              max={1}
+              step={0.01}
+              onChange={(v) => patch("centerForce", v)}
+            />
+            <Slider
+              label="Repel force"
+              value={controls.repelForce}
+              min={-400}
+              max={-10}
+              step={5}
+              onChange={(v) => patch("repelForce", v)}
+            />
+            <Slider
+              label="Link force"
+              value={controls.linkForce}
+              min={0}
+              max={2}
+              step={0.05}
+              onChange={(v) => patch("linkForce", v)}
+            />
+            <Slider
+              label="Link distance"
+              value={controls.linkDistance}
+              min={20}
+              max={200}
+              step={5}
+              onChange={(v) => patch("linkDistance", v)}
+            />
+
+            <button
+              type="button"
+              onClick={() => setControls({ ...DEFAULT_CONTROLS })}
+              className="btn btn-secondary btn-sm mt-1 w-full"
+            >
+              Reset defaults
+            </button>
+          </div>
         )}
-      </AnimatePresence>
+      </aside>
     </div>
   );
 }

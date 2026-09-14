@@ -16,6 +16,7 @@ from app.core.log import get_logger
 from app.models.note import Note
 from app.models.wikilink import NoteLink
 from app.schemas.extraction import NoteInput
+from pydantic import BaseModel
 from app.schemas.note import BatchDeleteNotesInput, CreateNoteInput, MoveNoteInput
 from app.services.ai_gate import require_ai
 from app.services.kb_registry import KBContext
@@ -204,6 +205,130 @@ async def ingest_existing_note(
         "note_id": note_id,
         "status": "processing_started",
         "message": "Note ingestion has been queued",
+    }
+
+
+class ProcessAttachmentInput(BaseModel):
+    """One attachment to run through its extractor, outside a full ingest."""
+
+    url: str
+    force: bool = False
+
+
+# ponytail: unbounded per-process dict; entries are tiny and a restart clears
+# it. Move to SQLite if a per-note history ever matters.
+_attachment_jobs: dict[tuple[str, str, str], dict] = {}
+
+
+async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
+    """Extract one attachment, replace its block in the vault .md, unload models."""
+    from app.core.database import AsyncSessionLocal
+    from app.workflows.agents.ingestion_agent import (
+        classify_attachment,
+        extract_attachment,
+        multimedia_concurrency_limit,
+        parse_attachments,
+        place_extraction,
+        remove_extraction,
+    )
+    from app.services.multimedia import multimedia_service
+
+    key = (kb.kb_id, note_id, url)
+    wf = kb.get_ingestion_workflow()
+
+    async def _noop_status(_stage: str, _model: str | None = None) -> None:
+        return None
+
+    kind = None
+    try:
+        async with multimedia_concurrency_limit:
+            async with AsyncSessionLocal() as session:
+                result = await session.execute(
+                    select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
+                )
+                note = result.scalar_one_or_none()
+                if not note:
+                    raise ValueError("Note not found")
+                body = note_body(note, kb)
+            from app.workflows.agents.ingestion_agent import attachment_key
+
+            item = next(
+                (a for a in parse_attachments(body) if a["lower_url"] == attachment_key(url)),
+                None,
+            )
+            if not item:
+                raise ValueError("Attachment is no longer linked from this note")
+            kind = classify_attachment(item)
+            if not kind:
+                raise ValueError(f"Orb cannot read {item['filename']}")
+            section = await extract_attachment(kind, item, _noop_status, wf._llm)  # pylint: disable=protected-access
+            if not section.strip():
+                raise ValueError("Extraction produced no text")
+            content = place_extraction(remove_extraction(body, url), item["url"], section)
+            await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
+        _attachment_jobs[key] = {"status": "done", "error": None}
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.error(f"Attachment processing failed for {url}: {exc}")
+        _attachment_jobs[key] = {"status": "failed", "error": str(exc)}
+    finally:
+        try:
+            if kind in ("audio", "video"):
+                await asyncio.to_thread(multimedia_service.unload_local_models, "whisper")
+            if kind == "video":
+                await asyncio.to_thread(multimedia_service.unload_marlin)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Model unload after attachment job failed: {exc}")
+
+
+@router.post("/api/v1/notes/{note_id}/attachments/process")
+async def process_note_attachment(
+    note_id: str,
+    payload: ProcessAttachmentInput,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    kb: KBContext = Depends(get_kb),
+):
+    """Transcribe / describe / extract one attachment without a full ingest.
+
+    Ingestion skips attachments that already carry a block, so this is how a
+    recording gets transcribed once and never again.
+    """
+    from app.workflows.agents.ingestion_agent import (
+        attachment_key,
+        extraction_srcs,
+        parse_attachments,
+    )
+
+    require_ai(kb)
+    result = await db.execute(
+        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    body = note_body(note, kb)
+    key = attachment_key(payload.url)
+    if not any(a["lower_url"] == key for a in parse_attachments(body)):
+        raise HTTPException(status_code=404, detail="Attachment not found in this note")
+    if key in extraction_srcs(body) and not payload.force:
+        return {"note_id": note_id, "url": payload.url, "status": "already_processed"}
+    job_key = (kb.kb_id, note_id, payload.url)
+    if _attachment_jobs.get(job_key, {}).get("status") == "running":
+        return {"note_id": note_id, "url": payload.url, "status": "running"}
+    _attachment_jobs[job_key] = {"status": "running", "error": None}
+    background_tasks.add_task(_run_attachment_job, kb, note_id, payload.url)
+    return {"note_id": note_id, "url": payload.url, "status": "running"}
+
+
+@router.get("/api/v1/notes/{note_id}/attachments/jobs")
+async def note_attachment_jobs(note_id: str, kb: KBContext = Depends(get_kb)):
+    """Status of every per-attachment job started for this note this session."""
+    return {
+        "jobs": {
+            url: job
+            for (kb_id, nid, url), job in _attachment_jobs.items()
+            if kb_id == kb.kb_id and nid == note_id
+        }
     }
 
 

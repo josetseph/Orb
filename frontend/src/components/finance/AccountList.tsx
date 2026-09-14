@@ -1,5 +1,5 @@
 import type { FinanceAccount } from "@/lib/types";
-import { money } from "./utils";
+import { EMPTY_ROW, LIST_ROW, money } from "./utils";
 
 export function AccountList({
   accounts,
@@ -11,28 +11,19 @@ export function AccountList({
   empty: string;
 }) {
   return (
-    <ul className="space-y-2">
+    <ul>
       {accounts.map((account) => (
-        <li
-          key={account.id}
-          className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
-        >
-          <div className="min-w-0">
+        <li key={account.id} className={LIST_ROW}>
+          <div className="min-w-0 flex-1">
             <div className="truncate">{account.name}</div>
-            <div className="text-xs uppercase tracking-wide text-white/40">
-              {account.account_type}
-            </div>
+            <span className="tag tag-neutral mt-0.5">{account.account_type}</span>
           </div>
-          <div className="text-right font-mono text-teal-200">
+          <div className="tabular-nums text-accent-300">
             {money(account.balance, currency || account.currency)}
           </div>
         </li>
       ))}
-      {accounts.length === 0 && (
-        <li className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/40">
-          {empty}
-        </li>
-      )}
+      {accounts.length === 0 && <li className={EMPTY_ROW}>{empty}</li>}
     </ul>
   );
 }

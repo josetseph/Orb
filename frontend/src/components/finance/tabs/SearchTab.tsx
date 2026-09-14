@@ -29,10 +29,10 @@ export function SearchTab({
   busy: boolean;
 }) {
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
       <form
         onSubmit={onSearch}
-        className="flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-black/35 p-5"
+        className="card-outline flex flex-wrap items-end gap-3"
       >
         <Field label="Query">
           <input
@@ -61,7 +61,7 @@ export function SearchTab({
         <button
           type="submit"
           disabled={busy}
-          className="rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+          className="btn btn-primary"
         >
           {busy ? "Searching…" : "Search"}
         </button>

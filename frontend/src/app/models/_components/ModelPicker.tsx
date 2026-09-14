@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  AlertTriangle,
-  Check,
-  ChevronDown,
-  File as FileIcon,
-  FolderOpen,
-  Loader2,
-} from "lucide-react";
+import { AlertTriangle, Check, File as FileIcon, FolderOpen, Loader2 } from "lucide-react";
 import { getDesktopBridge, pickDesktopFile, pickDesktopDirectory } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import type { InstalledModel } from "@/lib/models-types";
@@ -63,44 +56,34 @@ export function ModelPicker({
   }
 
   return (
-    <div className="space-y-1.5">
-      <label className="text-xs text-white/45">{label}</label>
+    <div className="field space-y-1.5">
+      <label>{label}</label>
       <div className="flex gap-2">
-        <div className="relative min-w-0 flex-1">
-          <select
-            value={value}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
-            className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-9 text-sm text-white outline-none transition focus:border-purple-500/50 disabled:opacity-50"
-          >
-            {(allowInherit || isPlaceholder) && (
-              <option value="" className="bg-[#0d0d12]">
-                {allowInherit
-                  ? (inheritLabel ?? "Use the system model")
-                  : models.length
-                    ? "Choose a model…"
-                    : "No models on this machine yet"}
-              </option>
-            )}
-            {models.map((m) => (
-              <option
-                key={m.ref}
-                value={m.ref}
-                disabled={!m.runnable}
-                className="bg-[#0d0d12]"
-              >
-                {m.label} · {FORMAT_LABEL[m.format] ?? m.format} · {m.size_gb} GB
-                {m.runnable ? "" : " — cannot run here"}
-              </option>
-            ))}
-            {!known && !isPlaceholder && (
-              <option value={value} className="bg-[#0d0d12]">
-                {value.split("/").pop()} (added by path)
-              </option>
-            )}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-        </div>
+        <select
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className="input min-w-0 flex-1"
+        >
+          {(allowInherit || isPlaceholder) && (
+            <option value="">
+              {allowInherit
+                ? (inheritLabel ?? "Use the system model")
+                : models.length
+                  ? "Choose a model…"
+                  : "No models on this machine yet"}
+            </option>
+          )}
+          {models.map((m) => (
+            <option key={m.ref} value={m.ref} disabled={!m.runnable}>
+              {m.label} · {FORMAT_LABEL[m.format] ?? m.format} · {m.size_gb} GB
+              {m.runnable ? "" : " — cannot run here"}
+            </option>
+          ))}
+          {!known && !isPlaceholder && (
+            <option value={value}>{value.split("/").pop()} (added by path)</option>
+          )}
+        </select>
         {canBrowse && (
           <>
             <button
@@ -108,55 +91,45 @@ export function ModelPicker({
               disabled={disabled || browsing}
               onClick={() => void browse("file")}
               title="Pick a single .gguf file"
-              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
+              className="btn btn-secondary btn-sm h-[30px]"
             >
-              {browsing ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <span className="flex items-center gap-1.5">
-                  <FileIcon className="h-3.5 w-3.5" /> .gguf file
-                </span>
-              )}
+              {browsing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <FileIcon className="h-3.5 w-3.5" />}
+              .gguf file
             </button>
             <button
               type="button"
               disabled={disabled || browsing}
               onClick={() => void browse("folder")}
               title="Pick a model folder — MLX or safetensors, or a folder holding a .gguf"
-              className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
+              className="btn btn-secondary btn-sm h-[30px]"
             >
-              <span className="flex items-center gap-1.5">
-                <FolderOpen className="h-3.5 w-3.5" /> folder
-              </span>
+              <FolderOpen className="h-3.5 w-3.5" /> folder
             </button>
           </>
         )}
       </div>
 
       {canBrowse && (
-        <p className="text-[11px] text-white/25">
-          Point at a <span className="font-mono">.gguf</span> file, or a folder
-          holding GGUF, MLX or safetensors weights — Orb detects the format and
-          says so if it cannot run it here.
+        <p className="text-[11px] text-n-500">
+          Point at a <span className="font-mono">.gguf</span> file, or a folder holding GGUF, MLX or
+          safetensors weights — Orb detects the format and says so if it cannot run it here.
         </p>
       )}
       {selected && (
-        <p className="text-[11px] text-white/30">
+        <p className="text-[11px] text-n-500">
           {FORMAT_LABEL[selected.format] ?? selected.format}
-          {selected.context_length
-            ? ` · ${selected.context_length.toLocaleString()} token context`
-            : ""}
+          {selected.context_length ? ` · ${selected.context_length.toLocaleString()} token context` : ""}
           {selected.shards > 1 ? ` · ${selected.shards} shards` : ""}
         </p>
       )}
       {selected && !selected.runnable && (
-        <p className="flex items-start gap-1.5 rounded-lg border border-red-500/25 bg-red-500/5 px-3 py-2 text-[11px] text-red-200/90">
+        <p className="flex items-start gap-1.5 text-[11px] text-danger-text">
           <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
           {selected.unsupported_reason}
         </p>
       )}
       {(selected?.warnings ?? []).map((w) => (
-        <p key={w} className="flex items-start gap-1.5 text-[11px] text-amber-300/80">
+        <p key={w} className="flex items-start gap-1.5 text-[11px] text-danger-text">
           <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
           {w}
         </p>
@@ -165,7 +138,7 @@ export function ModelPicker({
   );
 }
 
-/** Shared card chrome so every section on the page reads the same. */
+/** Shared section chrome so every block on the page reads the same. */
 export function Card({
   title,
   subtitle,
@@ -178,19 +151,10 @@ export function Card({
   accent?: boolean;
 }) {
   return (
-    <section
-      className={cn(
-        "rounded-2xl border p-6 space-y-4",
-        accent
-          ? "border-purple-500/30 bg-purple-500/[0.04]"
-          : "border-white/10 bg-white/[0.03]",
-      )}
-    >
-      <div className="space-y-1">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-white/70">
-          {title}
-        </h2>
-        {subtitle && <p className="text-xs text-white/40">{subtitle}</p>}
+    <section className={cn("card-outline space-y-3.5 p-4", accent && "shadow-[0_0_0_1px_var(--color-accent-700)]")}>
+      <div>
+        <div className="kicker">{title}</div>
+        {subtitle && <p className="mt-1 text-[12.5px] text-n-500">{subtitle}</p>}
       </div>
       {children}
     </section>
@@ -200,7 +164,7 @@ export function Card({
 export function SavedTick({ show }: { show: boolean }) {
   if (!show) return null;
   return (
-    <span className="inline-flex items-center gap-1 text-[11px] text-green-400">
+    <span className="inline-flex items-center gap-1 text-[11px] text-accent-300">
       <Check className="h-3 w-3" /> Saved
     </span>
   );

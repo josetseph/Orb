@@ -8,7 +8,6 @@ from collections.abc import Callable
 
 from app.core.config import settings
 from app.core.log import get_logger
-from app.services.credentials import get_api_key
 
 logger = get_logger("MultimediaService")
 
@@ -19,6 +18,32 @@ def _format_timestamp(seconds: float) -> str:
     m, s = divmod(s, 60)
     h, m = divmod(m, 60)
     return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def image_data_url(image_path: str) -> str:
+    """JPEG data URL of ``image_path``, downscaled to the describe budget.
+
+    Every provider takes a data URL; sending a 12-megapixel photo to a local
+    projector or a metered endpoint buys nothing over ~1.5 MP.
+    """
+    import base64
+    import io
+
+    from PIL import Image
+
+    max_pixels = int(getattr(settings, "IMAGE_DESCRIBE_MAX_PIXELS", 0) or 1_500_000)
+    with Image.open(image_path) as opened:
+        image = opened.convert("RGB")
+    pixels = image.width * image.height
+    if max_pixels > 0 and pixels > max_pixels:
+        scale = (max_pixels / pixels) ** 0.5
+        image = image.resize(
+            (max(1, int(image.width * scale)), max(1, int(image.height * scale))),
+            Image.LANCZOS,
+        )
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=88)
+    return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
 
 class MultimediaService:
@@ -164,12 +189,6 @@ class MultimediaService:
                     raise
                 return tmp.name
 
-    def _describe_image_local(self, local_path: str) -> str:
-        """Florence caption via in-process multimodal runtime."""
-        from app.services.multimodal_runtime import multimodal_runtime
-
-        return multimodal_runtime.describe_image_path(local_path) or ""
-
     def _caption_video_with_marlin(self, local_path: str) -> dict:
         """Marlin caption via in-process multimodal runtime."""
         from app.services.multimodal_runtime import multimodal_runtime
@@ -181,11 +200,10 @@ class MultimediaService:
             raise RuntimeError(f"Marlin captioning failed: {exc}") from exc
 
     def unload_local_models(self, family: str | None = None) -> None:
-        """Unload Florence/Whisper (and optionally Marlin) from the API process."""
+        """Unload Whisper (or every media model) from the API process."""
         from app.services.multimodal_runtime import multimodal_runtime
 
         try:
-            # Legacy callers pass "florence" / "whisper"; marlin has its own unload.
             multimodal_runtime.unload(family)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Multimodal unload skipped/failed: {exc}")
@@ -199,75 +217,19 @@ class MultimediaService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Marlin unload skipped/failed: {exc}")
 
-    def describe_image(self, image_path: str) -> str:
-        """Generate an image description via Florence (local) or cloud vision fallback."""
+    def describe_image(self, image_path: str, llm) -> str:
+        """Describe an image with the KB's ingestion model (see ``LLMService.describe_image``)."""
         local_path = self._download_temp_file(image_path)
         try:
-            try:
-                text = self._describe_image_local(local_path)
-                if text:
-                    return text
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.warning(f"Local image description failed: {exc}")
-            # Cloud vision only when the chosen chat model is not local —
-            # someone running fully local should not have images leave the box.
-            from app.services.ai_gate import chat_is_local_only
-
-            if not chat_is_local_only():
-                cloud = self._describe_image_cloud(local_path)
-                if cloud:
-                    return cloud
-            raise RuntimeError("Image description failed (local Florence unavailable)")
+            text = llm.describe_image(local_path)
+            if not text:
+                raise RuntimeError("The model returned no description")
+            return text
         finally:
             if self._is_ephemeral_download(image_path, local_path) and os.path.exists(
                 local_path
             ):
                 os.remove(local_path)
-
-    def _describe_image_cloud(self, image_path: str) -> str:
-        """Optional OpenAI / Gemini vision when local Florence is unavailable."""
-        try:
-            import base64
-
-            with open(image_path, "rb") as f:
-                data = f.read()
-            b64 = base64.b64encode(data).decode("ascii")
-            mime = "image/png" if image_path.lower().endswith(".png") else "image/jpeg"
-            data_url = f"data:{mime};base64,{b64}"
-
-            if get_api_key("openai"):
-                from openai import OpenAI
-
-                client = OpenAI(api_key=get_api_key("openai"))
-                resp = client.chat.completions.create(
-                    model=settings.OPENAI_MODEL or "gpt-4o-mini",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": [
-                                {"type": "text", "text": "Describe this image briefly."},
-                                {"type": "image_url", "image_url": {"url": data_url}},
-                            ],
-                        }
-                    ],
-                    max_tokens=400,
-                )
-                return (resp.choices[0].message.content or "").strip()
-
-            if get_api_key("gemini"):
-                from google import genai
-                from google.genai import types
-
-                client = genai.Client(api_key=get_api_key("gemini"))
-                part = types.Part.from_bytes(data=data, mime_type=mime)
-                resp = client.models.generate_content(
-                    model=settings.GEMINI_MODEL or "gemini-2.0-flash",
-                    contents=["Describe this image briefly.", part],
-                )
-                return (resp.text or "").strip()
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.debug(f"Cloud vision failed: {exc}")
-        return ""
 
     def transcribe_audio(self, audio_path: str) -> str:
         """Transcribe audio via in-process Whisper (multimodal_runtime)."""
@@ -361,12 +323,12 @@ class MultimediaService:
                 os.remove(local_path)
 
     def _pdf_page_needs_render(self, page, native_text: str, image_descriptions: list[str]) -> bool:
-        """True when a full-page Florence render is useful (scanned / sparse pages)."""
+        """True when describing a full-page render is useful (scanned / sparse pages)."""
         if not settings.PDF_VISUAL_EXTRACTION_ENABLED:
             return False
         if len(native_text.strip()) >= settings.PDF_VISUAL_TEXT_THRESHOLD:
             return False
-        # Embedded-image Florence already covered this page.
+        # Embedded-image descriptions already covered this page.
         if image_descriptions:
             return False
         try:
@@ -382,8 +344,8 @@ class MultimediaService:
         # Image-only / empty pages with almost no text still benefit from a render.
         return len(native_text.strip()) == 0
 
-    def _describe_pdf_page_render(self, page) -> str:
-        """Render a PDF page to PNG and describe it with Florence."""
+    def _describe_pdf_page_render(self, page, llm) -> str:
+        """Render a PDF page to PNG and describe it with the ingestion model."""
         import tempfile
 
         import fitz
@@ -400,8 +362,7 @@ class MultimediaService:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as tmp:
                 image_path = tmp.name
                 pixmap.save(image_path)
-            result_text = self._describe_image_local(image_path)
-            return (result_text or "").strip()
+            return (llm.describe_image(image_path) or "").strip()
         finally:
             if image_path and os.path.exists(image_path):
                 os.remove(image_path)
@@ -410,8 +371,9 @@ class MultimediaService:
         self,
         pdf_path: str,
         progress_callback: Callable[[str, str | None], None] | None = None,
+        llm=None,
     ) -> str:
-        """Extract PDF page text; Florence on embedded images and sparse page renders."""
+        """Extract PDF page text; the ingestion model reads embedded images and sparse page renders."""
         import tempfile
 
         import fitz
@@ -422,6 +384,7 @@ class MultimediaService:
 
         local_path = self._download_temp_file(pdf_path)
         owns_temp = self._is_ephemeral_download(pdf_path, local_path)
+        vision_model = (llm.get_ingestion_model() if llm else None) or "vision model"
         try:
             extracted_pages: list[str] = []
             doc = fitz.open(local_path)
@@ -448,7 +411,7 @@ class MultimediaService:
                                 f"PDF: page {page_index}/{total_pages}, "
                                 f"describing image {image_index}/{len(images)}"
                             ),
-                            "Florence-2",
+                            vision_model,
                         )
                         xref = image_info[0]
                         image_path = ""
@@ -463,7 +426,7 @@ class MultimediaService:
                             ) as tmp:
                                 image_path = tmp.name
                                 tmp.write(image_bytes)
-                            description = self._describe_image_local(image_path)
+                            description = llm.describe_image(image_path) if llm else ""
                         except Exception as exc:  # pylint: disable=broad-exception-caught
                             logger.warning(
                                 "PDF image description skipped "
@@ -484,10 +447,10 @@ class MultimediaService:
                         if not max_visual_pages or visual_pages_used < max_visual_pages:
                             _progress(
                                 f"PDF: page {page_index}/{total_pages}, describing page render",
-                                "Florence-2",
+                                vision_model,
                             )
                             try:
-                                page_desc = self._describe_pdf_page_render(page)
+                                page_desc = self._describe_pdf_page_render(page, llm) if llm else ""
                                 if page_desc:
                                     image_descriptions.append(
                                         f"Page render: {page_desc}"
@@ -616,7 +579,7 @@ class MultimediaService:
         """Write a .docx's embedded images to temp files and return their paths.
 
         A diagram inside a Word document used to be invisible to the pipeline
-        while the same file attached directly got described by Florence. The
+        while the same file attached directly got described. The
         caller is responsible for deleting the returned paths.
         """
         local_path = self._download_temp_file(docx_path)

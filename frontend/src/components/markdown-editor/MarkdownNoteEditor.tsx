@@ -15,11 +15,9 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import {
   EditorView,
   keymap,
-  lineNumbers,
   placeholder as cmPlaceholder,
   drawSelection,
   highlightActiveLine,
-  highlightActiveLineGutter,
 } from "@codemirror/view";
 import { EditorState, Compartment, Prec } from "@codemirror/state";
 import {
@@ -50,7 +48,7 @@ import {
 } from "./wikilinkExtension";
 import { createMediaEmbedDecorations } from "./mediaEmbedExtension";
 import { MarkdownToolbar } from "./MarkdownToolbar";
-import type { Note } from "@/lib/types";
+import type { AttachmentJob, Note } from "@/lib/types";
 import {
   autocompletion,
   completionKeymap,
@@ -74,6 +72,14 @@ export interface MarkdownNoteEditorProps {
   className?: string;
   /** Show formatting toolbar above the editor (default true). */
   showToolbar?: boolean;
+  /** "live" renders markdown as you type; "source" shows plain markdown. */
+  viewMode?: "live" | "source";
+  /** Per-attachment jobs keyed by raw markdown url (drives embed footers). */
+  attachmentJobs?: Record<string, AttachmentJob>;
+  /** Start "process this item only" for one attachment (force = redo). */
+  onProcessAttachment?: (rawUrl: string, force: boolean) => void;
+  /** Open a vault file linked from the note (preview modal). */
+  onOpenFile?: (url: string, filename: string) => void;
 }
 
 export interface MarkdownNoteEditorHandle {
@@ -206,11 +212,47 @@ const MarkdownNoteEditor = forwardRef<
     placeholder = "Start writing...",
     className,
     showToolbar = true,
+    viewMode = "live",
+    attachmentJobs,
+    onProcessAttachment,
+    onOpenFile,
   },
   ref,
 ) {
   const cmRef = useRef<ReactCodeMirrorRef>(null);
   const entityDecorationsCompartment = useRef(new Compartment()).current;
+  const liveCompartment = useRef(new Compartment()).current;
+  const mediaCompartment = useRef(new Compartment()).current;
+  const onProcessRef = useRef(onProcessAttachment);
+  onProcessRef.current = onProcessAttachment;
+  // Stable identity so the widget's eq() does not churn on every render.
+  const processHandler = useCallback(
+    (rawUrl: string, force: boolean) => onProcessRef.current?.(rawUrl, force),
+    [],
+  );
+  const onOpenFileRef = useRef(onOpenFile);
+  onOpenFileRef.current = onOpenFile;
+  const openFileHandler = useCallback(
+    (url: string, filename: string) => onOpenFileRef.current?.(url, filename),
+    [],
+  );
+  const liveExtensions = useCallback(
+    (mode: "live" | "source") =>
+      mode === "live"
+        ? [
+            createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler }),
+            createExtractMarkerDecorations(),
+          ]
+        : [],
+    [kb, openFileHandler],
+  );
+  const mediaExtension = useCallback(
+    (mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
+      mode === "live"
+        ? createMediaEmbedDecorations(kb, { jobs, onProcess: processHandler })
+        : [],
+    [kb, processHandler],
+  );
   const [view, setView] = useState<EditorView | null>(null);
   const [scannedEntities, setScannedEntities] = useState<EntitySuggestion[]>(
     [],
@@ -290,22 +332,32 @@ const MarkdownNoteEditor = forwardRef<
     });
   }, [scannedEntities, entityDecorationsCompartment]);
 
+  // Live / source and attachment-job changes reconfigure their compartments
+  // instead of rebuilding the whole extension set (which resets the view).
+  useEffect(() => {
+    const v = cmRef.current?.view;
+    if (!v) return;
+    v.dispatch({
+      effects: [
+        liveCompartment.reconfigure(liveExtensions(viewMode)),
+        mediaCompartment.reconfigure(mediaExtension(viewMode, attachmentJobs)),
+      ],
+    });
+  }, [viewMode, attachmentJobs, liveCompartment, mediaCompartment, liveExtensions, mediaExtension]);
+
   const extensions = useMemo(
     () => [
-      lineNumbers(),
       highlightActiveLine(),
-      highlightActiveLineGutter(),
       drawSelection(),
       history(),
       EditorView.lineWrapping,
       EditorState.allowMultipleSelections.of(true),
       markdown({ base: markdownLanguage }),
       ...liveMarkdownExtensions,
-      createLivePreviewHideMarks(),
+      liveCompartment.of(liveExtensions(viewMode)),
       cmPlaceholder(placeholder),
       createWikilinkDecorations(),
-      createMediaEmbedDecorations(kb),
-      createExtractMarkerDecorations(),
+      mediaCompartment.of(mediaExtension(viewMode, attachmentJobs)),
       // One .of() per compartment: a second registration of the same
       // Compartment is not resolvable, and this one seeded it empty.
       entityDecorationsCompartment.of(
@@ -351,7 +403,7 @@ const MarkdownNoteEditor = forwardRef<
         ...searchKeymap,
       ]),
     ],
-    // scannedEntities initial; updates via compartment.reconfigure
+    // scannedEntities / viewMode / attachmentJobs initial; updates via compartment.reconfigure
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       kb,
@@ -361,6 +413,10 @@ const MarkdownNoteEditor = forwardRef<
       onWikilinkHover,
       onWikilinkLeave,
       entityDecorationsCompartment,
+      liveCompartment,
+      mediaCompartment,
+      liveExtensions,
+      mediaExtension,
     ],
   );
 
@@ -423,8 +479,8 @@ const MarkdownNoteEditor = forwardRef<
           className="h-full [&_.cm-editor]:h-full"
         />
         {isDraggingFiles && (
-          <div className="pointer-events-none absolute inset-3 z-10 flex items-center justify-center rounded-xl border-2 border-dashed border-teal-400/60 bg-teal-500/10 backdrop-blur-[2px]">
-            <p className="rounded-lg bg-black/70 px-4 py-2 text-sm font-medium text-teal-100">
+          <div className="pointer-events-none absolute inset-3 z-10 flex items-center justify-center rounded-md border border-dashed border-accent bg-accent/8">
+            <p className="rounded-md bg-surface px-3 py-1.5 text-[12.5px] font-medium text-accent-200 shadow-sm">
               Drop files to attach
             </p>
           </div>

@@ -70,6 +70,9 @@ const structureTools: ToolItem[] = [
   },
 ];
 
+const TOOL_BUTTON =
+  "flex h-6 w-6 items-center justify-center rounded-[5px] text-n-500 transition-colors hover:bg-n-900 hover:text-text";
+
 function ToolButton({
   tool,
   onAction,
@@ -85,14 +88,9 @@ function ToolButton({
         e.preventDefault();
         onAction(tool.action);
       }}
-      title={
-        tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label
-      }
+      title={tool.shortcut ? `${tool.label} (${tool.shortcut})` : tool.label}
       aria-label={tool.label}
-      className={cn(
-        "group relative flex h-7 w-7 items-center justify-center rounded-md",
-        "text-white/50 transition-colors hover:bg-white/10 hover:text-white/90",
-      )}
+      className={TOOL_BUTTON}
     >
       <Icon className="h-3.5 w-3.5" />
     </button>
@@ -107,7 +105,7 @@ function ToolGroup({
   onAction: (action: MarkdownAction) => void;
 }) {
   return (
-    <div className="flex items-center gap-px rounded-md bg-white/[0.03] p-0.5">
+    <div className="flex items-center gap-px">
       {tools.map((tool) => (
         <ToolButton key={tool.action} tool={tool} onAction={onAction} />
       ))}
@@ -136,42 +134,34 @@ export function MarkdownToolbar({
   };
 
   return (
-    <div
-      className={cn(
-        "flex flex-wrap items-center gap-1.5 border-b border-white/10",
-        "bg-white/[0.02] px-3 py-2",
-        className,
-      )}
-    >
+    <div className={cn("flex flex-wrap items-center gap-1.5 px-3 py-1.5", className)}>
       <ToolGroup tools={formattingTools} onAction={onAction} />
-      <div className="mx-0.5 h-5 w-px bg-white/10" />
+      <div className="mx-0.5 h-4 w-px bg-divider" />
       <ToolGroup tools={insertTools} onAction={onAction} />
-      <div className="mx-0.5 h-5 w-px bg-white/10" />
+      <div className="mx-0.5 h-4 w-px bg-divider" />
       <ToolGroup tools={structureTools} onAction={onAction} />
       {onAttachFile && (
         <>
-          <div className="mx-0.5 h-5 w-px bg-white/10" />
-          <div className="flex items-center gap-px rounded-md bg-white/[0.03] p-0.5">
-            <input
-              type="file"
-              id="md-toolbar-file-upload"
-              className="hidden"
-              onChange={onAttachFile}
-              disabled={attachDisabled}
-            />
-            <label
-              htmlFor="md-toolbar-file-upload"
-              title="Attach file"
-              aria-label="Attach file"
-              className={cn(
-                "flex h-7 w-7 cursor-pointer items-center justify-center rounded-md",
-                "text-white/50 transition-colors hover:bg-white/10 hover:text-white/90",
-                attachDisabled && "pointer-events-none opacity-40",
-              )}
-            >
-              <Paperclip className="h-3.5 w-3.5" />
-            </label>
-          </div>
+          <div className="mx-0.5 h-4 w-px bg-divider" />
+          <input
+            type="file"
+            id="md-toolbar-file-upload"
+            className="hidden"
+            onChange={onAttachFile}
+            disabled={attachDisabled}
+          />
+          <label
+            htmlFor="md-toolbar-file-upload"
+            title="Attach file"
+            aria-label="Attach file"
+            className={cn(
+              TOOL_BUTTON,
+              "cursor-pointer",
+              attachDisabled && "pointer-events-none opacity-40",
+            )}
+          >
+            <Paperclip className="h-3.5 w-3.5" />
+          </label>
         </>
       )}
       {trailing}

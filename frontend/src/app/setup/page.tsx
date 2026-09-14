@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Sparkles, FolderOpen, Check } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Check, Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
+import { useKB } from "@/lib/kb-context";
 import { pickDesktopDirectory, getDesktopBridge } from "@/lib/desktop";
-import { ShaderBackground } from "@/components/shader-background";
+import { SettingRow, SettingsShell } from "@/components/settings-shell";
 import type { SetupStatus } from "@/lib/types";
 
+type Job = "idle" | "running" | "done" | "error";
+
 export default function SetupPage() {
+  const { currentKB } = useKB();
   const [status, setStatus] = useState<SetupStatus | null>(null);
   const [dataDir, setDataDir] = useState("");
   const [modelsDir, setModelsDir] = useState("");
@@ -16,6 +20,13 @@ export default function SetupPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const canBrowse = Boolean(getDesktopBridge()?.pickDirectory);
+
+  const [reingest, setReingest] = useState<Job>("idle");
+  const [reingestCount, setReingestCount] = useState<number | null>(null);
+  const [rebuild, setRebuild] = useState<Job>("idle");
+  const rebuildTriggeredRef = useRef(false);
+  const [reset, setReset] = useState<Job | "confirming">("idle");
+  const confirmTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     api
@@ -29,15 +40,52 @@ export default function SetupPage() {
       .catch(() => setError("Could not load setup status."));
   }, []);
 
-  async function browseInto(
-    setter: (v: string) => void,
-    title: string,
-    current: string,
-  ) {
-    const dir = await pickDesktopDirectory({
-      title,
-      defaultPath: current || undefined,
-    });
+  // Poll fast only while the user-triggered rebuild runs; back off when idle
+  // and pause while hidden — the sidebar already polls this globally.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = (active: boolean) => {
+      if (!cancelled) timer = setTimeout(poll, active ? 3000 : 15000);
+    };
+    const poll = async () => {
+      if (cancelled) return;
+      if (document.visibilityState === "hidden") return schedule(false);
+      let active = false;
+      try {
+        const s = await api.getMaintenanceStatus(currentKB);
+        if (cancelled) return;
+        const running = s.community_detection.running || s.temporal_digests.running;
+        active = Boolean(running || rebuildTriggeredRef.current);
+        if (running) {
+          setRebuild("running");
+        } else if (rebuildTriggeredRef.current) {
+          rebuildTriggeredRef.current = false;
+          setRebuild("done");
+          setTimeout(() => setRebuild("idle"), 3000);
+        }
+      } catch {
+        /* ignore */
+      }
+      schedule(active);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        clearTimeout(timer);
+        void poll();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    void poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [currentKB]);
+
+  async function browseInto(setter: (v: string) => void, title: string, current: string) {
+    const dir = await pickDesktopDirectory({ title, defaultPath: current || undefined });
     if (dir) setter(dir);
   }
 
@@ -53,8 +101,7 @@ export default function SetupPage() {
         default_vault_path: vaultPath || undefined,
       });
       setSaved(true);
-      const s = await api.getSetupStatus();
-      setStatus(s);
+      setStatus(await api.getSetupStatus());
     } catch {
       setError("Failed to save paths. Check that directories are writable.");
     } finally {
@@ -62,138 +109,146 @@ export default function SetupPage() {
     }
   }
 
-  return (
-    <div className="relative min-h-screen text-white">
-      <ShaderBackground />
-      <div className="relative z-10 mx-auto max-w-2xl px-8 py-12">
-        <div className="mb-8 flex items-center gap-3">
-          <Sparkles className="h-7 w-7 text-amber-300" />
-          <div>
-            <h1 className="text-2xl font-semibold">Setup</h1>
-            <p className="text-sm text-white/50">
-              Data folders and AI mode — restart the desktop app after changing paths
-            </p>
-          </div>
-        </div>
+  async function handleReingest() {
+    setReingest("running");
+    setReingestCount(null);
+    try {
+      const r = await api.reingestAll(currentKB);
+      setReingestCount(r.notes_queued);
+      setReingest("done");
+      setTimeout(() => setReingest("idle"), 5000);
+    } catch {
+      setReingest("error");
+      setTimeout(() => setReingest("idle"), 4000);
+    }
+  }
 
-        {error && (
-          <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-200">
-            {error}
-          </p>
-        )}
+  async function handleRebuild() {
+    rebuildTriggeredRef.current = true;
+    setRebuild("running");
+    try {
+      await api.rebuildCommunities(currentKB);
+      await api.buildTemporalDigests(undefined, currentKB);
+    } catch {
+      rebuildTriggeredRef.current = false;
+      setRebuild("error");
+      setTimeout(() => setRebuild("idle"), 4000);
+    }
+  }
 
+  async function handleReset() {
+    if (reset === "idle") {
+      setReset("confirming");
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+      confirmTimer.current = setTimeout(() => setReset("idle"), 5000);
+      return;
+    }
+    if (reset !== "confirming") return;
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    setReset("running");
+    try {
+      await api.resetIngestionData(currentKB);
+      setReset("done");
+    } catch {
+      setReset("error");
+    }
+    setTimeout(() => setReset("idle"), 4000);
+  }
 
-        <form onSubmit={save} className="space-y-8">
-          <section className="rounded-2xl border border-white/10 bg-black/40 p-6 space-y-4">
-            <h2 className="flex items-center gap-2 text-lg font-medium">
-              <FolderOpen className="h-5 w-5" /> Paths
-            </h2>
-            <p className="text-xs text-white/40">
-              Notes vault is the folder of markdown files Orb reads and writes. You can
-              change it anytime — click Save setup after browsing.
-            </p>
-            <label className="block text-sm">
-              <span className="text-white/50">Notes vault folder</span>
-              <div className="mt-1 flex gap-2">
-                <input
-                  value={vaultPath}
-                  onChange={(e) => setVaultPath(e.target.value)}
-                  className="w-full rounded-lg border border-white/15 bg-black/50 px-3 py-2 font-mono text-sm"
-                  placeholder="~/Documents/Orb Vault"
-                />
-                {canBrowse && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void browseInto(setVaultPath, "Choose notes vault folder", vaultPath)
-                    }
-                    className="shrink-0 rounded-lg border border-white/15 px-3 py-2 text-xs text-white/70 hover:bg-white/5 disabled:opacity-50"
-                  >
-                    Browse…
-                  </button>
-                )}
-              </div>
-            </label>
-            <label className="block text-sm">
-              <span className="text-white/50">Data directory (indexes, SQLite)</span>
-              <div className="mt-1 flex gap-2">
-                <input
-                  value={dataDir}
-                  onChange={(e) => setDataDir(e.target.value)}
-                  className="w-full rounded-lg border border-white/15 bg-black/50 px-3 py-2 font-mono text-sm"
-                  required
-                />
-                {canBrowse && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void browseInto(setDataDir, "Choose data directory", dataDir)
-                    }
-                    className="shrink-0 rounded-lg border border-white/15 px-3 py-2 text-xs text-white/70 hover:bg-white/5 disabled:opacity-50"
-                  >
-                    Browse…
-                  </button>
-                )}
-              </div>
-            </label>
-            <label className="block text-sm">
-              <span className="text-white/50">Models directory (local ML weights)</span>
-              <div className="mt-1 flex gap-2">
-                <input
-                  value={modelsDir}
-                  onChange={(e) => setModelsDir(e.target.value)}
-                  className="w-full rounded-lg border border-white/15 bg-black/50 px-3 py-2 font-mono text-sm"
-                  required
-                />
-                {canBrowse && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      void browseInto(setModelsDir, "Choose models directory", modelsDir)
-                    }
-                    className="shrink-0 rounded-lg border border-white/15 px-3 py-2 text-xs text-white/70 hover:bg-white/5 disabled:opacity-50"
-                  >
-                    Browse…
-                  </button>
-                )}
-              </div>
-            </label>
-          </section>
-
-          <section className="rounded-2xl border border-white/10 bg-black/40 p-6 space-y-3">
-            <h2 className="text-lg font-medium">AI models</h2>
-            <p className="text-xs text-white/45">
-              Everything model-related — local or cloud, system-wide or per
-              knowledge base — lives on one page. Orb works without AI too:
-              notes, wikilinks and finance never need a model.
-            </p>
-            <a
-              href="/models"
-              className="inline-flex items-center gap-2 rounded-xl border border-purple-500/40 bg-purple-500/10 px-4 py-2.5 text-sm text-purple-200 transition hover:bg-purple-500/20"
-            >
-              Open Models →
-            </a>
-          </section>
-
-          <button
-            type="submit"
-            disabled={saving}
-            className="inline-flex items-center gap-2 rounded-lg bg-amber-500/20 px-5 py-2.5 text-sm text-amber-100 hover:bg-amber-500/30 disabled:opacity-50"
-          >
-            {saved ? <Check className="h-4 w-4" /> : null}
-            {saving ? "Saving…" : saved ? "Saved" : "Save setup"}
+  const pathField = (
+    label: string,
+    value: string,
+    setter: (v: string) => void,
+    title: string,
+    required = false,
+    placeholder?: string,
+  ) => (
+    <div className="field">
+      <label>{label}</label>
+      <div className="flex gap-2">
+        <input
+          className="input input-mono"
+          value={value}
+          onChange={(e) => setter(e.target.value)}
+          required={required}
+          placeholder={placeholder}
+        />
+        {canBrowse && (
+          <button type="button" className="btn btn-secondary" onClick={() => void browseInto(setter, title, value)}>
+            Browse…
           </button>
-
-
-          {status && (
-            <p className="text-xs text-white/35">
-              Backend: {status.database_backend} · AI: {status.ai_setup_mode || "none"} ·
-              models: {status.local_models_ready ? "ready" : "missing"} · configured:{" "}
-              {status.ai_configured ? "yes" : "no"}
-            </p>
-          )}
-        </form>
+        )}
       </div>
     </div>
+  );
+
+  return (
+    <SettingsShell title="Storage" intro="Where Orb keeps indexes and model weights. Restart after changing a path.">
+      {error && <div className="card mb-4 text-[12.5px] text-danger-text">{error}</div>}
+
+      <form onSubmit={save} className="max-w-[560px] space-y-3.5">
+        {pathField("Notes vault folder — the Markdown files Orb reads and writes", vaultPath, setVaultPath, "Choose notes vault folder", false, "~/Documents/Orb Vault")}
+        {pathField("Data folder — graph, vectors, search index", dataDir, setDataDir, "Choose data directory", true)}
+        {pathField("Models folder — local model weights", modelsDir, setModelsDir, "Choose models directory", true)}
+        <div className="flex items-center gap-3">
+          <button type="submit" className="btn btn-primary" disabled={saving}>
+            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : saved ? <Check className="h-3.5 w-3.5" /> : null}
+            {saving ? "Saving…" : saved ? "Saved" : "Save"}
+          </button>
+          {status && (
+            <span className="text-[11px] text-n-500">
+              Backend: {status.database_backend} · AI: {status.ai_setup_mode || "none"} · models:{" "}
+              {status.local_models_ready ? "ready" : "missing"} · configured: {status.ai_configured ? "yes" : "no"}
+            </span>
+          )}
+        </div>
+      </form>
+
+      <div className="kicker mb-2 mt-7">Maintenance</div>
+      <div className="max-w-[560px] space-y-2">
+        <SettingRow title="Re-ingest whole vault" description="Rebuilds entities and links for every note.">
+          <button type="button" className="btn btn-primary btn-sm" disabled={reingest === "running"} onClick={() => void handleReingest()}>
+            {reingest === "running" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : reingest === "done" ? (
+              `Queued ${reingestCount ?? 0} notes`
+            ) : reingest === "error" ? (
+              "Failed — check logs"
+            ) : (
+              "Re-ingest"
+            )}
+          </button>
+        </SettingRow>
+        <SettingRow title="Rebuild communities and digests" description="Normally runs on its own after ingest settles.">
+          <button type="button" className="btn btn-secondary btn-sm" disabled={rebuild === "running"} onClick={() => void handleRebuild()}>
+            {rebuild === "running" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : rebuild === "done" ? (
+              <Check className="h-3 w-3" />
+            ) : rebuild === "error" ? (
+              "Failed — check logs"
+            ) : (
+              "Rebuild"
+            )}
+          </button>
+        </SettingRow>
+        <SettingRow title="Reset indexes" description="Deletes graph, vectors and search index. Your notes are untouched.">
+          <button type="button" className="btn btn-danger btn-sm" disabled={reset === "running"} onClick={() => void handleReset()}>
+            {reset === "running" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : reset === "confirming" ? (
+              "Confirm reset?"
+            ) : reset === "done" ? (
+              <Check className="h-3 w-3" />
+            ) : reset === "error" ? (
+              "Failed — check logs"
+            ) : (
+              "Reset…"
+            )}
+          </button>
+        </SettingRow>
+        <p className="text-[11px] text-n-500">Jobs run in the background for the current workspace ({currentKB}).</p>
+      </div>
+    </SettingsShell>
   );
 }

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/sidebar";
+import { CommandPalette } from "@/components/command-palette";
 import { AiLimitedBanner } from "@/components/ai-limited-banner";
 import { KBProvider } from "@/lib/kb-context";
 import { ChatProvider } from "@/lib/chat-context";
@@ -14,7 +15,7 @@ const inter = Inter({
 
 export const metadata: Metadata = {
   title: "Orb",
-  description: "Your multimodal, graph-based personal memory system",
+  description: "Your knowledge, on your machine.",
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "any" },
@@ -32,12 +33,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="dark">
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className={`${inter.variable} font-sans`}>
         <KBProvider>
           <ChatProvider>
             <SuppressThreeWarnings />
-            <Sidebar />
-            <main className="ml-20 min-h-screen">{children}</main>
+            <div className="flex h-screen w-full overflow-hidden">
+              <Sidebar />
+              <main className="relative flex min-w-0 flex-1">{children}</main>
+            </div>
+            <CommandPalette />
             <AiLimitedBanner />
           </ChatProvider>
         </KBProvider>

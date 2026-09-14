@@ -1,6 +1,6 @@
 import { Trash2 } from "lucide-react";
 import type { FinanceTransaction } from "@/lib/types";
-import { money } from "./utils";
+import { DELETE_BTN, EMPTY_ROW, LIST_ROW, money } from "./utils";
 
 export function TransactionList({
   rows,
@@ -14,52 +14,45 @@ export function TransactionList({
   busy?: boolean;
 }) {
   return (
-    <ul className="space-y-2">
+    <ul>
       {rows.map((tx) => (
-        <li
-          key={tx.id}
-          className="flex items-start justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
-        >
-          <div className="min-w-0">
+        <li key={tx.id} className={LIST_ROW}>
+          <span className="w-16 shrink-0 whitespace-nowrap text-[12px] text-n-400">
+            {tx.date ? new Date(tx.date).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—"}
+          </span>
+          <div className="min-w-0 flex-1">
             <div className="truncate">{tx.description || "(no description)"}</div>
-            <div className="mt-1 text-xs text-white/40">
-              {tx.date ? new Date(tx.date).toLocaleDateString() : "—"}
-              {tx.account_name ? ` · ${tx.account_name}` : ""}
+            <div className="truncate text-[11px] text-n-500">
+              {tx.account_name || ""}
               {tx.counterparty_name ? ` → ${tx.counterparty_name}` : ""}
-              {tx.category ? ` · ${tx.category}` : ""}
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <div
-              className={
-                tx.type === "deposit"
-                  ? "font-mono text-emerald-200"
-                  : tx.type === "withdrawal"
-                    ? "font-mono text-rose-200"
-                    : "font-mono text-sky-200"
-              }
+          {tx.category && <span className="tag tag-neutral">{tx.category}</span>}
+          <div
+            className={
+              tx.type === "deposit"
+                ? "tabular-nums text-accent-300"
+                : tx.type === "withdrawal"
+                  ? "tabular-nums text-text"
+                  : "tabular-nums text-n-300"
+            }
+          >
+            {money(tx.amount, tx.currency_code || currency)}
+          </div>
+          {onDelete && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onDelete(tx.group_id || tx.id)}
+              className={DELETE_BTN}
+              aria-label="Delete transaction"
             >
-              {money(tx.amount, tx.currency_code || currency)}
-            </div>
-            {onDelete && (
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => onDelete(tx.group_id || tx.id)}
-                className="rounded p-1 text-white/35 hover:bg-white/5 hover:text-rose-200 disabled:opacity-50"
-                aria-label="Delete transaction"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </li>
       ))}
-      {rows.length === 0 && (
-        <li className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/40">
-          No transactions yet.
-        </li>
-      )}
+      {rows.length === 0 && <li className={EMPTY_ROW}>No transactions yet.</li>}
     </ul>
   );
 }

@@ -4,7 +4,7 @@ import type { FinanceRule, FinanceRuleGroup } from "@/lib/types";
 import { DeletableList } from "../DeletableList";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { FIELD_INPUT } from "../utils";
+import { DELETE_BTN, EMPTY_ROW, FIELD_INPUT, LIST_ROW } from "../utils";
 
 type RuleGroupForm = { title: string; description: string };
 type RuleForm = {
@@ -42,14 +42,14 @@ export function RulesTab({
   busy: boolean;
 }) {
   return (
-    <section className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-2">
+    <section className="space-y-4">
+      <div className="grid gap-4 xl:grid-cols-2">
         <form
           onSubmit={onCreateGroup}
-          className="space-y-4 rounded-2xl border border-white/10 bg-black/35 p-5"
+          className="card-outline space-y-3"
         >
-          <h2 className="flex items-center gap-2 text-lg font-medium">
-            <Plus className="h-4 w-4 text-teal-300" /> Rule group
+          <h2 className="kicker flex items-center gap-1.5 text-[11px]">
+            <Plus className="h-3 w-3" /> Rule group
           </h2>
           <Field label="Title">
             <input
@@ -71,17 +71,17 @@ export function RulesTab({
           <button
             type="submit"
             disabled={busy}
-            className="rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+            className="btn btn-primary"
           >
             Create group
           </button>
         </form>
         <form
           onSubmit={onCreateRule}
-          className="space-y-4 rounded-2xl border border-white/10 bg-black/35 p-5"
+          className="card-outline space-y-3"
         >
-          <h2 className="flex items-center gap-2 text-lg font-medium">
-            <Plus className="h-4 w-4 text-teal-300" /> Rule
+          <h2 className="kicker flex items-center gap-1.5 text-[11px]">
+            <Plus className="h-3 w-3" /> Rule
           </h2>
           <Field label="Title">
             <input
@@ -135,13 +135,13 @@ export function RulesTab({
           <button
             type="submit"
             disabled={busy || !ruleForm.rule_group_id}
-            className="rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+            className="btn btn-primary"
           >
             Create rule
           </button>
         </form>
       </div>
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-2">
         <Panel title="Rule groups">
           <DeletableList
             rows={ruleGroups.map((g) => ({
@@ -155,15 +155,15 @@ export function RulesTab({
           />
         </Panel>
         <Panel title="Rules">
-          <ul className="space-y-2">
+          <ul>
             {rules.map((rule) => (
               <li
                 key={rule.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
+                className={LIST_ROW}
               >
                 <div className="min-w-0">
                   <div className="truncate">{rule.title}</div>
-                  <div className="text-xs text-white/40">
+                  <div className="text-[11px] text-n-500">
                     {rule.triggers[0]?.type || "trigger"}:{rule.triggers[0]?.value || "—"}{" "}
                     → {rule.actions[0]?.type || "action"}:{rule.actions[0]?.value || "—"}
                   </div>
@@ -172,14 +172,14 @@ export function RulesTab({
                   type="button"
                   disabled={busy}
                   onClick={() => onDeleteRule(rule.id)}
-                  className="rounded p-1 text-white/35 hover:bg-white/5 hover:text-rose-200 disabled:opacity-50"
+                  className={DELETE_BTN}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
                 </button>
               </li>
             ))}
             {rules.length === 0 && (
-              <li className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/40">
+              <li className={EMPTY_ROW}>
                 No rules yet.
               </li>
             )}

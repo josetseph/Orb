@@ -1,4 +1,5 @@
 import type { TabId } from "./utils";
+import { cn } from "@/lib/utils";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
@@ -20,17 +21,13 @@ export function FinanceTabs({
   onSelect: (id: TabId) => void;
 }) {
   return (
-    <div className="flex flex-wrap gap-2 border-b border-white/10 pb-2">
+    <div className="seg flex-wrap">
       {TABS.map((item) => (
         <button
           key={item.id}
           type="button"
           onClick={() => onSelect(item.id)}
-          className={
-            tab === item.id
-              ? "rounded-lg bg-teal-500/20 px-3 py-1.5 text-sm text-teal-100"
-              : "rounded-lg px-3 py-1.5 text-sm text-white/55 hover:bg-white/5 hover:text-white/85"
-          }
+          className={cn("seg-opt", tab === item.id && "seg-opt-active")}
         >
           {item.label}
         </button>

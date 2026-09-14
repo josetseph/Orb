@@ -1,116 +1,73 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, CircleDashed, Clock, Cpu, Eye, Loader2, AudioLines } from "lucide-react";
 import { api } from "@/lib/api";
 import { useKB } from "@/lib/kb-context";
 import { cn } from "@/lib/utils";
 
 type StatusTone = "idle" | "ingest" | "community" | "digest" | "error";
+type Payload = Awaited<ReturnType<typeof api.getMaintenanceStatus>>;
 
 interface StatusView {
   tone: StatusTone;
   label: string;
+  meta: string;
   detail: string;
+  busy: boolean;
 }
 
-function buildStatus(payload: Awaited<ReturnType<typeof api.getMaintenanceStatus>> | null): StatusView {
+function buildStatus(payload: Payload | null): StatusView {
   if (!payload) {
-    return {
-      tone: "idle",
-      label: "Checking…",
-      detail: "Waiting for backend status.",
-    };
+    return { tone: "idle", label: "Checking…", meta: "", detail: "Waiting for backend status.", busy: false };
   }
-
   const ingestActive = Number(payload.ingestion?.active || 0);
   if (ingestActive > 0) {
     return {
       tone: "ingest",
-      label: "Ingesting",
-      detail: `${ingestActive} note ingestion${ingestActive === 1 ? "" : "s"} running.`,
+      label: `Ingesting ${ingestActive} note${ingestActive === 1 ? "" : "s"}`,
+      meta: "running",
+      detail: "Extracting entities and links into the graph.",
+      busy: true,
     };
   }
-
   if (payload.community_detection?.running) {
     const pending = Number(payload.community_detection.pending_nodes || 0);
     return {
       tone: "community",
-      label: "Communities",
-      detail:
-        pending > 0
-          ? `Community detection running (${pending} nodes pending).`
-          : "Community detection running.",
+      label: "Rebuilding communities",
+      meta: pending > 0 ? `${pending} nodes` : "running",
+      detail: "Community detection is running over the graph.",
+      busy: true,
     };
   }
-
   if (payload.temporal_digests?.running) {
-    return {
-      tone: "digest",
-      label: "Digests",
-      detail: "Temporal digest build in progress.",
-    };
+    return { tone: "digest", label: "Building digests", meta: "running", detail: "Temporal digest build in progress.", busy: true };
   }
-
   if (payload.community_detection?.timer_armed) {
     const secs = payload.community_detection.idle_seconds ?? 120;
-    const pending = Number(payload.community_detection.pending_nodes || 0);
     return {
       tone: "community",
-      label: "Queued",
-      detail:
-        pending > 0
-          ? `Community rebuild armed — starts after ~${secs}s idle (${pending} nodes queued).`
-          : `Community rebuild armed — starts after ~${secs}s idle.`,
+      label: "Community rebuild queued",
+      meta: `~${secs}s`,
+      detail: "Starts once ingestion has settled.",
+      busy: false,
     };
   }
-
   const last = payload.ingestion?.last_completed_at;
   return {
     tone: "idle",
     label: "Ready",
+    meta: "idle",
     detail: last
-      ? `Idle. Last ingestion finished ${new Date(last).toLocaleString()}.`
-      : "Idle — no ingestion or community jobs running.",
+      ? `Last ingest finished ${new Date(last).toLocaleString()}.`
+      : "No ingestion or community jobs running.",
+    busy: false,
   };
 }
 
-const TONE_STYLES: Record<
-  StatusTone,
-  { wrap: string; dot: string; pulse: boolean }
-> = {
-  idle: {
-    wrap: "bg-emerald-500/10 text-emerald-400",
-    dot: "bg-emerald-400",
-    pulse: false,
-  },
-  ingest: {
-    wrap: "bg-amber-500/15 text-amber-300",
-    dot: "bg-amber-400",
-    pulse: true,
-  },
-  community: {
-    wrap: "bg-violet-500/15 text-violet-300",
-    dot: "bg-violet-400",
-    pulse: true,
-  },
-  digest: {
-    wrap: "bg-sky-500/15 text-sky-300",
-    dot: "bg-sky-400",
-    pulse: true,
-  },
-  error: {
-    wrap: "bg-rose-500/15 text-rose-300",
-    dot: "bg-rose-400",
-    pulse: true,
-  },
-};
-
-/** Global activity light for the left sidebar (ingestion / community / idle). */
-export function SystemStatusIndicator() {
-  const { currentKB } = useKB();
-  const [payload, setPayload] = useState<Awaited<
-    ReturnType<typeof api.getMaintenanceStatus>
-  > | null>(null);
+function useMaintenanceStatus(kb: string) {
+  const [payload, setPayload] = useState<Payload | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
@@ -118,10 +75,8 @@ export function SystemStatusIndicator() {
     let timer: number | undefined;
 
     // Poll fast only while a job is running; back off when idle and pause
-    // while the window is hidden — this indicator mounts on every page.
-    const isActive = (
-      data: Awaited<ReturnType<typeof api.getMaintenanceStatus>> | null,
-    ) =>
+    // while the window is hidden — this mounts on every page.
+    const isActive = (data: Payload | null) =>
       Boolean(
         data &&
           (Number(data.ingestion?.active || 0) > 0 ||
@@ -142,7 +97,7 @@ export function SystemStatusIndicator() {
         return;
       }
       try {
-        const data = await api.getMaintenanceStatus(currentKB);
+        const data = await api.getMaintenanceStatus(kb);
         if (cancelled) return;
         setPayload(data);
         setFailed(false);
@@ -168,48 +123,96 @@ export function SystemStatusIndicator() {
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [currentKB]);
+  }, [kb]);
 
-  const view = useMemo(() => {
+  return useMemo<StatusView>(() => {
     if (failed) {
       return {
-        tone: "error" as const,
-        label: "Offline",
-        detail: "Could not reach maintenance status. Backend may be restarting.",
+        tone: "error",
+        label: "Backend offline",
+        meta: "",
+        detail: "Could not reach the API. It may be restarting.",
+        busy: false,
       };
     }
     return buildStatus(payload);
   }, [payload, failed]);
+}
 
-  const styles = TONE_STYLES[view.tone];
+const DOT: Record<StatusTone, string> = {
+  idle: "bg-accent-700",
+  ingest: "bg-accent-300 animate-pulse",
+  community: "bg-accent-300 animate-pulse",
+  digest: "bg-accent-300 animate-pulse",
+  error: "bg-danger",
+};
+
+/** Sidebar activity row with a popover of what is running. */
+export function ActivityStatus() {
+  const { currentKB } = useKB();
+  const view = useMaintenanceStatus(currentKB);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [open]);
 
   return (
-    <div
-      className={cn(
-        "group relative flex h-12 w-12 flex-col items-center justify-center gap-1 rounded-xl transition-colors",
-        styles.wrap,
-      )}
-      aria-label={`${view.label}. ${view.detail}`}
-    >
-      <div
-        className={cn(
-          "h-2.5 w-2.5 rounded-full",
-          styles.dot,
-          styles.pulse && "animate-pulse",
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full flex-col gap-1.5 rounded-md px-2.5 py-2 text-left hover:bg-n-900"
+        aria-label={`${view.label}. ${view.detail}`}
+      >
+        <span className="flex items-center gap-2 text-[12px]">
+          <span className={cn("dot", DOT[view.tone])} />
+          <span className="flex-1 truncate text-n-300">{view.label}</span>
+          <span className="text-[11px] text-n-600">{view.meta}</span>
+        </span>
+        {view.busy && (
+          <span className="block h-0.5 overflow-hidden rounded bg-n-900">
+            <span className="block h-full w-1/2 animate-pulse rounded bg-accent" />
+          </span>
         )}
-      />
-      <span className="max-w-[2.75rem] truncate text-[8px] font-semibold uppercase leading-none tracking-wide opacity-80">
-        {view.label}
-      </span>
-      {/* Open into the main pane — centered-above tooltips clip on the narrow left rail. */}
-      <div className="pointer-events-none absolute left-full top-1/2 z-[100] ml-3 hidden w-60 -translate-y-1/2 rounded-lg border border-white/10 bg-black/95 px-3 py-2 text-left shadow-xl group-hover:block">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-white/50">
-          System
-        </p>
-        <p className="mt-0.5 text-xs font-semibold text-white">{view.label}</p>
-        <p className="mt-1 text-[11px] leading-snug text-white/65">{view.detail}</p>
-        <p className="mt-1.5 truncate text-[10px] text-white/35">KB: {currentKB}</p>
-      </div>
+      </button>
+
+      {open && (
+        <div className="popover absolute bottom-0 left-full z-40 ml-3 w-[300px] p-3">
+          <div className="mb-2 flex items-baseline justify-between">
+            <span className="text-[13px] font-medium">Activity</span>
+            <span className="text-[11px] text-n-500">All local · nothing leaves this machine</span>
+          </div>
+          <div className="flex items-start gap-2.5 py-2">
+            {view.busy ? (
+              <Loader2 className="mt-0.5 h-[15px] w-[15px] animate-spin text-accent-300" />
+            ) : view.tone === "error" ? (
+              <CircleDashed className="mt-0.5 h-[15px] w-[15px] text-danger" />
+            ) : view.meta.startsWith("~") ? (
+              <Clock className="mt-0.5 h-[15px] w-[15px] text-n-500" />
+            ) : (
+              <CheckCircle2 className="mt-0.5 h-[15px] w-[15px] text-n-600" />
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="text-[12.5px]">{view.label}</div>
+              <div className="text-[11px] text-n-500">{view.detail}</div>
+            </div>
+          </div>
+          <div className="my-2 h-px bg-divider" />
+          <div className="flex gap-3.5 text-[11px] text-n-500">
+            <span className="inline-flex items-center gap-1"><Cpu className="h-3 w-3" /> Chat</span>
+            <span className="inline-flex items-center gap-1"><AudioLines className="h-3 w-3" /> Whisper</span>
+            <span className="inline-flex items-center gap-1"><Eye className="h-3 w-3" /> Vision via chat model</span>
+            <span className="ml-auto truncate">{currentKB}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

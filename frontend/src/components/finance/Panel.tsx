@@ -10,10 +10,10 @@ export function Panel({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-black/35 p-6">
-      <div className="mb-4 flex items-center gap-2">
+    <div className="card-outline">
+      <div className="mb-2 flex items-center gap-1.5 px-2 text-n-500 [&_svg]:h-3.5 [&_svg]:w-3.5">
         {icon}
-        <h2 className="text-lg font-medium">{title}</h2>
+        <h2 className="kicker text-[11px]">{title}</h2>
       </div>
       {children}
     </div>

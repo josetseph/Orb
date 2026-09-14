@@ -88,32 +88,6 @@ function parseSegments(content: string): Segment[] {
 
 // ── Divider header ────────────────────────────────────────────────────────────
 
-const SEGMENT_STYLES: Record<
-    Exclude<SegmentType, "text">,
-    { border: string; text: string; bg: string }
-> = {
-    image: {
-        border: "border-blue-500/30",
-        text: "text-blue-300",
-        bg: "bg-blue-500/10",
-    },
-    pdf: {
-        border: "border-amber-500/30",
-        text: "text-amber-300",
-        bg: "bg-amber-500/10",
-    },
-    audio: {
-        border: "border-emerald-500/30",
-        text: "text-emerald-300",
-        bg: "bg-emerald-500/10",
-    },
-    video: {
-        border: "border-purple-500/30",
-        text: "text-purple-300",
-        bg: "bg-purple-500/10",
-    },
-};
-
 const SEGMENT_ICONS: Record<Exclude<SegmentType, "text">, React.ReactNode> = {
     image: <ImageIcon className="h-3.5 w-3.5" />,
     pdf: <FileText className="h-3.5 w-3.5" />,
@@ -128,17 +102,14 @@ function SegmentDivider({
     type: Exclude<SegmentType, "text">;
     label: string;
 }) {
-    const s = SEGMENT_STYLES[type];
     return (
-        <div className="flex items-center gap-3 my-4 not-prose">
-            <div className="h-px flex-1 bg-white/10" />
-            <div
-                className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium ${s.border} ${s.text} ${s.bg}`}
-            >
-                {SEGMENT_ICONS[type]}
+        <div className="not-prose my-4 flex items-center gap-3">
+            <div className="hr-fade flex-1" />
+            <div className="flex items-center gap-1.5 rounded-[6px] bg-surface px-2.5 py-1 text-[11.5px] text-n-300 shadow-sm">
+                <span className="text-accent-300">{SEGMENT_ICONS[type]}</span>
                 <span className="max-w-[280px] truncate">{label}</span>
             </div>
-            <div className="h-px flex-1 bg-white/10" />
+            <div className="hr-fade flex-1" />
         </div>
     );
 }
@@ -164,7 +135,7 @@ function makeLinkComponent(
                 text.startsWith("🎤") ||
                 isAttachmentHref(href!));
         const filename =
-            text.replace(/^[📎🖇🎤]\s*/, "").trim() ||
+            text.replace(/^[📎🖇🎤]\s*/u, "").trim() ||
             (href ? decodeURIComponent(href.split("/").pop() ?? "file") : "file");
 
         // Entity mention pseudo-link: entity://node_id
@@ -174,8 +145,7 @@ function makeLinkComponent(
                 <button
                     type="button"
                     onClick={() => onEntityClick?.(nodeId, text)}
-                    className="inline-block rounded px-1 py-0.5 text-blue-300 bg-blue-500/15 border border-blue-500/20 hover:bg-blue-500/25 transition-colors cursor-pointer no-underline font-medium"
-                    style={{ textDecoration: "none" }}
+                    className="cursor-pointer text-accent-200 underline decoration-dotted decoration-accent-600 underline-offset-[3px] hover:text-accent-100"
                 >
                     {text}
                 </button>
@@ -185,42 +155,38 @@ function makeLinkComponent(
         if (href && isAttachment) {
             if (isImageUrl(href) || isImageUrl(resolvedUrl)) {
                 return (
-                    <span className="block my-4 not-prose">
+                    <span className="not-prose my-4 block">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={resolvedUrl}
                             alt={filename}
-                            className="max-w-full rounded-xl border border-white/10 cursor-pointer"
+                            className="max-w-full cursor-zoom-in rounded-md shadow-sm"
                             onClick={() => onFileClick(resolvedUrl, filename)}
                         />
-                        <span className="block text-xs text-white/40 mt-1">{filename}</span>
+                        <span className="mt-1 block text-[11.5px] text-n-500">{filename}</span>
                     </span>
                 );
             }
             if (isVideoUrl(href) || isVideoUrl(resolvedUrl)) {
                 return (
-                    <span className="block my-4 not-prose">
-                        <BlobMediaPlayer
-                          url={resolvedUrl}
-                          kbId={kbId}
-                          kind="video"
-                          className="max-w-full rounded-xl border border-white/10 bg-black"
-                        />
-                        <span className="block text-xs text-white/40 mt-1">{filename}</span>
+                    <span className="not-prose my-4 block">
+                        <BlobMediaPlayer url={resolvedUrl} kbId={kbId} kind="video" />
+                        <span className="mt-1 block text-[11.5px] text-n-500">{filename}</span>
                     </span>
                 );
             }
             if (isPdfUrl(href) || isPdfUrl(resolvedUrl)) {
                 return (
-                    <span className="block my-4 not-prose">
+                    <span className="not-prose my-4 block">
                         <iframe
                             src={resolvedUrl}
                             title={filename}
-                            className="h-[480px] max-h-[70vh] w-full max-w-3xl rounded-xl border border-white/10 bg-black/40"
+                            className="h-[480px] max-h-[70vh] w-full max-w-3xl rounded-md bg-bg-deep shadow-sm"
                         />
                         <button
                             type="button"
                             onClick={() => onFileClick(resolvedUrl, filename)}
-                            className="mt-1 block text-xs text-white/40 hover:text-white/70"
+                            className="mt-1 block text-[11.5px] text-n-500 hover:text-accent-300"
                         >
                             {filename} — open full preview
                         </button>
@@ -231,8 +197,9 @@ function makeLinkComponent(
         if (href && isAttachment) {
             return (
                 <button
+                    type="button"
                     onClick={() => onFileClick(resolvedUrl, filename)}
-                    className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-300 hover:bg-purple-500/20 transition-all text-sm no-underline"
+                    className="inline-flex items-center gap-1.5 rounded-[6px] bg-surface px-2 py-0.5 text-[12px] text-n-200 no-underline shadow-sm hover:shadow-md"
                 >
                     {text || `📎 ${filename}`}
                 </button>

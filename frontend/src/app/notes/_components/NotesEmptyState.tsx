@@ -1,6 +1,6 @@
 "use client";
 
-import { FileText, Plus } from "lucide-react";
+import { FileText, NotebookPen } from "lucide-react";
 
 type NotesEmptyStateProps = {
   variant: "sidebar" | "editor";
@@ -17,29 +17,24 @@ export function NotesEmptyState({
 }: NotesEmptyStateProps) {
   if (variant === "sidebar") {
     return (
-      <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-        <FileText className="mb-2 h-8 w-8 text-white/20" />
-        <p className="text-sm text-white/40">
-          {searchQuery ? "No notes found" : "No notes yet"}
+      <div className="flex flex-col items-center justify-center px-4 py-12 text-center">
+        <FileText className="mb-2 h-7 w-7 text-n-700" />
+        <p className="text-[12.5px] text-n-500">
+          {searchQuery ? "No notes match" : "No notes yet"}
         </p>
       </div>
     );
   }
 
   return (
-    <div className="flex h-full flex-col items-center justify-center text-center">
-      <FileText className="mb-4 h-16 w-16 text-white/20" />
-      <h2 className="mb-2 text-2xl font-bold text-white">No note selected</h2>
-      <p className="mb-6 text-white/60">
-        Select a note from the sidebar or create a new one
+    <div className="flex h-full flex-col items-center justify-center gap-2.5 text-center">
+      <NotebookPen className="h-[34px] w-[34px] text-n-700" />
+      <p className="text-[14px] text-n-300">No note selected</p>
+      <p className="text-[12px] text-n-500">
+        Pick one on the left, or press <kbd className="font-mono">⌘N</kbd>
       </p>
-      <button
-        onClick={onCreateNote}
-        disabled={isSaving}
-        className="flex items-center gap-2 rounded-xl bg-linear-to-br from-purple-500 to-pink-500 px-6 py-3 text-white transition-all hover:scale-105 disabled:opacity-50"
-      >
-        <Plus className="h-5 w-5" />
-        Create Note
+      <button onClick={onCreateNote} disabled={isSaving} className="btn btn-primary mt-2">
+        New note
       </button>
     </div>
   );

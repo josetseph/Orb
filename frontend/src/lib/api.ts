@@ -4,6 +4,7 @@ import type {
   ModelsPageState,
 } from "@/lib/models-types";
 import type {
+  AttachmentJob,
   KBLLMConfig,
   ChatConversation,
   ChatMessageRecord,
@@ -229,6 +230,26 @@ export const api = {
   /** Ingest an existing note into the given KB (default KB if omitted). */
   async ingestNote(id: string, kb = "default") {
     return http.post(`/notes/${id}/ingest${kbQuery(kb)}`);
+  },
+
+  /**
+   * Transcribe / describe / extract one attachment now. Ingestion skips
+   * attachments that already carry a block, so this runs the model once.
+   */
+  async processAttachment(
+    noteId: string,
+    url: string,
+    force = false,
+    kb = "default",
+  ): Promise<{ status: string }> {
+    return http.post(`/notes/${noteId}/attachments/process${kbQuery(kb)}`, { url, force });
+  },
+
+  async getAttachmentJobs(
+    noteId: string,
+    kb = "default",
+  ): Promise<{ jobs: Record<string, AttachmentJob> }> {
+    return http.get(`/notes/${noteId}/attachments/jobs`, withKb(kb));
   },
 
   /** Clear a failed flag without re-ingesting — for notes you will not ingest. */

@@ -264,7 +264,7 @@ def _construct_llama(Llama, **kwargs):
 
 
 def _unload_multimodal_families() -> None:
-    """Best-effort: free Florence/Whisper/Marlin before loading a GGUF."""
+    """Best-effort: free Whisper/Marlin before loading a GGUF."""
     try:
         from app.services.multimodal_runtime import multimodal_runtime
 
@@ -469,6 +469,64 @@ def ensure_gguf(model_id: str, on_progress=None) -> Path:
         "bytes": dest.stat().st_size,
     }
     save_manifest(man)
+    return dest
+
+
+# ── Vision projector (mmproj) ────────────────────────────────────────────────
+# llama.cpp reads images through a second GGUF, the multimodal projector, that
+# sits beside the chat model. With it loaded the chat model describes images
+# itself; without it the model is text-only.
+
+_QUANT_SUFFIX_RE = re.compile(r"-(?:I?Q\d[A-Z0-9_]*|F16|BF16|F32)$", re.I)
+
+
+def mmproj_hf_path(model_hf_path: str) -> str:
+    """``repo/model-Q4_K_M.gguf`` → ``repo/mmproj-model-f16.gguf`` (bartowski layout)."""
+    repo, filename = model_hf_path.rsplit("/", 1)
+    stem = _QUANT_SUFFIX_RE.sub("", filename[: -len(".gguf")])
+    return f"{repo}/mmproj-{stem}-f16.gguf"
+
+
+def find_mmproj(chat_gguf: Path) -> Path | None:
+    """The projector for ``chat_gguf``, if one sits next to it.
+
+    Prefers a file sharing the model's name; a folder holding one model and
+    one projector matches on the projector alone.
+    """
+    folder = Path(chat_gguf).parent
+    if not folder.is_dir():
+        return None
+    candidates = sorted(
+        p for p in folder.glob("*.gguf") if p.name.lower().startswith("mmproj")
+    )
+    if not candidates:
+        return None
+    stem = _QUANT_SUFFIX_RE.sub("", Path(chat_gguf).stem).lower()
+    for cand in candidates:
+        if stem and stem in cand.name.lower():
+            return cand
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def ensure_mmproj(model_id: str, on_progress=None) -> Path | None:
+    """Download the projector for a catalog GGUF; ``None`` when the repo has none."""
+    import urllib.request
+
+    hf_path = mmproj_hf_path(model_id)
+    dest = resolve_models_dir() / "gguf" / hf_path.rsplit("/", 1)[-1]
+    if dest.exists() and dest.stat().st_size > 1_000_000:
+        return dest
+    url = _hf_file_url(hf_path)
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            if resp.status >= 400:
+                return None
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.info("No vision projector published for %s (%s)", model_id, exc)
+        return None
+    logger.info("Downloading vision projector %s…", dest.name)
+    download_file(url, dest, on_progress)
     return dest
 
 
@@ -702,6 +760,11 @@ def ensure_chat_and_embed_models(
         return cb
 
     chat = ensure_gguf(resolved["chat"], _wrap("chat"))
+    try:
+        ensure_mmproj(resolved["chat"], _wrap("vision"))
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        # Text chat must not fail because the image projector did not arrive.
+        logger.warning("Vision projector download skipped: %s", exc)
     embed = ensure_gguf(resolved["embed"], _wrap("embed"))
     rerank = ensure_gguf(resolved["reranker"], _wrap("reranker"))
 
@@ -1002,6 +1065,8 @@ class LocalLlamaRuntime:
 
     def __init__(self) -> None:
         self._chat = None
+        self._chat_handler = None
+        self._mmproj_path: Path | None = None
         self._embed = None
         self._lock = threading.RLock()
         self._chat_path: Path | None = None
@@ -1027,6 +1092,7 @@ class LocalLlamaRuntime:
             "chat_loaded": self._chat is not None,
             "embed_loaded": self._embed is not None and self._embed is not self._chat,
             "chat_model": str(self._chat_path) if self._chat_path else None,
+            "vision_projector": str(self._mmproj_path) if self._mmproj_path else None,
             "embed_model": str(self._embed_path) if self._embed_path else None,
             "accel": self.accel,
             "idle_seconds": round(idle_for, 1) if idle_for is not None else None,
@@ -1205,9 +1271,33 @@ class LocalLlamaRuntime:
             chat_gguf,
         )
         started = time.perf_counter()
+        mmproj = find_mmproj(Path(chat_gguf))
+        handler = None
+        if mmproj is not None:
+            # The projector rides along from the start: llama-cpp-python binds
+            # it at construction, and reloading a multi-GB model just to add
+            # it later would cost more than the ~1 GB it holds.
+            try:
+                from llama_cpp.llama_chat_format import MTMDChatHandler  # type: ignore
+
+                handler = MTMDChatHandler(
+                    clip_model_path=str(mmproj),
+                    verbose=False,
+                    use_gpu=int(self.accel["n_gpu_layers"]) != 0,
+                )
+                logger.info("Vision projector attached: %s", mmproj.name)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning("Vision projector %s not usable: %s", mmproj.name, exc)
+                handler = None
         self._chat = _construct_llama(
-            Llama, model_path=str(chat_gguf), embedding=False, **chat_kwargs
+            Llama,
+            model_path=str(chat_gguf),
+            embedding=False,
+            **({"chat_handler": handler} if handler else {}),
+            **chat_kwargs,
         )
+        self._chat_handler = handler
+        self._mmproj_path = mmproj if handler else None
         model_load_clock.record("chat", time.perf_counter() - started)
         self._chat_path = Path(chat_gguf)
         self._embed = None
@@ -1467,6 +1557,14 @@ class LocalLlamaRuntime:
         logger.info("Unloading in-process chat/embed GGUFs to free memory")
         _close_llama_handle(self._chat if self._chat is not self._embed else None)
         _close_llama_handle(self._embed)
+        handler = self._chat_handler
+        if handler is not None:
+            try:
+                handler.mtmd_free()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.debug("Projector free skipped: %s", exc)
+        self._chat_handler = None
+        self._mmproj_path = None
         self._chat = None
         self._embed = None
         self._chat_path = None
@@ -1638,6 +1736,55 @@ class LocalLlamaRuntime:
             out = self._embed_batch_unlocked(texts)
             self._touch()
             return out
+
+    @property
+    def vision_ready(self) -> bool:
+        """True while the resident chat model can take images."""
+        return self._chat is not None and self._chat_handler is not None
+
+    def describe_image(
+        self,
+        image_data_url: str,
+        prompt: str,
+        model: str | None = None,
+        max_tokens: int = 700,
+    ) -> str:
+        """Ask the local chat model about one image (a ``data:`` URL)."""
+        from app.services.model_formats import ModelFormat
+
+        target, model_format = self.resolve_chat_model(model)
+        if model_format is not None and model_format is not ModelFormat.GGUF:
+            raise RuntimeError(
+                f"{Path(target).name} is not a GGUF. Only GGUF models with a "
+                "vision projector, or a cloud endpoint, can read images."
+            )
+        self.ensure_chat_loaded(target)
+        assert self._chat is not None
+        if self._chat_handler is None:
+            raise RuntimeError(
+                f"{self._chat_path.name if self._chat_path else 'The chat model'} has no "
+                "vision projector (mmproj-*.gguf) beside it, so it cannot read images. "
+                "Download it from the Models page or pick a vision-capable model."
+            )
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_data_url}},
+                ],
+            }
+        ]
+        with self._lock:
+            raw = self._chat.create_chat_completion(
+                messages=messages,
+                temperature=0.1,
+                max_tokens=max_tokens,
+                repeat_penalty=_default_repeat_penalty(),
+            )
+            self._touch()
+        choice = (raw.get("choices") or [{}])[0]
+        return ((choice.get("message") or {}).get("content") or "").strip()
 
     def make_chat_clients(self):
         """Return (chat_client, async_chat_client, extraction_client) OpenAI-compat shims."""

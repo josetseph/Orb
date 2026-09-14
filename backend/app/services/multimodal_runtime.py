@@ -1,10 +1,9 @@
-"""In-process Florence-2, Whisper, and Marlin — no HTTP model sidecars.
+"""In-process Whisper and Marlin — no HTTP model sidecars.
 
 Loaded lazily into the API process from MODELS_DIR snapshots. Only one heavy
 family is kept resident at a time to bound memory (same idea as the old
 local-models engine, without the network hop).
 """
-
 from __future__ import annotations
 
 import gc
@@ -51,13 +50,11 @@ def _prepare_qwen35(device: str) -> None:
 
 
 class MultimodalRuntime:
-    """Lazy Florence / Whisper / Marlin loaded inside the API process."""
+    """Lazy Whisper / Marlin loaded inside the API process."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._device: str | None = None
-        self._florence_model = None
-        self._florence_processor = None
         self._whisper_model = None
         self._whisper_processor = None
         self._marlin_model = None
@@ -73,12 +70,10 @@ class MultimodalRuntime:
             "mode": "in_process",
             "device": self.device,
             "models_ready": {
-                "florence": is_hf_snapshot_ready(multimodal_model_path("florence")),
                 "whisper": is_hf_snapshot_ready(multimodal_model_path("whisper")),
                 "marlin": is_hf_snapshot_ready(multimodal_model_path("marlin")),
             },
             "loaded": {
-                "florence": self._florence_model is not None,
                 "whisper": self._whisper_model is not None,
                 "marlin": self._marlin_model is not None,
             },
@@ -86,10 +81,6 @@ class MultimodalRuntime:
 
     def _unload_except(self, keep: str) -> None:
         changed = False
-        if keep != "florence" and self._florence_model is not None:
-            self._florence_model = None
-            self._florence_processor = None
-            changed = True
         if keep != "whisper" and self._whisper_model is not None:
             self._whisper_model = None
             self._whisper_processor = None
@@ -128,16 +119,12 @@ class MultimodalRuntime:
 
     def unload(self, family: str | None = None) -> dict[str, Any]:
         family = family.lower() if family else None
-        valid = {None, "florence", "whisper", "marlin"}
+        valid = {None, "whisper", "marlin"}
         if family not in valid:
-            raise ValueError("family must be one of: florence, whisper, marlin")
+            raise ValueError("family must be one of: whisper, marlin")
         with self._lock:
             if family is None:
                 self._unload_except("")
-            elif family == "florence":
-                self._florence_model = None
-                self._florence_processor = None
-                gc.collect()
             elif family == "whisper":
                 self._whisper_model = None
                 self._whisper_processor = None
@@ -147,339 +134,6 @@ class MultimodalRuntime:
                 gc.collect()
             logger.info("Unloaded multimodal family: %s", family or "all")
             return self.status()
-
-    # ---- Florence ---------------------------------------------------------
-
-    def _patch_florence_config_file(self, model_path: str) -> None:
-        config_path = os.path.join(model_path, "config.json")
-        if not os.path.exists(config_path):
-            return
-        try:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = json.load(f)
-            text_config = config.setdefault("text_config", {})
-            changed = False
-            if "forced_bos_token_id" not in text_config:
-                text_config["forced_bos_token_id"] = text_config.get("bos_token_id", 0)
-                changed = True
-            if "forced_eos_token_id" not in text_config:
-                text_config["forced_eos_token_id"] = text_config.get("eos_token_id", 2)
-                changed = True
-            if "decoder_start_token_id" not in text_config:
-                text_config["decoder_start_token_id"] = text_config.get(
-                    "eos_token_id", 2
-                )
-                changed = True
-            if changed:
-                with open(config_path, "w", encoding="utf-8") as f:
-                    json.dump(config, f, indent=2)
-                    f.write("\n")
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-
-    def _patch_florence_remote_code(self, model_path: str) -> None:
-        patch_marker = (
-            "# Orb compatibility: transformers 5 may omit forced_bos_token_id"
-        )
-        insertion = (
-            f"        {patch_marker}\n"
-            '        if not hasattr(self, "forced_bos_token_id"):\n'
-            '            self.forced_bos_token_id = kwargs.get("forced_bos_token_id", None)\n\n'
-        )
-        paths = [Path(model_path) / "configuration_florence2.py"]
-        cache_root = (
-            Path.home() / ".cache" / "huggingface" / "modules" / "transformers_modules"
-        )
-        if cache_root.exists():
-            paths.extend(cache_root.glob("**/configuration_florence2.py"))
-        target = "        # ensure backward compatibility for BART CNN models\n"
-        for path in paths:
-            if not path.exists():
-                continue
-            try:
-                source = path.read_text(encoding="utf-8")
-                if patch_marker in source or target not in source:
-                    continue
-                path.write_text(
-                    source.replace(target, insertion + target, 1),
-                    encoding="utf-8",
-                )
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-
-        # Florence2Processor passes do_resize=None into CLIPImageProcessor; on
-        # transformers 5 that disables resize (wrong HxW → empty captions). When
-        # do_resize=True is passed without size/resample, transformers 5 raises.
-        # Patch the image_processor call to always supply size + resample.
-        resize_marker = "# Orb compatibility: pass size/resample with do_resize"
-        proc_paths = [Path(model_path) / "processing_florence2.py"]
-        if cache_root.exists():
-            proc_paths.extend(cache_root.glob("**/processing_florence2.py"))
-        old_call = (
-            "        pixel_values = self.image_processor(\n"
-            "            images,\n"
-            "            do_resize=do_resize,\n"
-            "            do_normalize=do_normalize,\n"
-            "            return_tensors=return_tensors,\n"
-            "            image_mean=image_mean,\n"
-            "            image_std=image_std,\n"
-            "            input_data_format=input_data_format,\n"
-            "            data_format=data_format,\n"
-            "            resample=resample,\n"
-            "            do_convert_rgb=do_convert_rgb,\n"
-            "        )[\"pixel_values\"]\n"
-        )
-        new_call = (
-            f"        {resize_marker}\n"
-            "        _do_resize = True if do_resize is None else do_resize\n"
-            "        _resample = resample if resample is not None else getattr(\n"
-            "            self.image_processor, \"resample\", None\n"
-            "        )\n"
-            "        _size = getattr(self.image_processor, \"size\", None)\n"
-            "        pixel_values = self.image_processor(\n"
-            "            images,\n"
-            "            do_resize=_do_resize,\n"
-            "            size=_size,\n"
-            "            do_normalize=do_normalize,\n"
-            "            return_tensors=return_tensors,\n"
-            "            image_mean=image_mean,\n"
-            "            image_std=image_std,\n"
-            "            input_data_format=input_data_format,\n"
-            "            data_format=data_format,\n"
-            "            resample=_resample,\n"
-            "            do_convert_rgb=do_convert_rgb,\n"
-            "        )[\"pixel_values\"]\n"
-        )
-        for path in proc_paths:
-            if not path.exists():
-                continue
-            try:
-                source = path.read_text(encoding="utf-8")
-                if resize_marker in source:
-                    continue
-                if old_call in source:
-                    path.write_text(
-                        source.replace(old_call, new_call, 1), encoding="utf-8"
-                    )
-            except Exception:  # pylint: disable=broad-exception-caught
-                pass
-
-    def _patch_florence_generation_config(self) -> None:
-        config_candidates = [
-            getattr(self._florence_model, "config", None),
-            getattr(self._florence_model, "generation_config", None),
-        ]
-        model_config = getattr(self._florence_model, "config", None)
-        if model_config is not None:
-            config_candidates.append(getattr(model_config, "text_config", None))
-        language_model = getattr(self._florence_model, "language_model", None)
-        if language_model is not None:
-            config_candidates.append(getattr(language_model, "config", None))
-            config_candidates.append(getattr(language_model, "generation_config", None))
-        for cfg in config_candidates:
-            if cfg is None:
-                continue
-            for attr, value in (
-                ("forced_bos_token_id", None),
-                ("forced_eos_token_id", None),
-                ("decoder_start_token_id", getattr(cfg, "bos_token_id", None)),
-            ):
-                if not hasattr(cfg, attr):
-                    setattr(cfg, attr, value)
-
-    def _patch_tokenizer_additional_special_tokens(self) -> None:
-        """Florence processor expects ``additional_special_tokens`` (transformers 4 API).
-
-        Transformers 5 renamed this to ``_extra_special_tokens``; expose a bridge
-        property so Florence-2 remote processor code keeps working.
-        """
-        from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-
-        if getattr(PreTrainedTokenizerBase, "_orb_addl_special_patched", False):
-            return
-
-        def _get(self):  # noqa: ANN001
-            return list(getattr(self, "_extra_special_tokens", []) or [])
-
-        def _set(self, value):  # noqa: ANN001
-            object.__setattr__(self, "_extra_special_tokens", list(value or []))
-
-        PreTrainedTokenizerBase.additional_special_tokens = property(_get, _set)
-        PreTrainedTokenizerBase._orb_addl_special_patched = True
-
-    def _load_florence(self) -> None:
-        if self._florence_model is not None:
-            return
-        path = multimodal_model_path("florence")
-        if not is_hf_snapshot_ready(path):
-            raise RuntimeError(
-                f"Florence model not found at {path}. Download the media models on the Models page."
-            )
-        from transformers import AutoModelForCausalLM, AutoProcessor
-
-        self._unload_ggufs()
-        self._unload_except("florence")
-        model_path = str(path)
-        self._patch_florence_config_file(model_path)
-        self._patch_florence_remote_code(model_path)
-        self._patch_tokenizer_additional_special_tokens()
-        logger.info("Loading Florence from %s on %s", model_path, self.device)
-        started = time.perf_counter()
-        # Florence-2 remote code predates transformers 5 SDPA checks; force eager attn.
-        load_kwargs: dict[str, Any] = {
-            "trust_remote_code": True,
-            "attn_implementation": "eager",
-        }
-        try:
-            self._florence_model = (
-                AutoModelForCausalLM.from_pretrained(model_path, **load_kwargs)
-                .to(self.device)
-                .eval()
-            )
-        except (TypeError, ValueError) as exc:
-            # Older remote-code / transformers without attn_implementation kw.
-            logger.warning(
-                "Florence load with attn_implementation failed (%s); retrying", exc
-            )
-            self._florence_model = (
-                AutoModelForCausalLM.from_pretrained(
-                    model_path, trust_remote_code=True
-                )
-                .to(self.device)
-                .eval()
-            )
-        if not hasattr(self._florence_model, "_supports_sdpa"):
-            type(self._florence_model)._supports_sdpa = False  # type: ignore[attr-defined]
-        # Checkpoint stores BART embeddings as language_model.model.shared; transformers 5
-        # may leave embed_tokens/lm_head randomly initialized. Re-tie before generate.
-        self._tie_florence_weights()
-        self._florence_processor = AutoProcessor.from_pretrained(
-            model_path, trust_remote_code=True
-        )
-        self._patch_florence_generation_config()
-        if not hasattr(self._florence_model, "_supports_sdpa"):
-            type(self._florence_model)._supports_sdpa = False  # type: ignore[attr-defined]
-        self._record_load("florence", started)
-        logger.info("Florence loaded")
-
-    def _tie_florence_weights(self) -> None:
-        """Re-bind Florence shared embeddings after transformers 5 load.
-
-        Checkpoint stores BART embeddings only as ``language_model.model.shared``.
-        Transformers 5 leaves encoder/decoder ``embed_tokens`` and ``lm_head``
-        randomly initialized; keep Florence2ScaledWordEmbedding modules and force
-        their ``.weight`` (and ``lm_head.weight``) to share ``shared.weight``.
-        """
-        model = self._florence_model
-        if model is None:
-            return
-        language_model = getattr(model, "language_model", None)
-        inner = getattr(language_model, "model", None) if language_model is not None else None
-        shared = getattr(inner, "shared", None) if inner is not None else None
-        if language_model is None or inner is None or shared is None:
-            logger.warning("Florence weight tie skipped: missing language_model.shared")
-            return
-        try:
-            shared_w = shared.weight
-            inner.encoder.embed_tokens.weight = shared_w
-            inner.decoder.embed_tokens.weight = shared_w
-            language_model.lm_head.weight = shared_w
-            tied = (
-                inner.encoder.embed_tokens.weight.data_ptr() == shared_w.data_ptr()
-                and inner.decoder.embed_tokens.weight.data_ptr() == shared_w.data_ptr()
-                and language_model.lm_head.weight.data_ptr() == shared_w.data_ptr()
-            )
-            if tied:
-                logger.info("Florence embeddings hard-tied to shared weights")
-            else:
-                logger.error(
-                    "Florence weight tie failed: shared=%s enc=%s dec=%s head=%s",
-                    shared_w.data_ptr(),
-                    inner.encoder.embed_tokens.weight.data_ptr(),
-                    inner.decoder.embed_tokens.weight.data_ptr(),
-                    language_model.lm_head.weight.data_ptr(),
-                )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("Florence weight tie failed: %s", exc)
-
-    def _resize_for_florence(self, image):
-        """Downscale large images and pad to a square (Florence vision requires square maps)."""
-        from PIL import Image
-
-        max_pixels = int(getattr(settings, "FLORENCE_MAX_IMAGE_PIXELS", 0) or 1_500_000)
-        working = image
-        if max_pixels > 0:
-            pixels = working.width * working.height
-            if pixels > max_pixels:
-                scale = (max_pixels / pixels) ** 0.5
-                target_size = (
-                    max(1, int(working.width * scale)),
-                    max(1, int(working.height * scale)),
-                )
-                working = working.copy()
-                resampling = getattr(getattr(Image, "Resampling", None), "LANCZOS", 1)
-                working.thumbnail(target_size, resampling)
-
-        # Florence-2 remote vision encoder asserts square feature maps.
-        side = max(working.width, working.height)
-        if working.width == side and working.height == side:
-            return working
-        canvas = Image.new("RGB", (side, side), color=(0, 0, 0))
-        offset = ((side - working.width) // 2, (side - working.height) // 2)
-        canvas.paste(working, offset)
-        return canvas
-
-    def describe_image_path(self, image_path: str) -> str:
-        from PIL import Image
-
-        with self._lock:
-            self._load_florence()
-            image = Image.open(image_path)
-            return self._describe_pil(image)
-
-    def _describe_pil(self, image) -> str:
-        import torch
-
-        assert self._florence_model is not None and self._florence_processor is not None
-        if image.mode != "RGB":
-            image = image.convert("RGB")
-        image = self._resize_for_florence(image)
-        prompt = "<MORE_DETAILED_CAPTION>"
-        # Florence2Processor + transformers 5: passing do_resize=None disables
-        # CLIP resize (wrong HxW → empty captions); passing do_resize=True without
-        # size/resample raises. Preprocess pixels via image_processor defaults.
-        pixel_values = self._florence_processor.image_processor(
-            images=image, return_tensors="pt"
-        )["pixel_values"]
-        prompts = self._florence_processor._construct_prompts([prompt])
-        text_inputs = self._florence_processor.tokenizer(
-            prompts, return_tensors="pt"
-        )
-        model_dtype = next(self._florence_model.parameters()).dtype
-        inputs = {"pixel_values": pixel_values}
-        for key, value in text_inputs.items():
-            if value is None:
-                continue
-            inputs[key] = value
-        moved = {}
-        for key, value in inputs.items():
-            if torch.is_floating_point(value):
-                moved[key] = value.to(device=self.device, dtype=model_dtype)
-            else:
-                moved[key] = value.to(self.device)
-        inputs = moved
-        with torch.no_grad():
-            # Greedy decode: beam search is very slow on MPS with Florence remote code.
-            generated_ids = self._florence_model.generate(
-                **inputs, max_new_tokens=256, num_beams=1, do_sample=False, use_cache=False
-            )
-        generated_text = self._florence_processor.batch_decode(
-            generated_ids, skip_special_tokens=False
-        )[0]
-        parsed = self._florence_processor.post_process_generation(
-            generated_text, task=prompt, image_size=(image.width, image.height)
-        )
-        return parsed.get(prompt, "") or ""
 
     # ---- Whisper ----------------------------------------------------------
 

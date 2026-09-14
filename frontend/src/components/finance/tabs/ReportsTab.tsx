@@ -28,10 +28,10 @@ export function ReportsTab({
   busy: boolean;
 }) {
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
       <form
         onSubmit={onLoad}
-        className="flex flex-wrap items-end gap-3 rounded-2xl border border-white/10 bg-black/35 p-5"
+        className="card-outline flex flex-wrap items-end gap-3"
       >
         <Field label="Start">
           <input
@@ -52,14 +52,14 @@ export function ReportsTab({
         <button
           type="submit"
           disabled={busy}
-          className="inline-flex items-center gap-2 rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+          className="btn btn-primary"
         >
           <PieChart className="h-4 w-4" />
           {busy ? "Loading…" : "Generate report"}
         </button>
       </form>
       {report && (
-        <div className="grid gap-6 xl:grid-cols-2">
+        <div className="grid gap-4 xl:grid-cols-2">
           <Panel title="Basic summary">
             <BasicSummaryList basic={report.basic} />
           </Panel>

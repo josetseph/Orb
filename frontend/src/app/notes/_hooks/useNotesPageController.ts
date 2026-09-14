@@ -26,6 +26,7 @@ import { useVaultTree, useNoteRestoreEffects } from "./useVaultTree";
 import { useNoteMedia } from "./useNoteMedia";
 import { useNoteBatchSelection } from "./useNoteBatchSelection";
 import { useWikilinkPreview } from "./useWikilinkPreview";
+import { useAttachmentJobs } from "./useAttachmentJobs";
 
 /** Composes all notes-page hooks. Keeps `page.tsx` as a thin view. */
 export function useNotesPageController() {
@@ -182,6 +183,12 @@ export function useNotesPageController() {
       list.fetchNotes(list.searchQuery, list.processedFilter),
   });
 
+  const attachments = useAttachmentJobs({
+    currentKB,
+    selectedNote: selection.selectedNote,
+    refreshSelectedNote: selection.refreshSelectedNote,
+  });
+
   const handleEntityClick = useCallback((nodeId: string, name: string) => {
     setEntityPanelNodeId(nodeId);
     setEntityPanelName(name);
@@ -314,6 +321,7 @@ export function useNotesPageController() {
     media,
     batch,
     wikilink,
+    attachments,
     handleEntityClick,
     handleNoteSelect,
     handleCreateNote,

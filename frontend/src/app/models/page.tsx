@@ -1,36 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import {
-  AlertCircle,
-  ChevronDown,
-  Cloud,
-  Cpu,
-  Download,
-  Loader2,
-  RotateCcw,
-  Sparkles,
-} from "lucide-react";
-import { motion } from "framer-motion";
+import { Cloud, Cpu, Download, Loader2, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api";
 import { useKB } from "@/lib/kb-context";
 import { getDesktopBridge } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
-import { ShaderBackground } from "@/components/shader-background";
+import { SettingRow, SettingsShell } from "@/components/settings-shell";
 import type { ModelsPageState } from "@/lib/models-types";
 import { endpointName, setEndpointName } from "@/lib/endpoint-names";
 import { Card, ModelPicker, SavedTick } from "./_components/ModelPicker";
 
 type Mode = "local" | "cloud";
 
+const INTRO =
+  "One place for every model decision. Local by default; a cloud endpoint is opt-in per workspace.";
+
 /**
- * The single page for every model decision.
- *
- * Model choice used to live in three places — Setup (mode, downloads), Settings
- * (provider, cloud names, keys, endpoints) and the Knowledge Bases list (per-KB
- * pin). All of it is here, in the order a person actually decides: how this
- * knowledge base answers, then what the rest of the app defaults to, then the
- * models and keys those choices draw on.
+ * The single page for every model decision: how this knowledge base answers,
+ * then what the rest of the app defaults to, then the models and keys those
+ * choices draw on.
  */
 export default function ModelsPage() {
   const { currentKB, currentKBName, isHydrated } = useKB();
@@ -128,12 +117,7 @@ export default function ModelsPage() {
     setError(null);
     try {
       if (kbMode === "inherit") {
-        await api.updateKBLLM(state.kb.id, {
-          provider: "",
-          model: "",
-          ingestion_model: "",
-          base_url: "",
-        });
+        await api.updateKBLLM(state.kb.id, { provider: "", model: "", ingestion_model: "", base_url: "" });
       } else if (kbMode === "local") {
         await api.updateKBLLM(state.kb.id, {
           provider: "local",
@@ -169,11 +153,7 @@ export default function ModelsPage() {
           await api.selectChatModel(sysModel);
         }
       } else {
-        await api.updateLLMSettings({
-          provider: "openai_compat",
-          model: sysCloudModel,
-          base_url: sysUrl,
-        });
+        await api.updateLLMSettings({ provider: "openai_compat", model: sysCloudModel, base_url: sysUrl });
       }
       flash("system");
       await load();
@@ -215,8 +195,8 @@ export default function ModelsPage() {
       const result = await bridge.setEndpointCredential(url, newKey.trim());
       if (!result?.ok) throw new Error(result?.error || "Could not add the endpoint");
       if (newName.trim()) setEndpointName(url, newName.trim());
-      if (!sysUrl) setSysUrl(newUrl.trim());
-      if (!kbUrl) setKbUrl(newUrl.trim());
+      if (!sysUrl) setSysUrl(url);
+      if (!kbUrl) setKbUrl(url);
       setNewUrl("");
       setNewKey("");
       setNewName("");
@@ -230,7 +210,7 @@ export default function ModelsPage() {
     }
   }
 
-  /** Florence / Whisper / Marlin — fetched together, in the background. */
+  /** Whisper / Marlin and the chat model's vision projector — fetched together. */
   async function downloadMedia() {
     setBusy("media");
     setError(null);
@@ -261,12 +241,11 @@ export default function ModelsPage() {
 
   if (loading) {
     return (
-      <div className="relative min-h-screen bg-black text-white">
-        <ShaderBackground />
-        <div className="relative z-10 flex items-center gap-2 px-6 py-16 text-white/40">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading models…
+      <SettingsShell title="Models" intro={INTRO}>
+        <div className="flex items-center gap-2 text-[12.5px] text-n-500">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading models…
         </div>
-      </div>
+      </SettingsShell>
     );
   }
 
@@ -275,428 +254,299 @@ export default function ModelsPage() {
   const endpoints = state?.cloud.endpoints ?? [];
   const effective = state?.kb?.effective;
 
-  const modeButton = (
-    active: boolean,
-    onClick: () => void,
-    icon: React.ReactNode,
-    title: string,
-    sub: string,
+  const seg = (
+    options: Array<{ key: string; active: boolean; onClick: () => void; icon: React.ReactNode; label: string }>,
   ) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex flex-1 items-start gap-3 rounded-xl border p-3 text-left transition",
-        active
-          ? "border-purple-500/50 bg-purple-500/10"
-          : "border-white/10 bg-white/5 hover:border-white/25",
-      )}
-    >
-      <span className={cn("mt-0.5", active ? "text-purple-300" : "text-white/40")}>
-        {icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm text-white">{title}</span>
-        <span className="block text-[11px] text-white/40">{sub}</span>
-      </span>
-    </button>
+    <div className="seg">
+      {options.map((o) => (
+        <button
+          key={o.key}
+          type="button"
+          onClick={o.onClick}
+          className={cn("seg-opt", o.active && "seg-opt-active")}
+        >
+          {o.icon}
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+
+  const saveButton = (key: string, onClick: () => void) => (
+    <div className="flex items-center justify-end gap-2">
+      <SavedTick show={saved === key} />
+      <button type="button" onClick={onClick} disabled={busy === key} className="btn btn-primary btn-sm">
+        {busy === key ? <Loader2 className="h-3 w-3 animate-spin" /> : "Save"}
+      </button>
+    </div>
   );
 
   return (
-    <div className="relative min-h-screen bg-black text-white">
-      <ShaderBackground />
-      <div className="relative z-10 mx-auto max-w-3xl px-6 py-16">
-        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="mb-8">
-          <div className="mb-2 flex items-center gap-3">
-            <Sparkles className="h-7 w-7 text-purple-400" />
-            <h1 className="bg-gradient-to-r from-white to-white/60 bg-clip-text text-3xl font-bold text-transparent">
-              Models
-            </h1>
-          </div>
-          <p className="text-sm text-white/50">
-            Every model decision in one place. Chat and note ingestion use the model
-            you pick here; embedding, reranking and media models are chosen
-            automatically and shared by all knowledge bases.
-          </p>
-        </motion.div>
+    <SettingsShell title="Models" intro={INTRO}>
+      {error && <div className="card mb-4 text-[12.5px] text-danger-text">{error}</div>}
 
-        {error && (
-          <p className="mb-6 flex items-start gap-2 rounded-xl border border-red-500/25 bg-red-500/5 px-4 py-3 text-xs text-red-200/90">
-            <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
-            {error}
-          </p>
-        )}
+      <div className="max-w-[620px] space-y-4">
+        {/* 1 — the active knowledge base */}
+        <Card
+          accent
+          title={`This workspace — ${currentKBName}`}
+          subtitle="Applies only to the workspace you have open. Leave it inheriting unless this vault needs something different."
+        >
+          {seg([
+            { key: "inherit", active: kbMode === "inherit", onClick: () => setKbMode("inherit"), icon: <RotateCcw className="h-3.5 w-3.5" />, label: "System model" },
+            { key: "local", active: kbMode === "local", onClick: () => setKbMode("local"), icon: <Cpu className="h-3.5 w-3.5" />, label: "On this device" },
+            { key: "cloud", active: kbMode === "cloud", onClick: () => setKbMode("cloud"), icon: <Cloud className="h-3.5 w-3.5" />, label: "Cloud endpoint" },
+          ])}
 
-        <div className="space-y-5">
-          {/* 1 — the active knowledge base */}
-          <Card
-            accent
-            title={`This knowledge base — ${currentKBName}`}
-            subtitle="Applies only to the knowledge base you have open. Leave it inheriting unless this vault needs something different."
-          >
-            <div className="flex gap-2">
-              {modeButton(kbMode === "inherit", () => setKbMode("inherit"), <RotateCcw className="h-4 w-4" />, "Use the system model", "Follows the setting below")}
-              {modeButton(kbMode === "local", () => setKbMode("local"), <Cpu className="h-4 w-4" />, "On this device", "A model on your machine")}
-              {modeButton(kbMode === "cloud", () => setKbMode("cloud"), <Cloud className="h-4 w-4" />, "Cloud endpoint", "Any OpenAI-compatible URL")}
+          {kbMode === "local" && (
+            <ModelPicker
+              label="Model for this workspace"
+              models={installed}
+              value={kbModel}
+              onChange={setKbModel}
+              onBrowse={(p) => void applyBrowsedPath(p, "kb")}
+              browsing={busy === "browse-kb"}
+            />
+          )}
+          {kbMode === "cloud" && (
+            <CloudFields endpoints={endpoints} url={kbUrl} setUrl={setKbUrl} model={kbCloudModel} setModel={setKbCloudModel} />
+          )}
+
+          {kbMode !== "inherit" && (
+            <div className="space-y-1.5 border-t border-divider pt-3">
+              <label className="flex items-center gap-2 text-[12px] text-n-400">
+                <input
+                  type="checkbox"
+                  checked={kbIngestModel !== ""}
+                  onChange={(e) =>
+                    setKbIngestModel(e.target.checked ? (kbMode === "cloud" ? kbCloudModel : kbModel) : "")
+                  }
+                  className="h-3.5 w-3.5 accent-[var(--color-accent)]"
+                />
+                Use a different model for note ingestion
+              </label>
+              {kbIngestModel === "" ? (
+                <p className="text-[11px] text-n-500">
+                  Ingestion uses the model above. Extraction emits strict JSON the whole graph is
+                  built from — a cheaper model saves on the highest-volume calls, but weak
+                  structured output costs more than it saves.
+                </p>
+              ) : (
+                <input
+                  type="text"
+                  value={kbIngestModel}
+                  onChange={(e) => setKbIngestModel(e.target.value)}
+                  placeholder="model name for extraction"
+                  className="input input-mono"
+                />
+              )}
             </div>
+          )}
 
-            {kbMode === "local" && (
-              <ModelPicker
-                label="Model for this knowledge base"
-                models={installed}
-                value={kbModel}
-                onChange={setKbModel}
-                onBrowse={(p) => void applyBrowsedPath(p, "kb")}
-                browsing={busy === "browse-kb"}
-              />
-            )}
-            {kbMode === "cloud" && (
-              <CloudFields
-                endpoints={endpoints}
-                url={kbUrl}
-                setUrl={setKbUrl}
-                model={kbCloudModel}
-                setModel={setKbCloudModel}
-              />
-            )}
+          <div className="flex items-center justify-between gap-3 pt-1">
+            <p className="text-[11px] text-n-500">
+              Now using:{" "}
+              <span className="text-n-300">
+                {effective?.provider === "openai_compat"
+                  ? `${effective?.base_url ?? "no endpoint"} · ${effective?.model ?? "—"}`
+                  : `on this device · ${effective?.model ?? "—"}`}
+              </span>
+              {effective?.inherited ? " (inherited)" : " (pinned)"}
+              {effective?.ingestion_model && effective.ingestion_model !== effective.model && (
+                <>
+                  {" · ingestion: "}
+                  <span className="text-n-300">{effective.ingestion_model}</span>
+                </>
+              )}
+            </p>
+            {saveButton("kb", () => void saveKb())}
+          </div>
+        </Card>
 
-            {kbMode !== "inherit" && (
-              <div className="space-y-1.5 border-t border-white/5 pt-3">
-                <label className="flex items-center gap-2 text-xs text-white/45">
-                  <input
-                    type="checkbox"
-                    checked={kbIngestModel !== ""}
-                    onChange={(e) =>
-                      setKbIngestModel(
-                        e.target.checked
-                          ? kbMode === "cloud"
-                            ? kbCloudModel
-                            : kbModel
-                          : "",
-                      )
-                    }
-                    className="h-3.5 w-3.5 accent-purple-500"
-                  />
-                  Use a different model for note ingestion
-                </label>
-                {kbIngestModel === "" ? (
-                  <p className="text-[11px] text-white/25">
-                    Ingestion uses the model above. Extraction emits strict JSON
-                    that the whole graph is built from — a cheaper model here
-                    saves on the highest-volume calls, but weak structured
-                    output costs more than it saves.
-                  </p>
-                ) : (
+        {/* 2 — the system default */}
+        <Card title="Default for everything else" subtitle="Used by every workspace that has not pinned its own model.">
+          {seg([
+            { key: "local", active: sysMode === "local", onClick: () => setSysMode("local"), icon: <Cpu className="h-3.5 w-3.5" />, label: "On this device" },
+            { key: "cloud", active: sysMode === "cloud", onClick: () => setSysMode("cloud"), icon: <Cloud className="h-3.5 w-3.5" />, label: "Cloud endpoint" },
+          ])}
+
+          {sysMode === "local" ? (
+            <ModelPicker
+              label="System model"
+              models={installed}
+              value={sysModel}
+              onChange={setSysModel}
+              onBrowse={(p) => void applyBrowsedPath(p, "system")}
+              browsing={busy === "browse-system"}
+            />
+          ) : (
+            <CloudFields endpoints={endpoints} url={sysUrl} setUrl={setSysUrl} model={sysCloudModel} setModel={setSysCloudModel} />
+          )}
+
+          {saveButton("system", () => void saveSystem())}
+        </Card>
+
+        {/* 3 — cloud endpoints */}
+        <Card
+          title="Cloud endpoints (optional)"
+          subtitle="Any server speaking the OpenAI API — OpenRouter, Groq, Google's OpenAI endpoint, Together, vLLM, LM Studio, llama-server, Ollama. The URL identifies the key, so two servers never share one."
+        >
+          {endpoints.length > 0 && (
+            <div className="space-y-1.5">
+              {endpoints.map((e) => (
+                <div key={`${e}:${nameNonce}`} className="flex items-center gap-2 rounded-md px-3 py-2 shadow-sm">
                   <input
                     type="text"
-                    value={kbIngestModel}
-                    onChange={(e) => setKbIngestModel(e.target.value)}
-                    placeholder="model name for extraction"
-                    className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
+                    defaultValue={endpointName(e)}
+                    onBlur={(ev) => {
+                      setEndpointName(e, ev.target.value);
+                      setNameNonce((n) => n + 1);
+                    }}
+                    title="Rename this endpoint"
+                    className="input w-32 shrink-0"
                   />
-                )}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between pt-1">
-              <p className="text-[11px] text-white/30">
-                Now using:{" "}
-                <span className="text-white/60">
-                  {effective?.provider === "openai_compat"
-                    ? `${effective?.base_url ?? "no endpoint"} · ${effective?.model ?? "—"}`
-                    : `on this device · ${effective?.model ?? "—"}`}
-                </span>
-                {effective?.inherited ? " (inherited)" : " (pinned)"}
-                {effective?.ingestion_model &&
-                  effective.ingestion_model !== effective.model && (
-                    <>
-                      {" · ingestion: "}
-                      <span className="text-white/60">
-                        {effective.ingestion_model}
-                      </span>
-                    </>
-                  )}
-              </p>
-              <div className="flex items-center gap-2">
-                <SavedTick show={saved === "kb"} />
-                <button
-                  type="button"
-                  onClick={() => void saveKb()}
-                  disabled={busy === "kb"}
-                  className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-purple-500 disabled:opacity-50"
-                >
-                  {busy === "kb" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
-                </button>
-              </div>
-            </div>
-          </Card>
-
-          {/* 2 — the system default */}
-          <Card
-            title="Default for everything else"
-            subtitle="Used by every knowledge base that has not pinned its own model."
-          >
-            <div className="flex gap-2">
-              {modeButton(sysMode === "local", () => setSysMode("local"), <Cpu className="h-4 w-4" />, "On this device", "Private; nothing leaves the machine")}
-              {modeButton(sysMode === "cloud", () => setSysMode("cloud"), <Cloud className="h-4 w-4" />, "Cloud endpoint", "Any OpenAI-compatible URL")}
-            </div>
-
-            {sysMode === "local" ? (
-              <ModelPicker
-                label="System model"
-                models={installed}
-                value={sysModel}
-                onChange={setSysModel}
-                onBrowse={(p) => void applyBrowsedPath(p, "system")}
-                browsing={busy === "browse-system"}
-              />
-            ) : (
-              <CloudFields
-                endpoints={endpoints}
-                url={sysUrl}
-                setUrl={setSysUrl}
-                model={sysCloudModel}
-                setModel={setSysCloudModel}
-              />
-            )}
-
-            <div className="flex items-center justify-end gap-2">
-              <SavedTick show={saved === "system"} />
-              <button
-                type="button"
-                onClick={() => void saveSystem()}
-                disabled={busy === "system"}
-                className="rounded-xl bg-purple-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-purple-500 disabled:opacity-50"
-              >
-                {busy === "system" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
-              </button>
-            </div>
-          </Card>
-
-          {/* 3 — cloud endpoints */}
-          <Card
-            title="Cloud endpoints"
-            subtitle="Any server speaking the OpenAI API — OpenRouter, Groq, Google's OpenAI endpoint, Together, vLLM, LM Studio, llama-server, Ollama. The URL identifies the key, so two servers never share one."
-          >
-            {endpoints.length > 0 && (
-              <div className="space-y-1.5">
-                {endpoints.map((e) => (
-                  <div
-                    key={`${e}:${nameNonce}`}
-                    className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2"
-                  >
-                    <input
-                      type="text"
-                      defaultValue={endpointName(e)}
-                      onBlur={(ev) => {
-                        setEndpointName(e, ev.target.value);
-                        setNameNonce((n) => n + 1);
-                      }}
-                      title="Rename this endpoint"
-                      className="w-32 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2 py-1 text-xs text-white outline-none focus:border-purple-500/50"
-                    />
-                    <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-white/45">
-                      {e}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => void removeEndpoint(e)}
-                      disabled={busy === "endpoint" || !bridge?.deleteEndpointCredential}
-                      title="Remove this endpoint and forget its key"
-                      className="shrink-0 rounded-lg border border-red-500/20 px-2 py-1 text-xs text-red-400/70 transition hover:border-red-500/40 hover:text-red-300 disabled:opacity-40"
-                    >
-                      Remove
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-            <div className="space-y-2">
-              <input
-                type="text"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                placeholder="Name (optional — defaults to the host)"
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-              />
-              <input
-                type="text"
-                value={newUrl}
-                onChange={(e) => setNewUrl(e.target.value)}
-                placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
-                className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-              />
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  autoComplete="off"
-                  value={newKey}
-                  onChange={(e) => setNewKey(e.target.value)}
-                  placeholder="API key (blank for local servers)"
-                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-                />
-                <button
-                  type="button"
-                  onClick={() => void addEndpoint()}
-                  disabled={busy === "endpoint" || !newUrl.trim() || !bridge?.setEndpointCredential}
-                  className="shrink-0 rounded-xl bg-purple-600 px-4 py-2 text-xs font-medium text-white transition hover:bg-purple-500 disabled:opacity-40"
-                >
-                  {busy === "endpoint" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add"}
-                </button>
-                <SavedTick show={saved === "endpoint"} />
-              </div>
-              {!bridge?.setEndpointCredential && (
-                <p className="text-[11px] text-amber-300/80">
-                  Adding endpoints requires the Orb desktop app.
-                </p>
-              )}
-            </div>
-          </Card>
-
-          {/* 4 — downloads */}
-          <Card
-            title="Download a model"
-            subtitle={
-              local?.hardware
-                ? `Chat models Orb can fetch for you. ~${local.hardware.usable_model_gb} GB of ${local.hardware.ram_gb} GB is usable for models on this machine; anything larger is marked "may be tight" and can still be chosen.`
-                : ""
-            }
-          >
-            <div className="space-y-1.5">
-              {(local?.downloadable ?? []).map((m) => (
-                <div
-                  key={m.id}
-                  className={cn(
-                    "flex items-center gap-3 rounded-xl border px-3 py-2.5",
-                    m.downloaded
-                      ? "border-green-500/25 bg-green-500/5"
-                      : "border-white/10 bg-white/5",
-                  )}
-                >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-sm text-white">{m.label}</span>
-                      {m.recommended && (
-                        <span className="rounded-full bg-purple-500/20 px-2 py-0.5 text-[10px] text-purple-300">
-                          suggested
-                        </span>
-                      )}
-                      {!m.fits_budget && (
-                        <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] text-amber-300">
-                          may be tight
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-white/35">
-                      {m.params ? `${m.params} · ` : ""}~{m.size_gb} GB download
-                    </p>
-                  </div>
-                  {m.downloaded ? (
-                    <span className="shrink-0 text-[11px] text-green-400">on disk</span>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => void download(m.id)}
-                      disabled={busy === `dl-${m.id}`}
-                      className="shrink-0 rounded-lg border border-white/10 px-2.5 py-1.5 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
-                    >
-                      {busy === `dl-${m.id}` ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Download className="h-3.5 w-3.5" />
-                      )}
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <p className="text-[11px] text-white/25">
-              Downloads go to{" "}
-              <span className="font-mono text-white/40">{local?.models_dir}</span>. Change
-              that folder in <a href="/setup" className="underline underline-offset-2">Setup</a>.
-            </p>
-          </Card>
-
-          {/* 5 — shared support models */}
-          <Card
-            title="Search and media models"
-            subtitle="Chosen automatically and shared by every knowledge base. Embedding dimensions are tied to the search index, so these are deliberately not per-KB."
-          >
-            <div className="grid gap-2 sm:grid-cols-2">
-              <Readonly label="Embedding" value={local?.embed?.label ?? "—"} />
-              <Readonly label="Reranker" value={local?.reranker?.label ?? "—"} />
-            </div>
-            <div className="space-y-1.5">
-              {(local?.media ?? []).map((m) => (
-                <div
-                  key={m.kind}
-                  className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5"
-                >
-                  <span
-                    className={cn(
-                      "mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full",
-                      m.installed ? "bg-green-400/70" : "bg-white/20",
-                    )}
-                    title={m.installed ? "Downloaded" : "Not downloaded"}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm text-white/80">{m.label}</span>
-                      <span className="truncate font-mono text-[10px] text-white/30">
-                        {m.name}
-                      </span>
-                      {m.engine_note && (
-                        <span className="rounded-full bg-purple-500/15 px-2 py-0.5 text-[10px] text-purple-300">
-                          {m.engine_note}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-white/35">{m.purpose}</p>
-                  </div>
-                  {!m.installed && (
-                    <span className="shrink-0 text-[10px] text-white/30">
-                      downloads on first use
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-[11px] text-white/25">
-                {local?.hardware
-                  ? `${local.hardware.ram_gb} GB RAM · ${local.hardware.accel.backend} · ~${local.hardware.usable_model_gb} GB usable for models`
-                  : ""}
-              </p>
-              {(local?.media ?? []).some((m) => !m.installed) && (
-                <div className="flex shrink-0 items-center gap-2">
-                  <SavedTick show={saved === "media"} />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-n-500">{e}</span>
                   <button
                     type="button"
-                    onClick={() => void downloadMedia()}
-                    disabled={busy === "media"}
-                    className="rounded-lg border border-white/10 px-3 py-1.5 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
+                    onClick={() => void removeEndpoint(e)}
+                    disabled={busy === "endpoint" || !bridge?.deleteEndpointCredential}
+                    title="Remove this endpoint and forget its key"
+                    className="btn btn-danger btn-sm"
                   >
-                    {busy === "media" ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      "Download media models"
-                    )}
+                    Remove
                   </button>
                 </div>
-              )}
+              ))}
             </div>
-          </Card>
-        </div>
+          )}
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="Name (optional — defaults to the host)"
+              className="input"
+            />
+            <input
+              type="text"
+              value={newUrl}
+              onChange={(e) => setNewUrl(e.target.value)}
+              placeholder="https://generativelanguage.googleapis.com/v1beta/openai/"
+              className="input input-mono"
+            />
+            <div className="flex gap-2">
+              <input
+                type="password"
+                autoComplete="off"
+                value={newKey}
+                onChange={(e) => setNewKey(e.target.value)}
+                placeholder="API key (blank for local servers)"
+                className="input input-mono min-w-0 flex-1"
+              />
+              <button
+                type="button"
+                onClick={() => void addEndpoint()}
+                disabled={busy === "endpoint" || !newUrl.trim() || !bridge?.setEndpointCredential}
+                className="btn btn-primary"
+              >
+                {busy === "endpoint" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add endpoint"}
+              </button>
+              <SavedTick show={saved === "endpoint"} />
+            </div>
+            {!bridge?.setEndpointCredential && (
+              <p className="text-[11px] text-n-500">Adding endpoints requires the Orb desktop app.</p>
+            )}
+          </div>
+        </Card>
+
+        {/* 4 — downloads */}
+        <Card
+          title="Download a model"
+          subtitle={
+            local?.hardware
+              ? `Chat models Orb can fetch for you. ~${local.hardware.usable_model_gb} GB of ${local.hardware.ram_gb} GB is usable for models on this machine; anything larger is marked "may be tight" and can still be chosen.`
+              : ""
+          }
+        >
+          <div className="space-y-1.5">
+            {(local?.downloadable ?? []).map((m) => (
+              <SettingRow
+                key={m.id}
+                title={m.label}
+                description={`${m.params ? `${m.params} · ` : ""}~${m.size_gb} GB download`}
+              >
+                {m.recommended && <span className="tag tag-accent">suggested</span>}
+                {!m.fits_budget && <span className="tag tag-neutral">may be tight</span>}
+                {m.downloaded ? (
+                  <span className="text-[11px] text-accent-300">on disk</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void download(m.id)}
+                    disabled={busy === `dl-${m.id}`}
+                    className="btn btn-secondary btn-sm"
+                    title="Download"
+                  >
+                    {busy === `dl-${m.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                  </button>
+                )}
+              </SettingRow>
+            ))}
+          </div>
+          <p className="text-[11px] text-n-500">
+            Downloads go to <span className="font-mono text-n-400">{local?.models_dir}</span>. Change
+            that folder in <a href="/setup">Storage</a>.
+          </p>
+        </Card>
+
+        {/* 5 — shared support models */}
+        <Card
+          title="Search and media models"
+          subtitle="Chosen automatically and shared by every workspace. Embedding dimensions are tied to the search index, so these are deliberately not per-workspace."
+        >
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Readonly label="Embedding" value={local?.embed?.label ?? "—"} />
+            <Readonly label="Reranker" value={local?.reranker?.label ?? "—"} />
+          </div>
+          <div className="space-y-1.5">
+            {(local?.media ?? []).map((m) => (
+              <SettingRow
+                key={m.kind}
+                icon={<span className={cn("dot", m.installed ? "bg-accent" : "bg-n-600")} />}
+                title={m.label}
+                description={`${m.purpose} · ${m.name}`}
+              >
+                {m.engine_note && <span className="tag tag-accent">{m.engine_note}</span>}
+                {!m.installed && <span className="text-[10px] text-n-500">downloads on first use</span>}
+              </SettingRow>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] text-n-500">
+              {local?.hardware
+                ? `${local.hardware.ram_gb} GB RAM · ${local.hardware.accel.backend} · ~${local.hardware.usable_model_gb} GB usable for models`
+                : ""}
+            </p>
+            {(local?.media ?? []).some((m) => !m.installed) && (
+              <div className="flex shrink-0 items-center gap-2">
+                <SavedTick show={saved === "media"} />
+                <button type="button" onClick={() => void downloadMedia()} disabled={busy === "media"} className="btn btn-secondary btn-sm">
+                  {busy === "media" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Download media models"}
+                </button>
+              </div>
+            )}
+          </div>
+        </Card>
       </div>
-    </div>
+    </SettingsShell>
   );
 }
 
 function Readonly({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5">
-      <p className="text-[10px] uppercase tracking-wide text-white/35">{label}</p>
-      <p className="truncate text-sm text-white/70">{value}</p>
+    <div className="rounded-md px-3.5 py-2.5 shadow-sm">
+      <p className="kicker">{label}</p>
+      <p className="truncate text-[13px] text-n-300">{value}</p>
     </div>
   );
 }
@@ -744,40 +594,37 @@ function CloudFields({
 
   return (
     <div className="space-y-2">
-      <label className="text-xs text-white/45">Endpoint</label>
-      {endpoints.length > 0 ? (
-        <div className="relative">
+      <div className="field">
+        <label>Endpoint</label>
+        {endpoints.length > 0 && (
           <select
             value={endpoints.includes(url) ? url : "__custom__"}
             onChange={(e) => setUrl(e.target.value === "__custom__" ? "" : e.target.value)}
-            className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-9 text-sm text-white outline-none transition focus:border-purple-500/50"
+            className="input mb-2"
           >
             {endpoints.map((e) => (
-              <option key={e} value={e} className="bg-[#0d0d12]">
+              <option key={e} value={e}>
                 {endpointName(e)} — {e}
               </option>
             ))}
-            <option value="__custom__" className="bg-[#0d0d12]">
-              Another URL…
-            </option>
+            <option value="__custom__">Another URL…</option>
           </select>
-          <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-        </div>
-      ) : null}
-      {(endpoints.length === 0 || !endpoints.includes(url)) && (
-        <input
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://openrouter.ai/api/v1"
-          className="w-full rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-        />
-      )}
+        )}
+        {(endpoints.length === 0 || !endpoints.includes(url)) && (
+          <input
+            type="text"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://openrouter.ai/api/v1"
+            className="input input-mono"
+          />
+        )}
+      </div>
 
-      <label className="text-xs text-white/45">Model name</label>
-      <div className="flex gap-2">
-        {showList ? (
-          <div className="relative min-w-0 flex-1">
+      <div className="field">
+        <label>Model name</label>
+        <div className="flex gap-2">
+          {showList ? (
             <select
               value={models.includes(model) ? model : ""}
               onChange={(e) => {
@@ -787,62 +634,47 @@ function CloudFields({
                 }
                 setModel(e.target.value);
               }}
-              className="w-full appearance-none rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 pr-9 font-mono text-xs text-white outline-none transition focus:border-purple-500/50"
+              className="input input-mono min-w-0 flex-1"
             >
-              <option value="" className="bg-[#0d0d12]">
-                {model ? `${model} (not in list)` : "Choose a model…"}
-              </option>
+              <option value="">{model ? `${model} (not in list)` : "Choose a model…"}</option>
               {models.map((m) => (
-                <option key={m} value={m} className="bg-[#0d0d12]">
+                <option key={m} value={m}>
                   {m}
                 </option>
               ))}
-              <option value="__type__" className="bg-[#0d0d12]">
-                Type a name instead…
-              </option>
+              <option value="__type__">Type a name instead…</option>
             </select>
-            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-          </div>
-        ) : (
-          <input
-            type="text"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="gemini-2.5-flash"
-            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/5 px-4 py-2.5 font-mono text-xs text-white placeholder-white/25 outline-none focus:border-purple-500/50"
-          />
-        )}
-        <button
-          type="button"
-          onClick={() => void probe()}
-          disabled={probing || !url.trim()}
-          title="Ask the endpoint which models it serves"
-          className="shrink-0 rounded-xl border border-white/10 bg-white/5 px-3 text-xs text-white/60 transition hover:border-white/25 hover:text-white disabled:opacity-40"
-        >
-          {probing ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : models === null ? (
-            "List models"
           ) : (
-            "Refresh"
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="gemini-2.5-flash"
+              className="input input-mono min-w-0 flex-1"
+            />
           )}
-        </button>
+          <button
+            type="button"
+            onClick={() => void probe()}
+            disabled={probing || !url.trim()}
+            title="Ask the endpoint which models it serves"
+            className="btn btn-secondary"
+          >
+            {probing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : models === null ? "List models" : "Refresh"}
+          </button>
+        </div>
       </div>
       {showList && (
-        <p className="text-[11px] text-white/35">
+        <p className="text-[11px] text-n-500">
           {models.length} model{models.length === 1 ? "" : "s"} from this endpoint.
         </p>
       )}
       {typing && models && models.length > 0 && (
-        <button
-          type="button"
-          onClick={() => setTyping(false)}
-          className="text-[11px] text-purple-300/70 underline-offset-2 hover:underline"
-        >
+        <button type="button" onClick={() => setTyping(false)} className="text-[11px] text-accent-300 hover:underline">
           ← Back to the {models.length} listed models
         </button>
       )}
-      {note && <p className="text-[11px] text-amber-300/80">{note}</p>}
+      {note && <p className="text-[11px] text-n-400">{note}</p>}
     </div>
   );
 }

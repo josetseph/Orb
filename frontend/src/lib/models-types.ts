@@ -68,7 +68,7 @@ export interface ModelsPageState {
     budget_note: string;
     embed: { label: string; size_gb: number } | null;
     reranker: { label: string; size_gb: number } | null;
-    /** Florence / Whisper / Marlin — the models run on attachments. */
+    /** Vision route, Whisper and Marlin — what runs on attachments. */
     media: Array<{
       kind: string;
       label: string;

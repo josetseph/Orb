@@ -1,22 +1,54 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import {
+  Box,
+  Building2,
+  Circle,
+  Lightbulb,
+  Loader2,
+  MessageCircle,
+  User,
+  X,
+} from "lucide-react";
 import { api } from "@/lib/api";
 import type { KnowledgeNode } from "@/components/graph3d/types";
 import { nodeColor } from "@/components/graph3d/nodeColors";
 
+type Detail = KnowledgeNode & {
+  community_name?: string;
+  connections?: { node_id: string; name: string; relationship?: string; direction?: string }[];
+  related_notes?: { note_id: string; name: string }[];
+};
+
+function TypeIcon({ type, className }: { type: string; className?: string }) {
+  const t = type.toLowerCase();
+  if (t === "person" || t === "character") return <User className={className} />;
+  if (t === "organization" || t === "team" || t === "group" || t === "band")
+    return <Building2 className={className} />;
+  if (t === "concept") return <Lightbulb className={className} />;
+  if (t === "product" || t === "reference") return <Box className={className} />;
+  return <Circle className={className} />;
+}
+
+/** Entity panel rendered inline in the graph's right aside. */
 export function NodeDetailModal({
   node,
   onClose,
   kb,
+  onSelectNodeId,
 }: {
   node: KnowledgeNode;
   onClose: () => void;
   kb: string;
+  /** Select a connected node by id, when the graph has it. */
+  onSelectNodeId?: (nodeId: string) => void;
 }) {
+  const router = useRouter();
   const color = nodeColor(node.node_type);
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [detail, setDetail] = useState<KnowledgeNode | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
   const [fetching, setFetching] = useState(true);
 
   useEffect(() => {
@@ -39,287 +71,131 @@ export function NodeDetailModal({
     };
   }, [node.node_id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const display = detail ?? node;
+  const d: Detail = detail ?? node;
+  const firstNote = d.related_notes?.[0];
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 999,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "rgba(0,0,0,0.78)",
-        backdropFilter: "blur(6px)",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div
-        style={{
-          position: "relative",
-          maxWidth: 400,
-          width: "100%",
-          margin: "0 1.5rem",
-        }}
-      >
+    <>
+      <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+        <span className="kicker flex-1 text-accent">Entity</span>
         <button
+          type="button"
           onClick={onClose}
-          style={{
-            position: "absolute",
-            top: -44,
-            right: 0,
-            background: "none",
-            border: "none",
-            color: "#fff",
-            cursor: "pointer",
-            padding: 4,
-            lineHeight: 1,
-          }}
+          className="grid h-[26px] w-[26px] place-items-center rounded-[6px] text-n-400 hover:bg-n-900"
           aria-label="Close"
         >
-          <svg
-            width={28}
-            height={28}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={1.8}
-          >
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
+          <X className="h-3.5 w-3.5" />
         </button>
-
-        <div style={{ width: "100%" }}>
-          <div
-            ref={cardRef}
-            style={{
-              borderRadius: 16,
-              background: "#0a0e1a",
-              border: `1px solid ${color}55`,
-              padding: "20px 22px",
-              boxShadow: `0 0 40px ${color}22, rgba(0,0,0,0.29) 0px 21px 46px`,
-              cursor: "default",
-            }}
+      </div>
+      <div className="flex-1 overflow-auto px-4 pb-4">
+        <div className="mb-1.5 flex items-start gap-2.5">
+          <span
+            className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px]"
+            style={{ background: `color-mix(in srgb, ${color} 55%, var(--color-surface))` }}
           >
-            <div
-              style={{
-                fontSize: 10,
-                textTransform: "uppercase",
-                letterSpacing: "0.12em",
-                color,
-                fontWeight: 700,
-                marginBottom: 8,
-                fontFamily: "system-ui, sans-serif",
-              }}
-            >
-              {display.node_type}
+            <TypeIcon type={d.node_type} className="h-[18px] w-[18px] text-accent-100" />
+          </span>
+          <div>
+            <h5 className="text-[17px] font-medium">{d.name}</h5>
+            <div className="text-[11.5px] text-n-500">
+              {d.node_type}
+              {d.community_name || d.community_id ? ` · ${d.community_name || d.community_id}` : ""}
             </div>
-            <h2
-              style={{
-                margin: "0 0 12px",
-                fontSize: 20,
-                fontWeight: 800,
-                color: "#f8fafc",
-                lineHeight: 1.25,
-                fontFamily: "system-ui, sans-serif",
-              }}
-            >
-              {display.name}
-            </h2>
-            {fetching && (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "#475569",
-                  fontFamily: "system-ui, sans-serif",
-                  marginBottom: 8,
-                }}
-              >
-                Loading details…
-              </div>
-            )}
-            {display.description && (
-              <p
-                style={{
-                  margin: "0 0 12px",
-                  fontSize: 13,
-                  color: "#94a3b8",
-                  lineHeight: 1.6,
-                  fontFamily: "system-ui, sans-serif",
-                }}
-              >
-                {display.description}
-              </p>
-            )}
-            {display.isolated_contexts && display.isolated_contexts.length > 0 && (
-              <div style={{ marginBottom: 12 }}>
-                <div
-                  style={{
-                    fontSize: 9,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.1em",
-                    color: "#475569",
-                    fontWeight: 700,
-                    marginBottom: 6,
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
-                  Contexts
-                </div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                  {display.isolated_contexts.slice(0, 4).map((ctx, i) => (
-                    <div
-                      key={i}
-                      style={{
-                        fontSize: 12,
-                        color: "#cbd5e1",
-                        lineHeight: 1.55,
-                        fontFamily: "system-ui, sans-serif",
-                        borderLeft: "2px solid #334155",
-                        paddingLeft: 10,
-                        fontStyle: "italic",
-                      }}
-                    >
-                      {ctx}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {(display as { community_name?: string; community_id?: string })
-              .community_name ||
-            (display as { community_id?: string }).community_id ? (
-              <div
-                style={{
-                  fontSize: 12,
-                  color: "#94a3b8",
-                  fontFamily: "system-ui, sans-serif",
-                  marginBottom: 10,
-                }}
-              >
-                Community:{" "}
-                {(display as { community_name?: string }).community_name ||
-                  (display as { community_id?: string }).community_id}
-              </div>
-            ) : null}
-            {Array.isArray(
-              (
-                display as {
-                  connections?: {
-                    node_id: string;
-                    name: string;
-                    relationship?: string;
-                  }[];
-                }
-              ).connections,
-            ) &&
-              (
-                (
-                  display as {
-                    connections?: {
-                      node_id: string;
-                      name: string;
-                      relationship?: string;
-                    }[];
-                  }
-                ).connections || []
-              ).length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <div
-                    style={{
-                      fontSize: 9,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.1em",
-                      color: "#475569",
-                      fontWeight: 700,
-                      marginBottom: 6,
-                      fontFamily: "system-ui, sans-serif",
-                    }}
-                  >
-                    Connections
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 4,
-                      maxHeight: 140,
-                      overflowY: "auto",
-                    }}
-                  >
-                    {(
-                      (
-                        display as {
-                          connections?: {
-                            node_id: string;
-                            name: string;
-                            relationship?: string;
-                          }[];
-                        }
-                      ).connections || []
-                    )
-                      .slice(0, 8)
-                      .map((conn) => (
-                        <div
-                          key={conn.node_id}
-                          style={{
-                            fontSize: 12,
-                            color: "#e2e8f0",
-                            fontFamily: "system-ui, sans-serif",
-                          }}
-                        >
-                          {conn.name}
-                          {conn.relationship ? (
-                            <span style={{ color: "#64748b" }}>
-                              {" "}
-                              · {conn.relationship}
-                            </span>
-                          ) : null}
-                        </div>
-                      ))}
-                  </div>
-                </div>
-              )}
-            {!fetching &&
-              !display.description &&
-              !(display.isolated_contexts && display.isolated_contexts.length) &&
-              !(
-                Array.isArray(
-                  (display as { connections?: unknown[] }).connections,
-                ) &&
-                ((display as { connections?: unknown[] }).connections || [])
-                  .length
-              ) && (
-                <p
-                  style={{
-                    margin: 0,
-                    fontSize: 12,
-                    color: "#64748b",
-                    lineHeight: 1.55,
-                    fontFamily: "system-ui, sans-serif",
-                  }}
-                >
-                  No stored contexts yet for this node. Re-ingest related notes
-                  if content should appear here.
-                </p>
-              )}
-            {display.domain && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "#7dd3fc",
-                  fontFamily: "system-ui, sans-serif",
-                }}
-              >
-                {display.domain}
-              </div>
-            )}
           </div>
         </div>
+        {fetching && (
+          <div className="flex items-center gap-1.5 py-2 text-[12px] text-n-500">
+            <Loader2 className="h-3 w-3 animate-spin" /> Loading details…
+          </div>
+        )}
+        {d.description && <p className="my-2.5 text-[13px] text-n-300">{d.description}</p>}
+
+        {d.facts && d.facts.length > 0 && (
+          <>
+            <div className="kicker mb-1.5 mt-3.5">Facts</div>
+            {d.facts.map((f, i) => (
+              <div key={i} className="flex gap-2 py-1 text-[12.5px] text-n-200">
+                <span className="text-accent-700">•</span>
+                <span>{f}</span>
+              </div>
+            ))}
+          </>
+        )}
+
+        {d.isolated_contexts && d.isolated_contexts.length > 0 && (
+          <>
+            <div className="kicker mb-1.5 mt-3.5">Contexts</div>
+            {d.isolated_contexts.slice(0, 4).map((ctx, i) => (
+              <div
+                key={i}
+                className="my-1.5 border-l-2 border-accent-700 pl-2.5 text-[12.5px] text-n-300"
+              >
+                {ctx}
+              </div>
+            ))}
+          </>
+        )}
+
+        {d.connections && d.connections.length > 0 && (
+          <>
+            <div className="kicker mb-1.5 mt-3.5">Connections</div>
+            {d.connections.slice(0, 12).map((c) => (
+              <button
+                key={c.node_id}
+                type="button"
+                onClick={() => onSelectNodeId?.(c.node_id)}
+                className="row -mx-2 py-1.5"
+              >
+                <span className="min-w-20 text-[11px] text-n-500">
+                  {c.direction === "incoming" ? "← " : ""}
+                  {c.relationship || "related"}
+                </span>
+                <span className="text-accent-300">{c.name}</span>
+              </button>
+            ))}
+          </>
+        )}
+
+        {d.related_notes && d.related_notes.length > 0 && (
+          <>
+            <div className="kicker mb-1.5 mt-3.5">Mentioned in</div>
+            {d.related_notes.map((n) => (
+              <Link
+                key={n.note_id}
+                href={`/notes?note=${encodeURIComponent(n.note_id)}`}
+                className="row -mx-2 py-1.5 text-text no-underline"
+              >
+                {n.name}
+              </Link>
+            ))}
+          </>
+        )}
+
+        {!fetching && !d.description && !d.isolated_contexts?.length && !d.connections?.length && (
+          <p className="py-4 text-[12px] text-n-500">
+            No stored contexts yet for this node. Re-ingest related notes if content should
+            appear here.
+          </p>
+        )}
+
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            className="btn btn-primary flex-1"
+            onClick={() => router.push("/chat")}
+          >
+            <MessageCircle className="h-3.5 w-3.5" /> Ask about this
+          </button>
+          {firstNote && (
+            <Link
+              href={`/notes?note=${encodeURIComponent(firstNote.note_id)}`}
+              className="btn btn-secondary no-underline"
+            >
+              Open note
+            </Link>
+          )}
+        </div>
       </div>
-    </div>
+    </>
   );
 }

@@ -16,42 +16,15 @@ export class ErrorBoundary extends Component<
   render() {
     if (this.state.error) {
       return (
-        <div
-          style={{
-            position: "absolute",
-            inset: 0,
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "#000",
-            gap: "1rem",
-            color: "#f87171",
-          }}
-        >
-          <p
-            style={{
-              fontSize: "0.9rem",
-              maxWidth: "32rem",
-              textAlign: "center",
-              color: "#94a3b8",
-            }}
-          >
-            {this.state.error}
-          </p>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg text-center">
+          <p className="text-[13px] text-danger-text">The graph could not render.</p>
+          <p className="max-w-md font-mono text-[11px] text-n-500">{this.state.error}</p>
           <button
+            type="button"
+            className="btn btn-secondary"
             onClick={() => this.setState({ error: null })}
-            style={{
-              padding: "0.4rem 1rem",
-              background: "rgba(168,85,247,0.2)",
-              border: "1px solid rgba(168,85,247,0.5)",
-              borderRadius: "0.4rem",
-              color: "#c084fc",
-              cursor: "pointer",
-              fontSize: "0.8rem",
-            }}
           >
-            Retry
+            Try again
           </button>
         </div>
       );

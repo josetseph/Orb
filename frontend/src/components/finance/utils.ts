@@ -1,5 +1,16 @@
-export const FIELD_INPUT =
-  "w-full rounded-lg border border-white/15 bg-black/50 px-3 py-2 text-sm text-white focus:border-teal-400/50 focus:outline-none";
+export const FIELD_INPUT = "input";
+
+/** Empty-state row shared by every list on the Finance screen. */
+export const EMPTY_ROW =
+  "rounded-md border border-dashed border-n-800 px-3 py-5 text-[12.5px] text-n-500";
+
+/** One list row: a hairline under each, none under the last. */
+export const LIST_ROW =
+  "flex items-center gap-3 border-b border-n-900 px-2 py-2 text-[13px] last:border-0";
+
+/** Icon button that deletes a row. */
+export const DELETE_BTN =
+  "rounded p-1 text-n-500 hover:text-danger-text disabled:opacity-50";
 
 export type TabId =
   | "overview"

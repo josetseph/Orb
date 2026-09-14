@@ -1,4 +1,4 @@
-"""Download Florence-2, Whisper, and Marlin into MODELS_DIR for local multimedia."""
+"""Download Whisper and Marlin into MODELS_DIR for local multimedia."""
 
 from __future__ import annotations
 
@@ -44,8 +44,6 @@ def _whisper_repo_and_dir() -> tuple[str, str]:
 
 
 def _hf_repo_and_dir(kind: str) -> tuple[str, str]:
-    if kind == "florence":
-        return settings.MODEL_FLORENCE_HF, settings.MODEL_FLORENCE_LOCAL
     if kind == "whisper":
         return _whisper_repo_and_dir()
     if kind == "marlin":
@@ -64,7 +62,7 @@ def is_hf_snapshot_ready(dest: Path) -> bool:
         return False
     has_config = (dest / "config.json").exists() or (dest / "model_index.json").exists()
     if not has_config:
-        # Florence / some repos nest or use preprocessor_config alone
+        # Some repos nest or use preprocessor_config alone
         has_config = (dest / "preprocessor_config.json").exists()
     weight_globs = (
         "*.safetensors",
@@ -122,7 +120,7 @@ def ensure_hf_snapshot(
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError(
-            "huggingface_hub is required to download Florence/Whisper/Marlin. "
+            "huggingface_hub is required to download Whisper/Marlin. "
             "Install with: pip install huggingface_hub"
         ) from exc
 
@@ -182,18 +180,15 @@ def ensure_multimodal_models(
     on_progress=None,
 ) -> dict[str, Path]:
     """
-    Ensure Florence-2 + Whisper (+ Marlin) live under MODELS_DIR.
+    Ensure Whisper (+ Marlin) live under MODELS_DIR.
 
     Marlin defaults to the ungated mirror ``lunahr/Marlin-2B-ungated``
     (override with MODEL_MARLIN_HF). No HF token required for that repo.
     """
     out: dict[str, Path] = {}
-    for kind in ("florence", "whisper"):
-        repo, _ = _hf_repo_and_dir(kind)
-        dest = multimodal_model_path(kind)
-        out[kind] = ensure_hf_snapshot(
-            repo, dest, on_progress=on_progress, label=kind
-        )
+    repo, _ = _hf_repo_and_dir("whisper")
+    dest = multimodal_model_path("whisper")
+    out["whisper"] = ensure_hf_snapshot(repo, dest, on_progress=on_progress, label="whisper")
 
     if include_marlin:
         repo, _ = _hf_repo_and_dir("marlin")

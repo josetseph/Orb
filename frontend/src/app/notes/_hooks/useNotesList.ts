@@ -65,7 +65,9 @@ export function useNotesList({
         setIsLoading(true);
         let processed: boolean | undefined;
         let failed: boolean | undefined;
-        if (filter === "ingested") {
+        if (filter === "needs") {
+          processed = false;
+        } else if (filter === "ingested") {
           processed = true;
         } else if (filter === "saved") {
           processed = false;

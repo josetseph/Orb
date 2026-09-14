@@ -1,182 +1,249 @@
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
   Calendar,
-  Database,
+  Check,
+  Code,
+  Eye,
+  FolderOpen,
   Loader2,
   Mic,
-  MicOff,
-  Network,
+  MoreHorizontal,
+  PanelRight,
+  Paperclip,
+  RefreshCw,
+  Square,
   Trash2,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { api } from "@/lib/api";
+import { revealInFolder, revealInFolderLabel } from "@/lib/desktop";
 import type { Note } from "@/lib/types";
-import {
-  getProcessingLabel,
-  getProcessingStage,
-  isActiveProcessingNote,
-} from "../_lib/processing-status";
-import { NoteStatusBadge } from "./NoteStatusBadge";
+import { getProcessingStage, isActiveProcessingNote } from "../_lib/processing-status";
+
+export type ViewMode = "live" | "source";
 
 type NoteEditorHeaderProps = {
   selectedNote: Note;
+  currentKB: string;
   isSaving: boolean;
   isUploading: boolean;
   isRecording: boolean;
   showConnectedPanel: boolean;
-  onTitleChange: (title: string) => void;
+  viewMode: ViewMode;
+  onViewModeChange: (mode: ViewMode) => void;
   onIngest: () => void;
-  onDismissFailure?: () => void;
+  onAttachFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onToggleDatePicker: () => void;
   onToggleRecording: () => void;
   onToggleConnectedPanel: () => void;
   onDelete: () => void;
 };
 
+function folderOf(relPath?: string | null): string {
+  const parts = (relPath || "").replace(/\\/g, "/").split("/");
+  parts.pop();
+  return parts.join("/");
+}
+
 export function NoteEditorHeader({
   selectedNote,
+  currentKB,
   isSaving,
   isUploading,
   isRecording,
   showConnectedPanel,
-  onTitleChange,
+  viewMode,
+  onViewModeChange,
   onIngest,
-  onDismissFailure,
+  onAttachFile,
   onToggleDatePicker,
   onToggleRecording,
   onToggleConnectedPanel,
   onDelete,
 }: NoteEditorHeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const busy = isActiveProcessingNote(selectedNote);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [menuOpen]);
+
+  const reveal = async () => {
+    setMenuOpen(false);
+    if (!selectedNote.rel_path) return;
+    try {
+      const { local_path } = await api.resolveVaultLocalPath(selectedNote.rel_path, currentKB);
+      await revealInFolder(local_path);
+    } catch {
+      /* browser build — nothing to reveal into */
+    }
+  };
+
+  const ingestLabel = busy
+    ? getProcessingStage(selectedNote)
+    : selectedNote.processed
+      ? "Re-ingest"
+      : selectedNote.failed
+        ? "Retry"
+        : "Ingest";
+
   return (
-    <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-white/10 bg-black/50 px-4 py-3 backdrop-blur-xl sm:px-6 sm:py-4">
-      <div className="min-w-0 max-w-full flex-1 basis-[12rem]">
-        <input
-          type="text"
-          value={selectedNote.title || ""}
-          onChange={(e) => onTitleChange(e.target.value)}
-          placeholder="Untitled"
-          className="w-full max-w-xl rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm font-medium text-white placeholder-white/25 outline-none transition focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30"
-        />
-        <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
-          <p className="text-xs text-white/50">
-            {isSaving ? "Saving…" : isUploading ? "Uploading…" : "Saved"}
-          </p>
-          <p className="shrink-0 text-xs text-white/40">
-            {new Date(selectedNote.created_at).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-              hour: "numeric",
-              minute: "2-digit",
-            })}
-          </p>
-          <NoteStatusBadge
-            note={selectedNote}
-            onDismissFailure={onDismissFailure}
-          />
-        </div>
+    <div className="flex shrink-0 items-center gap-1.5 border-b border-n-900 px-5 py-2.5">
+      <div className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-n-500">
+        <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+        <span className="truncate">{folderOf(selectedNote.rel_path) || "Vault"}</span>
+        <span className="opacity-50">/</span>
+        <span className="truncate text-n-300">{selectedNote.title || "Untitled"}</span>
       </div>
-      <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
-        <>
-          <button
-            onClick={onIngest}
-            disabled={
-              isSaving ||
-              !selectedNote?.content.trim() ||
-              Boolean(
-                selectedNote && isActiveProcessingNote(selectedNote),
-              )
-            }
-            title={
-              selectedNote && isActiveProcessingNote(selectedNote)
-                ? getProcessingLabel(selectedNote)
-                : selectedNote?.processed
-                  ? "Re-ingest note"
-                  : "Ingest note"
-            }
-            className="flex h-9 shrink-0 items-center gap-2 rounded-lg bg-linear-to-r from-purple-500 to-pink-500 px-3 text-sm font-medium text-white transition-all hover:from-purple-600 hover:to-pink-600 disabled:cursor-not-allowed disabled:opacity-50 sm:px-4"
-          >
-            {selectedNote && isActiveProcessingNote(selectedNote) ? (
-              <>
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                <span className="max-w-[16rem] truncate">
-                  {getProcessingStage(selectedNote)}
-                </span>
-              </>
-            ) : isSaving ? (
-              <>
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                <span className="whitespace-nowrap">Saving…</span>
-              </>
-            ) : selectedNote?.processed ? (
-              <>
-                <Database className="h-4 w-4 shrink-0" />
-                <span className="whitespace-nowrap">Re-ingest</span>
-              </>
-            ) : selectedNote?.failed ? (
-              <>
-                <Database className="h-4 w-4 shrink-0" />
-                <span className="whitespace-nowrap">Retry</span>
-              </>
-            ) : (
-              <>
-                <Database className="h-4 w-4 shrink-0" />
-                <span className="whitespace-nowrap">Ingest</span>
-              </>
-            )}
-          </button>
-          <button
-            onClick={onToggleDatePicker}
-            title="Change date"
-            className="flex h-9 items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-2.5 text-sm text-white/80 transition-all hover:bg-white/10 sm:px-4"
-          >
-            <Calendar className="h-4 w-4 shrink-0" />
-            <span className="hidden sm:inline">Date</span>
-          </button>
-          <div className="hidden h-6 w-px bg-white/10 sm:block" />
-          <button
-            onClick={onToggleRecording}
-            disabled={isUploading}
-            title={isRecording ? "Stop recording" : "Record audio"}
-            className={cn(
-              "flex h-9 items-center gap-2 rounded-xl border px-2.5 text-sm transition-all sm:px-4",
-              isRecording
-                ? "border-red-500/30 bg-red-500/10 text-red-400 animate-pulse"
-                : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10",
-            )}
-          >
-            {isRecording ? (
-              <MicOff className="h-4 w-4 shrink-0" />
-            ) : (
-              <Mic className="h-4 w-4 shrink-0" />
-            )}
-            <span className="hidden sm:inline">
-              {isRecording ? "Stop" : "Record"}
-            </span>
-          </button>
-        </>
+
+      <span className="mr-1 flex items-center gap-1.5 text-[12px] text-n-500">
+        {isSaving || isUploading ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : (
+          <Check className="h-3.5 w-3.5" />
+        )}
+        {isSaving ? "Saving…" : isUploading ? "Uploading…" : "Saved"}
+      </span>
+
+      <div
+        className="seg mr-1"
+        title="Live: Markdown renders as you type. Source: plain Markdown. ⌘/ toggles"
+      >
         <button
-          onClick={onToggleConnectedPanel}
-          title="Connected notes"
-          className={cn(
-            "flex h-9 items-center gap-2 rounded-xl px-2.5 text-sm transition-all sm:px-4",
-            showConnectedPanel
-              ? "bg-teal-500/25 text-teal-200 border border-teal-500/40"
-              : "border border-white/10 bg-white/5 text-white/80 hover:bg-white/10",
-          )}
+          type="button"
+          onClick={() => onViewModeChange("live")}
+          className={cn("seg-opt", viewMode === "live" && "seg-opt-active")}
         >
-          <Network className="h-4 w-4 shrink-0" />
-          <span className="hidden sm:inline">Connected</span>
+          <Eye className="h-3.5 w-3.5" /> Live
         </button>
         <button
-          onClick={onDelete}
-          title="Delete note"
-          className="flex h-9 items-center gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-2.5 text-sm text-red-400 transition-all hover:bg-red-500/20 sm:px-4"
+          type="button"
+          onClick={() => onViewModeChange("source")}
+          className={cn("seg-opt", viewMode === "source" && "seg-opt-active")}
         >
-          <Trash2 className="h-4 w-4 shrink-0" />
-          <span className="hidden sm:inline">Delete</span>
+          <Code className="h-3.5 w-3.5" /> Source
         </button>
       </div>
+
+      <input
+        ref={fileRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={onAttachFile}
+        disabled={isUploading}
+      />
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
+        disabled={isUploading}
+        title="Attach photo, PDF or file"
+        className="btn btn-secondary"
+      >
+        <Paperclip className="h-3.5 w-3.5" /> Attach
+      </button>
+
+      <button
+        type="button"
+        onClick={onToggleRecording}
+        disabled={isUploading}
+        title={isRecording ? "Stop recording" : "Record voice note"}
+        className={cn(
+          "btn",
+          isRecording
+            ? "border-danger/60 bg-danger/10 text-danger-text"
+            : "btn-secondary",
+        )}
+      >
+        {isRecording ? (
+          <>
+            <span className="dot animate-blink bg-danger" />
+            <Square className="h-3 w-3" /> Stop
+          </>
+        ) : (
+          <>
+            <Mic className="h-3.5 w-3.5" /> Record
+          </>
+        )}
+      </button>
+
+      <button
+        type="button"
+        onClick={onIngest}
+        disabled={isSaving || busy || !selectedNote.content.trim()}
+        title="Extract entities and links into the graph"
+        className="btn btn-primary min-w-[96px]"
+      >
+        {busy ? (
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        ) : selectedNote.processed ? (
+          <RefreshCw className="h-3.5 w-3.5" />
+        ) : (
+          <Zap className="h-3.5 w-3.5" />
+        )}
+        <span className="max-w-[14rem] truncate">{ingestLabel}</span>
+      </button>
+
+      <div ref={menuRef} className="relative">
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          title="More"
+          className="btn btn-secondary btn-icon"
+        >
+          <MoreHorizontal className="h-4 w-4" />
+        </button>
+        {menuOpen && (
+          <div className="popover absolute right-0 top-[34px] z-40 min-w-[200px]">
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                onToggleDatePicker();
+              }}
+            >
+              <Calendar className="h-3.5 w-3.5" /> Change date…
+            </button>
+            <button type="button" className="menu-item" onClick={() => void reveal()}>
+              <FolderOpen className="h-3.5 w-3.5" /> {revealInFolderLabel()}
+            </button>
+            <div className="my-1 h-px bg-divider" />
+            <button
+              type="button"
+              className="menu-item text-danger-text"
+              onClick={() => {
+                setMenuOpen(false);
+                onDelete();
+              }}
+            >
+              <Trash2 className="h-3.5 w-3.5" /> Delete
+            </button>
+          </div>
+        )}
+      </div>
+
+      <button
+        type="button"
+        onClick={onToggleConnectedPanel}
+        title="Connections panel"
+        className={cn(
+          "btn btn-icon",
+          showConnectedPanel ? "border-accent-700 text-accent" : "btn-secondary",
+        )}
+      >
+        <PanelRight className="h-4 w-4" />
+      </button>
     </div>
   );
 }

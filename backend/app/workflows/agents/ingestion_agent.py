@@ -41,12 +41,12 @@ def _require_workflow(state: "IngestionState"):
         )
     return wf
 
-# Heavy local model multimedia extraction is serialized by default so Florence,
-# Whisper, and Marlin do not compete for the same CPU/RAM budget.
+# Heavy local model multimedia extraction is serialized by default so the
+# vision model, Whisper, and Marlin do not compete for the same CPU/RAM budget.
 multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY)
 
 # Blocks appended by multimodal_node — strip before re-processing so re-ingest
-# does not duplicate Florence/Whisper/Marlin output in the vault .md.
+# does not duplicate vision/Whisper/Marlin output in the vault .md.
 # Extraction output is delimited and carries the attachment it came from, so a
 # block can be found, replaced or removed on its own — and can sit directly
 # under its attachment instead of being piled at the end of the note. HTML
@@ -57,6 +57,7 @@ EXTRACT_BLOCK_RE = re.compile(
     r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->",
     re.S,
 )
+_EXTRACT_SRC_RE = re.compile(r'<!-- orb:extract src="([^"]*)" -->')
 
 # Pre-marker format: blocks were appended contiguously at the end with no
 # closing delimiter, so "first header to end of note" is the only boundary
@@ -75,22 +76,68 @@ _ENRICHMENT_BLOCK_RE = re.compile(
 )
 
 
-def _strip_prior_multimedia_enrichment(content: str) -> str:
-    """Remove previously generated extraction blocks; keep everything the user wrote.
+def attachment_key(url: str) -> str:
+    """Canonical identity of an attachment URL: no query, unquoted, lowercase."""
+    from urllib.parse import unquote
+
+    return unquote((url or "").strip().split("?", 1)[0]).lower()
+
+
+def extraction_srcs(content: str) -> set[str]:
+    """Keys of every attachment that already has an extraction block."""
+    return {attachment_key(s) for s in _EXTRACT_SRC_RE.findall(content or "")}
+
+
+def _block_key(block: str) -> str:
+    m = _EXTRACT_SRC_RE.search(block)
+    return attachment_key(m.group(1)) if m else ""
+
+
+def _strip_prior_multimedia_enrichment(
+    content: str, keep: set[str] | None = None
+) -> str:
+    """Remove generated extraction blocks; keep everything the user wrote.
+
+    ``keep`` is a set of attachment keys whose delimited blocks survive — the
+    attachments already processed, so ingestion does not redo them. ``None``
+    (the default) removes every block, which is what a full redo wants.
 
     Delimited blocks are removed individually wherever they sit, so text
-    written *below* an extraction survives a re-ingest — under the old
-    truncate-from-the-first-header rule it was silently deleted.
+    written *below* an extraction survives — under the old truncate-from-the-
+    first-header rule it was silently deleted. Legacy undelimited blocks still
+    use that rule, applied only to text outside kept blocks.
     """
     if not content:
         return content or ""
-    cleaned = EXTRACT_BLOCK_RE.sub("", content)
-    # Anything left in the pre-marker format has no closing delimiter, so the
-    # old boundary still applies to it.
-    match = _ENRICHMENT_BLOCK_RE.search(cleaned)
-    if match:
-        cleaned = cleaned[: match.start()]
-    return cleaned.rstrip()
+    pieces: list[tuple[str, bool]] = []  # (text, is_kept_block)
+    last = 0
+    for m in EXTRACT_BLOCK_RE.finditer(content):
+        pieces.append((content[last : m.start()], False))
+        if keep is not None and _block_key(m.group(0)) in keep:
+            pieces.append((m.group(0), True))
+        last = m.end()
+    pieces.append((content[last:], False))
+
+    out: list[str] = []
+    for text, kept in pieces:
+        if kept:
+            out.append(text)
+            continue
+        legacy = _ENRICHMENT_BLOCK_RE.search(text)
+        if legacy:
+            out.append(text[: legacy.start()])
+            break
+        out.append(text)
+    return "".join(out).rstrip()
+
+
+def remove_extraction(content: str, src_url: str) -> str:
+    """Drop the extraction block(s) for one attachment, leaving the rest as is."""
+    key = attachment_key(src_url)
+    return EXTRACT_BLOCK_RE.sub(
+        lambda m: "" if _block_key(m.group(0)) == key else m.group(0),
+        content or "",
+    )
 
 
 def place_extraction(content: str, src_url: str, section: str) -> str:
@@ -110,7 +157,6 @@ def place_extraction(content: str, src_url: str, section: str) -> str:
     if line_end == -1:
         return content.rstrip() + block
     return content[:line_end] + block + content[line_end:]
-
 
 def _build_extraction_prompt(extraction_content: str) -> str:
     """Knowledge Architect prompt for one note (or one chunk of a long note)."""
@@ -693,6 +739,158 @@ class IngestionState(TypedDict):
 
 
 # 2. Node Functions
+VIDEO_EXTS = (".mp4", ".mov", ".webm", ".mkv", ".avi")
+AUDIO_EXTS = (".m4a", ".mp3", ".wav", ".ogg", ".aac")
+IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
+SPREADSHEET_EXTS = (".xlsx", ".xls", ".csv", ".tsv")
+
+
+def parse_attachments(content: str) -> list[dict[str, str]]:
+    """Every attachment linked from a note, deduplicated by URL identity."""
+    import os
+    from urllib.parse import unquote
+
+    attachments: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def _add(emoji: str, filename: str, url: str) -> None:
+        cleaned_url = (url or "").strip()
+        key = attachment_key(cleaned_url)
+        if not key or key in seen:
+            return
+        seen.add(key)
+        display_name = (filename or "").strip() or os.path.basename(
+            unquote(cleaned_url.split("?", 1)[0])
+        )
+        attachments.append(
+            {"emoji": emoji, "filename": display_name, "url": cleaned_url, "lower_url": key}
+        )
+
+    for emoji, filename, url in ATTACHMENT_LINK_RE.findall(content or ""):
+        _add(emoji, filename, url)
+    for alt, url in IMAGE_LINK_RE.findall(content or ""):
+        _add("📎", alt, url)
+    return attachments
+
+
+def classify_attachment(item: dict[str, str]) -> str | None:
+    """Which extractor handles this attachment; None when Orb cannot read it."""
+    url = item.get("lower_url") or attachment_key(item.get("url", ""))
+    if url.endswith(".pdf"):
+        return "pdf"
+    if url.endswith(VIDEO_EXTS):
+        return "video"
+    if url.endswith(IMAGE_EXTS):
+        return "image"
+    if url.endswith(".docx"):
+        return "docx"
+    if url.endswith(SPREADSHEET_EXTS):
+        return "spreadsheet"
+    if url.endswith(AUDIO_EXTS) or item.get("emoji") == "🎤":
+        return "audio"
+    return None
+
+
+def describe_image_section(item: dict[str, str], pending: list[dict[str, str]], llm) -> str:
+    """Ingestion-model description with a title placeholder resolved later in one batch."""
+    img_desc = multimedia_service.describe_image(item["url"], llm)
+    logger.info(f'Image Description: "{img_desc}"')
+    token = f"{{{{ORB_IMAGE_TITLE_{len(pending)}}}}}"
+    pending.append({"token": token, "filename": item["filename"], "description": img_desc})
+    return (
+        f"\n\n[Image: {token}]\n"
+        f'The image titled "{token}" shows the following: {img_desc}'
+    )
+
+
+async def resolve_image_titles(content: str, pending: list[dict[str, str]], llm) -> str:
+    """Replace title placeholders with LLM titles (filenames on failure)."""
+    if not pending:
+        return content
+    titles = await _batch_image_titles(llm, pending)
+    for item in pending:
+        content = content.replace(item["token"], titles.get(item["token"]) or item["filename"])
+    return content
+
+
+async def extract_attachment(kind: str, item: dict[str, str], set_status, llm) -> str:
+    """Run one extractor and return its section text ("" when nothing came out).
+
+    ``kind`` is a value from ``classify_attachment``; "video" runs both the
+    Whisper and Marlin passes, while multimodal_node uses "video_audio" /
+    "video_visual" separately so it can release each model between phases.
+    """
+    filename = item["filename"]
+    url = item["url"]
+
+    if kind == "pdf":
+        loop = asyncio.get_running_loop()
+
+        def _progress(stage: str, model: str | None = None) -> None:
+            asyncio.run_coroutine_threadsafe(set_status(stage, model), loop).result(timeout=30)
+
+        pdf_text = await asyncio.to_thread(
+            multimedia_service.extract_text_from_pdf, url, _progress, llm
+        )
+        logger.info(f'PDF Result ({len(pdf_text)} chars): "{pdf_text.replace(chr(10), " ")[:100]}"')
+        return f"\n\n[PDF Extraction ({filename})]: {pdf_text}"
+
+    if kind == "image":
+        pending: list[dict[str, str]] = []
+        section = await asyncio.to_thread(describe_image_section, item, pending, llm)
+        await set_status("Naming images", llm.get_ingestion_model() or "LLM")
+        return await resolve_image_titles(section, pending, llm)
+
+    if kind == "docx":
+        doc_text = await asyncio.to_thread(multimedia_service.extract_text_from_docx, url)
+        logger.info(f'Word Result ({len(doc_text)} chars): "{doc_text.replace(chr(10), " ")[:100]}"')
+        return f"\n\n[Word Extraction ({filename})]: {doc_text}"
+
+    if kind == "spreadsheet":
+        sheet_text = await asyncio.to_thread(
+            multimedia_service.extract_text_from_spreadsheet, url
+        )
+        logger.info(
+            f'Spreadsheet Result ({len(sheet_text)} chars): "{sheet_text.replace(chr(10), " ")[:100]}"'
+        )
+        return f"\n\n[Spreadsheet Extraction ({filename})]: {sheet_text}"
+
+    if kind == "audio":
+        transcription = await asyncio.to_thread(multimedia_service.transcribe_audio, url)
+        logger.info(
+            f'Audio Result ({len(transcription)} chars): "{transcription.replace(chr(10), " ")[:100]}"'
+        )
+        return f"\n\n[Audio Transcript ({filename})]: {transcription}"
+
+    if kind == "video_audio":
+        transcription = await asyncio.to_thread(
+            multimedia_service.transcribe_video_audio, url
+        )
+        if not transcription:
+            return ""
+        logger.info(
+            f'Video Audio Result ({len(transcription)} chars): "{transcription.replace(chr(10), " ")[:100]}"'
+        )
+        return f"\n\n[Video Audio Transcript ({filename})]:\n\n{transcription}"
+
+    if kind == "video_visual":
+        visual_text = await asyncio.to_thread(multimedia_service.describe_video_visual, url)
+        if not visual_text:
+            return ""
+        logger.info(f'Video Visual Result: "{visual_text.replace(chr(10), " ")[:100]}"')
+        return f"\n\n[Video Visual Analysis ({filename})]:\n\n{visual_text}"
+
+    if kind == "video":
+        await set_status("Transcribing video audio", "Whisper")
+        audio = await extract_attachment("video_audio", item, set_status, llm)
+        await asyncio.to_thread(multimedia_service.unload_local_models, "whisper")
+        await set_status("Analyzing video visuals", "Marlin")
+        visual = await extract_attachment("video_visual", item, set_status, llm)
+        return "\n".join(s for s in (audio, visual) if s)
+
+    raise ValueError(f"Unsupported attachment kind: {kind}")
+
+
 async def multimodal_node(
     state: IngestionState,
 ):  # pylint: disable=too-many-locals,too-many-statements
@@ -719,51 +917,22 @@ async def multimodal_node(
             f"Multimedia semaphore acquired. (Active: {settings.MULTIMEDIA_CONCURRENCY - multimedia_concurrency_limit._value if hasattr(multimedia_concurrency_limit, '_value') else '?'})"  # pylint: disable=line-too-long
         )
         original_content = state["input"].content or ""
-        # Re-ingest safety: drop prior extraction/transcript appendages so we
-        # re-run multimedia once and rewrite a single clean enrichment section.
-        content = _strip_prior_multimedia_enrichment(original_content)
+        attachments = parse_attachments(original_content)
+        linked = {item["lower_url"] for item in attachments}
+        # Keep blocks for attachments still in the note — those were already
+        # processed (by a prior ingest or "process this item") and are not
+        # redone. Orphaned blocks and legacy undelimited output are dropped.
+        content = _strip_prior_multimedia_enrichment(original_content, keep=linked)
         content_changed = content.strip() != original_content.strip()
+        done = extraction_srcs(content)
+        attachments = [item for item in attachments if item["lower_url"] not in done]
         media_errors: list[str] = []
         # Images are titled in ONE batched LLM call after every multimodal
-        # phase has finished. Calling the chat GGUF per image inside the
-        # Florence phase evicted Florence each time (exclusive residency) and
-        # cost a full multi-GB reload per image.
+        # phase has finished, while the ingestion model is already resident.
         pending_image_titles: list[dict[str, str]] = []
         _llm = _wf._llm
 
         import os
-        from urllib.parse import unquote
-
-        attachments: list[dict[str, str]] = []
-        seen_urls: set[str] = set()
-
-        def _add_attachment(emoji: str, filename: str, url: str) -> None:
-            cleaned_url = (url or "").strip()
-            key = unquote(cleaned_url.split("?", 1)[0]).lower()
-            if not key or key in seen_urls:
-                return
-            seen_urls.add(key)
-            display_name = (filename or "").strip() or os.path.basename(
-                unquote(cleaned_url.split("?", 1)[0])
-            )
-            attachments.append(
-                {
-                    "emoji": emoji,
-                    "filename": display_name,
-                    "url": cleaned_url,
-                    "lower_url": key,
-                }
-            )
-
-        for emoji, filename, url in ATTACHMENT_LINK_RE.findall(content):
-            _add_attachment(emoji, filename, url)
-        for alt, url in IMAGE_LINK_RE.findall(content):
-            _add_attachment("📎", alt, url)
-
-        video_exts = (".mp4", ".mov", ".webm", ".mkv", ".avi")
-        audio_exts = (".m4a", ".mp3", ".wav", ".ogg", ".aac")
-        image_exts = (".jpg", ".jpeg", ".png", ".webp", ".gif")
-        spreadsheet_exts = (".xlsx", ".xls", ".csv", ".tsv")
 
         def _append(section: str, src_url: str = "") -> None:
             nonlocal content, content_changed
@@ -774,140 +943,44 @@ async def multimodal_node(
             phase_name: str,
             model_name: str | None,
             phase_attachments: list[dict[str, str]],
-            handler,
+            kind: str,
         ) -> None:
             if not phase_attachments:
                 return
             await _set_status(phase_name, model_name)
             for item in phase_attachments:
                 filename = item["filename"]
-                url = item["url"]
-                logger.info(f"[{phase_name}] Processing File: {filename} ({url})")
+                logger.info(f"[{phase_name}] Processing File: {filename} ({item['url']})")
                 try:
-                    section = await handler(item)
+                    if kind == "image":
+                        section = await asyncio.to_thread(
+                            describe_image_section, item, pending_image_titles
+                        )
+                    else:
+                        section = await extract_attachment(kind, item, _set_status, _llm)
                     if section:
                         _append(section, item["url"])
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     logger.error(f"[{phase_name}] File Processing Failed: {e}")
                     media_errors.append(f"{filename}: {e}")
 
-        async def _handle_pdf(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected PDF. Extracting text with Florence visual pass...")
-            loop = asyncio.get_running_loop()
+        by_kind: dict[str, list[dict[str, str]]] = {}
+        for item in attachments:
+            by_kind.setdefault(classify_attachment(item) or "unsupported", []).append(item)
+        pdfs = by_kind.get("pdf", [])
+        images = by_kind.get("image", [])
+        docx_files = by_kind.get("docx", [])
+        spreadsheets = by_kind.get("spreadsheet", [])
+        audio_files = by_kind.get("audio", [])
+        videos = by_kind.get("video", [])
 
-            def _progress(stage: str, model: str | None = None) -> None:
-                future = asyncio.run_coroutine_threadsafe(
-                    _set_status(stage, model), loop
-                )
-                future.result(timeout=30)
-
-            pdf_text = await asyncio.to_thread(
-                multimedia_service.extract_text_from_pdf, item["url"], _progress
-            )
-            snippet = pdf_text.replace("\n", " ")
-            logger.info(f'PDF Result ({len(pdf_text)} chars): "{snippet[:100]}"')
-            return f"\n\n[PDF Extraction ({filename})]: {pdf_text}"
-
-        async def _handle_image(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected Image. Describing with Florence...")
-            img_desc = await asyncio.to_thread(
-                multimedia_service.describe_image, item["url"]
-            )
-            logger.info(f'Image Description: "{img_desc}"')
-
-            # Placeholder now; the real title is filled in by the batched
-            # titling pass below (filename if that pass fails).
-            token = f"{{{{ORB_IMAGE_TITLE_{len(pending_image_titles)}}}}}"
-            pending_image_titles.append(
-                {"token": token, "filename": filename, "description": img_desc}
-            )
-            return (
-                f"\n\n[Image: {token}]\n"
-                f'The image titled "{token}" shows the following: {img_desc}'
-            )
-
-        async def _handle_docx(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected Word document. Extracting text...")
-            doc_text = await asyncio.to_thread(
-                multimedia_service.extract_text_from_docx, item["url"]
-            )
-            snippet = doc_text.replace("\n", " ")
-            logger.info(f'Word Result ({len(doc_text)} chars): "{snippet[:100]}"')
-            return f"\n\n[Word Extraction ({filename})]: {doc_text}"
-
-        async def _handle_spreadsheet(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected spreadsheet. Extracting text...")
-            sheet_text = await asyncio.to_thread(
-                multimedia_service.extract_text_from_spreadsheet, item["url"]
-            )
-            snippet = sheet_text.replace("\n", " ")
-            logger.info(
-                f'Spreadsheet Result ({len(sheet_text)} chars): "{snippet[:100]}"'
-            )
-            return f"\n\n[Spreadsheet Extraction ({filename})]: {sheet_text}"
-
-        async def _handle_audio(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected Audio. Transcribing with Whisper...")
-            transcription = await asyncio.to_thread(
-                multimedia_service.transcribe_audio, item["url"]
-            )
-            snippet = transcription.replace("\n", " ")
-            logger.info(f'Audio Result ({len(transcription)} chars): "{snippet[:100]}"')
-            return f"\n\n[Audio Transcript ({filename})]: {transcription}"
-
-        async def _handle_video_audio(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected Video. Transcribing audio with Whisper...")
-            transcription = await asyncio.to_thread(
-                multimedia_service.transcribe_video_audio, item["url"]
-            )
-            if not transcription:
-                return ""
-            snippet = transcription.replace("\n", " ")
-            logger.info(
-                f'Video Audio Result ({len(transcription)} chars): "{snippet[:100]}"'
-            )
-            return f"\n\n[Video Audio Transcript ({filename})]:\n\n{transcription}"
-
-        async def _handle_video_visual(item: dict[str, str]) -> str:
-            filename = item["filename"]
-            logger.info("Detected Video. Running Marlin visual analysis...")
-            visual_text = await asyncio.to_thread(
-                multimedia_service.describe_video_visual, item["url"]
-            )
-            if not visual_text:
-                return ""
-            snippet = visual_text.replace("\n", " ")
-            logger.info(f'Video Visual Result: "{snippet[:100]}"')
-            return f"\n\n[Video Visual Analysis ({filename})]:\n\n{visual_text}"
-
-        pdfs = [item for item in attachments if item["lower_url"].endswith(".pdf")]
-        images = [
-            item for item in attachments if item["lower_url"].endswith(image_exts)
-        ]
-        docx_files = [
-            item for item in attachments if item["lower_url"].endswith(".docx")
-        ]
-        spreadsheets = [
-            item for item in attachments if item["lower_url"].endswith(spreadsheet_exts)
-        ]
-        audio_files = [
-            item
-            for item in attachments
-            if (
-                item["lower_url"].endswith(audio_exts) or item["emoji"] == "🎤"
-            )
-            and not item["lower_url"].endswith(video_exts)
-        ]
         # Images embedded in a .docx used to be invisible: the same picture
         # attached directly got described, but inside a Word file it was lost.
         # Expand them here, before the phases run, so they ride the existing
-        # Florence pass rather than forcing the model to reload later.
+        # image pass rather than forcing the model to reload later.
+        # ponytail: their blocks carry a temp-file src that never matches on
+        # the next run, so they are always orphaned and re-described; key them
+        # by docx url + index if that cost ever matters.
         docx_temp_images: list[str] = []
         for item in list(docx_files):
             try:
@@ -915,14 +988,14 @@ async def multimodal_node(
                     multimedia_service.extract_docx_images, item["url"]
                 ):
                     docx_temp_images.append(path)
-                    embedded = {
-                        "emoji": "📎",
-                        "filename": f"{item['filename']} — embedded image",
-                        "url": path,
-                        "lower_url": path.lower(),
-                    }
-                    attachments.append(embedded)
-                    images.append(embedded)
+                    images.append(
+                        {
+                            "emoji": "📎",
+                            "filename": f"{item['filename']} — embedded image",
+                            "url": path,
+                            "lower_url": path.lower(),
+                        }
+                    )
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.warning(
                     "Could not extract images from %s: %s", item["filename"], exc
@@ -934,36 +1007,29 @@ async def multimodal_node(
                 len(docx_files),
             )
 
-        # Classify by extension — do not require emoji 📎 (same marker as images).
-        videos = [
-            item
-            for item in attachments
-            if item["lower_url"].endswith(video_exts)
-        ]
+        # Phase 1: lightweight document extraction that does not hold ML models.
+        await _run_phase("Extracting documents", None, docx_files, "docx")
+        await _run_phase("Extracting spreadsheets", None, spreadsheets, "spreadsheet")
 
-        # Phase 1: finish all Florence-backed work, then release Florence.
-        await _run_phase("Reading PDF pages and images", "Florence-2", pdfs, _handle_pdf)
-        await _run_phase("Describing images", "Florence-2", images, _handle_image)
-        if pdfs or images:
-            await _set_status("Unloading image model", "Florence-2")
-            await asyncio.to_thread(multimedia_service.unload_local_models, "florence")
-
-        # Phase 2: lightweight document extraction that does not hold ML models.
-        await _run_phase("Extracting documents", None, docx_files, _handle_docx)
-        await _run_phase("Extracting spreadsheets", None, spreadsheets, _handle_spreadsheet)
-
-        # Phase 3: finish all Whisper work, then release Whisper.
-        await _run_phase("Transcribing audio", "Whisper", audio_files, _handle_audio)
-        await _run_phase("Transcribing video audio", "Whisper", videos, _handle_video_audio)
+        # Phase 2: finish all Whisper work, then release Whisper.
+        await _run_phase("Transcribing audio", "Whisper", audio_files, "audio")
+        await _run_phase("Transcribing video audio", "Whisper", videos, "video_audio")
         if audio_files or videos:
             await _set_status("Unloading speech model", "Whisper")
             await asyncio.to_thread(multimedia_service.unload_local_models, "whisper")
 
-        # Phase 4: run Marlin only after local-models no longer holds Whisper.
-        await _run_phase("Analyzing video visuals", "Marlin", videos, _handle_video_visual)
+        # Phase 3: run Marlin only after local-models no longer holds Whisper.
+        await _run_phase("Analyzing video visuals", "Marlin", videos, "video_visual")
         if videos:
             await _set_status("Unloading video model", "Marlin")
             await asyncio.to_thread(multimedia_service.unload_marlin)
+
+        # Phase 4: images and PDFs go through the ingestion model itself, which
+        # then stays resident for image titling and entity extraction. Running
+        # it last means Whisper/Marlin never evict it mid-way.
+        vision_model = _llm.get_ingestion_model() or "vision model"
+        await _run_phase("Reading PDF pages and images", vision_model, pdfs, "pdf")
+        await _run_phase("Describing images", vision_model, images, "image")
 
         for path in docx_temp_images:
             try:
@@ -971,37 +1037,28 @@ async def multimodal_node(
             except OSError:
                 pass
 
-        supported_ids = {
-            id(item)
-            for item in pdfs + images + docx_files + spreadsheets + audio_files + videos
-        }
-        for item in attachments:
-            if id(item) not in supported_ids:
-                if item["lower_url"].endswith(".doc"):
-                    # python-docx reads OOXML only; the old binary format needs
-                    # a converter Orb does not ship.
-                    logger.warning(
-                        "Skipped legacy Word file %s — Orb reads .docx, not .doc. "
-                        "Re-save it as .docx to have it ingested.",
-                        item["filename"],
-                    )
-                    _append(
-                        f"[Unsupported ({item['filename']})]: legacy .doc format — "
-                        "re-save as .docx for Orb to read it.",
-                        item["url"],
-                    )
-                    continue
-                logger.info(f"Skipped (Unsupported Type): {item['url']}")
+        for item in by_kind.get("unsupported", []):
+            if item["lower_url"].endswith(".doc"):
+                # python-docx reads OOXML only; the old binary format needs
+                # a converter Orb does not ship.
+                logger.warning(
+                    "Skipped legacy Word file %s — Orb reads .docx, not .doc. "
+                    "Re-save it as .docx to have it ingested.",
+                    item["filename"],
+                )
+                _append(
+                    f"[Unsupported ({item['filename']})]: legacy .doc format — "
+                    "re-save as .docx for Orb to read it.",
+                    item["url"],
+                )
+                continue
+            logger.info(f"Skipped (Unsupported Type): {item['url']}")
 
         # Title images in one call now that no multimodal model is resident —
         # the chat GGUF this loads is the same one extraction needs next.
         if pending_image_titles:
             await _set_status("Naming images", _llm.get_ingestion_model() or "LLM")
-            titles = await _batch_image_titles(_llm, pending_image_titles)
-            for item in pending_image_titles:
-                content = content.replace(
-                    item["token"], titles.get(item["token"]) or item["filename"]
-                )
+            content = await resolve_image_titles(content, pending_image_titles, _llm)
 
         # Sync enriched content back to the vault .md (source of truth).
         if media_errors:
@@ -1025,7 +1082,6 @@ async def multimodal_node(
         "status": "MULTIMEDIA_DONE",
         "timings": {**(state.get("timings") or {}), "multimedia": round(t_end - t_start, 2)},
     }
-
 
 async def extraction_node(
     state: IngestionState,

@@ -64,7 +64,8 @@ export function Graph3DCanvas({
         linkDirectionalParticles={2}
         linkDirectionalParticleWidth={4}
         linkDirectionalParticleSpeed={0.006}
-        backgroundColor="#000000"
+        // Transparent so the CSS radial gradient on the host shows through.
+        backgroundColor="rgba(0,0,0,0)"
         showNavInfo={false}
         enableNodeDrag={false}
         enableNavigationControls={false}

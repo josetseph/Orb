@@ -235,7 +235,7 @@ def _is_orb_support_model(path: Path) -> bool:
         resolved = path.resolve()
         return any(
             multimodal_model_path(kind).resolve() == resolved
-            for kind in ("florence", "whisper", "marlin")
+            for kind in ("whisper", "marlin")
         )
     except Exception:  # pylint: disable=broad-exception-caught
         return False
@@ -266,14 +266,14 @@ def discover_chat_models(
             continue
 
         if _is_orb_support_model(path):
-            # Florence, Whisper and Marlin live in MODELS_DIR by design; they
+            # Whisper and Marlin live in MODELS_DIR by design; they
             # are Orb's own media models, never chat options.
             continue
         described = model_formats.describe(path)
         if described is None:
             continue
         if not described.chat_capable:
-            # Whisper, Florence and encoders live in MODELS_DIR too; listing
+            # Whisper and encoders live in MODELS_DIR too; listing
             # them as "blocked chat models" is noise, not information.
             logger.debug("Skipping non-chat model %s", path.name)
             continue

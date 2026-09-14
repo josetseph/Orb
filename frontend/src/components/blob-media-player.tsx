@@ -94,17 +94,17 @@ export function BlobMediaPlayer({
         allowFullScreen
         className={
           className ||
-          "mx-auto aspect-video min-h-[200px] w-full max-w-full rounded-lg border border-white/10 bg-black"
+          "mx-auto aspect-video min-h-[200px] w-full max-w-full rounded-md bg-bg-deep shadow-sm"
         }
       />
     );
   }
 
   if (error) {
-    return <p className="text-sm text-red-400">{error}</p>;
+    return <p className="text-[12.5px] text-danger-text">{error}</p>;
   }
   if (!src) {
-    return <p className="text-sm text-white/40">Loading media…</p>;
+    return <p className="text-[12.5px] text-n-500">Loading media…</p>;
   }
 
   if (kind === "video") {
@@ -115,7 +115,7 @@ export function BlobMediaPlayer({
         src={src}
         className={
           className ||
-          "mx-auto max-h-[70vh] w-full max-w-full rounded-lg bg-black"
+          "mx-auto max-h-[70vh] w-full max-w-full rounded-md bg-bg-deep shadow-sm"
         }
         onError={onMediaError}
       >
@@ -128,7 +128,7 @@ export function BlobMediaPlayer({
     <audio
       controls
       src={src}
-      className={className || "w-full max-w-2xl"}
+      className={className || "w-full max-w-2xl rounded-md"}
       onError={onMediaError}
     />
   );

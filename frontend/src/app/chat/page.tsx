@@ -2,43 +2,28 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
-  Send,
-  User,
-  Loader2,
-  Sparkles,
-  Database,
-  Network,
-  Cpu,
-  X,
-  FileText,
-  Trash2,
-  Search,
-  Layers,
+  ArrowUp,
   ChevronDown,
-  ChevronUp,
-  MessageSquarePlus,
-  MessagesSquare,
+  ChevronRight,
   Download,
-  FolderOpen,
+  FileText,
+  Layers,
+  Plus,
+  Trash2,
+  X,
 } from "lucide-react";
 import Image from "next/image";
-import { motion, AnimatePresence } from "framer-motion";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
 import { cn, encodeFileUrl, isAudioUrl, isImageUrl, isVideoUrl, resolveFileUrl } from "@/lib/utils";
-import { BlobMediaPlayer } from "@/components/blob-media-player";
-import {
-  isDesktopApp,
-  revealInFolder,
-  revealInFolderLabel,
-} from "@/lib/desktop";
-import { ShaderBackground } from "@/components/shader-background";
+import { revealInFolder } from "@/lib/desktop";
 import { useKB } from "@/lib/kb-context";
 import { useChat } from "@/lib/chat-context";
 import type { Message } from "@/lib/chat-context";
 import { SegmentedNoteContent } from "@/components/segmented-note-content";
 import { EntityDetailPanel } from "@/components/entity-detail-panel";
+import { FilePreviewModal } from "@/app/notes/_components/FilePreviewModal";
 import type { FilePreview, NotePreview } from "@/lib/types";
 import {
   MarkdownAnchor,
@@ -53,15 +38,15 @@ import {
 // on load. Older messages render without highlights (cached ones still show).
 const ENTITY_SCAN_RECENT_LIMIT = 5;
 
-/** Prose classes shared by the two inline message renderers. */
-const PROSE_CLASSNAME =
-  "prose prose-invert max-w-none prose-headings:font-bold prose-headings:text-white prose-h1:text-2xl prose-h2:text-xl prose-h3:text-lg prose-p:my-2 prose-p:leading-relaxed prose-p:text-white/90 prose-strong:text-white prose-em:text-white/90 prose-a:text-purple-400 prose-code:text-pink-400 prose-ul:text-white/90 prose-ol:text-white/90 prose-li:text-white/90";
+const SUGGESTIONS = [
+  "What are my recent thoughts?",
+  "Summarize my notes from this week",
+  "What concepts am I exploring?",
+];
 
 /**
- * Returns a react-markdown `components` map that handles:
- * - entity:// links → clickable entity highlight button
- * - 📎/🎤 links → file/audio attachment buttons
- * - all other anchors → normal <a>
+ * react-markdown `components` map: entity:// links → entity buttons,
+ * 📎/🎤 links → attachment chips, everything else → normal anchor.
  */
 function makeLinkRenderer(
   handleFileClick: (url: string, filename: string) => void,
@@ -79,19 +64,21 @@ function makeLinkRenderer(
         const nodeId = href.slice("entity://".length);
         return (
           <button
+            type="button"
             onClick={() => onEntityClick(nodeId, text)}
-            className="inline cursor-pointer rounded px-0.5 font-medium text-blue-400 underline decoration-dashed underline-offset-2 transition-colors hover:text-blue-300"
+            className="cursor-pointer text-accent-200 underline decoration-dotted decoration-accent-600 underline-offset-[3px] hover:text-accent-100"
           >
             {text}
           </button>
         );
       }
       if (href && (text.startsWith("📎") || text.startsWith("🎤"))) {
-        const filename = text.replace(/^[📎🎤]\s*/, "");
+        const filename = text.replace(/^[📎🎤]\s*/u, "");
         return (
           <button
+            type="button"
             onClick={() => handleFileClick(href, filename)}
-            className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-300 hover:bg-purple-500/20 transition-all text-sm no-underline"
+            className="inline-flex items-center gap-1.5 rounded-[6px] bg-surface px-2 py-0.5 text-[12px] text-n-200 no-underline shadow-sm hover:shadow-md"
           >
             {text}
           </button>
@@ -106,24 +93,25 @@ function makeLinkRenderer(
   };
 }
 
-/** Renders a single assistant message with entity scanning + highlighting. */
+/** One assistant message: thinking toggle, entity-highlighted body, sources. */
 function AssistantMessageBody({
   message,
   kb,
   scanEnabled,
   onEntityClick,
   onFileClick,
-  expandedThinking,
+  onOpenNote,
+  expanded,
   onToggleThinking,
 }: {
   message: Message;
   kb: string;
-  /** Whether this message may issue an entity scan (recent messages only). */
   scanEnabled: boolean;
   onEntityClick: (nodeId: string, name: string) => void;
   onFileClick: (url: string, filename: string) => void;
-  expandedThinking: Set<string>;
-  onToggleThinking: (id: string) => void;
+  onOpenNote: (noteId: string) => void;
+  expanded: boolean;
+  onToggleThinking: () => void;
 }) {
   const scannedEntities = useScannedEntities(message.content, kb, {
     enabled: scanEnabled,
@@ -131,10 +119,7 @@ function AssistantMessageBody({
   });
 
   const processContent = useCallback(
-    (text: string) => {
-      if (!scannedEntities.length) return text;
-      return injectEntityLinks(text, scannedEntities);
-    },
+    (text: string) => (scannedEntities.length ? injectEntityLinks(text, scannedEntities) : text),
     [scannedEntities],
   );
 
@@ -144,92 +129,59 @@ function AssistantMessageBody({
   );
 
   const refMatch = message.content.match(/###?\s*References[:\s]*\n([\s\S]+?)$/i);
+  const body = refMatch ? message.content.substring(0, refMatch.index) : message.content;
+  const sources = refMatch
+    ? refMatch[1]
+        .split("\n")
+        .map((t) => t.trim().match(/\[([^\]]+)\]\(\/notes\/([^)]+)\)/))
+        .filter((m): m is RegExpMatchArray => Boolean(m))
+    : [];
 
   return (
-    <>
-      {/* Thinking dropdown */}
+    <div className="flex min-w-0 flex-1 flex-col gap-3">
       {message.thinking && (
-        <div className="mb-3">
+        <div>
           <button
-            onClick={() => onToggleThinking(message.id)}
-            className="flex items-center gap-1.5 text-xs text-purple-400/80 hover:text-purple-300 transition-colors"
+            type="button"
+            onClick={onToggleThinking}
+            className="inline-flex items-center gap-1.5 text-[12px] text-n-500 hover:text-accent-300"
           >
-            {expandedThinking.has(message.id) ? (
-              <ChevronUp className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
-            <span>Model thinking</span>
+            {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+            Model thinking
           </button>
-          <AnimatePresence initial={false}>
-            {expandedThinking.has(message.id) && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: "auto", opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="overflow-hidden"
-              >
-                <div className="mt-2 rounded-lg border border-purple-500/20 bg-purple-500/5 px-3 py-2">
-                  <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-purple-300/70">
-                    {message.thinking}
-                  </pre>
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+          {expanded && (
+            <pre className="mt-2 animate-rise whitespace-pre-wrap rounded-md bg-surface px-3 py-2 font-mono text-[12px] leading-relaxed text-n-300 shadow-sm">
+              {message.thinking}
+            </pre>
+          )}
         </div>
       )}
 
-      {/* Message body */}
-      {refMatch ? (
-        <>
-          <div className={PROSE_CLASSNAME}>
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={linkRenderer} urlTransform={urlTransform}>
-              {processContent(message.content.substring(0, refMatch.index))}
-            </ReactMarkdown>
-          </div>
-          <div className="mt-4 pt-3 border-t border-white/10">
-            <p className="text-sm font-semibold text-white/60 mb-2">References:</p>
-            <div className="flex flex-wrap gap-2">
-              {refMatch[1]
-                .split("\n")
-                .map((t) => t.trim())
-                .filter((t) => t && !t.match(/^[\*\s]*$/))
-                .map((title, i) => {
-                  const linkMatch = title.match(/\[([^\]]+)\]\(\/notes\/([^)]+)\)/);
-                  if (!linkMatch) return null;
-                  return (
-                    <button
-                      key={i}
-                      onClick={() => {
-                        const noteId = linkMatch[2];
-                        api.getNote(noteId, kb).then((n) =>
-                          (window as unknown as { __chatSetPreview?: (n: NotePreview) => void }).__chatSetPreview?.({
-                            id: n.id,
-                            title: n.title || "Untitled",
-                            content: n.content,
-                          })
-                        ).catch(console.error);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-purple-500/10 border border-purple-500/30 text-purple-300 hover:bg-purple-500/20 transition-all text-sm no-underline"
-                    >
-                      <FileText className="h-3.5 w-3.5" />
-                      {linkMatch[1]}
-                    </button>
-                  );
-                })}
-            </div>
-          </div>
-        </>
-      ) : (
-        <div className={PROSE_CLASSNAME}>
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={linkRenderer} urlTransform={urlTransform}>
-            {processContent(message.content)}
-          </ReactMarkdown>
+      <div className="prose-orb">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={linkRenderer} urlTransform={urlTransform}>
+          {processContent(body)}
+        </ReactMarkdown>
+      </div>
+
+      {sources.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="mr-0.5 text-[11px] text-n-500">Sources</span>
+          {sources.map((m, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onOpenNote(m[2])}
+              className="inline-flex items-center gap-1.5 rounded-[6px] border border-n-800 py-1 pl-1.5 pr-2 text-[12px] text-n-200 hover:border-accent hover:text-accent-200"
+            >
+              <span className="grid h-4 w-4 place-items-center rounded bg-accent-800 text-[10px] text-accent-100">
+                {i + 1}
+              </span>
+              {m[1]}
+            </button>
+          ))}
         </div>
       )}
-    </>
+    </div>
   );
 }
 
@@ -240,7 +192,6 @@ export default function ChatPage() {
     conversations,
     activeConversationId,
     isLoading,
-    isLoadingConversations,
     loadingStage,
     loadingModel,
     sendMessage,
@@ -257,547 +208,317 @@ export default function ChatPage() {
   const [entityPanelName, setEntityPanelName] = useState<string | undefined>();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Expose setPreviewNote globally so AssistantMessageBody can trigger it without prop drilling
-  useEffect(() => {
-    (window as unknown as { __chatSetPreview?: unknown }).__chatSetPreview = (n: NotePreview) =>
-      setPreviewNote(n);
-    return () => { delete (window as unknown as { __chatSetPreview?: unknown }).__chatSetPreview; };
-  }, []);
-
   const handleEntityClick = useCallback((nodeId: string, name: string) => {
     setEntityPanelNodeId(nodeId);
     setEntityPanelName(name);
   }, []);
 
-  // Only the last few assistant messages may trigger entity scans; older
-  // ones render highlight-free (or from the module-level scan cache).
   const scannableMessageIds = useMemo(() => {
     const ids = new Set<string>();
-    for (
-      let i = messages.length - 1;
-      i >= 0 && ids.size < ENTITY_SCAN_RECENT_LIMIT;
-      i--
-    ) {
+    for (let i = messages.length - 1; i >= 0 && ids.size < ENTITY_SCAN_RECENT_LIMIT; i--) {
       if (messages[i].role === "assistant") ids.add(messages[i].id);
     }
     return ids;
   }, [messages]);
-  const [greeting] = useState(() => {
-    const hour = new Date().getHours();
-    if (hour < 12) return "Good morning!";
-    if (hour < 18) return "Good afternoon!";
-    return "Good evening!";
-  });
 
   useEffect(() => {
     if (!isHydrated) return;
     void initializeForKb(currentKB);
   }, [currentKB, initializeForKb, isHydrated]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
   useEffect(() => {
-    scrollToBottom();
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
+  const send = () => {
     if (!input.trim() || isLoading) return;
     sendMessage(input, currentKB);
     setInput("");
   };
 
-  const _handleNoteReference = async (noteId: string) => {
-    try {
-      const fullNote = await api.getNote(noteId, currentKB);
-      setPreviewNote({
-        id: fullNote.id,
-        title: fullNote.title || "Untitled",
-        content: fullNote.content,
-      });
-    } catch (error) {
-      console.error("Error fetching note:", error);
-    }
-  };
+  const openNote = useCallback(
+    (noteId: string) => {
+      api
+        .getNote(noteId, currentKB)
+        .then((n) =>
+          setPreviewNote({ id: n.id, title: n.title || "Untitled", content: n.content }),
+        )
+        .catch(console.error);
+    },
+    [currentKB],
+  );
 
-  const handleFileClick = (url: string, filename: string) => {
-    const resolvedUrl = encodeFileUrl(resolveFileUrl(url, currentKB));
-    let type: FilePreview["type"] = "other";
-
-    if (isImageUrl(resolvedUrl) || isImageUrl(filename)) {
-      type = "image";
-    } else if (/\.pdf(\?|$)/i.test(resolvedUrl) || /\.pdf$/i.test(filename)) {
-      type = "pdf";
-    } else if (isVideoUrl(resolvedUrl) || isVideoUrl(filename)) {
-      type = "video";
-    } else if (isAudioUrl(resolvedUrl) || isAudioUrl(filename)) {
-      type = "audio";
-    }
-
-    setFilePreview({ url: resolvedUrl, filename, type });
-  };
+  const handleFileClick = useCallback(
+    (url: string, filename: string) => {
+      const resolvedUrl = encodeFileUrl(resolveFileUrl(url, currentKB));
+      let type: FilePreview["type"] = "other";
+      if (isImageUrl(resolvedUrl) || isImageUrl(filename)) type = "image";
+      else if (/\.pdf(\?|$)/i.test(resolvedUrl) || /\.pdf$/i.test(filename)) type = "pdf";
+      else if (isVideoUrl(resolvedUrl) || isVideoUrl(filename)) type = "video";
+      else if (isAudioUrl(resolvedUrl) || isAudioUrl(filename)) type = "audio";
+      setFilePreview({ url: resolvedUrl, filename, type });
+    },
+    [currentKB],
+  );
 
   const handleRevealPreviewFile = async () => {
     if (!filePreview) return;
     try {
-      const { local_path } = await api.resolveVaultLocalPath(
-        filePreview.url,
-        currentKB,
-      );
+      const { local_path } = await api.resolveVaultLocalPath(filePreview.url, currentKB);
       const ok = await revealInFolder(local_path);
-      if (!ok) {
-        window.open(filePreview.url, "_blank", "noopener,noreferrer");
-      }
+      if (!ok) window.open(filePreview.url, "_blank", "noopener,noreferrer");
     } catch (error) {
       console.error("Reveal failed:", error);
       alert("Could not reveal this file on disk.");
     }
   };
 
-  const handleDeleteChat = () => {
-    if (!activeConversationId && messages.length === 0) return;
-    if (window.confirm("Delete this chat? This cannot be undone.")) {
-      void deleteActiveConversation(currentKB);
+  const deleteConversation = async (id: string) => {
+    if (!window.confirm("Delete this conversation? This cannot be undone.")) return;
+    if (id !== activeConversationId) await selectConversation(id, currentKB);
+    await deleteActiveConversation(currentKB);
+  };
+
+  const exportChat = async () => {
+    if (!activeConversationId) return;
+    try {
+      const md = await api.exportChat(activeConversationId, "markdown");
+      const url = URL.createObjectURL(new Blob([md], { type: "text/markdown" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `chat-${activeConversationId.slice(0, 8)}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      /* ignore */
     }
   };
 
-  const handleNewChat = () => {
-    startNewConversation();
-  };
-
-  const suggestions = [
-    "What are my recent thoughts?",
-    "Show me my tasks",
-    "Summarize my notes",
-    "What concepts am I exploring?",
-  ];
-
   return (
-    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-black">
-      {/* Animated background */}
-      <ShaderBackground />
-
-      {/* Header */}
-      <div className="relative z-10 border-b border-white/10 bg-black/50 backdrop-blur-xl">
-        <div className="mx-auto max-w-4xl px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 overflow-hidden rounded-xl ring-1 ring-white/15">
-                <Image
-                  src="/logo-icon.png"
-                  alt="Orb"
-                  width={40}
-                  height={40}
-                  loading="eager"
-                  className="h-full w-full object-cover"
-                />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-white">Orb</h1>
-                <p className="text-xs text-white/60">Your Personal Brain</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
+    <div className="screen">
+      {/* Threads */}
+      <div className="flex w-[248px] shrink-0 flex-col border-r border-n-900">
+        <div className="pane-header">
+          <h5 className="pane-title">Ask</h5>
+          {activeConversationId && (
+            <button type="button" onClick={() => void exportChat()} className="btn btn-ghost btn-sm" title="Export as Markdown">
+              <Download className="h-3.5 w-3.5" />
+            </button>
+          )}
+          <button type="button" onClick={startNewConversation} className="btn btn-primary btn-icon" title="New conversation">
+            <Plus className="h-[15px] w-[15px]" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto px-1.5">
+          <div className="kicker px-2 pb-1 pt-2">Recent</div>
+          {conversations.length === 0 && (
+            <p className="px-2 py-2 text-[12px] text-n-500">No conversations yet</p>
+          )}
+          {conversations.map((conv) => (
+            <div
+              key={conv.id}
+              className={cn(
+                "group flex w-full items-start gap-1 rounded-md px-2 py-2 hover:bg-n-900",
+                conv.id === activeConversationId && "bg-surface",
+              )}
+            >
               <button
-                onClick={handleNewChat}
-                className="flex items-center gap-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 px-3 py-1.5 text-xs text-purple-300 transition-all hover:bg-purple-500/20"
+                type="button"
+                onClick={() => void selectConversation(conv.id, currentKB)}
+                className="min-w-0 flex-1 text-left"
               >
-                <MessageSquarePlus className="h-3 w-3" />
-                New Chat
-              </button>
-              {(activeConversationId || messages.length > 0) && (
-                <button
-                  onClick={handleDeleteChat}
-                  className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-1.5 text-xs text-red-400 transition-all hover:bg-red-500/20"
-                >
-                  <Trash2 className="h-3 w-3" />
-                  Delete Chat
-                </button>
-              )}
-              {activeConversationId && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const md = await api.exportChat(activeConversationId, "markdown");
-                      const blob = new Blob([md], { type: "text/markdown" });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement("a");
-                      a.href = url;
-                      a.download = `chat-${activeConversationId.slice(0, 8)}.md`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/70 transition-all hover:bg-white/10"
-                >
-                  <Download className="h-3 w-3" />
-                  Export
-                </button>
-              )}
-              {conversations.length > 0 && (
-                <div className="relative">
-                  <select
-                    value={activeConversationId || ""}
-                    onChange={(e) => {
-                      const id = e.target.value;
-                      if (id) void selectConversation(id, currentKB);
-                      else startNewConversation();
-                    }}
-                    disabled={isLoadingConversations}
-                    className="max-w-[220px] appearance-none rounded-lg border border-white/10 bg-white/5 py-1.5 pl-8 pr-8 text-xs text-white/80 backdrop-blur-xl transition-all hover:bg-white/10 focus:border-purple-500/50 focus:outline-none"
-                  >
-                    <option value="">New chat</option>
-                    {conversations.map((conv) => (
-                      <option key={conv.id} value={conv.id}>
-                        {conv.title}
-                      </option>
-                    ))}
-                  </select>
-                  <MessagesSquare className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/50" />
-                  <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/50" />
+                <div className="truncate text-[13px]">{conv.title}</div>
+                <div className="text-[11px] text-n-500">
+                  {conv.updated_at ? new Date(conv.updated_at).toLocaleDateString() : ""}
                 </div>
-              )}
-              {/* Active KB badge */}
-              <div className="flex items-center gap-1 rounded-full border border-purple-500/30 bg-purple-500/10 px-3 py-1.5">
-                <Database className="h-3 w-3 text-purple-400" />
-                <span className="text-xs text-purple-300 font-medium">{currentKBName}</span>
-              </div>
-              <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                <Database className="h-3 w-3 text-green-400" />
-                <span className="text-xs text-white/70">SQLite</span>
-              </div>
-              <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                <Network className="h-3 w-3 text-blue-400" />
-                <span className="text-xs text-white/70">Kuzu</span>
-              </div>
-              <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                <Layers className="h-3 w-3 text-cyan-400" />
-                <span className="text-xs text-white/70">Qdrant</span>
-              </div>
-              <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-3 py-1.5">
-                <Search className="h-3 w-3 text-yellow-400" />
-                <span className="text-xs text-white/70">Meilisearch</span>
-              </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteConversation(conv.id)}
+                className="grid h-6 w-6 shrink-0 place-items-center rounded text-n-500 opacity-0 hover:bg-n-800 hover:text-danger-text group-hover:opacity-100"
+                title="Delete conversation"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
             </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Main */}
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <div className="flex-1 overflow-auto pb-6 pt-8">
+          <div className="mx-auto flex max-w-[760px] flex-col gap-6 px-8">
+            {messages.length === 0 && (
+              <div className="flex flex-col gap-2.5 pb-2.5 pt-10">
+                <h4 className="text-[24px]">Ask across everything in {currentKBName}</h4>
+                <p className="text-[14px] text-n-400">
+                  Answers cite the notes they came from. Everything runs on this machine.
+                </p>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setInput(s)}
+                      className="rounded-md border border-divider px-3 py-1.5 text-[12.5px] text-n-200 hover:border-accent hover:text-accent-200"
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {messages.map((message) =>
+              message.role === "user" ? (
+                <div key={message.id} className="flex justify-end">
+                  <div className="max-w-[78%] whitespace-pre-wrap rounded-lg bg-surface px-3.5 py-2.5 text-[14.5px] leading-[1.55] shadow-sm">
+                    {message.content}
+                  </div>
+                </div>
+              ) : (
+                <div key={message.id} className="flex animate-rise gap-3.5">
+                  <Image src="/logo-icon.png" alt="" width={24} height={24} className="mt-1 h-6 w-6 shrink-0 rounded-[7px]" />
+                  <AssistantMessageBody
+                    message={message}
+                    kb={currentKB}
+                    scanEnabled={scannableMessageIds.has(message.id)}
+                    onEntityClick={handleEntityClick}
+                    onFileClick={handleFileClick}
+                    onOpenNote={openNote}
+                    expanded={expandedThinking.has(message.id)}
+                    onToggleThinking={() =>
+                      setExpandedThinking((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(message.id)) next.delete(message.id);
+                        else next.add(message.id);
+                        return next;
+                      })
+                    }
+                  />
+                </div>
+              ),
+            )}
+
+            {isLoading && (
+              <div className="flex items-center gap-3.5">
+                <Image src="/logo-icon.png" alt="" width={24} height={24} className="h-6 w-6 animate-pulse rounded-[7px]" />
+                <span className="text-[13px] text-n-400">{loadingStage || "Thinking…"}</span>
+                {loadingModel && (
+                  <span className="text-[11px] text-n-600">· {loadingModel}, on this machine</span>
+                )}
+              </div>
+            )}
+            <div ref={messagesEndRef} />
           </div>
         </div>
-      </div>
 
-      {/* Chat Messages */}
-      <div className="relative z-10 flex-1 overflow-y-auto">
-        <div className="mx-auto max-w-4xl px-6 py-8">
-          {messages.length === 0 ? (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="flex flex-col items-center justify-center py-12"
-            >
-              <Sparkles className="mb-4 h-12 w-12 text-purple-400" />
-              <h2 className="mb-2 text-2xl font-bold text-white">{greeting}</h2>
-              <p className="mb-8 text-center text-white/60">
-                Ask me anything about your notes, documents, and knowledge graph
-              </p>
-              <div className="flex flex-wrap justify-center gap-2">
-                {suggestions.map((suggestion, index) => (
-                  <button
-                    key={index}
-                    onClick={() => setInput(suggestion)}
-                    className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-sm text-white/80 backdrop-blur-xl transition-all hover:border-purple-500/50 hover:bg-white/10"
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          ) : (
-            <div className="space-y-6">
-              <AnimatePresence>
-                {messages.map((message) => (
-                  <motion.div
-                    key={message.id}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    className={cn(
-                      "flex gap-4",
-                      message.role === "user" ? "justify-end" : "justify-start",
-                    )}
-                  >
-                    {message.role === "assistant" && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-purple-500 to-pink-500">
-                        <Sparkles className="h-4 w-4 text-white" />
-                      </div>
-                    )}
-                    <div
-                      className={cn(
-                        "max-w-[80%] rounded-2xl px-4 py-3",
-                        message.role === "user"
-                          ? "bg-linear-to-br from-purple-500 to-pink-500 text-white"
-                          : "border border-white/10 bg-white/5 text-white backdrop-blur-xl",
-                      )}
-                    >
-                      {message.role === "assistant" ? (
-                        <AssistantMessageBody
-                          message={message}
-                          kb={currentKB}
-                          scanEnabled={scannableMessageIds.has(message.id)}
-                          onEntityClick={handleEntityClick}
-                          onFileClick={handleFileClick}
-                          expandedThinking={expandedThinking}
-                          onToggleThinking={(id) =>
-                            setExpandedThinking((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(id)) next.delete(id); else next.add(id);
-                              return next;
-                            })
-                          }
-                        />
-                      ) : (
-                        <p className="whitespace-pre-wrap">{message.content}</p>
-                      )}
-
-                    </div>
-                    {message.role === "user" && (
-                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/10">
-                        <User className="h-4 w-4 text-white" />
-                      </div>
-                    )}
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-              {isLoading && (
-                <motion.div
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  className="flex gap-4"
-                >
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-linear-to-br from-purple-500 to-pink-500">
-                    <Loader2 className="h-4 w-4 animate-spin text-white" />
-                  </div>
-                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 backdrop-blur-xl">
-                    <div className="text-sm text-white/70">
-                      {loadingStage || "Thinking..."}
-                    </div>
-                    {loadingModel && (
-                      <div className="mt-0.5 text-xs text-purple-300/80">
-                        Using {loadingModel}
-                      </div>
-                    )}
-                  </div>
-                </motion.div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Input */}
-      <div className="relative z-10 border-t border-white/10 bg-black/50 backdrop-blur-xl">
-        <div className="mx-auto max-w-4xl px-6 py-4">
-          <form onSubmit={handleSubmit} className="flex gap-2">
-            <input
-              type="text"
+        {/* Composer */}
+        <div className="px-8 pb-6">
+          <div
+            className={cn(
+              "mx-auto flex max-w-[760px] flex-col gap-2 rounded-lg bg-surface p-3",
+              input ? "shadow-md" : "shadow-sm",
+            )}
+          >
+            <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask me anything..."
-              disabled={isLoading}
-              className="flex-1 rounded-full border border-white/10 bg-white/5 px-6 py-3 text-white placeholder-white/40 backdrop-blur-xl transition-all focus:border-purple-500/50 focus:outline-none disabled:opacity-50"
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={2}
+              placeholder="Ask about anything you've written, recorded or filed…"
+              className="w-full resize-none bg-transparent px-1 py-0.5 text-[14.5px] leading-[1.5] outline-none placeholder:text-n-600"
             />
-            <button
-              type="submit"
-              disabled={!input.trim() || isLoading}
-              className="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-br from-purple-500 to-pink-500 text-white transition-all hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
-              title="Send message"
-              aria-label="Send message"
-            >
-              <Send className="h-5 w-5" />
-            </button>
-          </form>
-          <div className="mt-3 flex items-center justify-center gap-2 text-xs text-white/40">
-            <span>Powered by</span>
-            <span className="font-medium text-purple-400">Gemma3 4B</span>
-            <span>•</span>
-            <span className="font-medium text-pink-400">Qwen3 Embedding</span>
-            <span>•</span>
-            <span className="font-medium text-emerald-400">Qwen3 Reranker</span>
-            <span>•</span>
-            <span className="font-medium text-teal-400">Florence 2</span>
-            <span>•</span>
-            <span className="font-medium text-amber-400">Whisper V3</span>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex h-[26px] items-center gap-1.5 rounded-[6px] border border-n-800 px-2 text-[11.5px] text-n-300">
+                <Layers className="h-3 w-3" /> Whole workspace
+              </span>
+              <span className="flex-1" />
+              <span className="text-[11px] text-n-600">↵ to send · ⇧↵ newline</span>
+              <button
+                type="button"
+                onClick={send}
+                disabled={!input.trim() || isLoading}
+                className={cn("btn btn-primary btn-icon", input.trim() && "bg-accent/14")}
+                title="Send"
+                aria-label="Send"
+              >
+                <ArrowUp className="h-[15px] w-[15px]" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Note Preview Modal */}
-      <AnimatePresence>
-        {previewNote && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-            onClick={() => setPreviewNote(null)}
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="relative mx-4 max-h-[80vh] w-full max-w-3xl overflow-hidden rounded-2xl border border-white/10 bg-black/95 shadow-2xl backdrop-blur-xl"
+      {/* Entity aside */}
+      {entityPanelNodeId && (
+        <aside className="flex w-[320px] shrink-0 animate-rise flex-col border-l border-n-900 bg-bg-deep/40">
+          <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+            <span className="kicker flex-1 text-accent">Entity</span>
+            <button
+              type="button"
+              onClick={() => setEntityPanelNodeId(null)}
+              className="grid h-[26px] w-[26px] place-items-center rounded-[6px] text-n-400 hover:bg-n-900"
+              aria-label="Close entity panel"
             >
-              <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-linear-to-br from-purple-500 to-pink-500">
-                    <FileText className="h-5 w-5 text-white" />
-                  </div>
-                  <h2 className="text-xl font-bold text-white">
-                    {previewNote.title}
-                  </h2>
-                </div>
-                <button
-                  onClick={() => setPreviewNote(null)}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white/60 transition-all hover:bg-white/10 hover:text-white"
-                  title="Close preview"
-                  aria-label="Close preview"
-                >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-              <div className="max-h-[calc(80vh-80px)] overflow-y-auto p-6">
-                <SegmentedNoteContent
-                  content={previewNote.content || "*Empty note*"}
-                  onFileClick={handleFileClick}
-                  onEntityClick={handleEntityClick}
-                  kb={currentKB}
-                  proseClassName="prose prose-invert max-w-none prose-headings:font-bold prose-headings:text-white prose-h1:text-4xl prose-h1:mt-6 prose-h1:mb-4 prose-h2:text-3xl prose-h2:mt-5 prose-h2:mb-3 prose-h3:text-2xl prose-h3:mt-4 prose-h3:mb-3 prose-h4:text-xl prose-h4:mt-3 prose-h4:mb-2 prose-p:leading-relaxed prose-p:text-white/90 prose-p:my-3 prose-strong:text-white prose-strong:font-bold prose-em:text-white/90 prose-em:italic prose-a:text-purple-400 prose-a:underline hover:prose-a:text-purple-300 prose-code:text-pink-400 prose-code:bg-white/10 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-[''] prose-code:after:content-[''] prose-pre:bg-white/5 prose-pre:border prose-pre:border-white/10 prose-blockquote:border-l-4 prose-blockquote:border-purple-500/50 prose-blockquote:text-white/80 prose-blockquote:pl-4 prose-blockquote:italic prose-ul:text-white/90 prose-ul:my-3 prose-ol:text-white/90 prose-ol:my-3 prose-li:text-white/90 prose-li:my-1"
-                />
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <EntityDetailPanel
+            nodeId={entityPanelNodeId}
+            name={entityPanelName}
+            kb={currentKB}
+            onClose={() => setEntityPanelNodeId(null)}
+          />
+        </aside>
+      )}
 
-      {/* Entity Detail Panel */}
-      <EntityDetailPanel
-        nodeId={entityPanelNodeId}
-        name={entityPanelName}
-        kb={currentKB}
-        onClose={() => setEntityPanelNodeId(null)}
-      />
-
-      {/* File Preview Modal */}
-      <AnimatePresence>
-        {filePreview && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm"
-            onClick={() => setFilePreview(null)}
+      {/* Note preview */}
+      {previewNote && (
+        <div className="dialog-backdrop" onClick={() => setPreviewNote(null)}>
+          <div
+            className="dialog max-h-[80vh] max-w-3xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
           >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-              className="relative mx-4 max-h-[90vh] w-full max-w-6xl overflow-hidden rounded-2xl border border-white/10 bg-black/95 shadow-2xl backdrop-blur-xl"
-            >
-              <div className="flex items-center justify-between border-b border-white/10 px-6 py-4">
-                <div className="flex items-center gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-linear-to-br from-purple-500 to-pink-500">
-                    <FileText className="h-5 w-5 text-white" />
-                  </div>
-                  <h2 className="text-lg font-semibold text-white">
-                    {filePreview.filename}
-                  </h2>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void handleRevealPreviewFile();
-                    }}
-                    className="flex h-8 items-center gap-1.5 rounded-lg bg-purple-500/20 px-3 text-sm text-purple-300 transition-all hover:bg-purple-500/30"
-                    title={
-                      isDesktopApp()
-                        ? revealInFolderLabel()
-                        : "Open file"
-                    }
-                  >
-                    <FolderOpen className="h-4 w-4" />
-                    {isDesktopApp() ? revealInFolderLabel() : "Open"}
-                  </button>
-                  <button
-                    onClick={() => setFilePreview(null)}
-                    className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/5 text-white/60 transition-all hover:bg-white/10 hover:text-white"
-                    title="Close file preview"
-                    aria-label="Close file preview"
-                  >
-                    <X className="h-5 w-5" />
-                  </button>
-                </div>
-              </div>
-              <div className="max-h-[calc(90vh-80px)] overflow-y-auto p-6">
-                {filePreview.type === "image" && (
-                  /* eslint-disable-next-line @next/next/no-img-element */
-                  <img
-                    src={filePreview.url}
-                    alt={filePreview.filename}
-                    className="max-h-full max-w-full rounded-lg"
-                  />
-                )}
-                {filePreview.type === "pdf" && (
-                  <iframe
-                    src={filePreview.url}
-                    className="h-[calc(90vh-160px)] w-full rounded-lg"
-                    title={filePreview.filename}
-                  />
-                )}
-                {filePreview.type === "video" && (
-                  <div className="flex min-h-50 items-center justify-center">
-                    <BlobMediaPlayer
-                      url={filePreview.url}
-                      kind="video"
-                      className="max-h-[70vh] max-w-full rounded-lg bg-black"
-                    />
-                  </div>
-                )}
-                {filePreview.type === "audio" && (
-                  <div className="flex min-h-50 items-center justify-center">
-                    <BlobMediaPlayer
-                      url={filePreview.url}
-                      kind="audio"
-                      className="w-full max-w-2xl"
-                    />
-                  </div>
-                )}
-                {filePreview.type === "other" && (
-                  <div className="flex min-h-50 flex-col items-center justify-center gap-4 text-white/60">
-                    <FileText className="h-16 w-16" />
-                    <p>Preview not available for this file type</p>
-                    <button
-                      type="button"
-                      onClick={() => void handleRevealPreviewFile()}
-                      className="rounded-lg bg-purple-500/20 px-4 py-2 text-purple-300 transition-all hover:bg-purple-500/30"
-                    >
-                      {isDesktopApp()
-                        ? revealInFolderLabel()
-                        : "Open file"}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <div className="flex items-center gap-2.5">
+              <FileText className="h-4 w-4 text-accent-300" />
+              <div className="dialog-title flex-1 truncate">{previewNote.title}</div>
+              <button
+                type="button"
+                onClick={() => setPreviewNote(null)}
+                className="grid h-[26px] w-[26px] place-items-center rounded-[6px] text-n-400 hover:bg-n-900"
+                aria-label="Close preview"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="min-h-0 overflow-y-auto">
+              <SegmentedNoteContent
+                content={previewNote.content || "*Empty note*"}
+                onFileClick={handleFileClick}
+                onEntityClick={handleEntityClick}
+                kb={currentKB}
+                proseClassName="prose-orb"
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
+      {filePreview && (
+        <FilePreviewModal
+          filePreview={filePreview}
+          currentKB={currentKB}
+          onClose={() => setFilePreview(null)}
+          onReveal={() => void handleRevealPreviewFile()}
+        />
+      )}
     </div>
   );
 }

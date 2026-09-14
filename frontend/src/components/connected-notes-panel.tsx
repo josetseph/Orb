@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link2, Loader2, Network, X } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { NotesGraphPayload } from "@/lib/types";
@@ -46,11 +46,11 @@ function hashSeed(input: string): number {
   return Math.abs(h);
 }
 
+/** Right-column "Connections": Links (wikilink neighbours) or Entities (graph subgraph). */
 export function ConnectedNotesPanel({
   noteId,
   noteContent,
   kb,
-  onClose,
   onSelectNote,
   onSelectEntity,
   className,
@@ -66,11 +66,7 @@ export function ConnectedNotesPanel({
   const w = 320;
   const h = 420;
 
-  if (
-    prevParams.mode !== mode ||
-    prevParams.noteId !== noteId ||
-    prevParams.kb !== kb
-  ) {
+  if (prevParams.mode !== mode || prevParams.noteId !== noteId || prevParams.kb !== kb) {
     setPrevParams({ mode, noteId, kb });
     setLoading(true);
     setError(null);
@@ -113,8 +109,6 @@ export function ConnectedNotesPanel({
     setLoading(true);
     setError(null);
     const timer = setTimeout(() => {
-      setLoading(true);
-      setError(null);
       api
         .getNoteEntitySubgraph(noteContent, kb, { signal: controller.signal })
         .then((payload) => {
@@ -137,29 +131,29 @@ export function ConnectedNotesPanel({
   }, [mode, noteContent, kb]);
 
   useEffect(() => {
-    if (!data) {
+    if (!data || data.nodes.length === 0) {
       setNodes([]);
       return;
     }
-    if (!data || data.nodes.length === 0) return;
     const n = data.nodes.length || 1;
     const cx = w / 2;
     const cy = h / 2;
     const rand = seededRandom(hashSeed(`${noteId}:${mode}:${layoutNonce}`));
     const angleOffset = rand() * Math.PI * 2;
     const r = Math.min(110, 28 + n * 10);
-    const initial: SimNode[] = data.nodes.map((node, i) => {
-      const angle = angleOffset + (2 * Math.PI * i) / n + (rand() - 0.5) * 0.9;
-      const radius = r * (0.55 + rand() * 0.7);
-      return {
-        ...node,
-        x: cx + radius * Math.cos(angle) + (rand() - 0.5) * 40,
-        y: cy + radius * Math.sin(angle) + (rand() - 0.5) * 40,
-        vx: (rand() - 0.5) * 2,
-        vy: (rand() - 0.5) * 2,
-      };
-    });
-    setNodes(initial);
+    setNodes(
+      data.nodes.map((node, i) => {
+        const angle = angleOffset + (2 * Math.PI * i) / n + (rand() - 0.5) * 0.9;
+        const radius = r * (0.55 + rand() * 0.7);
+        return {
+          ...node,
+          x: cx + radius * Math.cos(angle) + (rand() - 0.5) * 40,
+          y: cy + radius * Math.sin(angle) + (rand() - 0.5) * 40,
+          vx: (rand() - 0.5) * 2,
+          vy: (rand() - 0.5) * 2,
+        };
+      }),
+    );
   }, [data, noteId, mode, layoutNonce]);
 
   useEffect(() => {
@@ -239,76 +233,46 @@ export function ConnectedNotesPanel({
     return m;
   }, [nodes]);
 
-  return (
-    <aside
+  const tab = (id: GraphMode, label: string) => (
+    <button
+      type="button"
+      onClick={() => setMode(id)}
       className={cn(
-        "flex h-full w-[340px] shrink-0 flex-col border-l border-white/10 bg-black/60 backdrop-blur-xl",
-        className,
+        "h-7 flex-1 rounded-[6px] text-[12px] font-medium",
+        mode === id ? "bg-surface text-text" : "text-n-500 hover:text-n-300",
       )}
     >
-      <div className="flex items-center justify-between border-b border-white/10 px-3 py-3">
-        <div className="flex items-center gap-2">
-          <Network className="h-4 w-4 text-teal-300" />
-          <div>
-            <p className="text-sm font-medium text-white">Connected</p>
-            <p className="text-[11px] text-white/40">
-              {mode === "note" ? "Wikilink notes" : "Entities in this note"}
-            </p>
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="rounded-lg p-1.5 text-white/50 hover:bg-white/10 hover:text-white"
-          title="Close"
-        >
-          <X className="h-4 w-4" />
-        </button>
+      {label}
+    </button>
+  );
+
+  return (
+    <div className={cn("flex h-full min-h-0 flex-col", className)}>
+      <div className="flex gap-0.5 px-3 pb-1.5 pt-3">
+        {tab("note", "Links")}
+        {tab("nodes", "Entities")}
       </div>
 
-      <div className="flex gap-1 border-b border-white/10 p-2">
-        <button
-          type="button"
-          onClick={() => setMode("note")}
-          className={cn(
-            "flex-1 rounded-lg px-2 py-1.5 text-xs font-medium",
-            mode === "note"
-              ? "bg-teal-500/20 text-teal-300 border border-teal-500/30"
-              : "bg-white/5 text-white/50 hover:bg-white/10",
-          )}
-        >
-          Note
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode("nodes")}
-          className={cn(
-            "flex-1 rounded-lg px-2 py-1.5 text-xs font-medium",
-            mode === "nodes"
-              ? "bg-purple-500/20 text-purple-300 border border-purple-500/30"
-              : "bg-white/5 text-white/50 hover:bg-white/10",
-          )}
-        >
-          Nodes
-        </button>
+      <div className="kicker px-4 pb-1.5 pt-2">
+        {mode === "note" ? "Notes linked with this one" : "Entities in this note"}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-hidden p-2">
+      <div className="min-h-0 flex-1 overflow-hidden px-2">
         {loading && (
-          <div className="flex h-full items-center justify-center gap-2 text-white/40">
+          <div className="flex h-full items-center justify-center gap-2 text-[12px] text-n-500">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         )}
-        {error && <p className="p-3 text-sm text-red-300">{error}</p>}
+        {error && <p className="p-3 text-[12.5px] text-danger-text">{error}</p>}
         {!loading && data && data.nodes.length === 0 && (
-          <p className="p-4 text-center text-xs text-white/40">
+          <p className="p-4 text-center text-[12px] text-n-500">
             {mode === "note"
               ? "No wikilinks in this note yet."
               : "No knowledge-graph entities found in this note."}
           </p>
         )}
         {!loading && data && data.nodes.length > 0 && (
-          <svg viewBox={`0 0 ${w} ${h}`} className="h-full w-full rounded-xl bg-black/30">
+          <svg viewBox={`0 0 ${w} ${h}`} className="h-full w-full rounded-md bg-bg-deep/50">
             {(data.edges || []).map((e, i) => {
               const s = byId.get(e.source);
               const t = byId.get(e.target);
@@ -320,11 +284,7 @@ export function ConnectedNotesPanel({
                   y1={s.y}
                   x2={t.x}
                   y2={t.y}
-                  stroke={
-                    mode === "nodes"
-                      ? "rgba(196,181,253,0.35)"
-                      : "rgba(94,234,212,0.35)"
-                  }
+                  stroke="var(--color-n-700)"
                   strokeWidth={1.2}
                 />
               );
@@ -332,8 +292,6 @@ export function ConnectedNotesPanel({
             {nodes.map((n) => {
               const isCenter = mode === "note" && n.id === noteId;
               const isMissing = n.type === "missing";
-              const usePurple =
-                mode === "nodes" || isCenter || (!isMissing && n.type !== "note");
               return (
                 <g
                   key={n.id}
@@ -350,19 +308,14 @@ export function ConnectedNotesPanel({
                     cx={n.x}
                     cy={n.y}
                     r={isCenter ? 12 : isMissing ? 8 : 10}
-                    fill={
-                      isMissing
-                        ? "rgba(248,113,113,0.35)"
-                        : usePurple
-                          ? "rgba(167,139,250,0.35)"
-                          : "rgba(45,212,191,0.35)"
-                    }
+                    fill={isMissing ? "var(--color-danger)" : "var(--color-accent-800)"}
+                    fillOpacity={isMissing ? 0.35 : 1}
                     stroke={
                       isMissing
-                        ? "#f87171"
-                        : usePurple
-                          ? "#c4b5fd"
-                          : "#5eead4"
+                        ? "var(--color-danger)"
+                        : isCenter
+                          ? "var(--color-accent-200)"
+                          : "var(--color-accent-300)"
                     }
                     strokeWidth={isCenter ? 2 : 1.2}
                   />
@@ -370,7 +323,7 @@ export function ConnectedNotesPanel({
                     x={n.x}
                     y={n.y + 22}
                     textAnchor="middle"
-                    fill="rgba(255,255,255,0.75)"
+                    fill="var(--color-n-300)"
                     fontSize={9}
                   >
                     {(n.title || "").slice(0, 18)}
@@ -382,22 +335,21 @@ export function ConnectedNotesPanel({
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-white/10 px-3 py-2 text-[11px] text-white/40">
-        <div className="flex items-center gap-1.5">
-          <Link2 className="h-3 w-3" />
+      <div className="flex items-center justify-between px-4 py-2 text-[11px] text-n-500">
+        <span>
           {data
             ? `${data.nodes.length} ${mode === "note" ? "notes" : "nodes"} · ${data.edges.length} links`
             : "—"}
-        </div>
+        </span>
         <button
           type="button"
           onClick={() => setLayoutNonce((n) => n + 1)}
-          className="rounded px-1.5 py-0.5 text-white/50 hover:bg-white/10 hover:text-white/80"
+          className="rounded px-1.5 py-0.5 hover:bg-n-900 hover:text-n-300"
           title="Shuffle layout"
         >
           Shuffle
         </button>
       </div>
-    </aside>
+    </div>
   );
 }

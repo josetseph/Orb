@@ -36,7 +36,7 @@ export function VaultFileRow({
       }}
       onDragEnd={onDragEnd}
       className={cn(
-        "group/file relative flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-left text-[12px] text-white/60 hover:bg-white/5 hover:text-white/85",
+        "group/file relative flex w-full items-center gap-1 rounded-[6px] px-1.5 py-1 text-left text-[12px] text-n-400 hover:bg-n-900 hover:text-n-200",
         isDragging && "opacity-50",
       )}
       style={{ paddingLeft: 22 + depth * 12 }}
@@ -48,7 +48,7 @@ export function VaultFileRow({
         className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
         title={`${relPath}\nDouble-click to rename`}
       >
-        <Paperclip className="h-3 w-3 shrink-0 text-white/30" />
+        <Paperclip className="h-3 w-3 shrink-0 text-n-600" />
         <span className="truncate">{name}</span>
       </button>
       <button
@@ -58,9 +58,9 @@ export function VaultFileRow({
           e.stopPropagation();
           onRename(relPath);
         }}
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-0 hover:bg-white/10 group-hover/file:opacity-100"
+        className="grid h-5 w-5 shrink-0 place-items-center rounded opacity-0 hover:bg-n-800 group-hover/file:opacity-100"
       >
-        <Pencil className="h-3 w-3 text-white/45" />
+        <Pencil className="h-3 w-3 text-n-400" />
       </button>
       <button
         type="button"
@@ -69,9 +69,9 @@ export function VaultFileRow({
           e.stopPropagation();
           void onDelete(relPath, name);
         }}
-        className="flex h-5 w-5 shrink-0 items-center justify-center rounded opacity-0 hover:bg-red-500/20 group-hover/file:opacity-100"
+        className="grid h-5 w-5 shrink-0 place-items-center rounded opacity-0 hover:bg-danger/15 group-hover/file:opacity-100"
       >
-        <Trash2 className="h-3 w-3 text-red-400/80" />
+        <Trash2 className="h-3 w-3 text-danger-text" />
       </button>
     </div>
   );

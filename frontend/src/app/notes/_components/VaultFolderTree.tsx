@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import type { Note } from "@/lib/types";
 import { buildFolderTree } from "../_lib/folder-tree";
 import type { FolderTreeNode, VaultFileEntry } from "../_lib/types";
-import { NoteStatusDot } from "./NoteStatusBadge";
+import { NoteStatusDot, noteStatus } from "./NoteStatusBadge";
 import { VaultFileRow } from "./VaultFileRow";
 
 type VaultFolderTreeProps = {
@@ -55,7 +55,7 @@ type VaultFolderTreeProps = {
  */
 type TreeRow =
   | { key: string; kind: "vault-header" }
-  | { key: string; kind: "folder"; node: FolderTreeNode; depth: number }
+  | { key: string; kind: "folder"; node: FolderTreeNode; depth: number; count: number }
   | { key: string; kind: "note"; node: FolderTreeNode; depth: number }
   | { key: string; kind: "media"; file: VaultFileEntry; depth: number; dropTarget: string }
   | { key: string; kind: "attachments-header" }
@@ -69,6 +69,15 @@ type TreeRow =
       depth: number;
       count: number;
     };
+
+function countNotes(node: FolderTreeNode): number {
+  if (node.note) return 1;
+  return node.children.reduce((n, c) => n + countNotes(c), 0);
+}
+
+function shortDate(iso: string): string {
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
 
 export function VaultFolderTree({
   notes,
@@ -100,6 +109,7 @@ export function VaultFolderTree({
   onDeleteVaultAttachment,
 }: VaultFolderTreeProps) {
   const attachmentsOpen = !collapsedFolders.has("attachments");
+  const dragging = Boolean(dragNoteId || dragFileRel);
 
   const rows = useMemo<TreeRow[]>(() => {
     const noteFolders = vaultFolders.filter(
@@ -111,9 +121,7 @@ export function VaultFolderTree({
     const rootMedia: VaultFileEntry[] = [];
     for (const f of mediaFiles) {
       const rel = f.rel_path.replace(/\\/g, "/");
-      if (rel === "attachments" || rel.startsWith("attachments/")) {
-        continue;
-      }
+      if (rel === "attachments" || rel.startsWith("attachments/")) continue;
       const slash = rel.lastIndexOf("/");
       if (slash < 0) {
         rootMedia.push(f);
@@ -129,7 +137,13 @@ export function VaultFolderTree({
 
     const walk = (node: FolderTreeNode, depth: number) => {
       if (!node.note) {
-        out.push({ key: `folder:${node.path}`, kind: "folder", node, depth });
+        out.push({
+          key: `folder:${node.path}`,
+          kind: "folder",
+          node,
+          depth,
+          count: countNotes(node),
+        });
         if (collapsedFolders.has(node.path)) return;
         for (const child of node.children) walk(child, depth + 1);
         for (const f of mediaByFolder.get(node.path) || []) {
@@ -148,13 +162,7 @@ export function VaultFolderTree({
 
     for (const n of tree) walk(n, 0);
     for (const f of rootMedia) {
-      out.push({
-        key: `media:${f.rel_path}`,
-        kind: "media",
-        file: f,
-        depth: 0,
-        dropTarget: "",
-      });
+      out.push({ key: `media:${f.rel_path}`, kind: "media", file: f, depth: 0, dropTarget: "" });
     }
 
     out.push({ key: "__attachments__", kind: "attachments-header" });
@@ -169,10 +177,10 @@ export function VaultFolderTree({
         const list = filesByFolder.get(parent) || [];
         list.push(f);
         filesByFolder.set(parent, list);
-        let walk = parent;
-        while (walk && walk !== "attachments") {
-          folders.add(walk);
-          walk = walk.slice(0, walk.lastIndexOf("/"));
+        let walkUp = parent;
+        while (walkUp && walkUp !== "attachments") {
+          folders.add(walkUp);
+          walkUp = walkUp.slice(0, walkUp.lastIndexOf("/"));
         }
       }
       for (const f of vaultFolders) {
@@ -196,43 +204,26 @@ export function VaultFolderTree({
           if (collapsedFolders.has(child)) continue;
           emit(child, depth + 1);
           for (const f of own) {
-            out.push({
-              key: `attachment:${f.rel_path}`,
-              kind: "attachment",
-              file: f,
-              depth: depth + 1,
-            });
+            out.push({ key: `attachment:${f.rel_path}`, kind: "attachment", file: f, depth: depth + 1 });
           }
         }
       };
 
       emit("attachments", 0);
       for (const f of filesByFolder.get("attachments") || []) {
-        out.push({
-          key: `attachment:${f.rel_path}`,
-          kind: "attachment",
-          file: f,
-          depth: 0,
-        });
+        out.push({ key: `attachment:${f.rel_path}`, kind: "attachment", file: f, depth: 0 });
       }
       if (attachmentFiles.length === 0 && folders.size === 0) {
         out.push({ key: "__attachments-empty__", kind: "attachments-empty" });
       }
     }
     return out;
-  }, [
-    notes,
-    vaultFolders,
-    mediaFiles,
-    attachmentFiles,
-    collapsedFolders,
-    attachmentsOpen,
-  ]);
+  }, [notes, vaultFolders, mediaFiles, attachmentFiles, collapsedFolders, attachmentsOpen]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 28,
+    estimateSize: () => 30,
     overscan: 12,
   });
 
@@ -255,7 +246,7 @@ export function VaultFolderTree({
   };
 
   const folderActionButtons = (folderPath: string) => (
-    <div className="flex shrink-0 items-center gap-0.5">
+    <div className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover/folder:opacity-100">
       <button
         type="button"
         title="New folder"
@@ -263,9 +254,9 @@ export function VaultFolderTree({
           e.stopPropagation();
           onOpenFolderDialog(folderPath);
         }}
-        className="flex h-6 w-6 items-center justify-center rounded text-white/45 hover:bg-white/10 hover:text-white/90"
+        className="grid h-5 w-5 place-items-center rounded text-n-500 hover:bg-n-800 hover:text-text"
       >
-        <FolderPlus className="h-3.5 w-3.5" />
+        <FolderPlus className="h-3 w-3" />
       </button>
       <button
         type="button"
@@ -275,107 +266,76 @@ export function VaultFolderTree({
           onSelectFolder(folderPath);
           void onCreateNote(folderPath);
         }}
-        className="flex h-6 w-6 items-center justify-center rounded text-white/45 hover:bg-white/10 hover:text-white/90"
+        className="grid h-5 w-5 place-items-center rounded text-n-500 hover:bg-n-800 hover:text-text"
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="h-3 w-3" />
       </button>
     </div>
   );
 
-  /** Ancestor indent guides, one vertical segment per depth level. */
-  const indentGuides = (depth: number) =>
-    depth > 0 ? (
-      <>
-        {Array.from({ length: depth }, (_, i) => (
-          <div
-            key={i}
-            className="pointer-events-none absolute bottom-0 top-0 w-px bg-white/10"
-            style={{ left: 10 + i * 12 }}
+  const folderHeader = (
+    label: string,
+    path: string,
+    depth: number,
+    opts: { open?: boolean; selected: boolean; count?: number; icon: React.ReactNode; onClick: () => void },
+  ) => (
+    <div
+      className={cn(
+        "group/folder flex w-full items-center gap-1 rounded-[6px] pr-1 kicker",
+        opts.selected ? "text-accent" : "hover:text-n-300",
+        dragging && "ring-1 ring-accent/30",
+      )}
+      style={{ paddingLeft: 6 + depth * 12 }}
+    >
+      <button
+        type="button"
+        onClick={opts.onClick}
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-1 pb-1 pt-2.5 text-left"
+        title={path || vaultName}
+      >
+        {opts.open !== undefined && (
+          <ChevronRight
+            className={cn("h-3 w-3 shrink-0 text-n-600 transition-transform", opts.open && "rotate-90")}
           />
-        ))}
-      </>
-    ) : null;
+        )}
+        {opts.icon}
+        <span className="truncate">{label}</span>
+        {opts.count !== undefined && (
+          <span className="ml-auto text-[10px] normal-case tracking-normal text-n-600">{opts.count}</span>
+        )}
+      </button>
+      {folderActionButtons(path)}
+    </div>
+  );
 
   const renderRow = (row: TreeRow) => {
     switch (row.kind) {
       case "vault-header":
         return (
-          <div
-            className={cn(
-              "group/folder rounded-md pb-1",
-              (dragNoteId || dragFileRel) && "ring-1 ring-teal-500/25",
-            )}
-            onDragOver={allowVaultDragOver}
-            onDrop={(e) => acceptVaultDrop(e, "")}
-          >
-            <div
-              className={cn(
-                "flex w-full items-center gap-0.5 rounded-md pr-1 text-[12px]",
-                selectedFolder === ""
-                  ? "bg-teal-500/15 text-teal-200"
-                  : "text-white/55 hover:bg-white/5 hover:text-white/80",
-              )}
-            >
-              <button
-                type="button"
-                onClick={() => onSelectFolder("")}
-                className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1 text-left"
-              >
-                <Folder className="h-3.5 w-3.5 shrink-0 text-teal-300/90" />
-                <span className="truncate font-medium">{vaultName}</span>
-                {selectedFolder === "" && (
-                  <span className="ml-1 truncate text-[10px] text-teal-300/70">
-                    new notes here
-                  </span>
-                )}
-              </button>
-              {folderActionButtons("")}
-            </div>
+          <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, "")}>
+            {folderHeader(vaultName, "", 0, {
+              selected: selectedFolder === "",
+              count: notes.length,
+              icon: <Folder className="h-3 w-3 shrink-0" />,
+              onClick: () => onSelectFolder(""),
+            })}
           </div>
         );
 
       case "folder": {
         const { node, depth } = row;
-        const isOpen = !collapsedFolders.has(node.path);
-        const isSelected = selectedFolder === node.path;
         return (
-          <div
-            className={cn(
-              "relative group/folder rounded-md",
-              (dragNoteId || dragFileRel) && "ring-1 ring-teal-500/25",
-            )}
-            onDragOver={allowVaultDragOver}
-            onDrop={(e) => acceptVaultDrop(e, node.path)}
-          >
-            {indentGuides(depth)}
-            <div
-              className={cn(
-                "flex w-full items-center gap-0.5 rounded-md pr-1 text-[13px]",
-                isSelected
-                  ? "bg-teal-500/15 text-teal-100"
-                  : "text-white/65 hover:bg-white/5 hover:text-white/90",
-              )}
-              style={{ paddingLeft: 6 + depth * 12 }}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  onToggleFolder(node.path);
-                  onSelectFolder(node.path);
-                }}
-                className="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1 text-left"
-              >
-                <ChevronRight
-                  className={cn(
-                    "h-3 w-3 shrink-0 text-white/40 transition-transform",
-                    isOpen && "rotate-90",
-                  )}
-                />
-                <Folder className="h-3.5 w-3.5 shrink-0 text-amber-300/80" />
-                <span className="truncate font-medium">{node.name}</span>
-              </button>
-              {folderActionButtons(node.path)}
-            </div>
+          <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, node.path)}>
+            {folderHeader(node.name, node.path, depth, {
+              open: !collapsedFolders.has(node.path),
+              selected: selectedFolder === node.path,
+              count: row.count,
+              icon: <Folder className="h-3 w-3 shrink-0" />,
+              onClick: () => {
+                onToggleFolder(node.path);
+                onSelectFolder(node.path);
+              },
+            })}
           </div>
         );
       }
@@ -387,6 +347,8 @@ export function VaultFolderTree({
           ? node.path.slice(0, node.path.lastIndexOf("/"))
           : "";
         const isChecked = selectedNoteIds.has(note.id);
+        const selected = selectedNoteId === note.id;
+        const status = noteStatus(note);
         return (
           <div
             draggable
@@ -398,50 +360,43 @@ export function VaultFolderTree({
             onDragEnd={onDragNoteEnd}
             onDragOver={allowVaultDragOver}
             onDrop={(e) => acceptVaultDrop(e, parentFolder)}
+            onClick={() => onNoteSelect(note)}
             className={cn(
-              "relative flex w-full items-center gap-1 rounded-md px-1 py-1 text-left text-[13px] transition-colors",
-              selectedNoteId === note.id
-                ? "bg-white/10 text-white"
-                : "text-white/70 hover:bg-white/5 hover:text-white/90",
+              "group/note flex w-full cursor-default items-start gap-2 rounded-md px-2 py-1.5 text-left",
+              selected ? "bg-surface text-text shadow-sm" : "text-n-300 hover:bg-n-900",
               dragNoteId === note.id && "opacity-50",
-              isChecked && "ring-1 ring-red-400/30",
+              isChecked && "ring-1 ring-danger/40",
             )}
-            style={{ paddingLeft: 10 + depth * 12 }}
+            style={{ paddingLeft: 8 + depth * 12 }}
           >
-            {indentGuides(depth)}
             <input
               type="checkbox"
               checked={isChecked}
               onChange={() => onToggleNoteSelected(note.id)}
               onClick={(e) => e.stopPropagation()}
-              className="h-3.5 w-3.5 shrink-0 rounded border-white/30 bg-black/40"
+              className={cn(
+                "mt-1 h-3 w-3 shrink-0 accent-accent",
+                !isChecked && "opacity-0 group-hover/note:opacity-100",
+              )}
               aria-label={`Select ${note.title || "note"}`}
             />
-            <button
-              type="button"
-              onClick={() => onNoteSelect(note)}
-              className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-            >
-              <FileText className="h-3.5 w-3.5 shrink-0 text-white/35" />
-              <span className="min-w-0 flex-1 truncate">
-                {note.title || node.name || "Untitled"}
-              </span>
-              <span className="shrink-0">
-                <NoteStatusDot note={note} />
-              </span>
-            </button>
+            <FileText className="mt-0.5 h-[15px] w-[15px] shrink-0 text-n-500" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[13px]">{note.title || node.name || "Untitled"}</div>
+              <div className="truncate text-[11px] text-n-500">
+                {shortDate(note.created_at)} · {status.label}
+              </div>
+            </div>
+            <span className="mt-1.5 shrink-0">
+              <NoteStatusDot note={note} />
+            </span>
           </div>
         );
       }
 
       case "media":
         return (
-          <div
-            className="relative"
-            onDragOver={allowVaultDragOver}
-            onDrop={(e) => acceptVaultDrop(e, row.dropTarget)}
-          >
-            {indentGuides(row.depth)}
+          <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, row.dropTarget)}>
             <VaultFileRow
               name={row.file.name}
               relPath={row.file.rel_path}
@@ -459,73 +414,43 @@ export function VaultFolderTree({
       case "attachments-header":
         return (
           <div
-            className={cn(
-              "group/folder mt-2 border-t border-white/5 pt-2",
-              (dragNoteId || dragFileRel) && "ring-1 ring-sky-500/25 rounded-md",
-            )}
+            className="mt-1 border-t border-n-900"
             onDragOver={allowVaultDragOver}
             onDrop={(e) => acceptVaultDrop(e, "attachments")}
           >
-            <div className="flex w-full items-center gap-0.5 rounded-md pr-1 text-[13px] text-white/65 hover:bg-white/5 hover:text-white/90">
-              <button
-                type="button"
-                onClick={() => {
-                  onSelectFolder("attachments");
-                  onToggleFolder("attachments");
-                }}
-                className="flex min-w-0 flex-1 items-center gap-1 px-1.5 py-1 text-left"
-              >
-                <ChevronRight
-                  className={cn(
-                    "h-3 w-3 shrink-0 text-white/40 transition-transform",
-                    attachmentsOpen && "rotate-90",
-                  )}
-                />
-                <Paperclip className="h-3.5 w-3.5 shrink-0 text-sky-300/80" />
-                <span className="truncate font-medium">Attachments</span>
-                <span className="text-[10px] text-white/35">
-                  {attachmentFiles.length}
-                </span>
-              </button>
-            </div>
+            {folderHeader("Attachments", "attachments", 0, {
+              open: attachmentsOpen,
+              selected: selectedFolder === "attachments",
+              count: attachmentFiles.length,
+              icon: <Paperclip className="h-3 w-3 shrink-0" />,
+              onClick: () => {
+                onSelectFolder("attachments");
+                onToggleFolder("attachments");
+              },
+            })}
           </div>
         );
 
       case "attachments-empty":
         return (
-          <p className="px-8 py-1 text-[11px] text-white/30">
+          <p className="px-7 py-1 text-[11px] text-n-600">
             Default upload folder — drag files into other folders anytime
           </p>
         );
 
       case "attachment-folder":
         return (
-          <div
-            className={cn(
-              (dragNoteId || dragFileRel) && "ring-1 ring-sky-500/25 rounded-md",
-            )}
-            onDragOver={allowVaultDragOver}
-            onDrop={(e) => acceptVaultDrop(e, row.path)}
-          >
-            <button
-              type="button"
-              onClick={() => {
+          <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, row.path)}>
+            {folderHeader(row.name, row.path, row.depth, {
+              open: !collapsedFolders.has(row.path),
+              selected: selectedFolder === row.path,
+              count: row.count,
+              icon: <Paperclip className="h-3 w-3 shrink-0" />,
+              onClick: () => {
                 onSelectFolder(row.path);
                 onToggleFolder(row.path);
-              }}
-              style={{ paddingLeft: 8 + row.depth * 12 }}
-              className="flex w-full min-w-0 items-center gap-1 rounded-md py-1 pr-1 text-left text-[13px] text-white/65 hover:bg-white/5 hover:text-white/90"
-            >
-              <ChevronRight
-                className={cn(
-                  "h-3 w-3 shrink-0 text-white/40 transition-transform",
-                  !collapsedFolders.has(row.path) && "rotate-90",
-                )}
-              />
-              <Paperclip className="h-3.5 w-3.5 shrink-0 text-sky-300/60" />
-              <span className="truncate">{row.name}</span>
-              <span className="text-[10px] text-white/35">{row.count}</span>
-            </button>
+              },
+            })}
           </div>
         );
 
@@ -534,10 +459,7 @@ export function VaultFolderTree({
           <div
             onDragOver={allowVaultDragOver}
             onDrop={(e) =>
-              acceptVaultDrop(
-                e,
-                row.file.rel_path.slice(0, row.file.rel_path.lastIndexOf("/")),
-              )
+              acceptVaultDrop(e, row.file.rel_path.slice(0, row.file.rel_path.lastIndexOf("/")))
             }
           >
             <VaultFileRow

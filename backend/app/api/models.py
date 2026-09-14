@@ -36,8 +36,35 @@ class InspectPathInput(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
+def _vision_row() -> dict:
+    """Who reads images: the ingestion model, through a projector when local."""
+    from app.core.config import settings
+    from app.services.local_models import find_mmproj, gguf_paths_if_present
+
+    if (settings.LLM_PROVIDER or "local").lower() not in ("local", "ollama", "lm_studio"):
+        return {
+            "kind": "vision",
+            "label": "Vision",
+            "purpose": "Images and PDF pages are read by the model you chose above",
+            "name": settings.LLM_PROVIDER,
+            "installed": True,
+            "engine_note": "cloud",
+        }
+    present = gguf_paths_if_present() or {}
+    chat = present.get("chat")
+    proj = find_mmproj(chat) if chat else None
+    return {
+        "kind": "vision",
+        "label": "Vision",
+        "purpose": "Images and PDF pages are read by the chat model through its projector",
+        "name": proj.name if proj else (f"no projector beside {chat.name}" if chat else "no chat model"),
+        "installed": proj is not None,
+        "engine_note": "projector" if proj else None,
+    }
+
+
 def _media_state() -> dict:
-    """Florence, Whisper and Marlin — the models Orb runs on attachments.
+    """Whisper and Marlin plus the vision route — what Orb runs on attachments.
 
     Reported read-only alongside embed/rerank so the page accounts for every
     model on the machine, not just the chat one. Whisper additionally reports
@@ -46,9 +73,8 @@ def _media_state() -> dict:
     from app.services import whisper_engine
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
 
-    rows: list[dict] = []
+    rows: list[dict] = [_vision_row()]
     labels = {
-        "florence": ("Florence-2", "Image descriptions and PDF page reading"),
         "whisper": ("Whisper", "Audio and video transcription"),
         "marlin": ("Marlin", "Video understanding"),
     }

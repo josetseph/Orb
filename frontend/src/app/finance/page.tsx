@@ -3,7 +3,6 @@
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useKB } from "@/lib/kb-context";
-import { ShaderBackground } from "@/components/shader-background";
 import {
   AccountsTab,
   BudgetsTab,
@@ -26,40 +25,35 @@ import {
 } from "@/components/finance";
 
 export default function FinancePage() {
-  const { currentKB } = useKB();
+  const { currentKB, currentKBName } = useKB();
   const formSeedersRef = useRef<FormSeeders | null>(null);
   const [tab, setTab] = useState<TabId>("overview");
 
   const ws = useFinanceWorkspace(currentKB, formSeedersRef);
   const mut = useFinanceMutations(ws, currentKB, formSeedersRef);
 
-  const statusTone =
-    ws.workspace?.status === "auth_mismatch"
-      ? "border-amber-500/30 bg-amber-500/10 text-amber-100"
-      : "border-white/10 bg-black/40 text-white/80";
-
   return (
-    <div className="relative min-h-screen text-white">
-      <ShaderBackground />
-      <div className="relative z-10 mx-auto max-w-5xl px-8 py-12">
-        <FinanceHeader currentKB={currentKB} />
+    <div className="screen flex-col overflow-auto">
+      <FinanceHeader
+        meta={`Firefly III · ${ws.workspace?.administration_title || currentKBName}`}
+      />
 
+      <div className="flex flex-col gap-4 px-7 pb-8">
         {ws.error && (
-          <p className="mb-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm text-red-200">
+          <p className="rounded-md border border-danger/40 px-3 py-2 text-[12.5px] text-danger-text">
             {ws.error}
           </p>
         )}
 
         {ws.loading ? (
-          <div className="flex items-center gap-2 text-white/50">
-            <Loader2 className="h-4 w-4 animate-spin" /> Loading…
+          <div className="flex items-center gap-2 text-[12.5px] text-n-500">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
           </div>
         ) : ws.workspace?.status === "kb_disabled" ? (
-          <FinanceDisabled kbName={currentKB} />
+          <FinanceDisabled kbName={currentKBName} />
         ) : !ws.workspace?.ready ? (
           <FinanceNotReady
             workspace={ws.workspace}
-            statusTone={statusTone}
             currency={ws.currency}
             onCurrencyChange={ws.setCurrency}
             onSubmit={mut.setPrimaryCurrency}
@@ -67,10 +61,10 @@ export default function FinancePage() {
             busy={ws.busy}
           />
         ) : (
-          <div className="space-y-6">
+          <>
             <FinanceWorkspaceBar
               workspace={ws.workspace}
-              currentKB={currentKB}
+              currentKB={currentKBName}
               currency={ws.currency}
               onCurrencyChange={ws.setCurrency}
               onSubmit={mut.setPrimaryCurrency}
@@ -201,7 +195,7 @@ export default function FinancePage() {
                 busy={ws.busy}
               />
             )}
-          </div>
+          </>
         )}
       </div>
     </div>

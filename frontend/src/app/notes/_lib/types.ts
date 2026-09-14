@@ -1,6 +1,7 @@
 import type { Note } from "@/lib/types";
 
-export type ProcessedFilter = "all" | "ingested" | "ingesting" | "saved" | "failed";
+/** "needs" = everything not yet in the graph (saved, failed, or mid-ingest). */
+export type ProcessedFilter = "all" | "needs" | "ingested" | "ingesting" | "saved" | "failed";
 
 export type FolderTreeNode = {
   name: string;

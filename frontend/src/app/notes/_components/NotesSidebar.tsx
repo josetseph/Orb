@@ -1,19 +1,13 @@
 "use client";
 
 import { useRef } from "react";
-import {
-  FolderPlus,
-  Loader2,
-  Plus,
-  RotateCcw,
-  Search,
-} from "lucide-react";
+import { FolderPlus, Loader2, Plus, Search, Zap } from "lucide-react";
+import { cn } from "@/lib/utils";
 import type { Note } from "@/lib/types";
 import { isActiveProcessingNote } from "../_lib/processing-status";
 import type { ProcessedFilter, VaultFileEntry } from "../_lib/types";
 import { NotesBatchBar } from "./NotesBatchBar";
 import { NotesEmptyState } from "./NotesEmptyState";
-import { NotesFilterBar } from "./NotesFilterBar";
 import { VaultFolderTree } from "./VaultFolderTree";
 
 type NotesSidebarProps = {
@@ -58,8 +52,6 @@ type NotesSidebarProps = {
 };
 
 export function NotesSidebar({
-  currentKB,
-  currentKBName,
   notes,
   searchQuery,
   processedFilter,
@@ -78,7 +70,6 @@ export function NotesSidebar({
   dragFileRel,
   onSearchChange,
   onFilterChange,
-  onReingestVault,
   onOpenFolderDialog,
   onCreateNote,
   onToggleSelectAll,
@@ -98,137 +89,118 @@ export function NotesSidebar({
   onDeleteVaultAttachment,
 }: NotesSidebarProps) {
   const visibleNotes =
-    processedFilter === "ingesting"
-      ? notes.filter(isActiveProcessingNote)
-      : notes;
+    processedFilter === "ingesting" ? notes.filter(isActiveProcessingNote) : notes;
+  const needsOn = processedFilter === "needs";
+  const needsCount = notes.filter((n) => !n.processed).length;
   const treeScrollRef = useRef<HTMLDivElement>(null);
 
   return (
-    <div className="relative z-10 flex w-56 shrink-0 flex-col border-r border-white/10 bg-black/50 backdrop-blur-xl sm:w-64 md:w-72 lg:w-80">
-      <div className="border-b border-white/10 p-4">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold text-white">Notes</h1>
-            {currentKB !== "default" && (
-              <p className="text-[10px] text-purple-400 font-medium mt-0.5">
-                KB: {currentKBName}
-              </p>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              title="Re-ingest entire vault"
-              onClick={() => void onReingestVault()}
-              className="flex h-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 px-2 text-white/60 transition hover:bg-white/10 hover:text-white"
-            >
-              <RotateCcw className="h-4 w-4" />
-            </button>
-            <button
-              type="button"
-              title={
-                selectedFolder
-                  ? `New folder under ${selectedFolder}`
-                  : "New folder"
-              }
-              onClick={() => onOpenFolderDialog(selectedFolder)}
-              className="flex h-10 items-center justify-center rounded-xl border border-white/10 bg-white/5 px-2 text-white/60 transition hover:bg-white/10 hover:text-white"
-            >
-              <FolderPlus className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => void onCreateNote()}
-              disabled={isSaving}
-              title={
-                selectedFolder
-                  ? `New note in ${selectedFolder}`
-                  : "New note (vault root)"
-              }
-              className="flex h-10 w-10 items-center justify-center rounded-xl bg-linear-to-br from-purple-500 to-pink-500 text-white transition-all hover:scale-105 disabled:opacity-50"
-            >
-              {isSaving ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Plus className="h-5 w-5" />
-              )}
-            </button>
-          </div>
-        </div>
-
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/40" />
-          <input
-            type="text"
-            placeholder="Search notes..."
-            value={searchQuery}
-            onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full rounded-xl border border-white/10 bg-white/5 py-2 pl-10 pr-4 text-sm text-white placeholder-white/40 backdrop-blur-xl focus:border-purple-500/50 focus:outline-none"
-          />
-        </div>
-
-        <NotesFilterBar
-          processedFilter={processedFilter}
-          onFilterChange={onFilterChange}
-        />
-
-        <NotesBatchBar
-          noteCount={notes.length}
-          selectedCount={selectedNoteIds.size}
-          batchDeleting={batchDeleting}
-          onToggleSelectAll={onToggleSelectAll}
-          onBatchDelete={onBatchDelete}
-        />
+    <div className="flex w-[288px] shrink-0 flex-col border-r border-n-900">
+      <div className="pane-header">
+        <h5 className="pane-title">Notes</h5>
+        <button
+          type="button"
+          title={selectedFolder ? `New folder under ${selectedFolder}` : "New folder"}
+          onClick={() => onOpenFolderDialog(selectedFolder)}
+          className="btn btn-ghost btn-icon"
+        >
+          <FolderPlus className="h-[15px] w-[15px]" />
+        </button>
+        <button
+          onClick={() => void onCreateNote()}
+          disabled={isSaving}
+          title="New note (⌘N)"
+          className="btn btn-primary btn-icon"
+        >
+          {isSaving ? (
+            <Loader2 className="h-[15px] w-[15px] animate-spin" />
+          ) : (
+            <Plus className="h-[15px] w-[15px]" />
+          )}
+        </button>
       </div>
 
-      <div ref={treeScrollRef} className="flex-1 overflow-y-auto">
+      <div className="flex gap-1.5 px-3 pb-2">
+        <div className="flex h-[30px] flex-1 items-center gap-1.5 rounded-md border border-n-900 bg-surface px-2">
+          <Search className="h-3.5 w-3.5 text-n-500" />
+          <input
+            type="text"
+            placeholder="Filter notes"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            className="min-w-0 flex-1 bg-transparent text-[12.5px] outline-none placeholder:text-n-600"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => onFilterChange(needsOn ? "all" : "needs")}
+          title="Only notes that still need ingesting"
+          className={cn(
+            "flex h-[30px] items-center gap-1 rounded-md border px-2 text-[11.5px]",
+            needsOn
+              ? "border-accent bg-accent/12 text-accent"
+              : "border-n-900 bg-surface text-n-400 hover:border-n-700",
+          )}
+        >
+          <Zap className="h-3.5 w-3.5" />
+          {needsCount}
+        </button>
+      </div>
+
+      <NotesBatchBar
+        noteCount={notes.length}
+        selectedCount={selectedNoteIds.size}
+        batchDeleting={batchDeleting}
+        onToggleSelectAll={onToggleSelectAll}
+        onBatchDelete={onBatchDelete}
+      />
+
+      <div ref={treeScrollRef} className="flex-1 overflow-y-auto px-1.5 pb-2">
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="h-6 w-6 animate-spin text-white/40" />
+            <Loader2 className="h-5 w-5 animate-spin text-n-500" />
           </div>
         ) : notes.length === 0 && vaultFolders.length === 0 ? (
           <NotesEmptyState variant="sidebar" searchQuery={searchQuery} />
         ) : (
-          <div className="p-2">
-            <VaultFolderTree
-              notes={visibleNotes}
-              scrollRef={treeScrollRef}
-              vaultFolders={vaultFolders}
-              vaultName={vaultName}
-              mediaFiles={mediaFiles}
-              attachmentFiles={attachmentFiles}
-              collapsedFolders={collapsedFolders}
-              selectedFolder={selectedFolder}
-              selectedNoteId={selectedNoteId}
-              selectedNoteIds={selectedNoteIds}
-              dragNoteId={dragNoteId}
-              dragFileRel={dragFileRel}
-              onToggleFolder={onToggleFolder}
-              onSelectFolder={onSelectFolder}
-              onNoteSelect={onNoteSelect}
-              onToggleNoteSelected={onToggleNoteSelected}
-              onCreateNote={onCreateNote}
-              onOpenFolderDialog={onOpenFolderDialog}
-              onMoveNoteToFolder={onMoveNoteToFolder}
-              onMoveVaultFile={onMoveVaultFile}
-              onDragNoteStart={onDragNoteStart}
-              onDragNoteEnd={onDragNoteEnd}
-              onDragFileStart={onDragFileStart}
-              onDragFileEnd={onDragFileEnd}
-              onFileClick={onFileClick}
-              onRenameFile={onRenameFile}
-              onDeleteVaultAttachment={onDeleteVaultAttachment}
-            />
-          </div>
+          <VaultFolderTree
+            notes={visibleNotes}
+            scrollRef={treeScrollRef}
+            vaultFolders={vaultFolders}
+            vaultName={vaultName}
+            mediaFiles={mediaFiles}
+            attachmentFiles={attachmentFiles}
+            collapsedFolders={collapsedFolders}
+            selectedFolder={selectedFolder}
+            selectedNoteId={selectedNoteId}
+            selectedNoteIds={selectedNoteIds}
+            dragNoteId={dragNoteId}
+            dragFileRel={dragFileRel}
+            onToggleFolder={onToggleFolder}
+            onSelectFolder={onSelectFolder}
+            onNoteSelect={onNoteSelect}
+            onToggleNoteSelected={onToggleNoteSelected}
+            onCreateNote={onCreateNote}
+            onOpenFolderDialog={onOpenFolderDialog}
+            onMoveNoteToFolder={onMoveNoteToFolder}
+            onMoveVaultFile={onMoveVaultFile}
+            onDragNoteStart={onDragNoteStart}
+            onDragNoteEnd={onDragNoteEnd}
+            onDragFileStart={onDragFileStart}
+            onDragFileEnd={onDragFileEnd}
+            onFileClick={onFileClick}
+            onRenameFile={onRenameFile}
+            onDeleteVaultAttachment={onDeleteVaultAttachment}
+          />
         )}
       </div>
 
-      <div className="border-t border-white/10 p-3">
-        <p className="text-xs text-white/40 text-center">
-          {processedFilter === "ingesting"
-            ? `${notes.filter(isActiveProcessingNote).length} ingesting`
-            : `${notes.length} ${notes.length === 1 ? "note" : "notes"}`}
-          {selectedFolder ? ` · ${selectedFolder}` : ` · ${vaultName}`}
-        </p>
+      <div className="flex justify-between border-t border-n-900 px-3 py-2 text-[11px] text-n-500">
+        <span className="truncate">
+          {visibleNotes.length} {visibleNotes.length === 1 ? "note" : "notes"} ·{" "}
+          {selectedFolder || vaultName}
+        </span>
+        <span>Drag to move</span>
       </div>
     </div>
   );

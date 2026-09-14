@@ -450,7 +450,7 @@ class Supervisor {
           MEILI_MASTER_KEY: masterKey,
           FIREFLY_BASE_URL: fireflyUrl(),
           FIREFLY_RUNTIME_FILE: path.join(dataDir, "firefly", "runtime.json"),
-          // Florence/Whisper/Marlin load in-process in the API — no sidecar URLs.
+          // Whisper/Marlin load in-process in the API — no sidecar URLs.
           AI_SETUP_MODE: process.env.AI_SETUP_MODE || "none",
           LLM_PROVIDER: process.env.LLM_PROVIDER || "local",
           EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || "local",
@@ -502,15 +502,14 @@ class Supervisor {
   }
 
   async startMultimodalServices() {
-    // No HTTP sidecars — Florence/Whisper/Marlin load in-process in the API.
+    // No HTTP sidecars — Whisper/Marlin load in-process in the API.
     const { modelsDir } = this.paths;
-    const florence = path.join(modelsDir, "florence-2-large");
     const whisper = path.join(modelsDir, "whisper-large-v3-turbo");
-    if (!fs.existsSync(florence) || !fs.existsSync(whisper)) {
+    if (!fs.existsSync(whisper)) {
       this.onStatus("Multimodal models not installed yet — in-process load deferred");
       return;
     }
-    this.onStatus("Preparing in-process Florence / Whisper / Marlin…");
+    this.onStatus("Preparing in-process Whisper / Marlin…");
     const backendDir = getBackendDir();
     const python = getPythonBinary();
     try {

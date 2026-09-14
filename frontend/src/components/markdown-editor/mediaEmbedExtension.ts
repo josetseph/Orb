@@ -20,6 +20,34 @@ import {
   vimeoEmbedUrl,
 } from "@/lib/utils";
 import { visibleLineChunks } from "./visibleLineChunks";
+import type { AttachmentJob } from "@/lib/types";
+import {
+  extractKey,
+  extractNoun,
+  extractedKeys,
+  toggleExtractBlock,
+} from "./extractMarkerExtension";
+
+export type MediaEmbedOptions = {
+  /** Per-attachment jobs keyed by the raw markdown url. */
+  jobs?: Record<string, AttachmentJob>;
+  /** Start "process this item only" for one attachment (force = redo). */
+  onProcess?: (rawUrl: string, force: boolean) => void;
+};
+
+/** The one-click action for an attachment kind, or null when Orb cannot read it. */
+function processVerb(kind: MediaKind): string | null {
+  if (kind === "audio" || kind === "video") return "Transcribe";
+  if (kind === "image") return "Describe";
+  if (kind === "pdf" || kind === "table" || kind === "text") return "Extract";
+  return null;
+}
+
+function processingLabel(kind: MediaKind): string {
+  if (kind === "audio" || kind === "video") return "Transcribing…";
+  if (kind === "image") return "Describing…";
+  return "Extracting…";
+}
 
 /** Markdown images + paperclip/mic attachment links + plain links to embeddable video.
  * URLs may contain spaces (unencoded filenames) — match until `)`.
@@ -56,6 +84,26 @@ function kindForUrl(url: string): MediaKind | null {
   if (isTabularUrl(cleaned)) return "table";
   if (isTextUrl(cleaned)) return "text";
   return null;
+}
+
+/**
+ * True when this plugin turns the whole `[label](url)` into a media widget.
+ *
+ * The live-preview extension asks before hiding a link's syntax: two plugins
+ * replacing the same range is a rendering bug, and a rule copied into both
+ * files would drift apart on the first change.
+ */
+export function mediaEmbedClaimsLink(
+  isImage: boolean,
+  rawLabel: string,
+  rawUrl: string,
+): boolean {
+  const kind = kindForUrl(rawUrl);
+  if (!kind) return false;
+  if (isImage) return true;
+  // 📎/🖇/🎤 marks an attachment Orb inserted; those always embed.
+  if (/^[📎🖇🎤]/u.test(rawLabel)) return true;
+  return kind === "youtube" || kind === "vimeo";
 }
 
 /** Cap the preview so a huge log file cannot lock up the editor. */
@@ -123,6 +171,10 @@ class MediaWidget extends WidgetType {
     readonly src: string,
     readonly label: string,
     readonly kbId: string,
+    readonly rawUrl: string,
+    readonly hasBlock: boolean,
+    readonly job: AttachmentJob | undefined,
+    readonly onProcess: MediaEmbedOptions["onProcess"],
   ) {
     super();
   }
@@ -132,14 +184,87 @@ class MediaWidget extends WidgetType {
       this.kind === other.kind &&
       this.src === other.src &&
       this.label === other.label &&
-      this.kbId === other.kbId
+      this.kbId === other.kbId &&
+      this.rawUrl === other.rawUrl &&
+      this.hasBlock === other.hasBlock &&
+      this.job?.status === other.job?.status &&
+      this.job?.error === other.job?.error &&
+      this.onProcess === other.onProcess
     );
   }
 
-  toDOM() {
+  /** Filename · status · [Transcript ▾] [Transcribe] — below every readable attachment. */
+  private footer(view: EditorView): HTMLElement | null {
+    const verb = processVerb(this.kind);
+    if (!verb) return null;
+    const noun = extractNoun(this.rawUrl);
+    const bar = document.createElement("div");
+    bar.className = "cm-media-embed-bar";
+
+    const name = document.createElement("span");
+    name.className = "cm-media-embed-bar-name";
+    name.textContent = this.label;
+    bar.appendChild(name);
+
+    const status = document.createElement("span");
+    status.className = "cm-media-embed-bar-status";
+    if (this.job?.status === "running") {
+      status.classList.add("cm-media-embed-bar-busy");
+      status.textContent = processingLabel(this.kind);
+    } else if (this.job?.status === "failed") {
+      status.classList.add("cm-media-embed-bar-failed");
+      status.textContent = `Failed: ${this.job.error || "unknown error"}`;
+      status.title = this.job.error || "";
+    } else if (this.hasBlock) {
+      status.classList.add("cm-media-embed-bar-ready");
+      status.textContent = `${noun} ready`;
+    } else {
+      status.textContent = "Not processed";
+    }
+    bar.appendChild(status);
+
+    if (this.hasBlock) {
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "cm-media-embed-btn";
+      toggle.textContent = `${noun} ▾`;
+      toggle.title = `Show or hide the ${noun.toLowerCase()}`;
+      toggle.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        toggleExtractBlock(view, this.rawUrl);
+      });
+      bar.appendChild(toggle);
+    }
+
+    if (this.onProcess) {
+      const run = document.createElement("button");
+      run.type = "button";
+      run.className = "cm-media-embed-btn" + (this.hasBlock ? "" : " cm-media-embed-btn-primary");
+      run.disabled = this.job?.status === "running";
+      run.textContent = this.hasBlock ? "Redo" : verb;
+      run.title = this.hasBlock
+        ? `Run this attachment again and replace its ${noun.toLowerCase()}`
+        : `${verb} only this attachment now — ingestion will not redo it`;
+      run.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        this.onProcess?.(this.rawUrl, this.hasBlock);
+      });
+      bar.appendChild(run);
+    }
+    return bar;
+  }
+
+  toDOM(view: EditorView) {
     const wrap = document.createElement("div");
     wrap.className = "cm-media-embed";
     wrap.setAttribute("contenteditable", "false");
+    const footer = this.footer(view);
+    // Every branch below ends with `return done()`: the footer is appended
+    // last, after that kind's media element, and the wrapper is handed back.
+    const done = () => {
+      if (footer) wrap.appendChild(footer);
+      return wrap;
+    };
 
     if (this.kind === "youtube" || this.kind === "vimeo") {
       const iframe = document.createElement("iframe");
@@ -152,34 +277,26 @@ class MediaWidget extends WidgetType {
       iframe.loading = "lazy";
       iframe.referrerPolicy = "strict-origin-when-cross-origin";
       wrap.appendChild(iframe);
-      return wrap;
+      return done();
     }
 
     if (this.kind === "pdf") {
-      const caption = document.createElement("div");
-      caption.className = "cm-media-embed-caption";
-      caption.textContent = this.label || "PDF";
       const iframe = document.createElement("iframe");
       iframe.src = this.src;
       iframe.title = this.label || "PDF";
       iframe.className = "cm-media-embed-pdf";
       iframe.loading = "lazy";
-      wrap.appendChild(caption);
       wrap.appendChild(iframe);
-      return wrap;
+      return done();
     }
 
     if (this.kind === "text" || this.kind === "table") {
-      const caption = document.createElement("div");
-      caption.className = "cm-media-embed-caption";
-      caption.textContent = this.label || "File";
       const body = document.createElement("div");
       body.className = "cm-media-embed-text";
       body.textContent = "Loading…";
-      wrap.appendChild(caption);
       wrap.appendChild(body);
       renderTextPreview(this.src, this.kind === "table", body);
-      return wrap;
+      return done();
     }
 
     if (this.kind === "image") {
@@ -194,7 +311,7 @@ class MediaWidget extends WidgetType {
         wrap.textContent = `Could not load image: ${this.label || this.src}`;
       });
       wrap.appendChild(img);
-      return wrap;
+      return done();
     }
 
     if (this.kind === "video") {
@@ -227,7 +344,7 @@ class MediaWidget extends WidgetType {
           })
           .catch(showError);
       });
-      return wrap;
+      return done();
     }
 
     const audio = document.createElement("audio");
@@ -236,12 +353,9 @@ class MediaWidget extends WidgetType {
     audio.className = "cm-media-embed-audio";
     audio.title = this.label;
     audio.src = this.src;
-    const caption = document.createElement("div");
-    caption.className = "cm-media-embed-caption";
-    caption.textContent = this.label || "Audio";
-    wrap.appendChild(caption);
+    // No caption: the footer below already names the file and its state.
     wrap.appendChild(audio);
-    return wrap;
+    return done();
   }
 
   ignoreEvent() {
@@ -255,7 +369,15 @@ class MediaWidget extends WidgetType {
  * Inactive lines: replace markdown with the media widget.
  * Active (cursor) line: leave raw markdown for editing.
  */
-export function createMediaEmbedDecorations(kbId = "default") {
+export function createMediaEmbedDecorations(
+  kbId = "default",
+  options: MediaEmbedOptions = {},
+) {
+  // Jobs are keyed by the raw url as typed; match on the backend's identity.
+  const jobsByKey = new Map<string, AttachmentJob>();
+  for (const [url, job] of Object.entries(options.jobs ?? {})) {
+    jobsByKey.set(extractKey(url), job);
+  }
   return ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
@@ -279,6 +401,9 @@ export function createMediaEmbedDecorations(kbId = "default") {
         const activeLine = view.state.doc.lineAt(
           view.state.selection.main.head,
         ).number;
+        // ponytail: whole-doc scan per rebuild to learn which attachments
+        // already have a block; index it if notes ever get large.
+        const done = extractedKeys(view.state.doc.toString());
 
         // Only scan the visible viewport — media markdown is single-line.
         for (const chunk of visibleLineChunks(view)) {
@@ -289,7 +414,7 @@ export function createMediaEmbedDecorations(kbId = "default") {
             const to = from + m[0].length;
             const isMdImage = m[0].startsWith("![");
             const label = (isMdImage ? m[1] : m[3] || "").replace(
-              /^[📎🖇🎤]\s*/,
+              /^[📎🖇🎤]\s*/u,
               "",
             );
             const rawUrl = (isMdImage ? m[2] : m[4] || "").trim();
@@ -298,15 +423,9 @@ export function createMediaEmbedDecorations(kbId = "default") {
             const kind = kindForUrl(rawUrl);
             if (!kind) continue;
 
-            // Plain markdown links (no 📎/🖇/🎤 / image) only embed for YouTube/Vimeo
-            if (
-              !isMdImage &&
-              !(m[3] || "").match(/^[📎🖇🎤]/) &&
-              kind !== "youtube" &&
-              kind !== "vimeo"
-            ) {
-              continue;
-            }
+            // Plain markdown links (no 📎/🖇/🎤 / image) only embed for
+            // YouTube/Vimeo; the rest are hidden-syntax links instead.
+            if (!mediaEmbedClaimsLink(isMdImage, m[3] || "", rawUrl)) continue;
 
             const line = view.state.doc.lineAt(from).number;
             if (line === activeLine) continue;
@@ -327,6 +446,10 @@ export function createMediaEmbedDecorations(kbId = "default") {
                   src,
                   label || rawUrl.trim(),
                   kbId,
+                  rawUrl.trim(),
+                  done.has(extractKey(rawUrl)),
+                  jobsByKey.get(extractKey(rawUrl)),
+                  options.onProcess,
                 ),
                 block: false,
               }).range(from, to),

@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import type { FinanceBudget, FinanceWorkspace } from "@/lib/types";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { FIELD_INPUT, money } from "../utils";
+import { EMPTY_ROW, FIELD_INPUT, LIST_ROW, money } from "../utils";
 
 export function BudgetsTab({
   budgets,
@@ -21,13 +21,13 @@ export function BudgetsTab({
   busy: boolean;
 }) {
   return (
-    <section className="grid gap-6 xl:grid-cols-[0.9fr,1.1fr]">
+    <section className="grid gap-4 xl:grid-cols-[0.9fr,1.1fr]">
       <form
         onSubmit={onCreate}
-        className="space-y-4 rounded-2xl border border-white/10 bg-black/35 p-5"
+        className="card-outline space-y-3"
       >
-        <h2 className="flex items-center gap-2 text-lg font-medium">
-          <Plus className="h-4 w-4 text-teal-300" /> New budget
+        <h2 className="kicker flex items-center gap-1.5 text-[11px]">
+          <Plus className="h-3 w-3" /> New budget
         </h2>
         <Field label="Name">
           <input
@@ -52,33 +52,33 @@ export function BudgetsTab({
         <button
           type="submit"
           disabled={busy}
-          className="rounded-lg bg-teal-500/20 px-4 py-2 text-sm text-teal-100 hover:bg-teal-500/30 disabled:opacity-60"
+          className="btn btn-primary"
         >
           {busy ? "Creating…" : "Create budget"}
         </button>
       </form>
       <Panel title="Budgets">
-        <ul className="space-y-2">
+        <ul>
           {budgets.map((budget) => (
             <li
               key={budget.id}
-              className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
+              className={LIST_ROW}
             >
               <div>
                 <div>{budget.name}</div>
-                <div className="text-xs text-white/40">
+                <div className="text-[11px] text-n-500">
                   {budget.auto_budget_amount
                     ? `${money(budget.auto_budget_amount, workspace.currency)} / ${budget.auto_budget_period || "month"}`
                     : "No auto amount"}
                 </div>
               </div>
-              <div className="font-mono text-rose-200">
+              <div className="tabular-nums text-n-300">
                 spent {money(budget.spent, budget.currency || workspace.currency)}
               </div>
             </li>
           ))}
           {budgets.length === 0 && (
-            <li className="rounded-xl border border-dashed border-white/10 px-4 py-6 text-sm text-white/40">
+            <li className={EMPTY_ROW}>
               No budgets yet.
             </li>
           )}

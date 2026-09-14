@@ -1,3 +1,4 @@
+import { LIST_ROW } from "./utils";
 export function ChartList({ data }: { data: unknown }) {
   const rows = Array.isArray(data)
     ? data
@@ -5,10 +6,10 @@ export function ChartList({ data }: { data: unknown }) {
       ? ((data as { data: unknown[] }).data)
       : [];
   if (!rows.length) {
-    return <p className="text-sm text-white/40">No chart data for this range.</p>;
+    return <p className="text-[12.5px] text-n-500">No chart data for this range.</p>;
   }
   return (
-    <ul className="space-y-2">
+    <ul>
       {rows.map((item, idx) => {
         const row = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
         const label = String(row.label || row.key || row.name || `Series ${idx + 1}`);
@@ -31,10 +32,10 @@ export function ChartList({ data }: { data: unknown }) {
         return (
           <li
             key={`${label}-${idx}`}
-            className="flex items-center justify-between gap-3 rounded-xl border border-white/5 px-4 py-3 text-sm"
+            className={LIST_ROW}
           >
-            <span className="truncate text-white/70">{label}</span>
-            <span className="font-mono text-teal-200">
+            <span className="truncate text-n-300">{label}</span>
+            <span className="tabular-nums text-accent-300">
               {value == null ? "—" : Number(value).toFixed(2)}
             </span>
           </li>
