@@ -207,7 +207,7 @@ export function ActivityStatus() {
           <div className="my-2 h-px bg-divider" />
           <div className="flex gap-3.5 text-[11px] text-n-500">
             <span className="inline-flex items-center gap-1"><Cpu className="h-3 w-3" /> Chat</span>
-            <span className="inline-flex items-center gap-1"><AudioLines className="h-3 w-3" /> Whisper</span>
+            <span className="inline-flex items-center gap-1"><AudioLines className="h-3 w-3" /> Qwen3-ASR</span>
             <span className="inline-flex items-center gap-1"><Eye className="h-3 w-3" /> Vision via chat model</span>
             <span className="ml-auto truncate">{currentKB}</span>
           </div>

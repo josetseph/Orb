@@ -1,4 +1,4 @@
-"""In-process Whisper and Marlin — no HTTP model sidecars.
+"""In-process Qwen3-ASR and Marlin — no HTTP model sidecars.
 
 Loaded lazily into the API process from MODELS_DIR snapshots. Only one heavy
 family is kept resident at a time to bound memory (same idea as the old
@@ -50,13 +50,14 @@ def _prepare_qwen35(device: str) -> None:
 
 
 class MultimodalRuntime:
-    """Lazy Whisper / Marlin loaded inside the API process."""
+    """Lazy Qwen3-ASR / Marlin loaded inside the API process."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._device: str | None = None
-        self._whisper_model = None
-        self._whisper_processor = None
+        self._asr_model = None
+        self._asr_processor = None
+        self._asr_path: Path | None = None
         self._marlin_model = None
 
     @property
@@ -70,20 +71,21 @@ class MultimodalRuntime:
             "mode": "in_process",
             "device": self.device,
             "models_ready": {
-                "whisper": is_hf_snapshot_ready(multimodal_model_path("whisper")),
+                "asr": is_hf_snapshot_ready(multimodal_model_path("asr")),
                 "marlin": is_hf_snapshot_ready(multimodal_model_path("marlin")),
             },
             "loaded": {
-                "whisper": self._whisper_model is not None,
+                "asr": self._asr_model is not None,
                 "marlin": self._marlin_model is not None,
             },
         }
 
     def _unload_except(self, keep: str) -> None:
         changed = False
-        if keep != "whisper" and self._whisper_model is not None:
-            self._whisper_model = None
-            self._whisper_processor = None
+        if keep != "asr" and self._asr_model is not None:
+            self._asr_model = None
+            self._asr_processor = None
+            self._asr_path = None
             changed = True
         if keep != "marlin" and self._marlin_model is not None:
             self._marlin_model = None
@@ -119,15 +121,16 @@ class MultimodalRuntime:
 
     def unload(self, family: str | None = None) -> dict[str, Any]:
         family = family.lower() if family else None
-        valid = {None, "whisper", "marlin"}
+        valid = {None, "asr", "marlin"}
         if family not in valid:
-            raise ValueError("family must be one of: whisper, marlin")
+            raise ValueError("family must be one of: asr, marlin")
         with self._lock:
             if family is None:
                 self._unload_except("")
-            elif family == "whisper":
-                self._whisper_model = None
-                self._whisper_processor = None
+            elif family == "asr":
+                self._asr_model = None
+                self._asr_processor = None
+                self._asr_path = None
                 gc.collect()
             elif family == "marlin":
                 self._marlin_model = None
@@ -135,46 +138,31 @@ class MultimodalRuntime:
             logger.info("Unloaded multimodal family: %s", family or "all")
             return self.status()
 
-    # ---- Whisper ----------------------------------------------------------
+    # ---- Transcription (Qwen3-ASR) ----------------------------------------
 
-    def _load_whisper(self) -> None:
-        if self._whisper_model is not None:
+    def _load_asr(self, model_path: Path) -> None:
+        if self._asr_model is not None and self._asr_path == model_path:
             return
-        path = multimodal_model_path("whisper")
-        if not is_hf_snapshot_ready(path):
-            raise RuntimeError(
-                f"Whisper model not found at {path}. Download the media models on the Models page."
-            )
-        if "turbo" in path.name.lower():
-            # Measured on distant-mic audio: turbo's shallow decoder invents
-            # text in low-signal stretches where large-v3 stays quiet.
-            logger.warning(
-                "Using %s — the turbo decoder hallucinates on noisy audio. "
-                "Download whisper-large-v3 on the Models page for reliable transcripts.",
-                path.name,
-            )
-        from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
+        from transformers import AutoModelForMultimodalLM, AutoProcessor
 
         self._unload_ggufs()
-        self._unload_except("whisper")
-        model_path = str(path)
-        logger.info("Loading Whisper from %s on %s", model_path, self.device)
+        self._unload_except("asr")
+        logger.info("Loading Qwen3-ASR from %s on %s", model_path, self.device)
         started = time.perf_counter()
         import torch
 
         dtype = torch.float32 if self.device == "cpu" else torch.float16
-        self._whisper_model = (
-            AutoModelForSpeechSeq2Seq.from_pretrained(
-                model_path,
-                torch_dtype=dtype,
-                low_cpu_mem_usage=True,
+        self._asr_model = (
+            AutoModelForMultimodalLM.from_pretrained(
+                str(model_path), dtype=dtype, low_cpu_mem_usage=True
             )
             .to(self.device)
             .eval()
         )
-        self._whisper_processor = AutoProcessor.from_pretrained(model_path)
-        self._record_load("whisper", started)
-        logger.info("Whisper loaded")
+        self._asr_processor = AutoProcessor.from_pretrained(str(model_path))
+        self._asr_path = model_path
+        self._record_load("asr", started)
+        logger.info("Qwen3-ASR loaded")
 
     def _resolve_ffmpeg_bins(self) -> tuple[str | None, str | None]:
         """Locate system ``ffmpeg`` / ``ffprobe`` (PATH + common install dirs).
@@ -289,53 +277,60 @@ class MultimodalRuntime:
         return self._load_audio_mono_16k_pyav(audio_path)
 
     def transcribe_audio_path(self, audio_path: str) -> str:
-        """Transcribe with the best engine this machine has.
+        """Transcribe with Qwen3-ASR on the engine this machine has.
 
-        On Apple Silicon with mlx-whisper installed this runs on the GPU and
-        never loads the PyTorch model at all, so no accelerator memory is taken
-        from the resident chat/embed model.
+        Apple Silicon runs it on the GPU through MLX and never loads the torch
+        model, so no accelerator memory is taken from the chat model; every
+        other platform goes through transformers.
         """
         from app.core.config import settings
-        from app.services import whisper_engine
+        from app.services import asr_engine
 
-        choice = whisper_engine.choose(
-            multimodal_model_path("whisper").parent,
-            preferred_engine=settings.WHISPER_ENGINE,
+        choice = asr_engine.choose(
+            multimodal_model_path("asr").parent,
+            preferred_engine=settings.ASR_ENGINE,
         )
-        if choice.engine == whisper_engine.ENGINE_MLX and choice.ready:
-            # mlx-whisper holds its own weights; drop any resident torch model
-            # first so both are not in memory at once.
+        if not choice.ready:
+            raise RuntimeError(
+                f"Qwen3-ASR is not downloaded ({choice.reason}). "
+                "Download the media models on the Models page."
+            )
+        if choice.engine == asr_engine.ENGINE_MLX:
             with self._lock:
                 self._unload_except("")
-            return whisper_engine.transcribe_with_mlx(
-                choice.model_path, audio_path, language=settings.WHISPER_LANGUAGE
+            return asr_engine.transcribe_with_mlx(
+                choice.model_path, audio_path, language=settings.ASR_LANGUAGE
             )
-        return self._transcribe_with_transformers(audio_path)
+        return self._transcribe_with_transformers(choice.model_path, audio_path)
 
-    def _transcribe_with_transformers(self, audio_path: str) -> str:
+    def _transcribe_with_transformers(self, model_path: Path, audio_path: str) -> str:
         from app.core.config import settings
+        from app.services.asr_engine import language_name
 
         with self._lock:
-            self._load_whisper()
-            assert self._whisper_model is not None and self._whisper_processor is not None
+            self._load_asr(model_path)
+            assert self._asr_model is not None and self._asr_processor is not None
             audio = self._load_audio_mono_16k(audio_path)
             if audio.size == 0:
                 return ""
-            model_dtype = next(self._whisper_model.parameters()).dtype
-            input_features = self._whisper_processor(
-                audio, sampling_rate=16000, return_tensors="pt"
-            ).input_features.to(device=self.device, dtype=model_dtype)
-            generated_ids = self._whisper_model.generate(
-                input_features,
-                generation_config=self._whisper_model.generation_config,
-                # None lets Whisper detect the language; forcing "en" on
-                # non-English audio is a known source of invented transcripts.
-                language=settings.WHISPER_LANGUAGE,
-                task="transcribe",
+            request = {"audio": audio, "sampling_rate": 16000}
+            if language_name(settings.ASR_LANGUAGE):
+                request["language"] = language_name(settings.ASR_LANGUAGE)
+            inputs = self._asr_processor.apply_transcription_request(**request).to(
+                self._asr_model.device, self._asr_model.dtype
             )
-            return self._whisper_processor.batch_decode(
-                generated_ids, skip_special_tokens=True
-            )[0]
+            import torch
+
+            # No fixed cap: the bound scales with the recording so a long
+            # lecture is never cut mid-sentence (speech is ~3 tokens/s).
+            seconds = audio.size / 16000
+            with torch.no_grad():
+                output_ids = self._asr_model.generate(
+                    **inputs, max_new_tokens=int(seconds * 8) + 256
+                )
+            generated = output_ids[:, inputs["input_ids"].shape[1] :]
+            text = self._asr_processor.decode(generated, return_format="transcription_only")[0]
+            return (text or "").strip()
 
     # ---- Marlin -----------------------------------------------------------
 

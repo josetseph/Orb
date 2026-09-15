@@ -200,7 +200,7 @@ class MultimediaService:
             raise RuntimeError(f"Marlin captioning failed: {exc}") from exc
 
     def unload_local_models(self, family: str | None = None) -> None:
-        """Unload Whisper (or every media model) from the API process."""
+        """Unload the speech model (or every media model) from the API process."""
         from app.services.multimodal_runtime import multimodal_runtime
 
         try:
@@ -232,7 +232,7 @@ class MultimediaService:
                 os.remove(local_path)
 
     def transcribe_audio(self, audio_path: str) -> str:
-        """Transcribe audio via in-process Whisper (multimodal_runtime)."""
+        """Transcribe audio via in-process Qwen3-ASR (multimodal_runtime)."""
         local_path = self._download_temp_file(audio_path)
         try:
             logger.info(f"Transcribing audio: {local_path}")
@@ -246,7 +246,7 @@ class MultimediaService:
                 os.remove(local_path)
 
     def process_video(self, video_path: str) -> str:
-        """Process a video with Whisper audio transcription and Marlin visual analysis."""
+        """Process a video with Qwen3-ASR audio transcription and Marlin visual analysis."""
         transcript = self.transcribe_video_audio(video_path)
         visual = self.describe_video_visual(video_path)
         parts = []

@@ -18,9 +18,10 @@ const FILE_NAME = "credentials.enc";
 const KNOWN_PROVIDERS = ["openai", "gemini", "anthropic", "huggingface"];
 
 /**
- * OpenAI-compatible servers are identified by their URL rather than a name the
- * user invents, so two endpoints can never share a key by accident. Must match
- * normalize_base_url() in backend/app/services/credentials.py.
+ * OpenAI-compatible servers are identified by their URL, so two endpoints can
+ * never share a key by accident. A `#Name` fragment is a profile: a second key
+ * on the same server. Must match normalize_base_url() in
+ * backend/app/services/credentials.py.
  */
 const ENDPOINT_PREFIX = "endpoint:";
 
@@ -42,7 +43,15 @@ function normalizeBaseUrl(raw) {
     ? `${url.hostname.toLowerCase()}:${url.port}`
     : url.hostname.toLowerCase();
   const path = url.pathname.replace(/\/+$/, "");
-  return `${scheme}://${host}${path}`;
+  // Decoded and whitespace-collapsed, like the backend, so both sides derive
+  // the same credential id from "…/v1#Gemini - Personal".
+  let profile = "";
+  try {
+    profile = decodeURIComponent(url.hash.slice(1)).trim().split(/\s+/).join(" ");
+  } catch (_) {
+    profile = url.hash.slice(1).trim();
+  }
+  return `${scheme}://${host}${path}${profile ? `#${profile}` : ""}`;
 }
 
 function endpointCredentialId(baseUrl) {

@@ -182,7 +182,11 @@ export function NodeDetailModal({
           <button
             type="button"
             className="btn btn-primary flex-1"
-            onClick={() => router.push("/chat")}
+            onClick={() =>
+              router.push(
+                `/chat?q=${encodeURIComponent(`Tell me everything I know about ${d.name}`)}`,
+              )
+            }
           >
             <MessageCircle className="h-3.5 w-3.5" /> Ask about this
           </button>

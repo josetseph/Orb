@@ -29,7 +29,7 @@ Acceleration is auto-detected (Metal on macOS, CUDA when `nvidia-smi` is present
 - `ORB_EMBED_N_CTX=8192`
 - `ORB_RERANK_N_CTX=8192`
 
-Only one heavy model is resident at a time (chat ↔ embed ↔ rerank ↔ Florence/Whisper/Marlin). Chat aborts + retries on Gemma 4 ordinal/"or the" repetition cascades.
+Only one heavy model is resident at a time (chat ↔ embed ↔ rerank ↔ Qwen3-ASR/Marlin). Chat aborts + retries on Gemma 4 ordinal/"or the" repetition cascades.
 
 Install llama-cpp-python with the matching backend, e.g. Metal:
 

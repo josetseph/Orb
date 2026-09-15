@@ -45,10 +45,10 @@ def _vision_row() -> dict:
         return {
             "kind": "vision",
             "label": "Vision",
-            "purpose": "Images and PDF pages are read by the model you chose above",
+            "purpose": "Images and PDF pages, read by the model you chose above",
             "name": settings.LLM_PROVIDER,
             "installed": True,
-            "engine_note": "cloud",
+            "engine_note": "cloud endpoint",
         }
     present = gguf_paths_if_present() or {}
     chat = present.get("chat")
@@ -56,26 +56,31 @@ def _vision_row() -> dict:
     return {
         "kind": "vision",
         "label": "Vision",
-        "purpose": "Images and PDF pages are read by the chat model through its projector",
-        "name": proj.name if proj else (f"no projector beside {chat.name}" if chat else "no chat model"),
+        "purpose": "Images and PDF pages, read by the chat model",
+        "name": proj.name if proj else (chat.name if chat else "no chat model"),
         "installed": proj is not None,
-        "engine_note": "projector" if proj else None,
+        "engine_note": "GGUF projector",
+        "hint": (
+            None
+            if proj
+            else "no projector yet — Download media models fetches it for this chat model"
+        ),
     }
 
 
 def _media_state() -> dict:
-    """Whisper and Marlin plus the vision route — what Orb runs on attachments.
+    """Qwen3-ASR and Marlin plus the vision route — what Orb runs on attachments.
 
     Reported read-only alongside embed/rerank so the page accounts for every
-    model on the machine, not just the chat one. Whisper additionally reports
-    which engine will serve it, since that differs by platform.
+    model on the machine, not just the chat one. Transcription additionally
+    reports which engine will serve it, since that differs by platform.
     """
-    from app.services import whisper_engine
+    from app.services import asr_engine
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
 
     rows: list[dict] = [_vision_row()]
     labels = {
-        "whisper": ("Whisper", "Audio and video transcription"),
+        "asr": ("Transcription", "Audio and video transcription"),
         "marlin": ("Marlin", "Video understanding"),
     }
     for kind, (label, purpose) in labels.items():
@@ -89,27 +94,35 @@ def _media_state() -> dict:
             "purpose": purpose,
             "name": path.name,
             "installed": is_hf_snapshot_ready(path),
+            "engine_note": "Qwen3.5 via transformers" if kind == "marlin" else None,
+            "hint": "not downloaded yet",
         }
-        if kind == "whisper":
+        if kind == "asr":
             try:
-                choice = whisper_engine.choose(
-                    path.parent, preferred_engine=settings_whisper_engine()
+                choice = asr_engine.choose(
+                    path.parent, preferred_engine=settings_asr_engine()
                 )
                 row["engine"] = choice.engine
                 row["engine_note"] = (
-                    "GPU via MLX" if choice.engine == whisper_engine.ENGINE_MLX
-                    else "CPU/torch"
+                    "Qwen3-ASR via MLX"
+                    if choice.engine == asr_engine.ENGINE_MLX
+                    else "Qwen3-ASR via transformers"
                 )
+                if choice.model_path is not None:
+                    row["name"] = choice.model_path.name
+                    row["installed"] = True
             except Exception:  # pylint: disable=broad-exception-caught
                 row["engine"] = None
+        if row["installed"]:
+            row["hint"] = None
         rows.append(row)
     return {"models": rows}
 
 
-def settings_whisper_engine() -> str:
+def settings_asr_engine() -> str:
     from app.core.config import settings
 
-    return settings.WHISPER_ENGINE
+    return settings.ASR_ENGINE
 
 
 def _local_state() -> dict:

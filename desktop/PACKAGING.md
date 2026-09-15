@@ -38,7 +38,7 @@ dev stacks (`8000`, `3000`, `6333`, `7700`):
 | Qdrant | **17433** |
 | Meilisearch | **17470** |
 
-Florence / Whisper / Marlin / chat / embed / rerank all load **in-process** in the API (no model HTTP ports).
+Qwen3-ASR / Marlin / chat / embed / rerank all load **in-process** in the API (no model HTTP ports).
 
 - Electron loads `http://127.0.0.1:17400`.
 - Desktop frontend build uses **same-origin** `NEXT_PUBLIC_API_URL=/api/v1` with Next rewrites to `http://127.0.0.1:17401`.

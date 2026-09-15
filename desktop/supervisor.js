@@ -450,7 +450,7 @@ class Supervisor {
           MEILI_MASTER_KEY: masterKey,
           FIREFLY_BASE_URL: fireflyUrl(),
           FIREFLY_RUNTIME_FILE: path.join(dataDir, "firefly", "runtime.json"),
-          // Whisper/Marlin load in-process in the API — no sidecar URLs.
+          // Qwen3-ASR/Marlin load in-process in the API — no sidecar URLs.
           AI_SETUP_MODE: process.env.AI_SETUP_MODE || "none",
           LLM_PROVIDER: process.env.LLM_PROVIDER || "local",
           EMBEDDING_PROVIDER: process.env.EMBEDDING_PROVIDER || "local",
@@ -502,14 +502,16 @@ class Supervisor {
   }
 
   async startMultimodalServices() {
-    // No HTTP sidecars — Whisper/Marlin load in-process in the API.
+    // No HTTP sidecars — Qwen3-ASR/Marlin load in-process in the API.
     const { modelsDir } = this.paths;
-    const whisper = path.join(modelsDir, "whisper-large-v3-turbo");
-    if (!fs.existsSync(whisper)) {
+    const transcriber = ["qwen3-asr-1.7b", "qwen3-asr-1.7b-hf", "qwen3-asr-0.6b", "qwen3-asr-0.6b-hf"]
+      .map((name) => path.join(modelsDir, name))
+      .find((dir) => fs.existsSync(dir));
+    if (!transcriber) {
       this.onStatus("Multimodal models not installed yet — in-process load deferred");
       return;
     }
-    this.onStatus("Preparing in-process Whisper / Marlin…");
+    this.onStatus("Preparing in-process transcription / Marlin…");
     const backendDir = getBackendDir();
     const python = getPythonBinary();
     try {

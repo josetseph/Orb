@@ -142,7 +142,9 @@ class TestEndpointIdentity:
 
         assert normalize_base_url("HTTPS://Api.Example.COM/v1/") == "https://api.example.com/v1"
         assert normalize_base_url("  https://api.test/v1  ") == "https://api.test/v1"
-        assert normalize_base_url("https://api.test/v1?x=1#f") == "https://api.test/v1"
+        # The query goes; the fragment stays as a profile name (see test_endpoint_profiles).
+        assert normalize_base_url("https://api.test/v1?x=1") == "https://api.test/v1"
+        assert normalize_base_url("https://api.test/v1?x=1#f") == "https://api.test/v1#f"
 
     def test_port_is_preserved(self):
         from app.services.credentials import normalize_base_url

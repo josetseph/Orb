@@ -187,7 +187,7 @@ export default function SetupPage() {
       {error && <div className="card mb-4 text-[12.5px] text-danger-text">{error}</div>}
 
       <form onSubmit={save} className="max-w-[560px] space-y-3.5">
-        {pathField("Notes vault folder — the Markdown files Orb reads and writes", vaultPath, setVaultPath, "Choose notes vault folder", false, "~/Documents/Orb Vault")}
+        {pathField("Default workspace vault — the Markdown folder for the built-in \"default\" workspace only. Every other workspace picks its own vault when it is created (Workspace tab).", vaultPath, setVaultPath, "Choose the default workspace's vault folder", false, "~/Documents/Orb Vault")}
         {pathField("Data folder — graph, vectors, search index", dataDir, setDataDir, "Choose data directory", true)}
         {pathField("Models folder — local model weights", modelsDir, setModelsDir, "Choose models directory", true)}
         <div className="flex items-center gap-3">

@@ -8,7 +8,7 @@ import { getDesktopBridge } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { SettingRow, SettingsShell } from "@/components/settings-shell";
 import type { ModelsPageState } from "@/lib/models-types";
-import { endpointName, setEndpointName } from "@/lib/endpoint-names";
+import { endpointName, endpointRequestUrl, setEndpointName } from "@/lib/endpoint-names";
 import { Card, ModelPicker, SavedTick } from "./_components/ModelPicker";
 
 type Mode = "local" | "cloud";
@@ -38,8 +38,6 @@ export default function ModelsPage() {
   // the right default, and the page exists to make model choices legible.
   const [kbIngestModel, setKbIngestModel] = useState("");
   const [newName, setNewName] = useState("");
-  // Bumped when a name changes so the lists re-read localStorage.
-  const [nameNonce, setNameNonce] = useState(0);
 
   // System draft
   const [sysMode, setSysMode] = useState<Mode>("local");
@@ -177,7 +175,6 @@ export default function ModelsPage() {
     try {
       await bridge.deleteEndpointCredential(url);
       setEndpointName(url, "");
-      setNameNonce((n) => n + 1);
       await load();
     } catch (err) {
       setError(describeError(err, "Could not remove the endpoint."));
@@ -191,16 +188,17 @@ export default function ModelsPage() {
     setBusy("endpoint");
     setError(null);
     try {
-      const url = newUrl.trim();
+      // The name rides in the fragment, so "Personal" and "Work" on one
+      // server are two endpoints with two keys.
+      const base = endpointRequestUrl(newUrl.trim());
+      const url = newName.trim() ? `${base}#${newName.trim()}` : base;
       const result = await bridge.setEndpointCredential(url, newKey.trim());
       if (!result?.ok) throw new Error(result?.error || "Could not add the endpoint");
-      if (newName.trim()) setEndpointName(url, newName.trim());
       if (!sysUrl) setSysUrl(url);
       if (!kbUrl) setKbUrl(url);
       setNewUrl("");
       setNewKey("");
       setNewName("");
-      setNameNonce((n) => n + 1);
       flash("endpoint");
       await load();
     } catch (err) {
@@ -210,7 +208,7 @@ export default function ModelsPage() {
     }
   }
 
-  /** Whisper / Marlin and the chat model's vision projector — fetched together. */
+  /** Transcription / Marlin models and the chat model's vision projector — fetched together. */
   async function downloadMedia() {
     setBusy("media");
     setError(null);
@@ -389,23 +387,16 @@ export default function ModelsPage() {
         {/* 3 — cloud endpoints */}
         <Card
           title="Cloud endpoints (optional)"
-          subtitle="Any server speaking the OpenAI API — OpenRouter, Groq, Google's OpenAI endpoint, Together, vLLM, LM Studio, llama-server, Ollama. The URL identifies the key, so two servers never share one."
+          subtitle="Any server speaking the OpenAI API — OpenRouter, Groq, Google's OpenAI endpoint, Together, vLLM, LM Studio, llama-server, Ollama. The URL plus the name you give it identifies the key, so one server can hold several accounts and two servers never share one."
         >
           {endpoints.length > 0 && (
             <div className="space-y-1.5">
               {endpoints.map((e) => (
-                <div key={`${e}:${nameNonce}`} className="flex items-center gap-2 rounded-md px-3 py-2 shadow-sm">
-                  <input
-                    type="text"
-                    defaultValue={endpointName(e)}
-                    onBlur={(ev) => {
-                      setEndpointName(e, ev.target.value);
-                      setNameNonce((n) => n + 1);
-                    }}
-                    title="Rename this endpoint"
-                    className="input w-32 shrink-0"
-                  />
-                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-n-500">{e}</span>
+                <div key={e} className="flex items-center gap-2 rounded-md px-3 py-2 shadow-sm">
+                  <span className="w-32 shrink-0 truncate text-[12px] text-text" title={endpointName(e)}>
+                    {endpointName(e)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-n-500">{endpointRequestUrl(e)}</span>
                   <button
                     type="button"
                     onClick={() => void removeEndpoint(e)}
@@ -424,7 +415,7 @@ export default function ModelsPage() {
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="Name (optional — defaults to the host)"
+              placeholder="Name, e.g. Personal — several names can share one URL, each with its own key"
               className="input"
             />
             <input
@@ -517,7 +508,11 @@ export default function ModelsPage() {
                 description={`${m.purpose} · ${m.name}`}
               >
                 {m.engine_note && <span className="tag tag-accent">{m.engine_note}</span>}
-                {!m.installed && <span className="text-[10px] text-n-500">downloads on first use</span>}
+                {!m.installed && (
+                  <span className="max-w-[220px] text-right text-[11px] text-n-500">
+                    {m.hint ?? "not downloaded yet"}
+                  </span>
+                )}
               </SettingRow>
             ))}
           </div>
@@ -604,7 +599,7 @@ function CloudFields({
           >
             {endpoints.map((e) => (
               <option key={e} value={e}>
-                {endpointName(e)} — {e}
+                {endpointName(e)} — {endpointRequestUrl(e)}
               </option>
             ))}
             <option value="__custom__">Another URL…</option>

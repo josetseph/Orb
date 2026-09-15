@@ -273,7 +273,7 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
     finally:
         try:
             if kind in ("audio", "video"):
-                await asyncio.to_thread(multimedia_service.unload_local_models, "whisper")
+                await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
             if kind == "video":
                 await asyncio.to_thread(multimedia_service.unload_marlin)
         except Exception as exc:  # pylint: disable=broad-exception-caught

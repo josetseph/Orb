@@ -153,7 +153,7 @@ from sqlalchemy.pool import NullPool
 engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=NullPool)
 print("ok sqlalchemy_async")
 # numpy 2.x ships required modules under numpy/_core/tests — pruning that
-# tree breaks scipy → sklearn → transformers (Florence/Whisper imports).
+# tree breaks scipy → sklearn → transformers (Qwen3-ASR/Marlin imports).
 try:
     import numpy._core.tests._natype  # noqa: F401
     print("ok numpy._core.tests")
@@ -203,7 +203,7 @@ function extractArchive(archivePath, destDir, stripComponents = 0) {
 function pruneBackendTree() {
   // Never strip tests/ under site-packages: numpy 2.x requires
   // numpy/_core/tests/_natype.py at import time (pulled in via scipy/sklearn
-  // when transformers loads GenerationMixin → Florence/Whisper fail otherwise).
+  // when transformers loads GenerationMixin → Qwen3-ASR/Marlin fail otherwise).
   const isSitePackages = (p) =>
     p.replace(/\\/g, "/").includes("/site-packages/");
 

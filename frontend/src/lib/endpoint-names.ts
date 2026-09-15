@@ -1,11 +1,10 @@
 /**
- * Friendly names for OpenAI-compatible endpoints.
+ * Names for OpenAI-compatible endpoints.
  *
- * Kept in localStorage rather than the credential store: a label is not a
- * secret, needs no encryption, and storing it beside the key would mean a new
- * IPC method and a migration for something the user can retype in seconds.
- * Falls back to the host, so an unnamed endpoint still reads as "openrouter.ai"
- * rather than a full URL.
+ * A name given when the endpoint is added travels in the URL fragment
+ * ("…/v1#Personal") and is part of the endpoint's identity, which is what
+ * lets one server hold several keys. Endpoints added before that carried no
+ * name; for those a label lives in localStorage, falling back to the host.
  */
 
 const KEY = "orb.endpointNames";
@@ -30,8 +29,25 @@ export function endpointHost(url: string): string {
   }
 }
 
+/** The profile carried in the URL fragment ("…/v1#Work" → "Work"), or "". */
+export function endpointProfile(url: string): string {
+  const hash = url.indexOf("#");
+  if (hash < 0) return "";
+  try {
+    return decodeURIComponent(url.slice(hash + 1)).trim();
+  } catch {
+    return url.slice(hash + 1).trim();
+  }
+}
+
+/** The URL without its profile name — what requests are sent to. */
+export function endpointRequestUrl(url: string): string {
+  const hash = url.indexOf("#");
+  return hash < 0 ? url : url.slice(0, hash);
+}
+
 export function endpointName(url: string): string {
-  return readAll()[url]?.trim() || endpointHost(url);
+  return endpointProfile(url) || readAll()[url]?.trim() || endpointHost(endpointRequestUrl(url));
 }
 
 /** Empty name clears the override and falls back to the host. */

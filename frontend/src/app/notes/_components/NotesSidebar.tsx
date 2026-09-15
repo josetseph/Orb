@@ -23,12 +23,15 @@ type NotesSidebarProps = {
   vaultFolders: string[];
   mediaFiles: VaultFileEntry[];
   attachmentFiles: VaultFileEntry[];
-  collapsedFolders: Set<string>;
+  expandedFolders: Set<string>;
   selectedNoteId: string | null;
   selectedNoteIds: Set<string>;
   batchDeleting: boolean;
   dragNoteId: string | null;
   dragFileRel: string | null;
+  selectedFileRels: Set<string>;
+  onToggleFileSelected: (relPath: string) => void;
+  onMoveVaultFiles: (rels: string[], folder: string) => void;
   onSearchChange: (query: string) => void;
   onFilterChange: (filter: ProcessedFilter) => void;
   onReingestVault: () => void;
@@ -39,6 +42,7 @@ type NotesSidebarProps = {
   onToggleFolder: (path: string) => void;
   onSelectFolder: (path: string) => void;
   onNoteSelect: (note: Note) => void;
+  onNoteContextMenu?: (note: Note, x: number, y: number) => void;
   onToggleNoteSelected: (noteId: string) => void;
   onMoveNoteToFolder: (noteId: string, folder: string) => void;
   onMoveVaultFile: (fromRel: string, folder: string) => void;
@@ -62,12 +66,15 @@ export function NotesSidebar({
   vaultFolders,
   mediaFiles,
   attachmentFiles,
-  collapsedFolders,
+  expandedFolders,
   selectedNoteId,
   selectedNoteIds,
   batchDeleting,
   dragNoteId,
   dragFileRel,
+  selectedFileRels,
+  onToggleFileSelected,
+  onMoveVaultFiles,
   onSearchChange,
   onFilterChange,
   onOpenFolderDialog,
@@ -77,6 +84,7 @@ export function NotesSidebar({
   onToggleFolder,
   onSelectFolder,
   onNoteSelect,
+  onNoteContextMenu,
   onToggleNoteSelected,
   onMoveNoteToFolder,
   onMoveVaultFile,
@@ -156,7 +164,7 @@ export function NotesSidebar({
       />
 
       <div ref={treeScrollRef} className="flex-1 overflow-y-auto px-1.5 pb-2">
-        {isLoading ? (
+        {isLoading && notes.length === 0 && vaultFolders.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-n-500" />
           </div>
@@ -170,15 +178,19 @@ export function NotesSidebar({
             vaultName={vaultName}
             mediaFiles={mediaFiles}
             attachmentFiles={attachmentFiles}
-            collapsedFolders={collapsedFolders}
+            expandedFolders={expandedFolders}
             selectedFolder={selectedFolder}
             selectedNoteId={selectedNoteId}
             selectedNoteIds={selectedNoteIds}
             dragNoteId={dragNoteId}
             dragFileRel={dragFileRel}
+            selectedFileRels={selectedFileRels}
+            onToggleFileSelected={onToggleFileSelected}
+            onMoveVaultFiles={onMoveVaultFiles}
             onToggleFolder={onToggleFolder}
             onSelectFolder={onSelectFolder}
             onNoteSelect={onNoteSelect}
+            onNoteContextMenu={onNoteContextMenu}
             onToggleNoteSelected={onToggleNoteSelected}
             onCreateNote={onCreateNote}
             onOpenFolderDialog={onOpenFolderDialog}

@@ -226,6 +226,16 @@ export default function ChatPage() {
     void initializeForKb(currentKB);
   }, [currentKB, initializeForKb, isHydrated]);
 
+  // ?q= from "Ask about this" on the graph: a fresh thread with the question
+  // waiting in the composer, not sent until you press Enter.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (!q) return;
+    window.history.replaceState({}, "", "/chat");
+    startNewConversation();
+    setInput(q);
+  }, [startNewConversation]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);

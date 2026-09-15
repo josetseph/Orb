@@ -1,4 +1,4 @@
-"""Download Whisper and Marlin into MODELS_DIR for local multimedia."""
+"""Download Qwen3-ASR and Marlin into MODELS_DIR for local multimedia."""
 
 from __future__ import annotations
 
@@ -15,37 +15,36 @@ from app.core.paths import (
 logger = get_logger("MultimodalModels")
 
 
-def _whisper_repo_and_dir() -> tuple[str, str]:
-    """Whisper's repo depends on the engine this machine will actually use.
+def _asr_repo_and_dir() -> tuple[str, str]:
+    """Qwen3-ASR's repo depends on the engine this machine will actually use.
 
-    An explicit MODEL_WHISPER_HF still wins, so a pinned deployment is
-    unaffected; otherwise the platform default is chosen (MLX on Apple Silicon).
+    An explicit MODEL_ASR_HF still wins, so a pinned deployment is unaffected;
+    otherwise the platform default is chosen (MLX layout on Apple Silicon, the
+    ``-hf`` conversion elsewhere).
     """
-    from app.services import whisper_engine
+    from app.services import asr_engine
 
-    configured_repo = (settings.MODEL_WHISPER_HF or "").strip()
-    configured_dir = (settings.MODEL_WHISPER_LOCAL or "").strip()
+    configured_repo = (settings.MODEL_ASR_HF or "").strip()
+    configured_dir = (settings.MODEL_ASR_LOCAL or "").strip()
     if configured_repo and configured_dir:
         return configured_repo, configured_dir
 
-    choice = whisper_engine.choose(
-        resolve_models_dir(), preferred_engine=settings.WHISPER_ENGINE
-    )
+    choice = asr_engine.choose(resolve_models_dir(), preferred_engine=settings.ASR_ENGINE)
     if choice.model_path is not None:
         return (
-            configured_repo or whisper_engine.DEFAULT_REPO[choice.engine],
+            configured_repo or asr_engine.DEFAULT_REPO[choice.engine],
             choice.model_path.name,
         )
     engine = choice.engine
     return (
-        configured_repo or whisper_engine.DEFAULT_REPO[engine],
-        configured_dir or whisper_engine.DEFAULT_LOCAL_DIR[engine],
+        configured_repo or asr_engine.DEFAULT_REPO[engine],
+        configured_dir or asr_engine.DEFAULT_LOCAL_DIR[engine],
     )
 
 
 def _hf_repo_and_dir(kind: str) -> tuple[str, str]:
-    if kind == "whisper":
-        return _whisper_repo_and_dir()
+    if kind == "asr":
+        return _asr_repo_and_dir()
     if kind == "marlin":
         return settings.MODEL_MARLIN_HF, settings.MODEL_MARLIN_LOCAL
     raise ValueError(f"Unknown multimodal model kind: {kind}")
@@ -120,7 +119,7 @@ def ensure_hf_snapshot(
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError(
-            "huggingface_hub is required to download Whisper/Marlin. "
+            "huggingface_hub is required to download Qwen3-ASR/Marlin. "
             "Install with: pip install huggingface_hub"
         ) from exc
 
@@ -180,15 +179,15 @@ def ensure_multimodal_models(
     on_progress=None,
 ) -> dict[str, Path]:
     """
-    Ensure Whisper (+ Marlin) live under MODELS_DIR.
+    Ensure Qwen3-ASR (+ Marlin) live under MODELS_DIR.
 
     Marlin defaults to the ungated mirror ``lunahr/Marlin-2B-ungated``
     (override with MODEL_MARLIN_HF). No HF token required for that repo.
     """
     out: dict[str, Path] = {}
-    repo, _ = _hf_repo_and_dir("whisper")
-    dest = multimodal_model_path("whisper")
-    out["whisper"] = ensure_hf_snapshot(repo, dest, on_progress=on_progress, label="whisper")
+    repo, _ = _hf_repo_and_dir("asr")
+    dest = multimodal_model_path("asr")
+    out["asr"] = ensure_hf_snapshot(repo, dest, on_progress=on_progress, label="asr")
 
     if include_marlin:
         repo, _ = _hf_repo_and_dir("marlin")

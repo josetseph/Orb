@@ -20,7 +20,7 @@ configured, and where its key came from.
 from __future__ import annotations
 
 import threading
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from app.core.log import get_logger
 
@@ -52,11 +52,13 @@ class InvalidEndpointError(ValueError):
 
 
 def normalize_base_url(url: str) -> str:
-    """Canonical form of an OpenAI-compatible base URL.
+    """Canonical form of an OpenAI-compatible endpoint.
 
-    Lowercases scheme and host, drops a trailing slash, and discards query and
-    fragment, so ``HTTPS://Api.Example.com/v1/`` and ``https://api.example.com/v1``
-    resolve to one credential.
+    Lowercases scheme and host, drops a trailing slash and any query, so
+    ``HTTPS://Api.Example.com/v1/`` and ``https://api.example.com/v1`` resolve
+    to one credential. A fragment is kept as a *profile name*: ``…/v1#Work``
+    and ``…/v1#Personal`` are two endpoints with two keys on one server.
+    Never sent over the wire — see :func:`request_base_url`.
     """
     raw = (url or "").strip()
     if not raw:
@@ -72,7 +74,20 @@ def normalize_base_url(url: str) -> str:
     if parts.port:
         netloc = f"{netloc}:{parts.port}"
     path = parts.path.rstrip("/")
-    return urlunsplit((parts.scheme.lower(), netloc, path, "", ""))
+    # Decoded and whitespace-collapsed so the desktop keychain (which goes
+    # through the browser URL parser) and this side agree on the identity.
+    profile = " ".join(unquote(parts.fragment).split())
+    return urlunsplit((parts.scheme.lower(), netloc, path, "", profile))
+
+
+def request_base_url(url: str) -> str:
+    """The URL to actually call: the normalised endpoint without its profile name."""
+    return normalize_base_url(url).split("#", 1)[0]
+
+
+def endpoint_profile(url: str) -> str:
+    """The profile name carried in the fragment, or ``""``."""
+    return normalize_base_url(url).partition("#")[2]
 
 
 def endpoint_credential_id(base_url: str) -> str:

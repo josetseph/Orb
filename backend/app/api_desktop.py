@@ -57,7 +57,7 @@ async def setup_status():
     local_models_ready = gguf is not None
     multimodal_ready = all(
         is_hf_snapshot_ready(multimodal_model_path(k))
-        for k in ("whisper", "marlin")
+        for k in ("asr", "marlin")
     )
     mode = derived_setup_mode()
     vault = resolve_default_vault_path()
@@ -83,7 +83,7 @@ async def setup_status():
 class DownloadModelsInput(BaseModel):
     include_multimodal: bool = True
     chat_id: str | None = None
-    # When True, skip GGUF ensure (used for background Whisper/Marlin + projector).
+    # When True, skip GGUF ensure (used for background Qwen3-ASR/Marlin + projector).
     multimodal_only: bool = False
 
 
@@ -97,7 +97,7 @@ async def model_catalog(chat_id: str | None = None):
 
 @router.post("/api/v1/setup/download-models")
 async def download_models(body: DownloadModelsInput | None = None):
-    """Download chat/embed/rerank GGUFs (+ Whisper/Marlin weights and the vision projector).
+    """Download chat/embed/rerank GGUFs (+ Qwen3-ASR/Marlin weights and the vision projector).
 
     Does not install multimodal Python deps — that is a separate step
     (``start-multimodal-services`` prepares the in-process runtime). Keeping
@@ -167,7 +167,7 @@ async def download_models(body: DownloadModelsInput | None = None):
             "mode": "in_process",
             "hint": (
                 "Call /setup/start-multimodal-services?install_deps=true "
-                "to prepare the in-process Whisper/Marlin runtime"
+                "to prepare the in-process Qwen3-ASR/Marlin runtime"
             ),
         },
         "multimodal_error": multimodal_error,
@@ -217,7 +217,7 @@ async def select_chat_model(body: DownloadModelsInput | None = None):
 
 @router.post("/api/v1/setup/start-multimodal-services")
 async def start_multimodal_services(install_deps: bool = Query(True)):
-    """Prepare Whisper/Marlin for in-process load (no HTTP sidecars)."""
+    """Prepare Qwen3-ASR/Marlin for in-process load (no HTTP sidecars)."""
     from app.services.multimodal_services import ensure_multimodal_services
 
     try:
@@ -238,7 +238,7 @@ async def multimodal_status():
     return {
         "mode": "in_process",
         "models": {
-            "whisper": is_hf_snapshot_ready(multimodal_model_path("whisper")),
+            "asr": is_hf_snapshot_ready(multimodal_model_path("asr")),
             "marlin": is_hf_snapshot_ready(multimodal_model_path("marlin")),
         },
         "services": services_ready(),

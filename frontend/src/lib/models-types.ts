@@ -68,7 +68,7 @@ export interface ModelsPageState {
     budget_note: string;
     embed: { label: string; size_gb: number } | null;
     reranker: { label: string; size_gb: number } | null;
-    /** Vision route, Whisper and Marlin — what runs on attachments. */
+    /** Vision route, transcription and Marlin — what runs on attachments. */
     media: Array<{
       kind: string;
       label: string;
@@ -76,7 +76,9 @@ export interface ModelsPageState {
       name: string;
       installed: boolean;
       engine?: string | null;
-      engine_note?: string;
+      engine_note?: string | null;
+      /** Why it is not installed and how to get it; null once present. */
+      hint?: string | null;
     }>;
   };
   cloud: { endpoints: string[]; providers: string[]; all_providers: string[] };

@@ -114,17 +114,16 @@ class Settings(BaseSettings):
     TYPESENSE_API_KEY: str = "orb-dev-key"
     TYPESENSE_COLLECTION_NAME: str = "orb_nodes"
 
-    # large-v3, not turbo: turbo's 4-layer decoder invents text in low-signal
-    # audio (repetition loops, foreign script, ~20% more words on identical
-    # distant-mic input). Empty means "let whisper_engine pick per platform" —
-    # MLX on Apple Silicon, transformers elsewhere.
-    MODEL_WHISPER_HF: str = ""
-    MODEL_WHISPER_LOCAL: str = ""
+    # Transcription is Qwen3-ASR 1.7B: 5.6x realtime on Apple Silicon with no
+    # repetition loops or dropped speech on a 76-min lecture where Whisper
+    # lost 103 s. Empty means "let asr_engine pick the layout per platform".
+    MODEL_ASR_HF: str = ""
+    MODEL_ASR_LOCAL: str = ""
     # "auto" | "mlx" | "transformers". An explicit engine is never substituted.
-    WHISPER_ENGINE: str = "auto"
-    # None lets Whisper detect the language; pinning "en" on non-English audio
-    # is a known source of hallucinated transcripts.
-    WHISPER_LANGUAGE: str | None = "en"
+    ASR_ENGINE: str = "auto"
+    # None lets the model detect the language; pinning "en" on non-English
+    # audio is a known source of invented transcripts.
+    ASR_LANGUAGE: str | None = "en"
     MODEL_MARLIN_HF: str = "lunahr/Marlin-2B-ungated"
     MODEL_MARLIN_LOCAL: str = "marlin-2b"
     # Multimodal — loaded in-process (optional until first multimedia ingest).

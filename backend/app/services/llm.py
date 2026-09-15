@@ -42,6 +42,13 @@ def describe_call_failure(exc: Exception) -> str:
     return " ← ".join(parts)
 
 
+# Output is never capped by a number chosen here: local runtimes size each
+# answer from the context left after the prompt, and cloud endpoints run to
+# their own limit. Anthropic is the one API that refuses a request without
+# ``max_tokens``, so it gets this single high value everywhere.
+ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
+
+
 class LLMService:
     """Multi-provider LLM client supporting structured extraction, generation, and ingestion routing."""
 
@@ -133,14 +140,14 @@ class LLMService:
             api_key = self.get_endpoint_key(base_url)
             logger.info("Initializing OpenAI-compatible endpoint at %s", base_url)
             self.chat_client = OpenAI(
-                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
             )
             self.async_chat_client = AsyncOpenAI(
-                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
             )
             self.extraction_client = instructor.patch(
                 OpenAI(
-                    base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                    base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
                 ),
                 mode=instructor.Mode.MD_JSON,
             )
@@ -351,14 +358,14 @@ class LLMService:
                 )
             api_key = self.get_endpoint_key(base_url)
             self.i_chat_client = OpenAI(
-                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
             )
             self.i_async_chat_client = AsyncOpenAI(
-                base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
             )
             self.i_extraction_client = instructor.patch(
                 OpenAI(
-                    base_url=base_url, api_key=api_key, timeout=300.0, max_retries=2
+                    base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
                 ),
                 mode=instructor.Mode.MD_JSON,
             )
@@ -1051,7 +1058,7 @@ class LLMService:
         if self.provider == "anthropic":
             response = self.chat_client.messages.create(
                 model=model or self.get_chat_model(),
-                max_tokens=1024,
+                max_tokens=ANTHROPIC_MAX_OUTPUT_TOKENS,
                 messages=[
                     {"role": "user", "content": f"{system_prompt}\n\n{user_prompt}"}
                 ],
@@ -1248,7 +1255,7 @@ class LLMService:
                 response = await asyncio.to_thread(
                     self.chat_client.messages.create,
                     model=model or self.get_chat_model(),
-                    max_tokens=max_tokens if max_tokens is not None else 10240,
+                    max_tokens=max_tokens if max_tokens is not None else ANTHROPIC_MAX_OUTPUT_TOKENS,
                     temperature=temperature,
                     messages=[{"role": "user", "content": prompt}],
                 )
@@ -1730,8 +1737,7 @@ class LLMService:
                 response = await asyncio.to_thread(
                     self.i_anthropic_client.messages.create,
                     model=settings.ANTHROPIC_MODEL,
-                    # Anthropic requires an explicit cap.
-                    max_tokens=max_tokens if max_tokens is not None else 16384,
+                    max_tokens=max_tokens if max_tokens is not None else ANTHROPIC_MAX_OUTPUT_TOKENS,
                     temperature=temperature,
                     messages=[{"role": "user", "content": prompt}],
                 )
@@ -1800,13 +1806,18 @@ class LLMService:
 
     # ── Images ────────────────────────────────────────────────────────────────
 
+    # Metadata comes before the transcription so a long screenshot that hits
+    # the output cap loses the tail of its text, not the entities.
     IMAGE_DESCRIBE_PROMPT = (
-        "Describe this image for a personal knowledge base. First give a one- or "
-        "two-sentence summary of what it shows. Then transcribe ALL visible text "
-        "verbatim, keeping line order (headings, dates, names, prices, links). "
-        "Note the kind of image (photo, screenshot, poster, chart, document) and "
-        "any people, places, organisations or events it refers to. Plain text only."
+        "Describe this image for a personal knowledge base, as plain text in "
+        "this order: (1) one or two sentences on what it shows and what kind of "
+        "image it is (photo, screenshot, poster, chart, document); (2) the "
+        "people, places, organisations, dates and events it refers to; (3) ALL "
+        "visible text transcribed verbatim, keeping line order — headings, "
+        "dates, names, prices, links. No commentary."
     )
+    # No output cap: a transcription is cut short only by what the provider
+    # itself allows, never by a number chosen here.
 
     def describe_image(self, image_path: str) -> str:
         """What one image shows, through the ingestion model.
@@ -1822,6 +1833,11 @@ class LLMService:
         provider = getattr(self, "ingestion_provider", self.provider)
         prompt = self.IMAGE_DESCRIBE_PROMPT
         data_url = image_data_url(image_path)
+        logger.info(
+            "[LLM] describing image via %s (%s)",
+            self.get_base_url() if provider == "openai_compat" else provider,
+            model or "default model",
+        )
 
         if provider == "local":
             from app.services.local_models import local_llama_runtime
@@ -1846,7 +1862,7 @@ class LLMService:
             mime, b64 = data_url[5:].split(";base64,", 1)
             response = self.i_anthropic_client.messages.create(
                 model=model or settings.ANTHROPIC_MODEL,
-                max_tokens=1024,
+                max_tokens=ANTHROPIC_MAX_OUTPUT_TOKENS,
                 temperature=0.1,
                 messages=[
                     {
@@ -1867,7 +1883,6 @@ class LLMService:
         response = self.i_chat_client.chat.completions.create(
             model=model,
             temperature=0.1,
-            max_tokens=1024,
             messages=[
                 {
                     "role": "user",
@@ -1878,12 +1893,19 @@ class LLMService:
                 }
             ],
         )
-        content = response.choices[0].message.content
+        choice = response.choices[0]
+        content = choice.message.content
         if not content or not content.strip():
             raise ValueError(
                 f"{model or provider} returned no text for the image. "
                 "Check that this model accepts image input."
             )
+        if getattr(choice, "finish_reason", None) == "length":
+            logger.warning(
+                "[LLM] %s stopped the image description at its own output limit",
+                model or provider,
+            )
+            content = content.rstrip() + " […]"
         return content.strip()
 
     def ingestion_extract_structured(  # pylint: disable=too-many-return-statements

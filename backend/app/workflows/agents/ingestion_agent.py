@@ -42,11 +42,11 @@ def _require_workflow(state: "IngestionState"):
     return wf
 
 # Heavy local model multimedia extraction is serialized by default so the
-# vision model, Whisper, and Marlin do not compete for the same CPU/RAM budget.
+# vision model, Qwen3-ASR, and Marlin do not compete for the same CPU/RAM budget.
 multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY)
 
 # Blocks appended by multimodal_node — strip before re-processing so re-ingest
-# does not duplicate vision/Whisper/Marlin output in the vault .md.
+# does not duplicate vision/transcription/Marlin output in the vault .md.
 # Extraction output is delimited and carries the attachment it came from, so a
 # block can be found, replaced or removed on its own — and can sit directly
 # under its attachment instead of being piled at the end of the note. HTML
@@ -817,7 +817,7 @@ async def extract_attachment(kind: str, item: dict[str, str], set_status, llm) -
     """Run one extractor and return its section text ("" when nothing came out).
 
     ``kind`` is a value from ``classify_attachment``; "video" runs both the
-    Whisper and Marlin passes, while multimodal_node uses "video_audio" /
+    Qwen3-ASR and Marlin passes, while multimodal_node uses "video_audio" /
     "video_visual" separately so it can release each model between phases.
     """
     filename = item["filename"]
@@ -881,9 +881,9 @@ async def extract_attachment(kind: str, item: dict[str, str], set_status, llm) -
         return f"\n\n[Video Visual Analysis ({filename})]:\n\n{visual_text}"
 
     if kind == "video":
-        await set_status("Transcribing video audio", "Whisper")
+        await set_status("Transcribing video audio", "Qwen3-ASR")
         audio = await extract_attachment("video_audio", item, set_status, llm)
-        await asyncio.to_thread(multimedia_service.unload_local_models, "whisper")
+        await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
         await set_status("Analyzing video visuals", "Marlin")
         visual = await extract_attachment("video_visual", item, set_status, llm)
         return "\n".join(s for s in (audio, visual) if s)
@@ -1011,14 +1011,14 @@ async def multimodal_node(
         await _run_phase("Extracting documents", None, docx_files, "docx")
         await _run_phase("Extracting spreadsheets", None, spreadsheets, "spreadsheet")
 
-        # Phase 2: finish all Whisper work, then release Whisper.
-        await _run_phase("Transcribing audio", "Whisper", audio_files, "audio")
-        await _run_phase("Transcribing video audio", "Whisper", videos, "video_audio")
+        # Phase 2: finish all transcription, then release the speech model.
+        await _run_phase("Transcribing audio", "Qwen3-ASR", audio_files, "audio")
+        await _run_phase("Transcribing video audio", "Qwen3-ASR", videos, "video_audio")
         if audio_files or videos:
-            await _set_status("Unloading speech model", "Whisper")
-            await asyncio.to_thread(multimedia_service.unload_local_models, "whisper")
+            await _set_status("Unloading speech model", "Qwen3-ASR")
+            await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
 
-        # Phase 3: run Marlin only after local-models no longer holds Whisper.
+        # Phase 3: run Marlin only after the speech model is released.
         await _run_phase("Analyzing video visuals", "Marlin", videos, "video_visual")
         if videos:
             await _set_status("Unloading video model", "Marlin")
@@ -1026,7 +1026,7 @@ async def multimodal_node(
 
         # Phase 4: images and PDFs go through the ingestion model itself, which
         # then stays resident for image titling and entity extraction. Running
-        # it last means Whisper/Marlin never evict it mid-way.
+        # it last means the speech and video models never evict it mid-way.
         vision_model = _llm.get_ingestion_model() or "vision model"
         await _run_phase("Reading PDF pages and images", vision_model, pdfs, "pdf")
         await _run_phase("Describing images", vision_model, images, "image")

@@ -9,8 +9,12 @@ import {
   Film,
   Image as ImageIcon,
   Loader2,
+  Trash2,
   X,
+  Zap,
 } from "lucide-react";
+import { api } from "@/lib/api";
+import type { Note } from "@/lib/types";
 import { cn, isAudioUrl, isImageUrl, isVideoUrl } from "@/lib/utils";
 import { MarkdownNoteEditor } from "@/components/markdown-editor";
 import { EntityDetailPanel } from "@/components/entity-detail-panel";
@@ -63,8 +67,72 @@ export default function NotesPage() {
     handleDeleteVaultAttachment,
   } = useNotesPageController();
   const [viewMode, setViewMode] = useState<ViewMode>("live");
+  const [ctxMenu, setCtxMenu] = useState<{ note: Note; x: number; y: number } | null>(null);
 
   const selectedNote = selection.selectedNote;
+
+  // Right-click menu on a note row: closes on any click, Escape, or scroll.
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    window.addEventListener("mousedown", close);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      window.removeEventListener("mousedown", close);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [ctxMenu]);
+
+  // The header buttons act on the open note; these act on any row.
+  const ingestNoteById = async (note: Note) => {
+    if (selectedNote?.id === note.id) {
+      await ingest.handleIngestNote();
+      return;
+    }
+    try {
+      await api.ingestNote(note.id, currentKB);
+      ingest.setIngestingNoteIds((prev) => new Set([...prev, note.id]));
+      list.setNotes((prev) =>
+        prev.map((n) =>
+          n.id === note.id
+            ? { ...n, processed: false, failed: false, processing_stage: "Queued for ingestion", processing_model: null }
+            : n,
+        ),
+      );
+    } catch {
+      alert("Could not queue this note for ingestion.");
+    }
+  };
+
+  const deleteNoteById = async (note: Note) => {
+    if (selectedNote?.id === note.id) {
+      await handleDeleteNote();
+      return;
+    }
+    if (
+      !window.confirm(
+        `Delete "${note.title || "Untitled"}"?\n\nThis removes it from Orb and deletes the markdown file in your vault folder.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      await api.deleteNote(note.id, currentKB);
+      batch.setSelectedNoteIds((prev) => {
+        const next = new Set(prev);
+        next.delete(note.id);
+        return next;
+      });
+      await list.fetchNotes(list.searchQuery, list.processedFilter);
+    } catch {
+      alert("Delete failed. Refresh and try again.");
+    }
+  };
 
   // ⌘N new note, ⌘/ Live↔Source. ?new=1 comes from the command palette.
   useEffect(() => {
@@ -111,12 +179,15 @@ export default function NotesPage() {
         vaultFolders={vault.vaultFolders}
         mediaFiles={vault.mediaFiles}
         attachmentFiles={vault.attachmentFiles}
-        collapsedFolders={vault.collapsedFolders}
+        expandedFolders={vault.expandedFolders}
         selectedNoteId={selectedNote?.id ?? null}
         selectedNoteIds={batch.selectedNoteIds}
         batchDeleting={batch.batchDeleting}
         dragNoteId={vault.dragNoteId}
         dragFileRel={vault.dragFileRel}
+        selectedFileRels={vault.selectedFileRels}
+        onToggleFileSelected={vault.toggleFileSelected}
+        onMoveVaultFiles={vault.handleMoveVaultFiles}
         onSearchChange={list.setSearchQuery}
         onFilterChange={list.setProcessedFilter}
         onReingestVault={handleReingestVault}
@@ -127,6 +198,7 @@ export default function NotesPage() {
         onToggleFolder={vault.toggleFolder}
         onSelectFolder={vault.setSelectedFolder}
         onNoteSelect={handleNoteSelect}
+        onNoteContextMenu={(note, x, y) => setCtxMenu({ note, x, y })}
         onToggleNoteSelected={batch.toggleNoteSelected}
         onMoveNoteToFolder={vault.handleMoveNoteToFolder}
         onMoveVaultFile={vault.handleMoveVaultFile}
@@ -307,6 +379,57 @@ export default function NotesPage() {
           />
         )}
       </div>
+
+      {ctxMenu && (
+        <div
+          className="popover fixed z-[85] min-w-[200px]"
+          style={{
+            left: Math.min(ctxMenu.x, window.innerWidth - 220),
+            top: Math.min(ctxMenu.y, window.innerHeight - 160),
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="truncate px-2.5 pb-1.5 pt-1 text-[11px] text-n-500">
+            {ctxMenu.note.title || "Untitled"}
+          </div>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => {
+              const { note } = ctxMenu;
+              setCtxMenu(null);
+              void handleNoteSelect(note);
+            }}
+          >
+            <FileText className="h-3.5 w-3.5 text-n-500" /> Open
+          </button>
+          <button
+            type="button"
+            className="menu-item"
+            disabled={isActiveProcessingNote(ctxMenu.note)}
+            onClick={() => {
+              const { note } = ctxMenu;
+              setCtxMenu(null);
+              void ingestNoteById(note);
+            }}
+          >
+            <Zap className="h-3.5 w-3.5 text-n-500" />
+            {ctxMenu.note.processed ? "Re-ingest" : ctxMenu.note.failed ? "Retry ingest" : "Ingest now"}
+          </button>
+          <div className="my-1 h-px bg-divider" />
+          <button
+            type="button"
+            className="menu-item text-danger-text"
+            onClick={() => {
+              const { note } = ctxMenu;
+              setCtxMenu(null);
+              void deleteNoteById(note);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </button>
+        </div>
+      )}
 
       {media.showDatePicker && selectedNote && (
         <DatePickerModal

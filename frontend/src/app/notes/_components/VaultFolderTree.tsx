@@ -23,17 +23,21 @@ type VaultFolderTreeProps = {
   vaultName: string;
   mediaFiles: VaultFileEntry[];
   attachmentFiles: VaultFileEntry[];
-  collapsedFolders: Set<string>;
+  expandedFolders: Set<string>;
   selectedFolder: string;
   selectedNoteId: string | null;
   selectedNoteIds: Set<string>;
   dragNoteId: string | null;
   dragFileRel: string | null;
+  selectedFileRels: Set<string>;
+  onToggleFileSelected: (relPath: string) => void;
+  onMoveVaultFiles: (rels: string[], folder: string) => void;
   /** Scrollable ancestor (the sidebar body) used to window the tree rows. */
   scrollRef: RefObject<HTMLDivElement | null>;
   onToggleFolder: (path: string) => void;
   onSelectFolder: (path: string) => void;
   onNoteSelect: (note: Note) => void;
+  onNoteContextMenu?: (note: Note, x: number, y: number) => void;
   onToggleNoteSelected: (noteId: string) => void;
   onCreateNote: (folderPath: string) => void;
   onOpenFolderDialog: (parent: string) => void;
@@ -85,16 +89,20 @@ export function VaultFolderTree({
   vaultName,
   mediaFiles,
   attachmentFiles,
-  collapsedFolders,
+  expandedFolders,
   selectedFolder,
   selectedNoteId,
   selectedNoteIds,
   dragNoteId,
   dragFileRel,
+  selectedFileRels,
+  onToggleFileSelected,
+  onMoveVaultFiles,
   scrollRef,
   onToggleFolder,
   onSelectFolder,
   onNoteSelect,
+  onNoteContextMenu,
   onToggleNoteSelected,
   onCreateNote,
   onOpenFolderDialog,
@@ -108,7 +116,7 @@ export function VaultFolderTree({
   onRenameFile,
   onDeleteVaultAttachment,
 }: VaultFolderTreeProps) {
-  const attachmentsOpen = !collapsedFolders.has("attachments");
+  const attachmentsOpen = expandedFolders.has("attachments");
   const dragging = Boolean(dragNoteId || dragFileRel);
 
   const rows = useMemo<TreeRow[]>(() => {
@@ -144,7 +152,7 @@ export function VaultFolderTree({
           depth,
           count: countNotes(node),
         });
-        if (collapsedFolders.has(node.path)) return;
+        if (!expandedFolders.has(node.path)) return;
         for (const child of node.children) walk(child, depth + 1);
         for (const f of mediaByFolder.get(node.path) || []) {
           out.push({
@@ -201,7 +209,7 @@ export function VaultFolderTree({
             depth,
             count: own.length,
           });
-          if (collapsedFolders.has(child)) continue;
+          if (!expandedFolders.has(child)) continue;
           emit(child, depth + 1);
           for (const f of own) {
             out.push({ key: `attachment:${f.rel_path}`, kind: "attachment", file: f, depth: depth + 1 });
@@ -218,12 +226,17 @@ export function VaultFolderTree({
       }
     }
     return out;
-  }, [notes, vaultFolders, mediaFiles, attachmentFiles, collapsedFolders, attachmentsOpen]);
+  }, [notes, vaultFolders, mediaFiles, attachmentFiles, expandedFolders, attachmentsOpen]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: () => 30,
+    // Sizes are cached per row, not per index: opening a folder shifts every
+    // row below it, and an index-keyed cache then paints note rows at the
+    // height of whatever used to sit there.
+    getItemKey: (index) => rows[index].key,
+    // Note rows carry a second line; the rest are single-line.
+    estimateSize: (index) => (rows[index].kind === "note" ? 50 : 30),
     overscan: 12,
   });
 
@@ -233,9 +246,16 @@ export function VaultFolderTree({
     e.dataTransfer.dropEffect = "move";
     const noteId = e.dataTransfer.getData("text/note-id") || dragNoteId;
     const fileRel = e.dataTransfer.getData("text/vault-file") || dragFileRel;
+    let fileRels: string[] = [];
+    try {
+      fileRels = JSON.parse(e.dataTransfer.getData("text/vault-files") || "[]");
+    } catch {
+      fileRels = [];
+    }
     onDragNoteEnd();
     onDragFileEnd();
     if (noteId) void onMoveNoteToFolder(noteId, folderPath);
+    else if (fileRels.length > 1) void onMoveVaultFiles(fileRels, folderPath);
     else if (fileRel) void onMoveVaultFile(fileRel, folderPath);
   };
 
@@ -327,7 +347,7 @@ export function VaultFolderTree({
         return (
           <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, node.path)}>
             {folderHeader(node.name, node.path, depth, {
-              open: !collapsedFolders.has(node.path),
+              open: expandedFolders.has(node.path),
               selected: selectedFolder === node.path,
               count: row.count,
               icon: <Folder className="h-3 w-3 shrink-0" />,
@@ -361,6 +381,11 @@ export function VaultFolderTree({
             onDragOver={allowVaultDragOver}
             onDrop={(e) => acceptVaultDrop(e, parentFolder)}
             onClick={() => onNoteSelect(note)}
+            onContextMenu={(e) => {
+              if (!onNoteContextMenu) return;
+              e.preventDefault();
+              onNoteContextMenu(note, e.clientX, e.clientY);
+            }}
             className={cn(
               "group/note flex w-full cursor-default items-start gap-2 rounded-md px-2 py-1.5 text-left",
               selected ? "bg-surface text-text shadow-sm" : "text-n-300 hover:bg-n-900",
@@ -402,6 +427,9 @@ export function VaultFolderTree({
               relPath={row.file.rel_path}
               depth={row.depth}
               isDragging={dragFileRel === row.file.rel_path}
+              isSelected={selectedFileRels.has(row.file.rel_path)}
+              selectedRels={selectedFileRels}
+              onToggleSelected={onToggleFileSelected}
               onDragStart={onDragFileStart}
               onDragEnd={onDragFileEnd}
               onClick={onFileClick}
@@ -442,7 +470,7 @@ export function VaultFolderTree({
         return (
           <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, row.path)}>
             {folderHeader(row.name, row.path, row.depth, {
-              open: !collapsedFolders.has(row.path),
+              open: expandedFolders.has(row.path),
               selected: selectedFolder === row.path,
               count: row.count,
               icon: <Paperclip className="h-3 w-3 shrink-0" />,
@@ -467,6 +495,9 @@ export function VaultFolderTree({
               relPath={row.file.rel_path}
               depth={row.depth}
               isDragging={dragFileRel === row.file.rel_path}
+              isSelected={selectedFileRels.has(row.file.rel_path)}
+              selectedRels={selectedFileRels}
+              onToggleSelected={onToggleFileSelected}
               onDragStart={onDragFileStart}
               onDragEnd={onDragFileEnd}
               onClick={onFileClick}

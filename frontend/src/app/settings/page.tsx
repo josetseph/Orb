@@ -17,7 +17,7 @@ const GUIDE: Array<[string, string]> = [
     ["Reset indexes", "Graph, vectors and keyword index are cleared; your .md files stay and notes are marked unprocessed. Lives in Storage."],
     ["Empty / Delete workspace", "Always removes notes, vault files, indexes and finance data for that workspace. Delete also unregisters it (not allowed for the built-in one — use Empty). Lives in Workspace."],
     ["Where data lives", "The data folder holds SQLite, Qdrant, Meilisearch, Kuzu, Firefly, binaries and logs."],
-    ["Where models live", "GGUF chat / embed / rerank files, the chat model's vision projector, plus Whisper and Marlin snapshots."],
+    ["Where models live", "GGUF chat / embed / rerank files, the chat model's vision projector, plus the Qwen3-ASR and Marlin snapshots."],
     ["How to delete models", "Quit Orb, delete files inside the models folder (or the whole folder), relaunch, then re-download from Models. Never delete models while Orb runs — they may be memory-mapped."],
     ["Wipe all app data", "Quit Orb, delete the entire data folder, relaunch. Models are untouched unless you also clear the models folder."],
     ["paths.json", "Records the data and models folders chosen in the first-run wizard."],

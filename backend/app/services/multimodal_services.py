@@ -1,4 +1,4 @@
-"""Multimodal runtime readiness (in-process Whisper / Marlin).
+"""Multimodal runtime readiness (in-process Qwen3-ASR / Marlin).
 
 Legacy HTTP sidecars are retired. This module verifies weights on disk and
 optionally installs torch/transformers into the *current* API interpreter so
@@ -7,6 +7,7 @@ models load in-process.
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import sys
 
@@ -17,7 +18,7 @@ logger = get_logger("MultimodalServices")
 
 _MULTIMODAL_PIP = [
     "torch",
-    # Marlin requires transformers>=5.7 (Qwen3.5 backbone); Whisper runs on 5.x too.
+    # Marlin requires transformers>=5.7 (Qwen3.5 backbone); Qwen3-ASR ships there too.
     "transformers>=5.7.0",
     "accelerate>=1.12.0",
     "einops>=0.8.1",
@@ -29,6 +30,10 @@ _MULTIMODAL_PIP = [
     "qwen-vl-utils>=0.0.14",
     "av",
 ]
+if sys.platform == "darwin" and platform.machine() == "arm64":
+    # Same markers as requirements-multimodal.txt: the Apple GPU path for
+    # transcription and MLX-format chat models.
+    _MULTIMODAL_PIP += ["mlx-qwen3-asr>=0.4", "mlx-lm>=0.20"]
 
 
 def _deps_importable() -> tuple[bool, str | None]:
@@ -49,12 +54,12 @@ def _deps_importable() -> tuple[bool, str | None]:
         import qwen_vl_utils  # noqa: F401
         import av  # noqa: F401
 
-        # Exercise the real model entrypoints Whisper/Marlin need. A bare
+        # Exercise the real model entrypoints Qwen3-ASR/Marlin need. A bare
         # ``import transformers`` can succeed while AutoModel* fails (e.g. when
         # numpy/_core/tests was stripped from the desktop bundle).
         from transformers import (  # noqa: F401
             AutoModelForCausalLM,
-            AutoModelForSpeechSeq2Seq,
+            AutoModelForMultimodalLM,
         )
 
         return True, None
@@ -96,7 +101,7 @@ def services_ready() -> dict:
     status = multimodal_runtime.status()
     return {
         "mode": "in_process",
-        "local_models": deps_ok and status["models_ready"].get("whisper", False),
+        "local_models": deps_ok and status["models_ready"].get("asr", False),
         "marlin": deps_ok and status["models_ready"].get("marlin", False),
         "deps_ok": deps_ok,
         "deps_error": deps_err,
@@ -110,19 +115,19 @@ def ensure_multimodal_services(
     start_marlin: bool = True,  # noqa: ARG001 — API compat; Marlin is in-process
 ) -> dict:
     """Prepare in-process multimodal runtime (no HTTP processes spawned)."""
-    whisper = multimodal_model_path("whisper")
+    asr = multimodal_model_path("asr")
     marlin = multimodal_model_path("marlin")
     models = {
-        "whisper": is_hf_snapshot_ready(whisper),
+        "asr": is_hf_snapshot_ready(asr),
         "marlin": is_hf_snapshot_ready(marlin),
     }
-    if not models["whisper"]:
+    if not models["asr"]:
         return {
             "started": False,
             "mode": "in_process",
-            "error": "Download Whisper on the Models page first",
+            "error": "Download Qwen3-ASR on the Models page first",
             "models": models,
-            "paths": {"whisper": str(whisper), "marlin": str(marlin)},
+            "paths": {"asr": str(asr), "marlin": str(marlin)},
         }
 
     deps = ensure_multimodal_python_deps(install=install_deps)
@@ -143,7 +148,7 @@ def ensure_multimodal_services(
         "deps": deps,
         "services": services_ready(),
         "message": (
-            "Whisper / Marlin load in-process on demand "
+            "Qwen3-ASR / Marlin load in-process on demand "
             "(no sidecar HTTP services)."
         ),
     }

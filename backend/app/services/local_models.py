@@ -264,7 +264,7 @@ def _construct_llama(Llama, **kwargs):
 
 
 def _unload_multimodal_families() -> None:
-    """Best-effort: free Whisper/Marlin before loading a GGUF."""
+    """Best-effort: free Qwen3-ASR/Marlin before loading a GGUF."""
     try:
         from app.services.multimodal_runtime import multimodal_runtime
 
@@ -1484,6 +1484,16 @@ class LocalLlamaRuntime:
         total = 4
         for msg in messages:
             content = msg.get("content") or ""
+            if isinstance(content, list):
+                # Multimodal parts: text is counted; an image is charged at the
+                # top of Gemma 4's visual-token range so the budget errs safe.
+                for part in content:
+                    if part.get("type") == "text":
+                        total += self.count_tokens(part.get("text") or "")
+                    else:
+                        total += 1200
+                total += 8
+                continue
             total += self.count_tokens(content) + 8
         return total
 
@@ -1747,9 +1757,13 @@ class LocalLlamaRuntime:
         image_data_url: str,
         prompt: str,
         model: str | None = None,
-        max_tokens: int = 700,
+        max_tokens: int | None = None,
     ) -> str:
-        """Ask the local chat model about one image (a ``data:`` URL)."""
+        """Ask the local chat model about one image (a ``data:`` URL).
+
+        No cap by default: the answer may use everything the context window
+        has left, so a dense screenshot is transcribed in full.
+        """
         from app.services.model_formats import ModelFormat
 
         target, model_format = self.resolve_chat_model(model)
@@ -1775,6 +1789,9 @@ class LocalLlamaRuntime:
                 ],
             }
         ]
+        budget = self._remaining_output_budget(messages)
+        if max_tokens is None or max_tokens > budget:
+            max_tokens = budget
         with self._lock:
             raw = self._chat.create_chat_completion(
                 messages=messages,
@@ -1784,7 +1801,15 @@ class LocalLlamaRuntime:
             )
             self._touch()
         choice = (raw.get("choices") or [{}])[0]
-        return ((choice.get("message") or {}).get("content") or "").strip()
+        text = ((choice.get("message") or {}).get("content") or "").strip()
+        if choice.get("finish_reason") == "length":
+            logger.warning(
+                "Image description filled the context window (%s tokens); raise "
+                "ORB_LLAMA_N_CTX for longer transcriptions",
+                max_tokens,
+            )
+            text += " […]"
+        return text
 
     def make_chat_clients(self):
         """Return (chat_client, async_chat_client, extraction_client) OpenAI-compat shims."""

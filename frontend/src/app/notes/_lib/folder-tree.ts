@@ -56,8 +56,8 @@ export function buildFolderTree(
 
   const sortTree = (nodes: FolderTreeNode[]) => {
     nodes.sort((a, b) => {
-      const aFolder = !a.note && a.children.length > 0;
-      const bFolder = !b.note && b.children.length > 0;
+      const aFolder = !a.note;
+      const bFolder = !b.note;
       if (aFolder !== bFolder) return aFolder ? -1 : 1;
       return a.name.localeCompare(b.name);
     });

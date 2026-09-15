@@ -1,6 +1,6 @@
 # Contributor / optional infra stack only.
 # End users run the Orb desktop app (see desktop/) — not this compose file.
-# Chat, embed, rerank, Florence, Whisper, and Marlin all load in-process in the API.
+# Chat, embed, rerank, Qwen3-ASR, and Marlin all load in-process in the API.
 
 services:
   # PostgreSQL Database

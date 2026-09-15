@@ -21,6 +21,7 @@ from app.services.credentials import (
     InvalidEndpointError,
     credentials,
     endpoint_credential_id,
+    request_base_url,
     normalize_base_url,
     normalize_provider,
 )
@@ -53,8 +54,9 @@ def _reload_llm_clients() -> None:
 class EndpointCredentialInput(BaseModel):
     """An OpenAI-compatible endpoint and its key.
 
-    The URL is the credential's identity, so the user never invents a name and
-    two knowledge bases on different servers cannot share a key by accident.
+    The URL is the credential's identity, so two knowledge bases on different
+    servers cannot share a key by accident. A ``#Name`` fragment makes a second
+    profile on the same server, with its own key.
     """
 
     base_url: str = Field(min_length=1, max_length=2048)
@@ -113,7 +115,9 @@ async def list_endpoint_models(base_url: str = Query(min_length=1)):
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.get(f"{normalized}/models", headers=headers)
+            response = await client.get(
+                f"{request_base_url(normalized)}/models", headers=headers
+            )
     except httpx.HTTPError as exc:
         raise HTTPException(
             status_code=502, detail=f"Could not reach {normalized}: {exc}"

@@ -30,6 +30,20 @@ type UseVaultTreeArgs = {
   patchLocalNote: (note: Note) => void;
 };
 
+function expandedKey(kb: string) {
+  return `orb:notes-expanded:${kb || "default"}`;
+}
+
+function readExpandedFolders(kb: string): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem(expandedKey(kb));
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
 export function useVaultTree({
   currentKB,
   searchQuery,
@@ -40,13 +54,28 @@ export function useVaultTree({
   refreshSelectedNote,
   patchLocalNote,
 }: UseVaultTreeArgs) {
-  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
-    () => new Set(),
+  // Folders start closed; the ones you open are remembered per workspace.
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() =>
+    readExpandedFolders(currentKB),
   );
+  const [expandedFor, setExpandedFor] = useState(currentKB);
+  if (expandedFor !== currentKB) {
+    setExpandedFor(currentKB);
+    setExpandedFolders(readExpandedFolders(currentKB));
+  }
+  useEffect(() => {
+    try {
+      localStorage.setItem(expandedKey(currentKB), JSON.stringify([...expandedFolders]));
+    } catch {
+      /* a lost preference is not worth an error */
+    }
+  }, [expandedFolders, currentKB]);
   /** Vault-relative folder selected for new notes / drop target ("" = root). */
   const [selectedFolder, setSelectedFolder] = useState<string>("");
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
   const [dragFileRel, setDragFileRel] = useState<string | null>(null);
+  // ⌘-clicked attachments; dragging one of them moves the whole set.
+  const [selectedFileRels, setSelectedFileRels] = useState<Set<string>>(() => new Set());
   const [vaultFolders, setVaultFolders] = useState<string[]>([]);
   const [vaultName, setVaultName] = useState<string>("Vault");
   const [attachmentFiles, setAttachmentFiles] = useState<VaultFileEntry[]>(
@@ -134,6 +163,40 @@ export function useVaultTree({
     ],
   );
 
+  const toggleFileSelected = useCallback((relPath: string) => {
+    setSelectedFileRels((prev) => {
+      const next = new Set(prev);
+      if (next.has(relPath)) next.delete(relPath);
+      else next.add(relPath);
+      return next;
+    });
+  }, []);
+
+  const handleMoveVaultFiles = useCallback(
+    async (rels: string[], folder: string) => {
+      const moved: Array<{ from: string; to: string }> = [];
+      const failed: string[] = [];
+      for (const fromRel of rels) {
+        const filename = fromRel.split("/").pop() || fromRel;
+        const toRel = folder ? `${folder}/${filename}` : filename;
+        if (toRel === fromRel) continue;
+        try {
+          const result = await api.moveVaultFile(fromRel, toRel, currentKB);
+          if (result?.from && result?.to) moved.push({ from: result.from, to: result.to });
+        } catch (error) {
+          console.error("Error moving file:", error);
+          failed.push(filename);
+        }
+      }
+      for (const m of moved) rewriteOpenNotePaths(m.from, m.to);
+      setSelectedFileRels(new Set());
+      // One list refresh for the whole batch, not one per file.
+      await fetchNotes(searchQuery, processedFilter);
+      if (failed.length) alert(`Could not move: ${failed.join(", ")}`);
+    },
+    [currentKB, fetchNotes, searchQuery, processedFilter, rewriteOpenNotePaths],
+  );
+
   const openRenameDialog = useCallback((relPath: string) => {
     setRenameDialog({
       rel_path: relPath,
@@ -206,10 +269,10 @@ export function useVaultTree({
       await api.mkdirVaultFolder(path, currentKB);
       setFolderDialog(null);
       setSelectedFolder(path);
-      setCollapsedFolders((prev) => {
+      setExpandedFolders((prev) => {
         const next = new Set(prev);
-        next.delete(path);
-        if (folderDialog.parent) next.delete(folderDialog.parent);
+        next.add(path);
+        if (folderDialog.parent) next.add(folderDialog.parent);
         return next;
       });
       await fetchNotes(searchQuery, processedFilter);
@@ -220,7 +283,7 @@ export function useVaultTree({
   }, [folderDialog, currentKB, fetchNotes, searchQuery, processedFilter]);
 
   const toggleFolder = useCallback((path: string) => {
-    setCollapsedFolders((prev) => {
+    setExpandedFolders((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
@@ -229,12 +292,12 @@ export function useVaultTree({
   }, []);
 
   const expandFolderAndAncestors = useCallback((folder: string) => {
-    setCollapsedFolders((prev) => {
+    setExpandedFolders((prev) => {
       const next = new Set(prev);
-      next.delete(folder);
+      next.add(folder);
       const parts = folder.split("/");
       for (let i = 1; i < parts.length; i++) {
-        next.delete(parts.slice(0, i).join("/"));
+        next.add(parts.slice(0, i).join("/"));
       }
       return next;
     });
@@ -290,14 +353,17 @@ export function useVaultTree({
   );
 
   return {
-    collapsedFolders,
-    setCollapsedFolders,
+    expandedFolders,
+    setExpandedFolders,
     selectedFolder,
     setSelectedFolder,
     dragNoteId,
     setDragNoteId,
     dragFileRel,
     setDragFileRel,
+    selectedFileRels,
+    toggleFileSelected,
+    handleMoveVaultFiles,
     vaultFolders,
     vaultName,
     attachmentFiles,

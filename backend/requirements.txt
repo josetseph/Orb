@@ -30,7 +30,7 @@ instructor==1.14.3
 #   CUDA:         CMAKE_ARGS="-DGGML_CUDA=on"  pip install llama-cpp-python --force-reinstall --no-cache-dir
 #   CPU only:     pip install llama-cpp-python
 llama-cpp-python>=0.3.0
-# Florence/Whisper/Marlin (in-process): see requirements-multimodal.txt
+# Qwen3-ASR/Marlin (in-process): see requirements-multimodal.txt
 # (installed on demand by Setup / supervisor — keeps base image smaller)
 
 # LangChain & Agents

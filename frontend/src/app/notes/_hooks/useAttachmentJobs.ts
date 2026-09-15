@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { AttachmentJob, Note } from "@/lib/types";
 
@@ -53,6 +53,13 @@ export function useAttachmentJobs({ currentKB, selectedNote, refreshSelectedNote
   }, [noteId, currentKB]);
 
   const running = Object.values(jobs).some((j) => j.status === "running");
+  // The poller compares against what it last saw; reading state inside the
+  // setJobs updater ran too late (React applies updaters lazily), so the
+  // refresh that pulls the new description into the note never fired.
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
   useEffect(() => {
     if (!noteId || !running) return;
@@ -61,15 +68,11 @@ export function useAttachmentJobs({ currentKB, selectedNote, refreshSelectedNote
       try {
         const { jobs: fresh } = await api.getAttachmentJobs(noteId, currentKB);
         if (cancelled) return;
-        let finished = false;
-        setJobs((prev) => {
-          const next = { ...prev };
-          for (const [url, job] of Object.entries(fresh)) {
-            if (prev[url]?.status === "running" && job.status === "done") finished = true;
-            next[url] = job;
-          }
-          return next;
-        });
+        const before = jobsRef.current;
+        const finished = Object.entries(fresh).some(
+          ([url, job]) => before[url]?.status === "running" && job.status === "done",
+        );
+        setJobs((prev) => ({ ...prev, ...fresh }));
         if (finished) void refreshSelectedNote(noteId);
       } catch {
         /* backend hiccup — try again next tick */
