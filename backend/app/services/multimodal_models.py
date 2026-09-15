@@ -11,6 +11,7 @@ from app.core.paths import (
     looks_like_network_volume,
     resolve_models_dir,
 )
+from app.services import asr_engine
 
 logger = get_logger("MultimodalModels")
 
@@ -22,8 +23,6 @@ def _asr_repo_and_dir() -> tuple[str, str]:
     otherwise the platform default is chosen (MLX layout on Apple Silicon, the
     ``-hf`` conversion elsewhere).
     """
-    from app.services import asr_engine
-
     configured_repo = (settings.MODEL_ASR_HF or "").strip()
     configured_dir = (settings.MODEL_ASR_LOCAL or "").strip()
     if configured_repo and configured_dir:
@@ -47,6 +46,11 @@ def _hf_repo_and_dir(kind: str) -> tuple[str, str]:
         return _asr_repo_and_dir()
     if kind == "marlin":
         return settings.MODEL_MARLIN_HF, settings.MODEL_MARLIN_LOCAL
+    if kind == "aligner":
+        engine = asr_engine.choose(resolve_models_dir(), preferred_engine=settings.ASR_ENGINE).engine
+        return asr_engine.ALIGNER_REPO[engine], asr_engine.ALIGNER_DIR[engine]
+    if kind == "diarizer":
+        return asr_engine.DIARIZER_REPO, asr_engine.DIARIZER_DIR
     raise ValueError(f"Unknown multimodal model kind: {kind}")
 
 
@@ -59,7 +63,11 @@ def is_hf_snapshot_ready(dest: Path) -> bool:
     """True when a HF snapshot looks usable (config + weights)."""
     if not dest.is_dir():
         return False
-    has_config = (dest / "config.json").exists() or (dest / "model_index.json").exists()
+    has_config = (
+        (dest / "config.json").exists()
+        or (dest / "config.yaml").exists()
+        or (dest / "model_index.json").exists()
+    )
     if not has_config:
         # Some repos nest or use preprocessor_config alone
         has_config = (dest / "preprocessor_config.json").exists()
@@ -188,6 +196,14 @@ def ensure_multimodal_models(
     repo, _ = _hf_repo_and_dir("asr")
     dest = multimodal_model_path("asr")
     out["asr"] = ensure_hf_snapshot(repo, dest, on_progress=on_progress, label="asr")
+
+    # Speaker labels: the 30 MB pyannote pipeline plus Qwen's forced aligner
+    # (word timings) in this engine's layout.
+    for kind in ("diarizer", "aligner"):
+        repo, _ = _hf_repo_and_dir(kind)
+        out[kind] = ensure_hf_snapshot(
+            repo, multimodal_model_path(kind), on_progress=on_progress, label=kind
+        )
 
     if include_marlin:
         repo, _ = _hf_repo_and_dir("marlin")

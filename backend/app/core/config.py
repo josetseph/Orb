@@ -124,6 +124,15 @@ class Settings(BaseSettings):
     # None lets the model detect the language; pinning "en" on non-English
     # audio is a known source of invented transcripts.
     ASR_LANGUAGE: str | None = "en"
+    # Speaker labels ("Speaker 1: …") on transcripts, via pyannote community-1
+    # on the CPU plus Qwen's forced aligner for word timings. Measured in the
+    # sibling local-transcription-service project: the pipeline's default 1.0 s
+    # segmentation step runs at 1.8x realtime, 2.0 s at 3.4x while agreeing on
+    # 95.7% of speech; 3.0 s merges two speakers into one, so stop at 2.0.
+    ASR_SPEAKERS: bool = True
+    ASR_DIARIZE_STEP: float = 2.0
+    # None lets clustering decide; set when the speaker count is known.
+    ASR_MAX_SPEAKERS: int | None = None
     MODEL_MARLIN_HF: str = "lunahr/Marlin-2B-ungated"
     MODEL_MARLIN_LOCAL: str = "marlin-2b"
     # Multimodal — loaded in-process (optional until first multimedia ingest).

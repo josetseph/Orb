@@ -43,6 +43,9 @@ type NotesSidebarProps = {
   onSelectFolder: (path: string) => void;
   onNoteSelect: (note: Note) => void;
   onNoteContextMenu?: (note: Note, x: number, y: number) => void;
+  onFolderContextMenu?: (path: string, x: number, y: number) => void;
+  onMoveVaultFolder: (fromPath: string, folder: string) => void;
+  onDeleteVaultFolder: (path: string) => void;
   onToggleNoteSelected: (noteId: string) => void;
   onMoveNoteToFolder: (noteId: string, folder: string) => void;
   onMoveVaultFile: (fromRel: string, folder: string) => void;
@@ -85,6 +88,9 @@ export function NotesSidebar({
   onSelectFolder,
   onNoteSelect,
   onNoteContextMenu,
+  onFolderContextMenu,
+  onMoveVaultFolder,
+  onDeleteVaultFolder,
   onToggleNoteSelected,
   onMoveNoteToFolder,
   onMoveVaultFile,
@@ -191,6 +197,9 @@ export function NotesSidebar({
             onSelectFolder={onSelectFolder}
             onNoteSelect={onNoteSelect}
             onNoteContextMenu={onNoteContextMenu}
+            onFolderContextMenu={onFolderContextMenu}
+            onMoveVaultFolder={onMoveVaultFolder}
+            onDeleteVaultFolder={onDeleteVaultFolder}
             onToggleNoteSelected={onToggleNoteSelected}
             onCreateNote={onCreateNote}
             onOpenFolderDialog={onOpenFolderDialog}

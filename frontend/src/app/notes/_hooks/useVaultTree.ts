@@ -163,6 +163,43 @@ export function useVaultTree({
     ],
   );
 
+  const handleMoveVaultFolder = useCallback(
+    async (fromPath: string, folder: string) => {
+      const name = fromPath.split("/").pop() || fromPath;
+      const toRel = folder ? `${folder}/${name}` : name;
+      if (toRel === fromPath || folder === fromPath || folder.startsWith(`${fromPath}/`)) return;
+      try {
+        await api.moveVaultFile(fromPath, toRel, currentKB);
+        // Links inside the open note were rewritten on disk.
+        if (selectedNote) void refreshSelectedNote(selectedNote.id);
+        await fetchNotes(searchQuery, processedFilter);
+      } catch (error) {
+        console.error("Error moving folder:", error);
+        alert(getApiErrorDetail(error) || "Failed to move folder.");
+      }
+    },
+    [currentKB, fetchNotes, searchQuery, processedFilter, selectedNote, refreshSelectedNote],
+  );
+
+  const handleDeleteVaultFolder = useCallback(
+    async (path: string) => {
+      const name = path.split("/").pop() || path;
+      if (!confirm(`Delete folder "${name}" and everything in it?\n\nNotes inside are removed from Orb; links to attachments inside are stripped from other notes.`)) {
+        return false;
+      }
+      try {
+        await api.deleteVaultFile(path, currentKB);
+        await fetchNotes(searchQuery, processedFilter);
+        return true;
+      } catch (error) {
+        console.error("Error deleting folder:", error);
+        alert(getApiErrorDetail(error) || "Failed to delete folder.");
+        return false;
+      }
+    },
+    [currentKB, fetchNotes, searchQuery, processedFilter],
+  );
+
   const toggleFileSelected = useCallback((relPath: string) => {
     setSelectedFileRels((prev) => {
       const next = new Set(prev);
@@ -375,6 +412,8 @@ export function useVaultTree({
     applyVaultListing,
     handleMoveNoteToFolder,
     handleMoveVaultFile,
+    handleMoveVaultFolder,
+    handleDeleteVaultFolder,
     openRenameDialog,
     submitRenameDialog,
     openFolderDialog,

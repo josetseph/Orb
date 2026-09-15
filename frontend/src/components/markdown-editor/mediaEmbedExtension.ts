@@ -33,6 +33,8 @@ export type MediaEmbedOptions = {
   jobs?: Record<string, AttachmentJob>;
   /** Start "process this item only" for one attachment (force = redo). */
   onProcess?: (rawUrl: string, force: boolean) => void;
+  /** Stop a running job for one attachment. */
+  onCancel?: (rawUrl: string) => void;
 };
 
 /** The one-click action for an attachment kind, or null when Orb cannot read it. */
@@ -175,6 +177,7 @@ class MediaWidget extends WidgetType {
     readonly hasBlock: boolean,
     readonly job: AttachmentJob | undefined,
     readonly onProcess: MediaEmbedOptions["onProcess"],
+    readonly onCancel: MediaEmbedOptions["onCancel"],
   ) {
     super();
   }
@@ -189,7 +192,8 @@ class MediaWidget extends WidgetType {
       this.hasBlock === other.hasBlock &&
       this.job?.status === other.job?.status &&
       this.job?.error === other.job?.error &&
-      this.onProcess === other.onProcess
+      this.onProcess === other.onProcess &&
+      this.onCancel === other.onCancel
     );
   }
 
@@ -218,6 +222,8 @@ class MediaWidget extends WidgetType {
     } else if (this.hasBlock) {
       status.classList.add("cm-media-embed-bar-ready");
       status.textContent = `${noun} ready`;
+    } else if (this.job?.status === "cancelled") {
+      status.textContent = "Cancelled";
     } else {
       status.textContent = "Not processed";
     }
@@ -236,7 +242,18 @@ class MediaWidget extends WidgetType {
       bar.appendChild(toggle);
     }
 
-    if (this.onProcess) {
+    if (this.job?.status === "running" && this.onCancel) {
+      const stop = document.createElement("button");
+      stop.type = "button";
+      stop.className = "cm-media-embed-btn";
+      stop.textContent = "Cancel";
+      stop.title = "Stop this job";
+      stop.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        this.onCancel?.(this.rawUrl);
+      });
+      bar.appendChild(stop);
+    } else if (this.onProcess) {
       const run = document.createElement("button");
       run.type = "button";
       run.className = "cm-media-embed-btn" + (this.hasBlock ? "" : " cm-media-embed-btn-primary");
@@ -450,6 +467,7 @@ export function createMediaEmbedDecorations(
                   done.has(extractKey(rawUrl)),
                   jobsByKey.get(extractKey(rawUrl)),
                   options.onProcess,
+                  options.onCancel,
                 ),
                 block: false,
               }).range(from, to),

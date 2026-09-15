@@ -10,6 +10,7 @@ import {
   Loader2,
   Mic,
   MoreHorizontal,
+  X,
   PanelRight,
   Paperclip,
   RefreshCw,
@@ -35,6 +36,7 @@ type NoteEditorHeaderProps = {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
   onIngest: () => void;
+  onCancelIngest: () => void;
   onAttachFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onToggleDatePicker: () => void;
   onToggleRecording: () => void;
@@ -58,6 +60,7 @@ export function NoteEditorHeader({
   viewMode,
   onViewModeChange,
   onIngest,
+  onCancelIngest,
   onAttachFile,
   onToggleDatePicker,
   onToggleRecording,
@@ -193,6 +196,17 @@ export function NoteEditorHeader({
         )}
         <span className="max-w-[14rem] truncate">{ingestLabel}</span>
       </button>
+      {busy && (
+        <button
+          type="button"
+          onClick={onCancelIngest}
+          title="Stop this ingestion"
+          className="btn btn-secondary btn-icon w-8"
+          aria-label="Cancel ingestion"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      )}
 
       <div ref={menuRef} className="relative">
         <button

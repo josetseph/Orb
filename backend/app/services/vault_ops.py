@@ -67,7 +67,10 @@ def rewrite_refs_in_text(content: str, old_rel: str, new_rel: str, kb_id: str) -
     encoded_new = "/".join(quote(seg, safe="") for seg in new.split("/"))
 
     text = content
-    # ](...target...)  — cover vault-files URLs and relative vault paths
+    # ](...target...) and the extraction marker's src="..." — cover vault-files
+    # URLs and relative vault paths. The marker must follow the link: it is how
+    # ingestion and the media widget know the attachment was already processed,
+    # and a stale one meant a moved recording got transcribed all over again.
     for src, dst in (
         (f"/vault-files/{kb_id}/{old}", f"/vault-files/{kb_id}/{new}"),
         (f"/vault-files/{kb_id}/{encoded_old}", f"/vault-files/{kb_id}/{encoded_new}"),
@@ -77,7 +80,7 @@ def rewrite_refs_in_text(content: str, old_rel: str, new_rel: str, kb_id: str) -
         if not src or src == dst:
             continue
         text = re.sub(
-            rf"(\]\()({re.escape(src)})(\))",
+            rf"(\]\(|orb:extract src=\")({re.escape(src)})(\)|\")",
             rf"\1{dst}\3",
             text,
         )
@@ -191,6 +194,8 @@ async def delete_vault_file(
         raise ValueError("Use note delete for markdown files")
 
     src = safe_vault_join(vault, src_rel)
+    if src.is_dir():
+        return await _delete_folder(db, kb, vault, src_rel, src)
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(f"File not found: {src_rel}")
 
@@ -199,6 +204,45 @@ async def delete_vault_file(
     stripped = await strip_refs_across_notes(db, kb, src_rel)
     await db.commit()
     return {"deleted": src_rel, "links_stripped": stripped}
+
+
+def _files_under(vault: Path, folder: Path) -> list[str]:
+    """Vault-relative paths of every visible file below ``folder``."""
+    out: list[str] = []
+    for p in sorted(folder.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = str(p.relative_to(vault)).replace("\\", "/")
+        if any(part.startswith(".") for part in rel.split("/")):
+            continue
+        out.append(rel)
+    return out
+
+
+async def _delete_folder(
+    db: AsyncSession, kb: KBContext, vault: Path, src_rel: str, src: Path
+) -> dict:
+    """Delete a folder: notes go through the full note delete, attachments lose their links."""
+    from app.api.notes import _delete_note_impl
+
+    notes_deleted = 0
+    stripped = 0
+    all_notes = list(
+        (await db.execute(select(Note).where(Note.kb_id == kb.kb_id))).scalars().all()
+    )
+    by_rel = {_norm(n.rel_path or ""): n.id for n in all_notes}
+    # ponytail: one round-trip per file; fine for a folder, slow for a vault.
+    for rel in _files_under(vault, src):
+        if rel.lower().endswith(".md"):
+            if rel in by_rel:
+                await _delete_note_impl(by_rel[rel], db, kb)
+                notes_deleted += 1
+            continue
+        mark_self_write(vault, rel)
+        stripped += await strip_refs_across_notes(db, kb, rel)
+    await db.commit()
+    shutil.rmtree(src)
+    return {"deleted": src_rel, "notes_deleted": notes_deleted, "links_stripped": stripped}
 
 
 async def move_vault_file(
@@ -217,6 +261,8 @@ async def move_vault_file(
         raise ValueError("Invalid path")
 
     src = safe_vault_join(vault, src_rel)
+    if src.is_dir():
+        return await _move_folder(db, kb, vault, src_rel, dst_rel)
     dst_rel = unique_rel_path(vault, dst_rel)
     dst = safe_vault_join(vault, dst_rel)
     if not src.exists() or not src.is_file():
@@ -296,6 +342,27 @@ async def move_vault_file(
         "note_id": note_row.id if note_row else None,
         "links_rewritten": rewritten,
     }
+
+
+async def _move_folder(
+    db: AsyncSession, kb: KBContext, vault: Path, src_rel: str, dst_rel: str
+) -> dict:
+    """Move a folder by moving each file through ``move_vault_file`` so links follow."""
+    if dst_rel == src_rel or dst_rel.startswith(src_rel + "/"):
+        raise ValueError("Cannot move a folder into itself")
+    src = safe_vault_join(vault, src_rel)
+    dst_rel = unique_rel_path(vault, dst_rel)
+    dst = safe_vault_join(vault, dst_rel)
+    rewritten = 0
+    moved = 0
+    for rel in _files_under(vault, src):
+        result = await move_vault_file(db, kb, rel, dst_rel + rel[len(src_rel):])
+        rewritten += result["links_rewritten"]
+        moved += 1
+    # Empty subfolders and dotfiles (.keep) come along; the old tree goes.
+    shutil.copytree(src, dst, dirs_exist_ok=True)
+    shutil.rmtree(src)
+    return {"from": src_rel, "to": dst_rel, "note_id": None, "moved": moved, "links_rewritten": rewritten}
 
 
 async def rename_note_file_for_title(

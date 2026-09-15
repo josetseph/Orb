@@ -26,6 +26,29 @@ from app.workflows.agents.ingestion_agent import ingestion_agent
 
 logger = get_logger("IngestionPipeline")
 
+#: Pipelines in flight, by (kb_id, note_id) — what the Cancel button stops.
+_running_ingestions: dict[tuple[str, str], asyncio.Task] = {}
+
+
+def _failure_reason(exc: BaseException) -> str:
+    """One short line a person can act on, not the wrapped agent traceback."""
+    text = str(exc)
+    if "503" in text or "high demand" in text.lower() or "overloaded" in text.lower():
+        return "the model provider is overloaded (503) — retry in a few minutes"
+    if "429" in text or "rate limit" in text.lower():
+        return "the model provider rate-limited us (429) — retry in a minute"
+    text = re.sub(r"^Ingestion Agent Failed: \[?['\"]?", "", text).strip("[]'\" ")
+    return (text[:157] + "…") if len(text) > 160 else text
+
+
+def cancel_ingestion(kb_id: str, note_id: str) -> bool:
+    """Stop a running or queued ingestion. False when nothing is running."""
+    task = _running_ingestions.get((kb_id, note_id))
+    if task is None or task.done():
+        return False
+    task.cancel()
+    return True
+
 
 def clean_rel_type(rel_type: str, source_name: str, target_name: str) -> str:
     """Remove entity name tokens from a relationship predicate.
@@ -112,9 +135,39 @@ class IngestionWorkflow:
         self._temporal_digest_running = False
 
     async def process_note(self, note_input: NoteInput, note_id: str = None):
-        """Run the full ingestion pipeline for a single note."""
+        """Run the full ingestion pipeline for a single note, cancellable by id.
+
+        The pipeline runs as its own task so ``cancel_ingestion`` can stop it
+        wherever it is — queued behind the semaphore or mid-phase. A model call
+        already running in a thread finishes on its own; its result is dropped.
+        """
         if not note_id:
             note_id = str(uuid.uuid4())
+        key = (self.kb_id, note_id)
+        inner = asyncio.create_task(self._process_note(note_input, note_id))
+        _running_ingestions[key] = inner
+        try:
+            return await inner
+        except asyncio.CancelledError:
+            if not inner.cancelled():
+                # We were cancelled from outside (shutdown); take the pipeline down too.
+                inner.cancel()
+                raise
+            logger.info(f"[Ingestion] CANCELLED note_id={note_id}")
+            await self._update_note_fields(
+                note_id,
+                f"[Ingestion] Note {note_id} cancelled by the user.",
+                processed=False,
+                failed=False,
+                processing_stage="Saved",
+                processing_model=None,
+            )
+            return {"note_id": note_id, "status": "cancelled"}
+        finally:
+            if _running_ingestions.get(key) is inner:
+                del _running_ingestions[key]
+
+    async def _process_note(self, note_input: NoteInput, note_id: str):
 
         # Register with the tracker BEFORE the semaphore so the community-detection
         # idle timer never fires while tasks are queued waiting for a slot.
@@ -197,11 +250,8 @@ class IngestionWorkflow:
                     "processed_content": final_state["content"],
                 }
 
-            except Exception:
-                await self._update_note_processing_status(
-                    note_id, "Ingestion failed", None
-                )
-                await self._mark_note_failed(note_id)
+            except Exception as exc:
+                await self._mark_note_failed(note_id, reason=_failure_reason(exc))
                 raise
 
             finally:
@@ -345,14 +395,14 @@ class IngestionWorkflow:
     @retry(
         stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
     )
-    async def _mark_note_failed(self, note_id: str):
-        """Set failed=True in SQLite so callers can distinguish permanent failure."""
+    async def _mark_note_failed(self, note_id: str, reason: str | None = None):
+        """Set failed=True in SQLite; the stage carries why, so the UI can say."""
         await self._update_note_fields(
             note_id,
             f"[Ingestion] Marked Note {note_id} as Failed.",
             processed=False,
             failed=True,
-            processing_stage="Ingestion failed",
+            processing_stage=f"Ingestion failed: {reason}" if reason else "Ingestion failed",
             processing_model=None,
         )
 

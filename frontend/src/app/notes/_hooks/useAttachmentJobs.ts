@@ -36,6 +36,15 @@ export function useAttachmentJobs({ currentKB, selectedNote, refreshSelectedNote
     [noteId, currentKB],
   );
 
+  const cancel = useCallback(
+    (rawUrl: string) => {
+      if (!noteId) return;
+      setJobs((prev) => ({ ...prev, [rawUrl]: { status: "cancelled", error: null } }));
+      api.cancelAttachment(noteId, rawUrl, currentKB).catch(() => {});
+    },
+    [noteId, currentKB],
+  );
+
   // Coming back to a note: the server still knows what is running, the
   // local list does not. One fetch seeds it, which also restarts polling.
   useEffect(() => {
@@ -72,7 +81,15 @@ export function useAttachmentJobs({ currentKB, selectedNote, refreshSelectedNote
         const finished = Object.entries(fresh).some(
           ([url, job]) => before[url]?.status === "running" && job.status === "done",
         );
-        setJobs((prev) => ({ ...prev, ...fresh }));
+        // Job records live in the API's memory. One we think is running that
+        // the server no longer knows about died with a restart.
+        const lost: Record<string, AttachmentJob> = {};
+        for (const [url, job] of Object.entries(before)) {
+          if (job.status === "running" && !(url in fresh)) {
+            lost[url] = { status: "failed", error: "Lost when the backend restarted — press Redo" };
+          }
+        }
+        setJobs((prev) => ({ ...prev, ...fresh, ...lost }));
         if (finished) void refreshSelectedNote(noteId);
       } catch {
         /* backend hiccup — try again next tick */
@@ -85,5 +102,5 @@ export function useAttachmentJobs({ currentKB, selectedNote, refreshSelectedNote
     };
   }, [noteId, currentKB, running, refreshSelectedNote]);
 
-  return { jobs, start };
+  return { jobs, start, cancel };
 }

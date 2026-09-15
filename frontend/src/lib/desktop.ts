@@ -51,6 +51,8 @@ export type OrbDesktopBridge = {
   deleteEndpointCredential?: (
     baseUrl: string,
   ) => Promise<{ ok: boolean; error?: string }>;
+  /** Kill and relaunch the FastAPI process (keys are re-pushed after). */
+  restartBackend?: () => Promise<{ ok: boolean; error?: string }>;
   /** Direct FastAPI base, e.g. http://127.0.0.1:17401/api/v1 */
   getApiBaseUrl?: () => Promise<string>;
   /** Reveal a local file in Finder / Explorer (vault / data / models only) */

@@ -304,6 +304,20 @@ export function useNotesPageController() {
     [vault, media],
   );
 
+  const handleDeleteVaultFolder = useCallback(
+    async (path: string) => {
+      const open = selection.selectedNote;
+      const inside = Boolean(open?.rel_path && open.rel_path.replace(/\\/g, "/").startsWith(`${path}/`));
+      if (inside) autosave.cancelPendingAutosave();
+      const deleted = await vault.handleDeleteVaultFolder(path);
+      if (deleted && inside) {
+        selection.resetBeforeEdit();
+        selection.setSelectedNote(null);
+      }
+    },
+    [selection, autosave, vault],
+  );
+
   return {
     currentKB,
     currentKBName,
@@ -328,5 +342,6 @@ export function useNotesPageController() {
     handleDeleteNote,
     handleReingestVault,
     handleDeleteVaultAttachment,
+    handleDeleteVaultFolder,
   };
 }

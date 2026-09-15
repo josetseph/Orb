@@ -58,6 +58,8 @@ class MultimodalRuntime:
         self._asr_model = None
         self._asr_processor = None
         self._asr_path: Path | None = None
+        self._aligner_model = None
+        self._aligner_processor = None
         self._marlin_model = None
 
     @property
@@ -86,6 +88,8 @@ class MultimodalRuntime:
             self._asr_model = None
             self._asr_processor = None
             self._asr_path = None
+            self._aligner_model = None
+            self._aligner_processor = None
             changed = True
         if keep != "marlin" and self._marlin_model is not None:
             self._marlin_model = None
@@ -163,6 +167,25 @@ class MultimodalRuntime:
         self._asr_path = model_path
         self._record_load("asr", started)
         logger.info("Qwen3-ASR loaded")
+
+    def _load_aligner(self, model_path: Path) -> None:
+        """The forced aligner rides along with the ASR model (same layout, same device)."""
+        if self._aligner_model is not None:
+            return
+        from transformers import AutoProcessor
+        from transformers.models.qwen3_asr import Qwen3ASRForTokenClassification
+
+        logger.info("Loading Qwen3 forced aligner from %s", model_path)
+        started = time.perf_counter()
+        self._aligner_model = (
+            Qwen3ASRForTokenClassification.from_pretrained(
+                str(model_path), dtype=self._asr_model.dtype, low_cpu_mem_usage=True
+            )
+            .to(self.device)
+            .eval()
+        )
+        self._aligner_processor = AutoProcessor.from_pretrained(str(model_path))
+        self._record_load("aligner", started)
 
     def _resolve_ffmpeg_bins(self) -> tuple[str | None, str | None]:
         """Locate system ``ffmpeg`` / ``ffprobe`` (PATH + common install dirs).
@@ -295,42 +318,115 @@ class MultimodalRuntime:
                 f"Qwen3-ASR is not downloaded ({choice.reason}). "
                 "Download the media models on the Models page."
             )
-        if choice.engine == asr_engine.ENGINE_MLX:
-            with self._lock:
-                self._unload_except("")
-            return asr_engine.transcribe_with_mlx(
-                choice.model_path, audio_path, language=settings.ASR_LANGUAGE
+        if choice.engine != asr_engine.ENGINE_MLX:
+            return self._transcribe_with_transformers(choice.model_path, audio_path)
+
+        aligner = multimodal_model_path("aligner")
+        speakers = self._diarizer_ready() and is_hf_snapshot_ready(aligner)
+        if settings.ASR_SPEAKERS and not speakers:
+            logger.info("Speaker labels skipped: aligner/diarizer not downloaded")
+        with self._lock:
+            self._unload_except("")
+        transcript = asr_engine.transcribe_with_mlx(
+            choice.model_path,
+            audio_path,
+            language=settings.ASR_LANGUAGE,
+            aligner_path=aligner if speakers else None,
+        )
+        if not speakers or not transcript.words:
+            return transcript.text
+        turns = self._speaker_turns(self._load_audio_mono_16k(audio_path))
+        if not turns:
+            # The transcript is already in hand; labels are the optional half.
+            return transcript.text
+        return asr_engine.label_speakers(transcript, turns)
+
+    def _diarizer_ready(self) -> bool:
+        from app.core.config import settings
+
+        return bool(settings.ASR_SPEAKERS) and is_hf_snapshot_ready(
+            multimodal_model_path("diarizer")
+        )
+
+    def _speaker_turns(self, audio) -> list:
+        """Who spoke when, or [] when diarization is off, missing, or fails."""
+        from app.core.config import settings
+        from app.services import asr_engine
+
+        if not self._diarizer_ready():
+            return []
+        try:
+            turns = asr_engine.speaker_turns(
+                audio,
+                16000,
+                multimodal_model_path("diarizer"),
+                step=settings.ASR_DIARIZE_STEP,
+                max_speakers=settings.ASR_MAX_SPEAKERS,
             )
-        return self._transcribe_with_transformers(choice.model_path, audio_path)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Speaker labels skipped: %s", exc)
+            return []
+        logger.info("Speaker labels: %d speakers", len({t.speaker for t in turns}))
+        return turns
 
     def _transcribe_with_transformers(self, model_path: Path, audio_path: str) -> str:
         from app.core.config import settings
         from app.services.asr_engine import language_name
 
+        from app.services import asr_engine
+
+        aligner = multimodal_model_path("aligner")
+        speakers = self._diarizer_ready() and is_hf_snapshot_ready(aligner)
+        if settings.ASR_SPEAKERS and not speakers:
+            logger.info("Speaker labels skipped: aligner/diarizer not downloaded")
         with self._lock:
             self._load_asr(model_path)
             assert self._asr_model is not None and self._asr_processor is not None
             audio = self._load_audio_mono_16k(audio_path)
             if audio.size == 0:
                 return ""
-            request = {"audio": audio, "sampling_rate": 16000}
-            if language_name(settings.ASR_LANGUAGE):
-                request["language"] = language_name(settings.ASR_LANGUAGE)
-            inputs = self._asr_processor.apply_transcription_request(**request).to(
-                self._asr_model.device, self._asr_model.dtype
-            )
-            import torch
-
-            # No fixed cap: the bound scales with the recording so a long
-            # lecture is never cut mid-sentence (speech is ~3 tokens/s).
-            seconds = audio.size / 16000
-            with torch.no_grad():
-                output_ids = self._asr_model.generate(
-                    **inputs, max_new_tokens=int(seconds * 8) + 256
+            if not speakers:
+                return self._asr_generate(audio)
+            # Same recipe as the MLX library: transcribe and align 30 s
+            # chunks, then attribute the timed words to pyannote's turns.
+            self._load_aligner(aligner)
+            texts: list[str] = []
+            words: list[asr_engine.Word] = []
+            for chunk, offset in asr_engine.split_audio_into_chunks(audio, 16000):
+                text = self._asr_generate(chunk)
+                if not text:
+                    continue
+                texts.append(text)
+                words += asr_engine.align_with_transformers(
+                    self._aligner_processor, self._aligner_model, chunk, 16000, text, offset
                 )
-            generated = output_ids[:, inputs["input_ids"].shape[1] :]
-            text = self._asr_processor.decode(generated, return_format="transcription_only")[0]
-            return (text or "").strip()
+            transcript = asr_engine.Transcript(" ".join(texts), words)
+            turns = self._speaker_turns(audio)
+        return asr_engine.label_speakers(transcript, turns) if turns else transcript.text
+
+    def _asr_generate(self, audio) -> str:
+        """Run the loaded transformers Qwen3-ASR over one mono 16 kHz clip."""
+        from app.core.config import settings
+        from app.services.asr_engine import language_name
+
+        import torch
+
+        request = {"audio": audio, "sampling_rate": 16000}
+        if language_name(settings.ASR_LANGUAGE):
+            request["language"] = language_name(settings.ASR_LANGUAGE)
+        inputs = self._asr_processor.apply_transcription_request(**request).to(
+            self._asr_model.device, self._asr_model.dtype
+        )
+        # No fixed cap: the bound scales with the recording so a long
+        # lecture is never cut mid-sentence (speech is ~3 tokens/s).
+        seconds = audio.size / 16000
+        with torch.no_grad():
+            output_ids = self._asr_model.generate(
+                **inputs, max_new_tokens=int(seconds * 8) + 256
+            )
+        generated = output_ids[:, inputs["input_ids"].shape[1] :]
+        text = self._asr_processor.decode(generated, return_format="transcription_only")[0]
+        return (text or "").strip()
 
     # ---- Marlin -----------------------------------------------------------
 

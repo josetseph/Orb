@@ -144,3 +144,50 @@ class TestNoEngineInstalled:
         choice = ae.choose(tmp_path)
         assert choice.engine == ENGINE_MLX
         assert choice.reason == "no engine installed"
+
+
+class TestSpeakerLabels:
+    def _transcript(self):
+        words = [
+            ae.Word("Good", 0.0, 0.3), ae.Word("morning.", 0.3, 0.6),
+            ae.Word("Thanks,", 2.0, 2.3), ae.Word("professor.", 2.3, 2.8),
+            ae.Word("Let's", 4.0, 4.2), ae.Word("begin.", 4.2, 4.6),
+        ]
+        return ae.Transcript("Good morning. Thanks, professor. Let's begin.", words)
+
+    def _turns(self):
+        return [ae.Turn(0.0, 1.0, "SPEAKER_01"), ae.Turn(1.9, 3.0, "SPEAKER_00"), ae.Turn(3.9, 5.0, "SPEAKER_01")]
+
+    def test_labels_number_speakers_by_first_appearance(self):
+        out = ae.label_speakers(self._transcript(), self._turns())
+        assert out == "Speaker 1: Good morning.\n\nSpeaker 2: Thanks, professor.\n\nSpeaker 1: Let's begin."
+
+    def test_word_in_a_gap_goes_to_the_nearest_turn(self):
+        assert ae.speaker_at(self._turns(), 1.5) == "SPEAKER_00"
+
+    def test_without_timings_or_turns_text_is_unchanged(self):
+        t = self._transcript()
+        assert ae.label_speakers(ae.Transcript(t.text, []), self._turns()) == t.text
+        assert ae.label_speakers(t, []) == t.text
+
+
+
+class TestChunking:
+    def test_short_audio_is_one_chunk(self):
+        np = pytest.importorskip("numpy")
+        audio = np.ones(16000 * 10, dtype="float32")
+        assert len(ae.split_audio_into_chunks(audio, 16000)) == 1
+
+    def test_long_audio_splits_in_the_quiet_part_with_offsets(self):
+        np = pytest.importorskip("numpy")
+        sr = 100
+        audio = np.ones(sr * 50, dtype="float32")
+        audio[sr * 24 : sr * 26] = 0.0  # a two-second pause near the middle
+        chunks = ae.split_audio_into_chunks(audio, sr, max_chunk_sec=30)
+        assert len(chunks) == 2 and chunks[0][1] == 0.0
+        assert 24 <= chunks[1][1] <= 26  # the cut lands inside the pause
+        assert sum(len(c) for c, _ in chunks) == len(audio)
+
+    def test_aligner_layout_follows_the_engine(self):
+        assert ae.ALIGNER_DIR[ENGINE_MLX] == "qwen3-forced-aligner-0.6b"
+        assert ae.ALIGNER_DIR[ENGINE_TRANSFORMERS] == "qwen3-forced-aligner-0.6b-hf"

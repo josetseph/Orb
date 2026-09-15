@@ -116,7 +116,27 @@ def _media_state() -> dict:
         if row["installed"]:
             row["hint"] = None
         rows.append(row)
+    rows.append(_speakers_row())
     return {"models": rows}
+
+
+def _speakers_row() -> dict:
+    """Speaker labels: pyannote turns plus, on MLX, Qwen's aligner for word timings."""
+    from app.core.config import settings
+    from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
+
+    diarizer = multimodal_model_path("diarizer")
+    aligner = multimodal_model_path("aligner")
+    installed = is_hf_snapshot_ready(diarizer) and is_hf_snapshot_ready(aligner)
+    return {
+        "kind": "speakers",
+        "label": "Speaker labels",
+        "purpose": "Who said what in lectures and meetings",
+        "name": f"{diarizer.name} + {aligner.name}",
+        "installed": installed,
+        "engine_note": "off (ASR_SPEAKERS=false)" if not settings.ASR_SPEAKERS else "pyannote on CPU",
+        "hint": None if installed else "not downloaded yet",
+    }
 
 
 def settings_asr_engine() -> str:

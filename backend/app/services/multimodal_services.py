@@ -29,6 +29,8 @@ _MULTIMODAL_PIP = [
     "Pillow>=12.0.0",
     "qwen-vl-utils>=0.0.14",
     "av",
+    # Speaker labels on transcripts (CPU, every platform).
+    "pyannote.audio>=4.0",
 ]
 if sys.platform == "darwin" and platform.machine() == "arm64":
     # Same markers as requirements-multimodal.txt: the Apple GPU path for

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type DragEvent, type RefObject } from "react";
+import { useMemo, useState, type DragEvent, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ChevronRight,
@@ -9,6 +9,7 @@ import {
   FolderPlus,
   Paperclip,
   Plus,
+  Trash2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Note } from "@/lib/types";
@@ -38,6 +39,9 @@ type VaultFolderTreeProps = {
   onSelectFolder: (path: string) => void;
   onNoteSelect: (note: Note) => void;
   onNoteContextMenu?: (note: Note, x: number, y: number) => void;
+  onFolderContextMenu?: (path: string, x: number, y: number) => void;
+  onMoveVaultFolder: (fromPath: string, folder: string) => void;
+  onDeleteVaultFolder: (path: string) => void;
   onToggleNoteSelected: (noteId: string) => void;
   onCreateNote: (folderPath: string) => void;
   onOpenFolderDialog: (parent: string) => void;
@@ -103,6 +107,9 @@ export function VaultFolderTree({
   onSelectFolder,
   onNoteSelect,
   onNoteContextMenu,
+  onFolderContextMenu,
+  onMoveVaultFolder,
+  onDeleteVaultFolder,
   onToggleNoteSelected,
   onCreateNote,
   onOpenFolderDialog,
@@ -117,7 +124,9 @@ export function VaultFolderTree({
   onDeleteVaultAttachment,
 }: VaultFolderTreeProps) {
   const attachmentsOpen = expandedFolders.has("attachments");
-  const dragging = Boolean(dragNoteId || dragFileRel);
+  // Folder being dragged (vault-relative path); the tree owns this one.
+  const [dragFolder, setDragFolder] = useState<string | null>(null);
+  const dragging = Boolean(dragNoteId || dragFileRel || dragFolder);
 
   const rows = useMemo<TreeRow[]>(() => {
     const noteFolders = vaultFolders.filter(
@@ -245,6 +254,7 @@ export function VaultFolderTree({
     e.stopPropagation();
     e.dataTransfer.dropEffect = "move";
     const noteId = e.dataTransfer.getData("text/note-id") || dragNoteId;
+    const folderRel = e.dataTransfer.getData("text/vault-folder") || dragFolder;
     const fileRel = e.dataTransfer.getData("text/vault-file") || dragFileRel;
     let fileRels: string[] = [];
     try {
@@ -254,7 +264,9 @@ export function VaultFolderTree({
     }
     onDragNoteEnd();
     onDragFileEnd();
-    if (noteId) void onMoveNoteToFolder(noteId, folderPath);
+    setDragFolder(null);
+    if (folderRel) void onMoveVaultFolder(folderRel, folderPath);
+    else if (noteId) void onMoveNoteToFolder(noteId, folderPath);
     else if (fileRels.length > 1) void onMoveVaultFiles(fileRels, folderPath);
     else if (fileRel) void onMoveVaultFile(fileRel, folderPath);
   };
@@ -265,8 +277,23 @@ export function VaultFolderTree({
     e.dataTransfer.dropEffect = "move";
   };
 
+  const isRootFolder = (folderPath: string) => folderPath === "" || folderPath === "attachments";
+
   const folderActionButtons = (folderPath: string) => (
     <div className="flex shrink-0 items-center gap-0.5 opacity-0 group-hover/folder:opacity-100">
+      {!isRootFolder(folderPath) && (
+        <button
+          type="button"
+          title="Delete folder"
+          onClick={(e) => {
+            e.stopPropagation();
+            onDeleteVaultFolder(folderPath);
+          }}
+          className="grid h-5 w-5 place-items-center rounded text-n-500 hover:bg-n-800 hover:text-danger-text"
+        >
+          <Trash2 className="h-3 w-3" />
+        </button>
+      )}
       <button
         type="button"
         title="New folder"
@@ -300,10 +327,25 @@ export function VaultFolderTree({
     opts: { open?: boolean; selected: boolean; count?: number; icon: React.ReactNode; onClick: () => void },
   ) => (
     <div
+      draggable={!isRootFolder(path)}
+      onDragStart={(e) => {
+        if (isRootFolder(path)) return;
+        e.stopPropagation();
+        setDragFolder(path);
+        e.dataTransfer.setData("text/vault-folder", path);
+        e.dataTransfer.effectAllowed = "move";
+      }}
+      onDragEnd={() => setDragFolder(null)}
+      onContextMenu={(e) => {
+        if (!onFolderContextMenu || isRootFolder(path)) return;
+        e.preventDefault();
+        onFolderContextMenu(path, e.clientX, e.clientY);
+      }}
       className={cn(
         "group/folder flex w-full items-center gap-1 rounded-[6px] pr-1 kicker",
         opts.selected ? "text-accent" : "hover:text-n-300",
         dragging && "ring-1 ring-accent/30",
+        dragFolder === path && "opacity-50",
       )}
       style={{ paddingLeft: 6 + depth * 12 }}
     >

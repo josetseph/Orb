@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertCircle,
   AudioLines,
   Clock,
   FileText,
   Film,
+  FolderPlus,
   Image as ImageIcon,
   Loader2,
   Trash2,
@@ -65,11 +66,24 @@ export default function NotesPage() {
     handleDeleteNote,
     handleReingestVault,
     handleDeleteVaultAttachment,
+    handleDeleteVaultFolder,
   } = useNotesPageController();
   const [viewMode, setViewMode] = useState<ViewMode>("live");
-  const [ctxMenu, setCtxMenu] = useState<{ note: Note; x: number; y: number } | null>(null);
+  type CtxMenu =
+    | { kind: "note"; note: Note; x: number; y: number }
+    | { kind: "folder"; path: string; x: number; y: number };
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
 
   const selectedNote = selection.selectedNote;
+  const selectedNoteId = selectedNote?.id ?? null;
+  const selectedNoteEmpty = Boolean(selectedNote && !selectedNote.title && !selectedNote.content);
+
+  // A fresh note lands in the title. (Remounting the input with key={id}
+  // leaked one input per note switch, so focus is driven by an effect.)
+  const titleRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (selectedNoteId && selectedNoteEmpty) titleRef.current?.focus();
+  }, [selectedNoteId, selectedNoteEmpty]);
 
   // Right-click menu on a note row: closes on any click, Escape, or scroll.
   useEffect(() => {
@@ -198,7 +212,10 @@ export default function NotesPage() {
         onToggleFolder={vault.toggleFolder}
         onSelectFolder={vault.setSelectedFolder}
         onNoteSelect={handleNoteSelect}
-        onNoteContextMenu={(note, x, y) => setCtxMenu({ note, x, y })}
+        onNoteContextMenu={(note, x, y) => setCtxMenu({ kind: "note", note, x, y })}
+        onFolderContextMenu={(path, x, y) => setCtxMenu({ kind: "folder", path, x, y })}
+        onMoveVaultFolder={vault.handleMoveVaultFolder}
+        onDeleteVaultFolder={handleDeleteVaultFolder}
         onToggleNoteSelected={batch.toggleNoteSelected}
         onMoveNoteToFolder={vault.handleMoveNoteToFolder}
         onMoveVaultFile={vault.handleMoveVaultFile}
@@ -224,6 +241,7 @@ export default function NotesPage() {
               viewMode={viewMode}
               onViewModeChange={setViewMode}
               onIngest={ingest.handleIngestNote}
+              onCancelIngest={ingest.handleCancelIngest}
               onAttachFile={media.handleFileAttach}
               onToggleDatePicker={() => media.setShowDatePicker(!media.showDatePicker)}
               onToggleRecording={media.isRecording ? media.stopRecording : media.startRecording}
@@ -241,12 +259,12 @@ export default function NotesPage() {
               <div className="mx-6 mt-3.5 flex items-center gap-2.5 rounded-md bg-surface px-3 py-2.5 text-[12.5px] shadow-sm">
                 <AlertCircle className="h-4 w-4 shrink-0 text-danger" />
                 <span className="flex-1">
-                  Ingestion failed
-                  {selectedNote.processing_stage &&
-                  selectedNote.processing_stage !== "Ingestion failed"
-                    ? ` — ${selectedNote.processing_stage}`
-                    : ""}
-                  . Fix the note or attachment and retry.
+                  {selectedNote.processing_stage?.startsWith("Ingestion failed: ")
+                    ? `Ingestion failed — ${selectedNote.processing_stage.slice("Ingestion failed: ".length)}.`
+                    : selectedNote.processing_stage &&
+                        selectedNote.processing_stage !== "Ingestion failed"
+                      ? `Ingestion failed — ${selectedNote.processing_stage}.`
+                      : "Ingestion failed. Fix the note or attachment and retry."}
                 </span>
                 <button type="button" onClick={ingest.handleIngestNote} className="btn btn-sm btn-primary">
                   Retry
@@ -266,6 +284,7 @@ export default function NotesPage() {
               <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-12 pb-20 pt-7">
                 <div className="flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
                   <input
+                    ref={titleRef}
                     type="text"
                     value={selectedNote.title || ""}
                     onChange={(e) => selection.handleTitleChange(e.target.value)}
@@ -338,6 +357,7 @@ export default function NotesPage() {
                     viewMode={viewMode}
                     attachmentJobs={attachments.jobs}
                     onProcessAttachment={attachments.start}
+                    onCancelAttachment={attachments.cancel}
                     onOpenFile={media.handleFileClick}
                     placeholder="Keep writing… drop a file to embed it, [[ links a note."
                     className="min-h-[50vh] w-full"
@@ -380,7 +400,56 @@ export default function NotesPage() {
         )}
       </div>
 
-      {ctxMenu && (
+      {ctxMenu?.kind === "folder" && (
+        <div
+          className="popover fixed z-[85] min-w-[200px]"
+          style={{
+            left: Math.min(ctxMenu.x, window.innerWidth - 220),
+            top: Math.min(ctxMenu.y, window.innerHeight - 160),
+          }}
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <div className="truncate px-2.5 pb-1.5 pt-1 text-[11px] text-n-500">
+            {ctxMenu.path.split("/").pop()}
+          </div>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => {
+              const { path } = ctxMenu;
+              setCtxMenu(null);
+              void handleCreateNote(path);
+            }}
+          >
+            <FileText className="h-3.5 w-3.5 text-n-500" /> New note here
+          </button>
+          <button
+            type="button"
+            className="menu-item"
+            onClick={() => {
+              const { path } = ctxMenu;
+              setCtxMenu(null);
+              vault.openFolderDialog(path);
+            }}
+          >
+            <FolderPlus className="h-3.5 w-3.5 text-n-500" /> New subfolder
+          </button>
+          <div className="my-1 h-px bg-divider" />
+          <button
+            type="button"
+            className="menu-item text-danger-text"
+            onClick={() => {
+              const { path } = ctxMenu;
+              setCtxMenu(null);
+              void handleDeleteVaultFolder(path);
+            }}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete folder
+          </button>
+        </div>
+      )}
+
+      {ctxMenu?.kind === "note" && (
         <div
           className="popover fixed z-[85] min-w-[200px]"
           style={{

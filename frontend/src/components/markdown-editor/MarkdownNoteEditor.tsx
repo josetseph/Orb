@@ -78,6 +78,8 @@ export interface MarkdownNoteEditorProps {
   attachmentJobs?: Record<string, AttachmentJob>;
   /** Start "process this item only" for one attachment (force = redo). */
   onProcessAttachment?: (rawUrl: string, force: boolean) => void;
+  /** Stop a running attachment job. */
+  onCancelAttachment?: (rawUrl: string) => void;
   /** Open a vault file linked from the note (preview modal). */
   onOpenFile?: (url: string, filename: string) => void;
 }
@@ -215,6 +217,7 @@ const MarkdownNoteEditor = forwardRef<
     viewMode = "live",
     attachmentJobs,
     onProcessAttachment,
+    onCancelAttachment,
     onOpenFile,
   },
   ref,
@@ -230,6 +233,9 @@ const MarkdownNoteEditor = forwardRef<
     (rawUrl: string, force: boolean) => onProcessRef.current?.(rawUrl, force),
     [],
   );
+  const onCancelRef = useRef(onCancelAttachment);
+  onCancelRef.current = onCancelAttachment;
+  const cancelHandler = useCallback((rawUrl: string) => onCancelRef.current?.(rawUrl), []);
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
   const openFileHandler = useCallback(
@@ -249,9 +255,9 @@ const MarkdownNoteEditor = forwardRef<
   const mediaExtension = useCallback(
     (mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
       mode === "live"
-        ? createMediaEmbedDecorations(kb, { jobs, onProcess: processHandler })
+        ? createMediaEmbedDecorations(kb, { jobs, onProcess: processHandler, onCancel: cancelHandler })
         : [],
-    [kb, processHandler],
+    [kb, processHandler, cancelHandler],
   );
   const [view, setView] = useState<EditorView | null>(null);
   const [scannedEntities, setScannedEntities] = useState<EntitySuggestion[]>(

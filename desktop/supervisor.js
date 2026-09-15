@@ -607,6 +607,29 @@ class Supervisor {
     this.onStatus("Ready");
   }
 
+  /** Kill just the API and bring it back; the "Backend offline" row calls this. */
+  async restartBackend() {
+    const idx = this.children.findIndex((c) => c.label === "Backend");
+    if (idx >= 0) {
+      const [{ child }] = this.children.splice(idx, 1);
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch (_) {
+          killPid(child.pid);
+        }
+      }
+    }
+    // Wait for the port to free up, escalating to SIGKILL on stragglers.
+    for (let i = 0; i < 20; i += 1) {
+      const pids = pidsListeningOnPort(PORTS.api);
+      if (!pids.length) break;
+      if (i >= 6) pids.forEach(killPid);
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    await this.startBackend();
+  }
+
   stopAll() {
     for (const { label, child } of this.children.reverse()) {
       try {

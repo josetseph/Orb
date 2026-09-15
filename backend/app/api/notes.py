@@ -208,6 +208,15 @@ async def ingest_existing_note(
     }
 
 
+@router.post("/api/v1/notes/{note_id}/ingest/cancel")
+async def cancel_note_ingestion(note_id: str, kb: KBContext = Depends(get_kb)):
+    """Stop this note's ingestion; the note goes back to plain "Saved"."""
+    from app.workflows.ingestion import cancel_ingestion
+
+    stopped = cancel_ingestion(kb.kb_id, note_id)
+    return {"note_id": note_id, "status": "cancelling" if stopped else "not_running"}
+
+
 class ProcessAttachmentInput(BaseModel):
     """One attachment to run through its extractor, outside a full ingest."""
 
@@ -267,6 +276,10 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             content = place_extraction(remove_extraction(body, url), item["url"], section)
             await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
         _attachment_jobs[key] = {"status": "done", "error": None}
+    except asyncio.CancelledError:
+        # The model call already in a thread runs to completion; its output is dropped.
+        logger.info(f"Attachment processing cancelled for {url}")
+        _attachment_jobs[key] = {"status": "cancelled", "error": None}
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.error(f"Attachment processing failed for {url}: {exc}")
         _attachment_jobs[key] = {"status": "failed", "error": str(exc)}
@@ -284,7 +297,6 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
 async def process_note_attachment(
     note_id: str,
     payload: ProcessAttachmentInput,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     kb: KBContext = Depends(get_kb),
 ):
@@ -315,9 +327,26 @@ async def process_note_attachment(
     job_key = (kb.kb_id, note_id, payload.url)
     if _attachment_jobs.get(job_key, {}).get("status") == "running":
         return {"note_id": note_id, "url": payload.url, "status": "running"}
-    _attachment_jobs[job_key] = {"status": "running", "error": None}
-    background_tasks.add_task(_run_attachment_job, kb, note_id, payload.url)
+    # A real task (not a BackgroundTask) so it can be cancelled by url.
+    _attachment_jobs[job_key] = {
+        "status": "running",
+        "error": None,
+        "task": asyncio.create_task(_run_attachment_job(kb, note_id, payload.url)),
+    }
     return {"note_id": note_id, "url": payload.url, "status": "running"}
+
+
+@router.post("/api/v1/notes/{note_id}/attachments/cancel")
+async def cancel_note_attachment(
+    note_id: str, payload: ProcessAttachmentInput, kb: KBContext = Depends(get_kb)
+):
+    """Stop one attachment's transcribe / describe / extract job."""
+    job = _attachment_jobs.get((kb.kb_id, note_id, payload.url))
+    task = job.get("task") if job else None
+    if job is None or job.get("status") != "running" or task is None or task.done():
+        return {"note_id": note_id, "url": payload.url, "status": "not_running"}
+    task.cancel()
+    return {"note_id": note_id, "url": payload.url, "status": "cancelling"}
 
 
 @router.get("/api/v1/notes/{note_id}/attachments/jobs")
@@ -325,7 +354,7 @@ async def note_attachment_jobs(note_id: str, kb: KBContext = Depends(get_kb)):
     """Status of every per-attachment job started for this note this session."""
     return {
         "jobs": {
-            url: job
+            url: {"status": job["status"], "error": job.get("error")}
             for (kb_id, nid, url), job in _attachment_jobs.items()
             if kb_id == kb.kb_id and nid == note_id
         }

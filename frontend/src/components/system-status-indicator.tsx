@@ -1,8 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { CheckCircle2, CircleDashed, Clock, Cpu, Eye, Loader2, AudioLines } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isAxiosError } from "axios";
+import { CheckCircle2, CircleDashed, Clock, Cpu, Eye, Loader2, AudioLines, RotateCw } from "lucide-react";
 import { api } from "@/lib/api";
+import { getDesktopBridge } from "@/lib/desktop";
 import { useKB } from "@/lib/kb-context";
 import { cn } from "@/lib/utils";
 
@@ -68,7 +70,10 @@ function buildStatus(payload: Payload | null): StatusView {
 
 function useMaintenanceStatus(kb: string) {
   const [payload, setPayload] = useState<Payload | null>(null);
-  const [failed, setFailed] = useState(false);
+  // "offline" = no HTTP answer at all; "error" = the API answered with a 5xx.
+  const [failed, setFailed] = useState<"offline" | "error" | null>(null);
+  const [tick, setTick] = useState(0);
+  const retry = useCallback(() => setTick((t) => t + 1), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -100,12 +105,13 @@ function useMaintenanceStatus(kb: string) {
         const data = await api.getMaintenanceStatus(kb);
         if (cancelled) return;
         setPayload(data);
-        setFailed(false);
+        setFailed(null);
         schedule(isActive(data));
-      } catch {
+      } catch (err) {
         if (cancelled) return;
-        setFailed(true);
-        schedule(false);
+        setFailed(isAxiosError(err) && err.response ? "error" : "offline");
+        // Retry sooner while down so a restart shows up without a wait.
+        timer = window.setTimeout(poll, 5000);
       }
     };
 
@@ -123,10 +129,10 @@ function useMaintenanceStatus(kb: string) {
       window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [kb]);
+  }, [kb, tick]);
 
-  return useMemo<StatusView>(() => {
-    if (failed) {
+  const view = useMemo<StatusView>(() => {
+    if (failed === "offline") {
       return {
         tone: "error",
         label: "Backend offline",
@@ -135,8 +141,46 @@ function useMaintenanceStatus(kb: string) {
         busy: false,
       };
     }
+    if (failed === "error") {
+      return {
+        tone: "error",
+        label: "Backend error",
+        meta: "",
+        detail: "The API is up but its status call failed — check errors.log.",
+        busy: false,
+      };
+    }
     return buildStatus(payload);
   }, [payload, failed]);
+  return { view, retry };
+}
+
+/** Desktop only: kill and relaunch the API process. */
+function RestartBackendButton({ onDone }: { onDone: () => void }) {
+  const bridge = getDesktopBridge();
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  if (!bridge?.restartBackend) return null;
+  return (
+    <button
+      type="button"
+      className="btn btn-secondary btn-sm mt-2 w-full"
+      disabled={state === "busy"}
+      onClick={async () => {
+        setState("busy");
+        const res = await bridge.restartBackend!().catch((e: Error) => ({ ok: false, error: e.message }));
+        setState(res.ok ? "idle" : "failed");
+        if (!res.ok) alert(res.error || "Restart failed");
+        onDone();
+      }}
+    >
+      {state === "busy" ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <RotateCw className="h-3.5 w-3.5" />
+      )}
+      {state === "busy" ? "Restarting…" : "Restart backend"}
+    </button>
+  );
 }
 
 const DOT: Record<StatusTone, string> = {
@@ -150,7 +194,7 @@ const DOT: Record<StatusTone, string> = {
 /** Sidebar activity row with a popover of what is running. */
 export function ActivityStatus() {
   const { currentKB } = useKB();
-  const view = useMaintenanceStatus(currentKB);
+  const { view, retry } = useMaintenanceStatus(currentKB);
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -202,6 +246,7 @@ export function ActivityStatus() {
             <div className="min-w-0 flex-1">
               <div className="text-[12.5px]">{view.label}</div>
               <div className="text-[11px] text-n-500">{view.detail}</div>
+              {view.tone === "error" && <RestartBackendButton onDone={retry} />}
             </div>
           </div>
           <div className="my-2 h-px bg-divider" />

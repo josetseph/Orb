@@ -245,6 +245,16 @@ export const api = {
     return http.post(`/notes/${noteId}/attachments/process${kbQuery(kb)}`, { url, force });
   },
 
+  /** Stop one attachment's job; the widget goes back to its idle button. */
+  async cancelAttachment(noteId: string, url: string, kb = "default"): Promise<{ status: string }> {
+    return http.post(`/notes/${noteId}/attachments/cancel${kbQuery(kb)}`, { url });
+  },
+
+  /** Stop a queued or running ingestion; the note returns to "Saved". */
+  async cancelIngest(id: string, kb = "default"): Promise<{ status: string }> {
+    return http.post(`/notes/${id}/ingest/cancel${kbQuery(kb)}`);
+  },
+
   async getAttachmentJobs(
     noteId: string,
     kb = "default",

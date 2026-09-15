@@ -536,9 +536,24 @@ ipcMain.handle("save-wizard", async (event, payload) => {
   return { ok: true, pathsFile: loc };
 });
 
+ipcMain.handle("backend:restart", async () => {
+  if (!supervisor) return { ok: false, error: "App is still starting" };
+  try {
+    await supervisor.restartBackend();
+    await restoreCredentials(getAppRoot());
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 async function bootStack(appRoot) {
   supervisor = new Supervisor(appRoot, sendStatus);
   await supervisor.startAll();
+  await restoreCredentials(appRoot);
+}
+
+async function restoreCredentials(appRoot) {
   // The API holds keys in memory only, so they are re-pushed on every boot.
   try {
     // Earlier builds kept the store in DATA_DIR (often a synced folder).

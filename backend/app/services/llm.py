@@ -14,6 +14,7 @@ from app.services.credentials import (
     endpoint_credential_id,
     get_api_key,
     normalize_base_url,
+    request_base_url,
 )
 from google import genai
 from google.genai import types

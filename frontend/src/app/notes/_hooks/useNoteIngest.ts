@@ -201,10 +201,30 @@ export function useNoteIngest({
     titleBeforeEditRef,
   ]);
 
+  /** Stop the open note's ingestion; it goes back to plain "Saved". */
+  const handleCancelIngest = useCallback(async () => {
+    if (!selectedNote) return;
+    const id = selectedNote.id;
+    const idle = { processed: false, failed: false, processing_stage: "Saved", processing_model: null };
+    setSelectedNote((prev) => (prev && prev.id === id ? { ...prev, ...idle } : prev));
+    setNotes((prev) => prev.map((n) => (n.id === id ? { ...n, ...idle } : n)));
+    setIngestingNoteIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    try {
+      await api.cancelIngest(id, currentKB);
+    } catch (error) {
+      console.error("Could not cancel ingestion:", error);
+    }
+  }, [selectedNote, currentKB, setSelectedNote, setNotes]);
+
   return {
     ingestingNoteIds,
     setIngestingNoteIds,
     handleIngestNote,
+    handleCancelIngest,
     handleDismissFailure,
   };
 }
