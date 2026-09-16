@@ -19,6 +19,7 @@ from app.services.ingestion_tracker import (
     ingestion_tracker as _tracker,
     COMMUNITY_IDLE_SECONDS,
 )
+from app.services import ingestion_checkpoint as checkpoint
 from app.services.llm import llm_service
 from app.services.qdrant_service import QdrantService, qdrant_service
 from app.services.meilisearch_service import MeilisearchService, meilisearch_service
@@ -205,7 +206,11 @@ class IngestionWorkflow:
             t_start = time.perf_counter()
             load_before = self._load_snapshot()
             try:
+                saved = checkpoint.activate(self.kb_id, note_id)
+                if saved:
+                    logger.info(f"[Ingestion] resuming note_id={note_id}: {saved} model call(s) replay from disk")
                 final_state = await ingestion_agent.ainvoke(initial_state)
+                checkpoint.clear(self.kb_id, note_id)
                 t_end = time.perf_counter()
                 self._log_timing(note_id, t_end - t_start, load_before, final_state)
 

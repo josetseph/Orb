@@ -58,10 +58,15 @@ export function useVaultTree({
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() =>
     readExpandedFolders(currentKB),
   );
+  /** Vault-relative folder selected for new notes / drop target ("" = root). */
+  const [selectedFolder, setSelectedFolder] = useState<string>("");
   const [expandedFor, setExpandedFor] = useState(currentKB);
   if (expandedFor !== currentKB) {
     setExpandedFor(currentKB);
     setExpandedFolders(readExpandedFolders(currentKB));
+    // A folder chosen in one workspace is meaningless in the next; leaving
+    // it set filed new notes under a path the other vault happened to share.
+    setSelectedFolder("");
   }
   useEffect(() => {
     try {
@@ -70,8 +75,6 @@ export function useVaultTree({
       /* a lost preference is not worth an error */
     }
   }, [expandedFolders, currentKB]);
-  /** Vault-relative folder selected for new notes / drop target ("" = root). */
-  const [selectedFolder, setSelectedFolder] = useState<string>("");
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
   const [dragFileRel, setDragFileRel] = useState<string | null>(null);
   // ⌘-clicked attachments; dragging one of them moves the whole set.

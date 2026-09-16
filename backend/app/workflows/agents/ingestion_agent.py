@@ -11,6 +11,7 @@ from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
 from app.core.log import get_logger
+from app.services import ingestion_checkpoint as checkpoint
 from app.schemas.extraction import (
     ContextPass,
     EntityPass,
@@ -477,8 +478,8 @@ async def _extract_chunk(
         try:
             # Free-form generate + JSON clean (not grammar-constrained sampling),
             # which small models often empty out for nested relationship arrays.
-            raw, meta = await llm.ingestion_generate_with_meta(
-                _build_extraction_prompt(text), temperature=0.1
+            raw, meta = await checkpoint.generate_with_meta(
+                llm, _build_extraction_prompt(text), temperature=0.1
             )
             tokens = count_tokens(text)
             model_name = llm.get_ingestion_model()
@@ -526,7 +527,7 @@ async def _extract_chunk(
 async def _call_pass(llm, prompt: str, model_cls, label: str):
     """One task-split call, parsed into ``model_cls``. Never raises."""
     try:
-        raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=0.1)
+        raw, meta = await checkpoint.generate_with_meta(llm, prompt, temperature=0.1)
         if meta.get("truncated"):
             logger.warning("[Extraction] %s truncated — result may be partial", label)
         return model_cls.model_validate_json(llm._clean_json(raw))
@@ -704,7 +705,7 @@ async def _batch_image_titles(llm, items: list[dict[str, str]]) -> dict[str, str
         'Return ONLY a JSON array: [{"index": 1, "title": "..."}, ...]'
     )
     try:
-        raw = await llm.ingestion_generate(prompt, temperature=0.0)
+        raw = await checkpoint.generate(llm, prompt, temperature=0.0)
         match = re.search(r"\[.*\]", raw or "", re.DOTALL)
         if not match:
             return {}
@@ -1165,7 +1166,8 @@ async def extraction_node(
             'Return ONLY: [{"index": 1, "name": "..."}, ...]'
         )
         try:
-            rename_resp = await _llm.ingestion_generate(
+            rename_resp = await checkpoint.generate(
+                _llm,
                 rename_prompt,
                 temperature=0.0,
             )
