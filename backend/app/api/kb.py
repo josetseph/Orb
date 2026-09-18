@@ -15,14 +15,12 @@ from app.core.database import get_db
 from app.core.log import get_logger
 from app.models.note import Note
 from app.models.wikilink import NoteLink
-from app.services.firefly_service import firefly_service
 from app.services.kb_registry import (
     LLM_PROVIDERS,
     KBContext,
     effective_llm_config,
     kb_registry,
 )
-from app.services.kb_registry import finance_enabled_for
 from app.services.vault import clear_vault_contents, ensure_vault
 
 logger = get_logger("API")
@@ -40,12 +38,6 @@ class RenameKBInput(BaseModel):
     """Request body for renaming a knowledge base."""
 
     name: str
-
-
-class KBFinanceInput(BaseModel):
-    """Turn the finance section on or off for one knowledge base."""
-
-    enabled: bool
 
 
 class KBLLMInput(BaseModel):
@@ -67,7 +59,6 @@ def _with_effective_llm(row: dict) -> dict:
     return {
         **row,
         "effective_llm": effective_llm_config(row),
-        "finance_enabled": finance_enabled_for(row),
     }
 
 
@@ -138,21 +129,6 @@ def _kb_llm_payload(kb_id: str) -> dict:
 async def list_knowledge_bases():
     """List all registered knowledge bases (with their effective LLM)."""
     return {"knowledge_bases": [_with_effective_llm(r) for r in kb_registry.list_kbs()]}
-
-
-@router.patch("/api/v1/kb/{kb_id}/finance")
-async def update_kb_finance(kb_id: str, body: KBFinanceInput):
-    """Turn finance on or off for one KB.
-
-    Nothing is deleted either way: a KB switched off keeps its Firefly group,
-    so turning it back on restores the accounts and transactions it had.
-    """
-    if kb_id != "default" and not kb_registry.get_metadata(kb_id):
-        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
-    meta = kb_registry.set_finance_enabled(kb_id, body.enabled)
-    if meta is None:
-        raise HTTPException(status_code=404, detail=f"Knowledge base '{kb_id}' not found")
-    return {"kb_id": kb_id, "finance_enabled": body.enabled}
 
 
 @router.get("/api/v1/kb/{kb_id}/llm")
@@ -330,13 +306,9 @@ async def empty_knowledge_base(
     """
     Full wipe of the current KB while keeping the KB registry row.
 
-    Always deletes notes, vault contents, graph/search indexes, and Firefly admin.
+    Always deletes notes, vault contents, and graph/search indexes.
     """
     vault_path = kb.vault_path or ""
-    try:
-        await firefly_service.destroy_kb_administration(kb)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.warning("[empty-kb] Firefly destroy failed: %s", exc)
 
     notes_removed = await _purge_kb_sql_notes(db, kb.kb_id)
 
@@ -374,7 +346,7 @@ async def empty_knowledge_base(
         "vault_path": vault_path,
         "message": (
             f"Emptied knowledge base '{kb.name}': notes, vault files, indexes, "
-            "and Firefly administration removed. The KB itself remains."
+            "removed. The KB itself remains."
         ),
     }
 
@@ -393,16 +365,6 @@ async def delete_all_non_default_knowledge_bases(
             continue
         try:
             meta = kb_registry.get_metadata(kid)
-            ctx = kb_registry.get_kb(kid)
-            if ctx is not None:
-                try:
-                    await firefly_service.destroy_kb_administration(ctx)
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.warning(
-                        "[delete-non-default] Firefly destroy failed for %s: %s",
-                        kid,
-                        exc,
-                    )
             await _purge_kb_sql_notes(db, kid)
             kb_registry.delete_kb(kid, delete_vault_files=True, wipe_indexes=True)
             removed.append(
@@ -431,7 +393,7 @@ async def delete_knowledge_base(
     """
     Permanently delete a non-default knowledge base.
 
-    Always destroys Firefly admin, SQLite notes, vault folder, and indexes.
+    Always destroys SQLite notes, vault folder, and indexes.
     """
     if kb_id == "default":
         raise HTTPException(
@@ -442,13 +404,6 @@ async def delete_knowledge_base(
         raise HTTPException(
             status_code=404, detail=f"Knowledge base '{kb_id}' not found"
         )
-
-    ctx = kb_registry.get_kb(kb_id)
-    if ctx is not None:
-        try:
-            await firefly_service.destroy_kb_administration(ctx)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[delete-kb] Firefly destroy failed: %s", exc)
 
     await _purge_kb_sql_notes(db, kb_id)
 
@@ -477,8 +432,4 @@ async def rename_knowledge_base(kb_id: str, body: RenameKBInput):
         raise HTTPException(
             status_code=404, detail=f"Knowledge base '{kb_id}' not found"
         )
-    try:
-        await firefly_service.sync_kb_group_title(kb_id, name)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.warning("Firefly group title sync failed after KB rename: %s", exc)
     return {"id": kb_id, "name": name}

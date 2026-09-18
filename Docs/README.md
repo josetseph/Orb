@@ -28,30 +28,21 @@ Comprehensive, code-grounded documentation of the Orb repository: the Electron d
 | 01 | [Overview](01-overview.md) | Product scope, delivery model, locked product decisions, technology stack, versioning |
 | 02 | [System architecture](02-system-architecture.md) | Process topology, bootstrap layers, storage map, KB isolation, ingestion and retrieval flows, model layer, frontend↔backend contract, deployment modes |
 | 03 | [Repository layout](03-repository-layout.md) | Directory-by-directory map of `backend/`, `frontend/`, `desktop/`; git-ignored paths; where to look for a concern |
-| 04 | [Desktop shell](04-desktop-shell.md) | Electron main/preload/renderer, IPC surface and guards, window lifecycle, boot sequence, supervisor, path/port contracts, binary downloads, Firefly runtime bootstrap, wizard and splash, every `ORB_*` env read by the shell |
-| 05 | [Packaging, build and release](05-packaging-build-and-release.md) | `prepare-dist` pipeline, electron-builder config, packaged layout, CI matrix, signing/notarization state, versioning, Docker contributor stack, platform caveats |
 | 06 | [Backend core and configuration](06-backend-core-and-configuration.md) | FastAPI app, middleware, startup hooks, `Settings`, path resolution, `runtime_config.json`, database layer, ORM models, Pydantic schemas, `get_kb`, health/settings routes, AI gate |
-| 07 | [API reference](07-api-reference.md) | Every HTTP route: params, bodies, responses, status codes, side effects, service calls; conventions; frontend cross-check |
 | 08 | [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) | KB model and isolation, `KBContext`, registry lifecycle, vault resolution, `vault_sync`, `vault_watcher`, per-KB store fan-out |
 | 09 | [Notes, wikilinks and vault files](09-notes-wikilinks-and-vault-files.md) | Note/file contract, title↔filename sync, vault operations, attachments and `/vault-files`, uploads, wikilink parsing/resolution, `note_links`, notes-graph payloads, processing status |
 | 10 | [Ingestion pipeline](10-ingestion-pipeline.md) | Entry points, concurrency, LangGraph agent, stage-by-stage walkthrough, chunked extraction, entity resolution, what is written to Kuzu/Qdrant/Meili, re-ingest cleanup, post-triggers, tracker |
-| 11 | [Multimedia enrichment](11-multimedia-enrichment.md) | Attachment discovery, PDF/image/audio/video/document handlers, Florence/Whisper/Marlin usage, enrichment block format, temp-file rules |
 | 12 | [Local models and inference](12-local-models-and-inference.md) | Model catalogue and manifest, downloads, llama.cpp runtime parameters, exclusive residency, chat/embed/rerank internals, multimodal runtime, `ORB_LLAMA_*` knobs |
 | 13 | [LLM providers and prompting](13-llm-providers-and-prompting.md) | `LLMService` abstraction, providers, model resolution, structured output, retries, thinking extraction, AI gate, per-KB overrides, catalogue of every prompt |
 | 14 | [Graph storage (Kuzu)](14-graph-storage-kuzu.md) | Connection management, full schema, node identity, relationship model, communities, digests, layouts, every `GraphService` method, graph/admin routes |
 | 15 | [Search indexes (Qdrant, Meilisearch)](15-search-indexes-qdrant-meilisearch.md) | Collections, vector params, payload schemas, search functions, dimension sync, Meili index settings and documents, embedding service, contract tests |
 | 16 | [Retrieval and chat](16-retrieval-and-chat.md) | Chat request lifecycle and polling, conversation persistence, multi-hop research loop, hybrid channels, fusion and rerank, context assembly, synthesis, tuning |
-| 17 | [Finance (Firefly III)](17-finance-firefly.md) | Runtime and token, per-KB administrations, request scoping, `FireflyService` methods and mappings, finance routes, frontend workspace |
-| 18 | [Frontend architecture](18-frontend-architecture.md) | Stack, conventions, build modes and rewrites, API layer, providers, desktop bridge, navigation, shared components, types, patterns |
-| 19 | [Frontend notes editor](19-frontend-notes-editor.md) | Notes page controller and hooks, vault tree, autosave, ingestion controls, media, CodeMirror extensions (wikilinks, entities, media embeds), read-only rendering |
-| 20 | [Frontend chat, graph and pages](20-frontend-chat-graph-and-pages.md) | Home, chat, 3D graph, 2D graph, notes graph, KB manager (incl. per-KB model panel), settings, setup |
 | 21 | [Configuration reference](21-configuration-reference.md) | Every env var and alias with default, reader and effect; `paths.json` and `runtime_config.json` schemas; precedence; provider fallback chains |
 | 22 | [Data directory layout](22-data-directory-layout.md) | On-disk trees for `DATA_DIR`, `MODELS_DIR`, app-support root, caches; owners; what is safe to delete |
 | 23 | [Logging and observability](23-logging-and-observability.md) | Log routing table, formats, rotation, trace ids, supervisor logs, status surfaces, debugging playbook |
 | 24 | [Testing and benchmarks](24-testing-and-benchmarks.md) | Unit tests and fixtures, lint tooling, benchmark harness and metrics, `Results/` archive and what it taught, gaps |
 | 25 | [Development history](25-development-history.md) | Commit timeline, era narratives, decision log with shas, removed/legacy paths, versions, uncommitted work in progress |
 | 26 | [Decisions and constraints](26-decisions-and-constraints.md) | Settled decisions with rejected alternatives, rationale and enforcement points; removed features |
-| 27 | [Development guide](27-development-guide.md) | Prerequisites, setup, run modes, commands, conventions, recipes, things never to do |
 | 28 | [Glossary](28-glossary.md) | Terms and identifiers by area, legacy identifiers |
 
 ---

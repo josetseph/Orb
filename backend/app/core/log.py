@@ -45,7 +45,6 @@ COMPONENT_LOG_FILES = {
     "QdrantService": "retrieval.log",
     "MeilisearchService": "retrieval.log",
     "RerankerService": "retrieval.log",
-    "FireflyService": "finance.log",
 }
 
 _configured = False

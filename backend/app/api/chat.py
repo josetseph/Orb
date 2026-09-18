@@ -15,7 +15,6 @@ from app.core.log import get_logger
 from app.schemas.chat import ChatInput, CreateConversationInput
 from app.services.ai_gate import require_ai
 from app.services.chat_store import chat_store
-from app.services.firefly_service import firefly_service
 from app.services.kb_registry import KBContext
 
 logger = get_logger("API")
@@ -86,23 +85,7 @@ async def _answer_chat_query(
     history_turns: list,
     progress_callback,
 ) -> dict:
-    """Run finance-aware chat or standard retrieval chat."""
-    if kb.finance_enabled and firefly_service.looks_like_finance_query(query):
-        progress_callback("Checking finance data and notes")
-        note_ctx = await kb.get_chat_workflow().retrieve_for_query(
-            query,
-            history=history_turns,
-            progress_callback=progress_callback,
-        )
-        result = await firefly_service.answer_finance_question(
-            query,
-            kb,
-            note_docs=note_ctx.get("context") or [],
-            rewritten_query=note_ctx.get("rewritten_query"),
-        )
-        if note_ctx.get("thinking"):
-            result["thinking"] = note_ctx.get("thinking")
-        return result
+    """Run retrieval chat."""
     return await kb.get_chat_workflow().chat(
         query,
         history=history_turns,
@@ -150,7 +133,7 @@ async def delete_chat_conversation(
 
 @router.post("/api/v1/chat")
 async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
-    """Chat: retrieval → rerank → synthesis (or finance path when query matches)."""
+    """Chat: retrieval → rerank → synthesis."""
     require_ai(kb)
 
     request_id = body.request_id or str(uuid.uuid4())

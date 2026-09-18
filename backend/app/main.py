@@ -116,19 +116,4 @@ async def startup_event():
         sync_embedding_infrastructure()
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning(f"Embedding infrastructure sync skipped: {exc}")
-    try:
-        from app.services.vault_watcher import start_vault_watchers
 
-        start_vault_watchers()
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.warning(f"Vault watcher not started: {exc}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    try:
-        from app.services.vault_watcher import stop_vault_watchers
-
-        stop_vault_watchers()
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass

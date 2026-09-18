@@ -14,6 +14,7 @@ cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt httpx tqdm
 cp .env.example .env                       # pick a provider block; local GGUFs need MODELS_DIR
+echo BENCHMARK_MODE=true >> .env           # short factual answers + the benchmark reasoning rules
 ORB_DATA_DIR=$PWD/../data uvicorn app.main:app --port 8000
 ```
 
