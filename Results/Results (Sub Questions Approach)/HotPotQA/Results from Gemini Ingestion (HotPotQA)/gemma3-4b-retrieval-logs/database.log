@@ -1,4 +1,0 @@
-2026-02-27 11:15:04 | DatabaseService | INFO | Converted DATABASE_URL: postgresql+asyncpg://user:password@127.0.0.1:5434/liveos to use asyncpg driver
-2026-02-27 11:15:04 | DatabaseService | INFO | Async database engine created successfully
-2026-02-27 11:15:04 | DatabaseService | INFO | Async session maker created successfully
-2026-02-27 11:15:04 | DatabaseService | INFO | Declarative base for ORM models created successfully

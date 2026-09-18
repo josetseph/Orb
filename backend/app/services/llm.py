@@ -1367,41 +1367,22 @@ class LLMService:
 
         # ── Build task instructions ───────────────────────────────────────────
         if search_query and docs:
-            if settings.BENCHMARK_MODE:
-                task_instructions = (
-                    "Assess the current results:\n"
-                    "REASONING: <how these documents relate to the question "
-                    "and prior findings>\n"
-                    "FINDING: <the specific fact(s) extracted from these documents, "
-                    "e.g. 'Scott Derrickson is American' or 'Ed Wood was born in 1924'. "
-                    "This is NOT the final answer to the original question — just what "
-                    "this search found. Always write something; use 'Not found' only "
-                    "if nothing in these documents is relevant to the query>\n\n"
-                    "Then decide:\n"
-                    "  If you have enough information to answer the ORIGINAL QUESTION confidently:\n"
-                    "  ANSWER: <the specific answer — see output rules below>\n\n"
-                    "  If you need more information:\n"
-                    "  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n"
-                    f"{self._REASONING_RULES}\n"
-                    f"{self._OUTPUT_RULES}"
-                )
-            else:
-                task_instructions = (
-                    "Assess the current results:\n"
-                    "REASONING: <how these documents relate to the question "
-                    "and what you have found so far>\n"
-                    "FINDING: <a summary of what is relevant in these documents — "
-                    "key facts, entities, relationships. Always write something; "
-                    "use 'Not found' only if truly nothing here is relevant>\n\n"
-                    "Then decide:\n"
-                    "  If you have enough information to answer the ORIGINAL QUESTION:\n"
-                    "  ANSWER: <a complete, natural-language answer covering everything "
-                    "relevant you found — see output rules below>\n\n"
-                    "  If you need more information:\n"
-                    "  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n"
-                    f"{self._REASONING_RULES_GENERAL}\n"
-                    f"{self._OUTPUT_RULES_GENERAL}"
-                )
+            task_instructions = (
+                "Assess the current results:\n"
+                "REASONING: <how these documents relate to the question "
+                "and what you have found so far>\n"
+                "FINDING: <a summary of what is relevant in these documents — "
+                "key facts, entities, relationships. Always write something; "
+                "use 'Not found' only if truly nothing here is relevant>\n\n"
+                "Then decide:\n"
+                "  If you have enough information to answer the ORIGINAL QUESTION:\n"
+                "  ANSWER: <a complete, natural-language answer covering everything "
+                "relevant you found — see output rules below>\n\n"
+                "  If you need more information:\n"
+                "  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n"
+                f"{self._REASONING_RULES_GENERAL}\n"
+                f"{self._OUTPUT_RULES_GENERAL}"
+            )
         else:
             task_instructions = (
                 "Output the first search query needed to start answering this question:\n"
@@ -1523,69 +1504,7 @@ class LLMService:
             "thinking": step_thinking,
         }
 
-    # Reasoning rules ported from benchmark v4/v5 (the 0.74-scoring pipeline).
-    # Enforces correct answer-type discipline, comparison direction, specificity, and past/present.
-    _REASONING_RULES = """
-        REASONING RULES — apply these before writing your answer:
-
-        CHAIN TRACING
-        - For multi-hop questions, trace findings in order. The bridge entity (answer to an 
-        intermediate step) is not the final answer — use it to reach what was actually asked.
-        - Explicitly name the bridge entity first, then derive the final answer from it.
-
-        COMPARISON & YES/NO
-        - For yes/no comparisons: extract the relevant value per entity, compare, then output 
-        YES or NO — never the compared value itself.
-        - For "which of X or Y is more/older/greater": output the winner's full name, not the 
-        metric. Older = earlier birth year.
-        - If the question asks whether two entities BOTH share a property: verify each 
-        separately. YES only if both are confirmed.
-        - "Was X founded by the person who did Y?" → output the name, not YES.
-        Only output YES/NO for explicit comparisons or shared-property questions.
-        - For yes/no questions: your ANSWER line must be YES or NO — never an intermediate 
-        value like a nationality, number, or name. Derive the YES/NO conclusion yourself 
-        from the evidence before writing ANSWER.
-
-        ANSWER TYPE
-        - Match exactly what the question asks for.
-        Common traps: song ≠ person; show ≠ character; position ≠ person holding it; 
-        city ≠ building; number ≠ demonym; animal ≠ person named after it.
-        - Before writing your answer, verify it matches the type asked for.
-
-        SPECIFICITY & SCOPE
-        - Use the most specific value the evidence supports. Do not broaden:
-        neighborhood → city, city → country, person → organization.
-        - If two entities share a parent region, output the parent. Only list sub-locations 
-        when they differ.
-        - One answer only. Do not list alternatives or add caveats.
-
-        EXACT EXTRACTION
-        - Do NOT add: parent geography, org prefix, or qualifiers not implied by the question.
-        - Do NOT strip: first names, suffixes, units, or qualifiers that are part of the answer.
-        - For time spans: copy the exact phrase from the source including connectives 
-        (from/until/through/between). Do not normalize — if the source says "until", keep "until".
-        - For qualified quantities (e.g. "net", "peak", "opening", "seat"): use the figure 
-        carrying that exact qualifier, not a broader or unqualified figure.
-
-        TEMPORAL
-        - If the question asks for a former or historical value, use the value from that period.
-        """
-
-    _OUTPUT_RULES = """
-        OUTPUT RULES:
-        - Return only the specific fact the question asks for — nothing else
-        - Yes/no question → YES or NO
-        - Comparison / either-or → exactly one of the options given
-        - Name → full name as it appears in the source
-        - Number → include units or qualifiers the question implies
-        - Date or time range → exact phrase from source, preserving all connectives
-        - Role, title, or position → the role/title only, never the person holding it
-        - Location → exact place name as it appears in the source
-        - Never answer "Neither" or "Both" unless the question explicitly asks for it
-        - If you cannot answer yet → output NEXT_QUERY, not ANSWER
-        """
-
-    # ── General KB mode rules (BENCHMARK_MODE=False) ──────────────────────────
+    # ── General KB mode rules ──────────────────────────
     # Used when the goal is a thorough, natural-language answer rather than a
     # single extracted fact. A collection may be personal notes, course
     # material, or company documents — the rules stay source-neutral so the
