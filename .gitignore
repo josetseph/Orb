@@ -33,13 +33,6 @@ __pycache__/
 # Extra
 /data
 /backend/venv
-/frontend/.next
-/frontend/node_modules
-/frontend/out/
-/frontend/build/
-/desktop/node_modules
-/desktop/dist
-/desktop/resources
 .tmp/
 .env
 .env.local

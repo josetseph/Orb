@@ -1,218 +1,75 @@
-<div align="center">
+# Orb — pipeline testing branch
 
-  <img src="desktop/assets/logo.png" width="128" alt="Orb logo" />
+This branch is the research half of Orb: the GraphRAG ingestion + retrieval
+pipeline in `backend/`, the HotpotQA / MuSiQue benchmark harness in
+`backend/tests/benchmark/`, and the run reports in `Results/`. No desktop
+shell, no frontend. Use it to try a pipeline variation, score it, and keep or
+drop it. The product lives on `main`.
 
-  <h1>Orb</h1>
-
-  <p><b>Your knowledge, on your machine.</b></p>
-
-  <p>
-    Notes, voice, images, and documents become a searchable knowledge graph.<br/>
-    Chat across it. No Docker. No cloud required.
-  </p>
-
-<p>
-  <a href="https://github.com/josetseph/Orb/actions/workflows/desktop-release.yml"><img src="https://img.shields.io/github/actions/workflow/status/josetseph/Orb/desktop-release.yml?branch=main&label=desktop%20build" alt="Desktop build status" /></a>
-  <a href="https://github.com/josetseph/Orb/blob/main/LICENSE"><img src="https://img.shields.io/github/license/josetseph/Orb?color=blue" alt="License: MIT" /></a>
-  <a href="https://github.com/josetseph/Orb/releases/latest"><img src="https://img.shields.io/github/v/release/josetseph/Orb?label=latest&color=red" alt="Latest release" /></a>
-  <a href="https://github.com/josetseph/Orb/stargazers"><img src="https://img.shields.io/github/stars/josetseph/Orb?color=yellow" alt="GitHub stars" /></a>
-</p>
-
-  <p>
-    <a href="https://github.com/josetseph/Orb/releases/latest"><b>Download</b></a>
-    &nbsp;·&nbsp;
-    <a href="#installation">Install guide</a>
-    &nbsp;·&nbsp;
-    <a href="#build-from-source">Build from source</a>
-    &nbsp;·&nbsp;
-    <a href="#privacy">Privacy</a>
-  </p>
-
-  <img src="Platform%20Images/home_view.png" width="720" alt="Orb home" />
-
-</div>
-
----
-
-Write notes the way you already do — text, voice, photos, PDFs. Orb extracts entities and relationships into a knowledge graph, indexes them for search, and answers multi-hop questions in chat. Everything runs locally through the desktop app: your vault, your models, your machine.
-
-> [!NOTE]
-> End users install the **Orb** desktop app. You do not need Docker, Ollama, or a separate model server. Local chat, embedding, reranking, Qwen3-ASR, and Marlin all load **in-process** in the API.
-
----
-
-## Features
-
-### Notes & vault
-
-- Per–knowledge-base markdown vaults (note bodies live as real `.md` files, not in SQLite)
-- Attachments stay in the vault — images, audio, PDFs, documents
-- Entity highlighting and autocomplete from the graph as you write
-- In-app voice recording and file attach on save
-
-### Multimedia ingest
-
-On save, Orb enriches the note before graph indexing:
-
-- **PDF** — native text, plus the ingestion model reads embedded images and sparse page renders
-- **Images** — described by the model you chose for ingestion (a local GGUF through its vision projector, or a cloud endpoint), including a verbatim transcription of visible text
-- **Audio / video** — Qwen3-ASR transcription (MLX on Apple Silicon, transformers elsewhere); video also runs Marlin for visual understanding
-- Enrichment is written into the vault markdown, then ingested into the graph
-
-### Chat & retrieval
-
-- Multi-hop research loop over the knowledge graph (not a single vector lookup)
-- Hybrid retrieval: entity lookup, keyword (Meilisearch), and vectors (Qdrant)
-- Cross-encoder reranking with a local GGUF
-- Inline source citations and optional model thinking
-
-### Knowledge graph
-
-- Embedded Kuzu property graph with Leiden communities
-- 3D graph explorer and node detail panels
-- Multiple isolated knowledge bases (separate vault, vectors, keyword index, and graph)
-
-### Finance
-
-- Per-KB Firefly III administrations — accounts and transactions stay scoped to a vault
-
-### Local models
-
-- First-run wizard chooses **data dir** and **models dir** (NAS / OneDrive friendly)
-- GGUF chat, embed, and rerank via `llama-cpp-python` in the API process
-- Only one heavy model resident at a time (chat **or** embed **or** rerank **or** transcription/Marlin)
-- Cloud providers (Gemini, OpenAI, Anthropic, …) remain available if you want them
-
----
-
-## Screenshots
-
-<table>
-  <tr>
-    <td><img src="Platform%20Images/chat_view.png" alt="Chat interface"/></td>
-    <td><img src="Platform%20Images/notes_page_edit_view.png" alt="Notes editor"/></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Chat</em></td>
-    <td align="center"><em>Notes editor</em></td>
-  </tr>
-</table>
-
-![3D Knowledge Graph](Platform%20Images/graph_view.png)
-
-<table>
-  <tr>
-    <td><img src="Platform%20Images/knowledge_base_selector_view.png" alt="Knowledge base manager"/></td>
-    <td><img src="Platform%20Images/llm_model_settings_view.png" alt="Runtime model settings"/></td>
-  </tr>
-  <tr>
-    <td align="center"><em>Knowledge bases</em></td>
-    <td align="center"><em>Model settings</em></td>
-  </tr>
-</table>
-
----
-
-## Download
-
-<div align="center">
-
-<a href="https://github.com/josetseph/Orb/releases/latest"><img src="https://img.shields.io/badge/download-Orb-2EA043?style=flat&logo=apple&logoColor=white" alt="Download Orb" /></a>
-
-</div>
-
-Installers ship as macOS `.dmg` and Windows `.exe` from [GitHub Releases](https://github.com/josetseph/Orb/releases) (tags `desktop-v*`).
-
----
-
-## Installation
-
-### macOS
-
-1. Download the latest `.dmg` from [Releases](https://github.com/josetseph/Orb/releases/latest) (`arm64` for Apple Silicon, `x64` for Intel)
-2. Open it and drag **Orb** into Applications
-3. Launch Orb
-4. Complete the first-run wizard — pick a **data directory** and a **models directory**
-
-On first launch the app downloads Qdrant and Meilisearch into your data dir, and you can pull GGUF models from Setup.
-
-If macOS says the app is **damaged** (common for unsigned downloads), clear quarantine then reopen:
+## Run the pipeline bare
 
 ```bash
-xattr -cr /Applications/Orb.app
-open /Applications/Orb.app
+docker compose up -d                       # Qdrant :6333, Meilisearch :7700
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt httpx tqdm
+cp .env.example .env                       # pick a provider block; local GGUFs need MODELS_DIR
+ORB_DATA_DIR=$PWD/../data uvicorn app.main:app --port 8000
 ```
 
-### Windows
+Already running the desktop app? Skip compose and point at its sidecars:
+`QDRANT_PORT=17433 MEILI_PORT=17470`.
 
-1. Download the latest `.exe` installer from [Releases](https://github.com/josetseph/Orb/releases/latest)
-2. Run the installer and open Orb
-3. Complete the first-run wizard (data dir + models dir)
-
-> [!TIP]
-> Unsigned builds may need an extra click through Gatekeeper / SmartScreen until notarization and Authenticode are enabled.
-> Prefer **v0.2.0+** — faster ingest/retrieval, Obsidian-style wikilinks, and Firefly upgrade fixes. Avoid v0.1.0 Mac builds (could show “damaged” from broken Node helper symlinks in CI).
-
----
-
-## Build from source
-
-Prefer to run or package Orb yourself? Use the Electron shell under [`desktop/`](desktop/).
-
-### Prerequisites
-
-- Node.js 20+
-- Python 3.11+ (dev uses the repo `backend/.venv` when present)
-- macOS: Xcode CLT + `cmake` for Metal `llama-cpp-python` when packaging
-- ffmpeg (audio transcoding)
-
-### Develop
+## Benchmark loop
 
 ```bash
-git clone https://github.com/josetseph/Orb.git
-cd Orb/desktop
-npm install
-npm start
+cd backend
+python tests/benchmark/fetch_notes.py                          # once: downloads + writes note .md files
+python tests/benchmark/prepare_dataset.py --dataset hotpotqa   # ingest 990 notes (--resume / --retry-failed / --limit N)
+python tests/benchmark/evaluate.py --dataset hotpotqa --verbose
+python tests/benchmark/prepare_dataset.py --dataset musique    # 526 notes, 2–4 hop
+python tests/benchmark/evaluate.py --dataset musique --verbose
 ```
 
-This starts the supervisor with the repo backend and `next dev` frontend. Ports: UI `17400`, API `17401`, Qdrant `17433`, Meilisearch `17470`.
+Scores land in `backend/tests/benchmark/results/<dataset>_<timestamp>.json`
+(gitignored). Metrics: EM, token F1, fuzzy, contains; retrieval P/R/F1 against
+the manifest's supporting notes. Details in
+[backend/tests/benchmark/README.md](backend/tests/benchmark/README.md).
 
-More detail: [`desktop/README.md`](desktop/README.md).
+Ingest into a dedicated KB (`?kb=<name>` on every request; the scripts take
+`--base-url` only, so use a fresh `ORB_DATA_DIR` per experiment instead).
 
-### Package installers
+## Recording an experiment
 
-```bash
-cd desktop
-npm install
-npm run prepare-dist   # bundle Python + Node + frontend (~10–20 min)
-npm run dist:mac       # or dist:win on Windows
+One folder per variation under `Results/`, same shape as the existing ones:
+
+```
+Results/<Variation name>/
+├── <MODEL>_<DATASET>_REPORT.md    # what changed, config table, headline metrics vs. baseline
+├── <model>_<dataset>_results.json # copied from backend/tests/benchmark/results/
+└── <model>_logs/                  # DATA_DIR/logs/* from the run (optional)
 ```
 
-Full packaging notes: [`desktop/PACKAGING.md`](desktop/PACKAGING.md).
+Baseline to beat: `Results/Results (After Optimizations)` — Gemma4 E4B,
+HotpotQA N=100, EM 62 %, F1 0.736, retrieval recall 0.610.
 
-### Contributors — optional Docker infra
+## Where the pipeline is
 
-`docker-compose.yml` can still bring up Postgres, Qdrant, Meilisearch, API, and UI for contributor stacks. It is **not** the product install path and does **not** run model HTTP sidecars — multimodal and GGUF inference stay in-process in the API. The Electron app always supervises local binaries (`npm start` in `desktop/`); do not wire Docker through the desktop shell.
+| Stage | Files |
+|---|---|
+| Extraction prompts + chunking | `backend/app/workflows/agents/ingestion_agent.py`, `backend/app/workflows/extraction_chunking.py` |
+| Ingestion orchestration | `backend/app/workflows/ingestion.py` |
+| Retrieval (hybrid + graph expansion) | `backend/app/services/retrieval.py`, `backend/app/services/graph.py`, `backend/app/services/reranker.py` |
+| Chat loop / answer synthesis | `backend/app/workflows/chat.py` |
+| Providers / model routing | `backend/app/services/llm.py`, `backend/app/services/local_models.py` |
 
-```bash
-# Optional contributor path only
-docker compose up -d
-```
+Docs for each stage: [Docs/10-ingestion-pipeline.md](Docs/10-ingestion-pipeline.md),
+[Docs/13-llm-providers-and-prompting.md](Docs/13-llm-providers-and-prompting.md),
+[Docs/16-retrieval-and-chat.md](Docs/16-retrieval-and-chat.md).
 
----
+## Syncing with `main`
 
-## Privacy
-
-Orb is local-first. Notes, vault files, vectors, and models live under the directories you chose (or Application Support / `%APPDATA%\Orb`). Nothing is uploaded unless you explicitly configure a cloud LLM provider.
-
----
-
-## Benchmarks
-
-Retrieval and HotPotQA evaluation reports live under [`Results/`](Results/). They document earlier pipeline experiments; the shipping product path is the desktop app above.
-
----
-
-## License
-
-Orb is released under the [MIT License](LICENSE).
+Pull pipeline changes in: `git merge main`, then drop the shell files it
+brings back (`git rm -r -q desktop frontend "Platform Images" .github/workflows`) and commit.
+Push a winning variation out: `git cherry-pick <commit>` onto `main` — only
+`backend/` differs, so it applies cleanly.
