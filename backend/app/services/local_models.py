@@ -264,13 +264,7 @@ def _construct_llama(Llama, **kwargs):
 
 
 def _unload_multimodal_families() -> None:
-    """Best-effort: free Qwen3-ASR/Marlin before loading a GGUF."""
-    try:
-        from app.services.multimodal_runtime import multimodal_runtime
-
-        multimodal_runtime.unload(None)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.debug("Multimodal unload before GGUF skipped: %s", exc)
+    """No multimodal runtimes on this branch."""
 # Pinned defaults (overridden by Setup selection / manifest)
 CHAT_MODEL_ID = os.environ.get(
     "ORB_CHAT_GGUF",

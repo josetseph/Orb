@@ -79,12 +79,10 @@ class _BaseChatRuntime:
     def _evict_peers(self) -> None:
         """Drop every other heavy model before taking accelerator memory."""
         from app.services.local_models import local_gguf_reranker, local_llama_runtime
-        from app.services.multimodal_runtime import multimodal_runtime
 
         for unload in (
             local_llama_runtime.unload,
             local_gguf_reranker.unload,
-            lambda: multimodal_runtime.unload(None),
         ):
             try:
                 unload()

@@ -12,15 +12,8 @@ class ChatTurn(BaseModel):
     content: str
 
 
-class CreateConversationInput(BaseModel):
-    """Optional body when explicitly creating a conversation."""
-
-    title: str | None = None
-
-
 class ChatInput(BaseModel):
-    """Request body for sync and async chat endpoints."""
+    """Request body for the chat endpoint."""
 
     query: str = Field(min_length=1)
     request_id: str | None = None
-    conversation_id: str | None = None

@@ -102,7 +102,7 @@ class EntityLockManager:  # pylint: disable=too-few-public-methods
 
 
 class IngestionWorkflow:
-    """Orchestrates full ingestion: multimedia → LLM extraction → graph → embeddings → communities."""
+    """Orchestrates full ingestion: LLM extraction → graph → embeddings → communities."""
 
     def __init__(
         self,
@@ -202,7 +202,7 @@ class IngestionWorkflow:
                 "workflow": self,  # KB-specific instance so agent nodes write to the right stores
             }
 
-            # Use ainvoke because the graph contains async nodes (multimodal_node)
+            # Use ainvoke because the graph contains async nodes
             t_start = time.perf_counter()
             load_before = self._load_snapshot()
             try:

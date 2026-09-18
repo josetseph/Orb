@@ -1,6 +1,6 @@
 """Shared Pydantic request/response schemas for Orb API and pipelines."""
 
-from app.schemas.chat import ChatInput, ChatTurn, CreateConversationInput
+from app.schemas.chat import ChatInput, ChatTurn
 from app.schemas.extraction import Extraction, ExtractedRelationship, Node, NoteInput
 from app.schemas.note import (
     BatchDeleteNotesInput,
@@ -15,7 +15,6 @@ __all__ = [
     "BatchDeleteNotesInput",
     "ChatInput",
     "ChatTurn",
-    "CreateConversationInput",
     "CreateNoteInput",
     "DeleteVaultFileInput",
     "Extraction",

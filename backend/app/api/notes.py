@@ -16,11 +16,9 @@ from app.core.log import get_logger
 from app.models.note import Note
 from app.models.wikilink import NoteLink
 from app.schemas.extraction import NoteInput
-from pydantic import BaseModel
-from app.schemas.note import BatchDeleteNotesInput, CreateNoteInput, MoveNoteInput
+from app.schemas.note import BatchDeleteNotesInput, CreateNoteInput
 from app.services.ai_gate import require_ai
 from app.services.kb_registry import KBContext
-from app.services.local_storage import remove_upload, vault_rel_from_url
 from app.services.note_files import note_body, persist_note_body
 from app.services.vault import delete_note_file
 from app.services.wikilinks import refresh_note_links
@@ -115,30 +113,6 @@ async def create_note(
     return _note_response(new_note, kb)
 
 
-@router.post("/api/v1/notes/{note_id}/move")
-async def move_note(
-    note_id: str,
-    body: MoveNoteInput,
-    db: AsyncSession = Depends(get_db),
-    kb: KBContext = Depends(get_kb),
-):
-    """Move a note into a vault folder (empty folder = vault root)."""
-    from app.services.vault_ops import move_note_to_folder
-
-    result = await db.execute(select(Note).where(Note.id == note_id))
-    note = result.scalar_one_or_none()
-    if not note or note.kb_id != kb.kb_id:
-        raise HTTPException(status_code=404, detail="Note not found")
-    try:
-        moved = await move_note_to_folder(db, kb, note, body.folder or "")
-    except FileExistsError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    await db.refresh(note)
-    return {**moved, "note": _note_response(note, kb)}
-
-
 @router.post("/api/v1/notes/{note_id}/dismiss-failure")
 async def dismiss_note_failure(
     note_id: str,
@@ -215,205 +189,6 @@ async def cancel_note_ingestion(note_id: str, kb: KBContext = Depends(get_kb)):
 
     stopped = cancel_ingestion(kb.kb_id, note_id)
     return {"note_id": note_id, "status": "cancelling" if stopped else "not_running"}
-
-
-class ProcessAttachmentInput(BaseModel):
-    """One attachment to run through its extractor, outside a full ingest."""
-
-    url: str
-    force: bool = False
-
-
-# ponytail: unbounded per-process dict; entries are tiny and a restart clears
-# it. Move to SQLite if a per-note history ever matters.
-_attachment_jobs: dict[tuple[str, str, str], dict] = {}
-
-
-async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
-    """Extract one attachment, replace its block in the vault .md, unload models."""
-    from app.core.database import AsyncSessionLocal
-    from app.workflows.agents.ingestion_agent import (
-        classify_attachment,
-        extract_attachment,
-        multimedia_concurrency_limit,
-        parse_attachments,
-        place_extraction,
-        remove_extraction,
-    )
-    from app.services.multimedia import multimedia_service
-
-    key = (kb.kb_id, note_id, url)
-    wf = kb.get_ingestion_workflow()
-
-    async def _noop_status(_stage: str, _model: str | None = None) -> None:
-        return None
-
-    kind = None
-    try:
-        async with multimedia_concurrency_limit:
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
-                )
-                note = result.scalar_one_or_none()
-                if not note:
-                    raise ValueError("Note not found")
-                body = note_body(note, kb)
-            from app.workflows.agents.ingestion_agent import attachment_key
-
-            item = next(
-                (a for a in parse_attachments(body) if a["lower_url"] == attachment_key(url)),
-                None,
-            )
-            if not item:
-                raise ValueError("Attachment is no longer linked from this note")
-            kind = classify_attachment(item)
-            if not kind:
-                raise ValueError(f"Orb cannot read {item['filename']}")
-            section = await extract_attachment(kind, item, _noop_status, wf._llm)  # pylint: disable=protected-access
-            if not section.strip():
-                raise ValueError("Extraction produced no text")
-            content = place_extraction(remove_extraction(body, url), item["url"], section)
-            await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
-        _attachment_jobs[key] = {"status": "done", "error": None}
-    except asyncio.CancelledError:
-        # The model call already in a thread runs to completion; its output is dropped.
-        logger.info(f"Attachment processing cancelled for {url}")
-        _attachment_jobs[key] = {"status": "cancelled", "error": None}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.error(f"Attachment processing failed for {url}: {exc}")
-        _attachment_jobs[key] = {"status": "failed", "error": str(exc)}
-    finally:
-        try:
-            if kind in ("audio", "video"):
-                await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
-            if kind == "video":
-                await asyncio.to_thread(multimedia_service.unload_marlin)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"Model unload after attachment job failed: {exc}")
-
-
-@router.post("/api/v1/notes/{note_id}/attachments/process")
-async def process_note_attachment(
-    note_id: str,
-    payload: ProcessAttachmentInput,
-    db: AsyncSession = Depends(get_db),
-    kb: KBContext = Depends(get_kb),
-):
-    """Transcribe / describe / extract one attachment without a full ingest.
-
-    Ingestion skips attachments that already carry a block, so this is how a
-    recording gets transcribed once and never again.
-    """
-    from app.workflows.agents.ingestion_agent import (
-        attachment_key,
-        extraction_srcs,
-        parse_attachments,
-    )
-
-    require_ai(kb)
-    result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
-    )
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
-    body = note_body(note, kb)
-    key = attachment_key(payload.url)
-    if not any(a["lower_url"] == key for a in parse_attachments(body)):
-        raise HTTPException(status_code=404, detail="Attachment not found in this note")
-    if key in extraction_srcs(body) and not payload.force:
-        return {"note_id": note_id, "url": payload.url, "status": "already_processed"}
-    job_key = (kb.kb_id, note_id, payload.url)
-    if _attachment_jobs.get(job_key, {}).get("status") == "running":
-        return {"note_id": note_id, "url": payload.url, "status": "running"}
-    # A real task (not a BackgroundTask) so it can be cancelled by url.
-    _attachment_jobs[job_key] = {
-        "status": "running",
-        "error": None,
-        "task": asyncio.create_task(_run_attachment_job(kb, note_id, payload.url)),
-    }
-    return {"note_id": note_id, "url": payload.url, "status": "running"}
-
-
-@router.post("/api/v1/notes/{note_id}/attachments/cancel")
-async def cancel_note_attachment(
-    note_id: str, payload: ProcessAttachmentInput, kb: KBContext = Depends(get_kb)
-):
-    """Stop one attachment's transcribe / describe / extract job."""
-    job = _attachment_jobs.get((kb.kb_id, note_id, payload.url))
-    task = job.get("task") if job else None
-    if job is None or job.get("status") != "running" or task is None or task.done():
-        return {"note_id": note_id, "url": payload.url, "status": "not_running"}
-    task.cancel()
-    return {"note_id": note_id, "url": payload.url, "status": "cancelling"}
-
-
-@router.get("/api/v1/notes/{note_id}/attachments/jobs")
-async def note_attachment_jobs(note_id: str, kb: KBContext = Depends(get_kb)):
-    """Status of every per-attachment job started for this note this session."""
-    return {
-        "jobs": {
-            url: {"status": job["status"], "error": job.get("error")}
-            for (kb_id, nid, url), job in _attachment_jobs.items()
-            if kb_id == kb.kb_id and nid == note_id
-        }
-    }
-
-
-@router.post("/api/v1/ingest")
-async def ingest_note(
-    note_data: NoteInput,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    kb: KBContext = Depends(get_kb),
-):
-    """
-    Create and ingest a new note (legacy combined endpoint for batch scripts).
-    For manual note creation, prefer POST /api/v1/notes then POST /api/v1/notes/{id}/ingest.
-    """
-    if not note_data.skip_ingestion:
-        require_ai(kb)
-    note_id = str(uuid.uuid4())
-    c_at = (
-        _parse_date_str(note_data.created_at)
-        if note_data.created_at
-        else datetime.now(timezone.utc)
-    )
-
-    new_note = Note(
-        id=note_id,
-        content="",
-        created_at=c_at,
-        processed=False,
-        processing_stage=(
-            "Queued for ingestion" if not note_data.skip_ingestion else "Saved"
-        ),
-        kb_id=kb.kb_id,
-    )
-    persist_note_body(new_note, kb, note_data.content or "")
-    db.add(new_note)
-    await db.flush()
-    await refresh_note_links(db, kb.kb_id, note_id, note_data.content or "")
-    await db.commit()
-
-    if not note_data.skip_ingestion:
-        if note_data.created_at is None:
-            note_data.created_at = c_at.isoformat()
-        background_tasks.add_task(
-            kb.get_ingestion_workflow().process_note, note_data, note_id
-        )
-        status = "processing_started"
-    else:
-        status = "saved_without_ingestion"
-
-    return {
-        "note_id": note_id,
-        "status": status,
-        "content": note_data.content,
-        "created_at": c_at.isoformat(),
-        "processed": False,
-    }
 
 
 @router.get("/api/v1/notes")
@@ -635,26 +410,6 @@ async def batch_delete_notes(
     }
 
 
-def _attachment_rels_from_note_body(body: str) -> list[str]:
-    """Extract vault-relative attachment paths from markdown links/images."""
-    import re as _re
-
-    rels: list[str] = []
-    seen: set[str] = set()
-    # Balanced parentheses are legal in a markdown URL ("Report (2026).pdf");
-    # matching [^)\s]+ truncated those and left the file orphaned on disk.
-    _link = r"!?\[[^\]]*\]\(((?:[^()\s]|\([^()\s]*\))+)(?:\s+\"[^\"]*\")?\)"
-    for match in _re.finditer(_link, body or ""):
-        raw = match.group(1).rstrip("/")
-        rel = vault_rel_from_url(raw)
-        if not rel and raw.startswith("attachments/"):
-            rel = raw
-        if rel and rel not in seen and ".." not in rel.split("/"):
-            seen.add(rel)
-            rels.append(rel)
-    return rels
-
-
 def _best_effort_delete_index_node(kb: KBContext, node_id: str, label: str) -> None:
     try:
         kb.qdrant.delete_node(node_id)
@@ -685,9 +440,7 @@ async def _delete_note_impl(
             "already_gone": True,
         }
 
-    body = await asyncio.to_thread(note_body, note_obj, kb)
     rel_path = note_obj.rel_path
-    attached_rels = _attachment_rels_from_note_body(body)
 
     vault = _Path(kb.vault_path).expanduser().resolve() if kb.vault_path else None
     if vault and rel_path:
@@ -759,17 +512,5 @@ async def _delete_note_impl(
         len(orphan_ids),
     )
 
-    for rel in attached_rels:
-        try:
-            if vault:
-                await remove_upload(vault, rel)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[delete_note] Attachment delete failed (%s): %s", rel, exc)
-    if attached_rels:
-        logger.info(
-            "[delete_note] Deleted %s attached file(s) for note %s.",
-            len(attached_rels),
-            note_id,
-        )
 
     return {"status": "deleted", "id": note_id, "orphans_removed": len(orphan_ids)}

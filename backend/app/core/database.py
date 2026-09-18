@@ -66,8 +66,7 @@ async def get_db():
 
 async def init_db() -> None:
     """Create tables if they do not exist (SQLite-friendly bootstrap)."""
-    # Import models so metadata is populated (finance = Firefly, not local tables)
-    import app.models.chat  # noqa: F401
+    # Import models so metadata is populated
     import app.models.kb  # noqa: F401
     import app.models.note  # noqa: F401
     import app.models.wikilink  # noqa: F401

@@ -36,115 +36,6 @@ class InspectPathInput(BaseModel):
     path: str = Field(min_length=1, max_length=4096)
 
 
-def _vision_row() -> dict:
-    """Who reads images: the ingestion model, through a projector when local."""
-    from app.core.config import settings
-    from app.services.local_models import find_mmproj, gguf_paths_if_present
-
-    if (settings.LLM_PROVIDER or "local").lower() not in ("local", "ollama", "lm_studio"):
-        return {
-            "kind": "vision",
-            "label": "Vision",
-            "purpose": "Images and PDF pages, read by the model you chose above",
-            "name": settings.LLM_PROVIDER,
-            "installed": True,
-            "engine_note": "cloud endpoint",
-        }
-    present = gguf_paths_if_present() or {}
-    chat = present.get("chat")
-    proj = find_mmproj(chat) if chat else None
-    return {
-        "kind": "vision",
-        "label": "Vision",
-        "purpose": "Images and PDF pages, read by the chat model",
-        "name": proj.name if proj else (chat.name if chat else "no chat model"),
-        "installed": proj is not None,
-        "engine_note": "GGUF projector",
-        "hint": (
-            None
-            if proj
-            else "no projector yet — Download media models fetches it for this chat model"
-        ),
-    }
-
-
-def _media_state() -> dict:
-    """Qwen3-ASR and Marlin plus the vision route — what Orb runs on attachments.
-
-    Reported read-only alongside embed/rerank so the page accounts for every
-    model on the machine, not just the chat one. Transcription additionally
-    reports which engine will serve it, since that differs by platform.
-    """
-    from app.services import asr_engine
-    from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
-
-    rows: list[dict] = [_vision_row()]
-    labels = {
-        "asr": ("Transcription", "Audio and video transcription"),
-        "marlin": ("Marlin", "Video understanding"),
-    }
-    for kind, (label, purpose) in labels.items():
-        try:
-            path = multimodal_model_path(kind)
-        except Exception:  # pylint: disable=broad-exception-caught
-            continue
-        row = {
-            "kind": kind,
-            "label": label,
-            "purpose": purpose,
-            "name": path.name,
-            "installed": is_hf_snapshot_ready(path),
-            "engine_note": "Qwen3.5 via transformers" if kind == "marlin" else None,
-            "hint": "not downloaded yet",
-        }
-        if kind == "asr":
-            try:
-                choice = asr_engine.choose(
-                    path.parent, preferred_engine=settings_asr_engine()
-                )
-                row["engine"] = choice.engine
-                row["engine_note"] = (
-                    "Qwen3-ASR via MLX"
-                    if choice.engine == asr_engine.ENGINE_MLX
-                    else "Qwen3-ASR via transformers"
-                )
-                if choice.model_path is not None:
-                    row["name"] = choice.model_path.name
-                    row["installed"] = True
-            except Exception:  # pylint: disable=broad-exception-caught
-                row["engine"] = None
-        if row["installed"]:
-            row["hint"] = None
-        rows.append(row)
-    rows.append(_speakers_row())
-    return {"models": rows}
-
-
-def _speakers_row() -> dict:
-    """Speaker labels: pyannote turns plus, on MLX, Qwen's aligner for word timings."""
-    from app.core.config import settings
-    from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
-
-    diarizer = multimodal_model_path("diarizer")
-    aligner = multimodal_model_path("aligner")
-    installed = is_hf_snapshot_ready(diarizer) and is_hf_snapshot_ready(aligner)
-    return {
-        "kind": "speakers",
-        "label": "Speaker labels",
-        "purpose": "Who said what in lectures and meetings",
-        "name": f"{diarizer.name} + {aligner.name}",
-        "installed": installed,
-        "engine_note": "off (ASR_SPEAKERS=false)" if not settings.ASR_SPEAKERS else "pyannote on CPU",
-        "hint": None if installed else "not downloaded yet",
-    }
-
-
-def settings_asr_engine() -> str:
-    from app.core.config import settings
-
-    return settings.ASR_ENGINE
-
-
 def _local_state() -> dict:
     """Installed models, what can be downloaded, and the fixed support models."""
     from app.core.paths import resolve_models_dir
@@ -177,11 +68,9 @@ def _local_state() -> dict:
         "downloadable": downloadable,
         "hardware": stack.get("hardware"),
         "budget_note": stack.get("budget_note"),
-        # Chosen automatically from RAM; shown read-only so the page explains
-        # what search and media use without offering a footgun.
+        # Chosen automatically from RAM.
         "embed": stack.get("embed"),
         "reranker": stack.get("reranker"),
-        "media": _media_state()["models"],
     }
 
 

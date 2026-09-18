@@ -20,12 +20,6 @@ logger = get_logger("API")
 router = APIRouter()
 
 
-@router.get("/api/v1/admin/maintenance-status")
-async def get_maintenance_status(kb: KBContext = Depends(get_kb)):
-    """Return the running state of background maintenance jobs."""
-    return kb.get_ingestion_workflow().get_maintenance_status()
-
-
 @router.post("/api/v1/admin/rebuild-communities")
 async def rebuild_communities(
     background_tasks: BackgroundTasks, kb: KBContext = Depends(get_kb)

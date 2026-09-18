@@ -227,18 +227,9 @@ def clear_cache() -> None:
     _cache.clear()
 
 
-def _is_orb_support_model(path: Path) -> bool:
-    """True for the media models Orb downloads for itself."""
-    try:
-        from app.services.multimodal_models import multimodal_model_path
-
-        resolved = path.resolve()
-        return any(
-            multimodal_model_path(kind).resolve() == resolved
-            for kind in ("asr", "marlin")
-        )
-    except Exception:  # pylint: disable=broad-exception-caught
-        return False
+def _is_orb_support_model(path: Path) -> bool:  # pylint: disable=unused-argument
+    """No media models on this branch."""
+    return False
 
 
 def discover_chat_models(
