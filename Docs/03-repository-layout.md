@@ -173,7 +173,7 @@ desktop/
 ├── build.py              packaging pipeline: bundle Python + backend, build UI, seed Firefly, preflight, cargo tauri build
 ├── shell/index.html      first-run setup page (data dir, models dir, vault, AI mode → paths.json)
 ├── src-tauri/
-│   ├── tauri.conf.json   identifier com.orb.app, version, no static windows, withGlobalTauri
+│   ├── tauri.conf.json   identifier com.josetseph.orb, version, no static windows, withGlobalTauri
 │   ├── Cargo.toml / build.rs
 │   ├── capabilities/     shell.json (bundled page), remote-ui.json (http://127.0.0.1:17401)
 │   ├── icons/

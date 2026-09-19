@@ -25,7 +25,7 @@ desktop/
   shell/index.html         first-run page; blank on every other launch until the window navigates
   build/                   icon.png, entitlements.mac.plist
   src-tauri/
-    tauri.conf.json        identifier com.orb.app, no static windows, withGlobalTauri
+    tauri.conf.json        identifier com.josetseph.orb, no static windows, withGlobalTauri
     capabilities/shell.json      bundled page: core + dialog + opener
     capabilities/remote-ui.json  http://127.0.0.1:17401 (the UI): dialog open, opener, notifications
     src/main.rs            builder, plugins, run-event handling (Exit → stop; macOS Reopen)

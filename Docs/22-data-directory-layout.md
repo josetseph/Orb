@@ -178,7 +178,7 @@ If `selection` is missing/broken, the code falls back to the pinned default file
 
 - Written by the first-run setup page (`save_setup` in `src-tauri/src/commands.rs`, atomic tmp → rename; validates absolute paths) and by `POST /api/v1/setup/paths` (`core/paths.save_paths_file`, plain `write_text`, `expanduser().resolve()`, preserves an omitted `default_vault_path`).
 - Read by the shell at every launch (`first_run()` when missing or invalid, unless `ORB_SKIP_WIZARD`) and by the backend via `load_paths_file()` (cached in `_PATHS_CACHE` until `save_paths_file`).
-- Tauri's WebView data (`com.orb.app` under the OS app-data dir: WebKit/WebView2 caches, `localStorage` for the UI origin) lives beside this folder; those files are WebView-managed and safe to delete (the UI loses `orb_current_kb` and similar conveniences).
+- Tauri's WebView data (`com.josetseph.orb` under the OS app-data dir: WebKit/WebView2 caches, `localStorage` for the UI origin) lives beside this folder; those files are WebView-managed and safe to delete (the UI loses `orb_current_kb` and similar conveniences).
 
 ## 6. Caches and staging directories
 
@@ -189,7 +189,7 @@ If `selection` is missing/broken, the code falls back to the pinned default file
 | `DATA_DIR/firefly/.tmp/` | PHP runtime and Firefly release archives + extraction | safe to delete when not installing |
 | `DATA_DIR/firefly/.app-state-stash/` | copy of `storage/{database,upload,oauth-*.key}` while the Firefly app dir is rebuilt on upgrade | exists only mid-upgrade; if present after a crash it may be the *only* copy of finance data — restore before deleting |
 | Hugging Face hub cache (`~/.cache/huggingface/`) | not used for model files (Orb passes `local_dir`), but `huggingface_hub` may still write token/metadata there | external |
-| WebView cache for `com.orb.app` (OS-managed location) | WebKit / WebView2 cache | WebView-managed |
+| WebView cache for `com.josetseph.orb` (OS-managed location) | WebKit / WebView2 cache | WebView-managed |
 
 ## 7. Dev fallbacks and repo-relative artefacts
 
@@ -231,6 +231,7 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 
 | Legacy artefact | Current handling |
 |---|---|
+| WebView data under `com.orb.app` (bundle identifier before 1.0.0) | orphaned: 1.0.0 uses `com.josetseph.orb`, so the UI's `localStorage` conveniences (`orb_current_kb`, graph controls) start fresh once; the old folder is safe to delete. Notes, indexes and `paths.json` are unaffected. |
 | App Support `LifeOS/` or `LiveOS/` with `paths.json` | **no longer probed** (removed 2026-09-19). Move the folder to `Orb/` by hand if such an install still exists. |
 | Env vars `LIVEOS_*` | **no longer read** (removed 2026-09-19); only the `ORB_*` names exist. |
 | `DATA_DIR` env (bare) / `MODELS_DIR` env (bare) | third-priority aliases (container era). |
