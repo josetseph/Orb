@@ -50,18 +50,11 @@ export function errMessage(err: unknown, fallback: string): string {
  */
 export function resolveFileUrl(url: string, kbId = "default"): string {
   if (!url) return url;
-  let cleaned = url.replace(/\\/g, "/");
-  // Repair older buggy rewrites that doubled the attachments folder
-  cleaned = cleaned.replace(
-    /(\/vault-files\/[^/]+\/)attachments\/attachments\//g,
-    "$1attachments/",
-  );
-  cleaned = cleaned.replace(/(^|\/)attachments\/attachments\//g, "$1attachments/");
-  if (cleaned.startsWith("/vault-files/")) return cleaned;
-  if (cleaned.startsWith("attachments/")) {
-    return `/vault-files/${encodeURIComponent(kbId)}/${cleaned}`;
+  if (url.startsWith("/vault-files/")) return url;
+  if (url.startsWith("attachments/")) {
+    return `/vault-files/${encodeURIComponent(kbId)}/${url}`;
   }
-  return cleaned;
+  return url;
 }
 
 /** Returns true if the URL points to an image file. */
@@ -157,7 +150,6 @@ function decodeURIComponentSafe(value: string): string {
   }
 }
 
-/** Encode each path segment of a vault/file URL for safe markdown links. */
 /**
  * Percent-encode one path segment for use inside a markdown link.
  *
@@ -174,26 +166,15 @@ function encodePathSegment(segment: string): string {
     .replace(/\]/g, "%5D");
 }
 
+/** Encode a freshly uploaded `/vault-files/<kb>/<raw path>` URL for a markdown link. */
 export function encodeFileUrl(url: string): string {
-  if (!url) return url;
-  if (url.startsWith("/vault-files/")) {
-    const rest = url.slice("/vault-files/".length);
-    const slash = rest.indexOf("/");
-    if (slash < 0) return url;
-    const kb = rest.slice(0, slash);
-    const path = rest.slice(slash + 1);
-    return `/vault-files/${encodeURIComponent(kb)}/${path
-      .split("/")
-      .map((p) => encodePathSegment(decodeURIComponentSafe(p)))
-      .join("/")}`;
-  }
-  if (url.startsWith("attachments/") || !url.includes("://")) {
-    return url
-      .split("/")
-      .map((p) => encodePathSegment(decodeURIComponentSafe(p)))
-      .join("/");
-  }
-  return url;
+  if (!url.startsWith("/vault-files/")) return url;
+  const rest = url.slice("/vault-files/".length);
+  const slash = rest.indexOf("/");
+  if (slash < 0) return url;
+  const kb = rest.slice(0, slash);
+  const path = rest.slice(slash + 1);
+  return `/vault-files/${encodeURIComponent(kb)}/${path.split("/").map(encodePathSegment).join("/")}`;
 }
 
 /**
@@ -209,7 +190,7 @@ export async function fetchMediaObjectUrl(
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed;
   }
-  const href = encodeFileUrl(resolveFileUrl(trimmed, kbId));
+  const href = resolveFileUrl(trimmed, kbId);
   const res = await fetch(href);
   if (!res.ok) {
     throw new Error(`Failed to load media (${res.status})`);

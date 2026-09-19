@@ -15,7 +15,7 @@ def _make_meili_service():
 
     svc = MeilisearchService.__new__(MeilisearchService)
     svc._client = MagicMock()
-    svc.collection = "test_nodes"
+    svc.index_name = "test_nodes"
     svc.is_available = MagicMock(return_value=True)
     index = MagicMock()
     task = MagicMock()
@@ -39,3 +39,13 @@ class TestIndexNode:
         docs = index.add_documents.call_args[0][0]
         assert docs[0]["node_id"] == "xyz-456"
         assert docs[0]["name"] == "Bob Jones"
+
+    def test_isolated_contexts_are_stored_as_a_list(self):
+        svc, index = _make_meili_service()
+
+        svc.index_node("n1", "Bob", "person", isolated_contexts=["met in 2020", "lives in Oslo"])
+
+        assert index.add_documents.call_args[0][0][0]["isolated_contexts"] == [
+            "met in 2020",
+            "lives in Oslo",
+        ]

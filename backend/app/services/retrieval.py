@@ -257,18 +257,13 @@ class RetrievalService:
                     _tgt_name = entry["neighbor"].get("name", "")
                     nl = _nl_lookup.get((_src, _tgt))
                     if nl:
-                        entry["nl_sentence"] = self._extract_predicate(
-                            nl, _src_name, _tgt_name
-                        )
+                        entry["nl_sentence"] = nl
                         entry["_nl_is_reverse"] = False
                     else:
                         nl = _nl_lookup.get((_tgt, _src))
                         if nl:
-                            # Predicate was written from the neighbor's perspective;
-                            # strip names from the NL text it was stored as.
-                            entry["nl_sentence"] = self._extract_predicate(
-                                nl, _tgt_name, _src_name
-                            )
+                            # Predicate was written from the neighbor's perspective.
+                            entry["nl_sentence"] = nl
                             entry["_nl_is_reverse"] = True
         except Exception as _qdrant_err:  # pylint: disable=broad-exception-caught
             logger.debug(f"  [GraphExpand] Qdrant NL lookup failed: {_qdrant_err}")
@@ -367,9 +362,7 @@ class RetrievalService:
             _scores = await reranker_service.rerank(question, _per_neighbor_texts)
             _score_map: dict[int, float] = (
                 {
-                    r["index"]: float(
-                        r.get("relevance_score", r.get("score", 0.0)) or 0.0
-                    )
+                    r["index"]: float(r.get("relevance_score") or 0.0)
                     for r in _scores
                     if "index" in r
                 }
@@ -534,26 +527,6 @@ class RetrievalService:
                 f"  [GraphExpand] Added {len(result)} neighbour node(s) via relationship expansion"
             )
         return result
-
-    @staticmethod
-    def _extract_predicate(nl: str, src_name: str, tgt_name: str) -> str:
-        """Strip entity names from the start/end of a stored NL text.
-
-        Qdrant may store a full sentence ("scott derrickson directed doctor
-        strange") when the LLM returned an empty natural_language and the
-        ingestion fallback fired.  Strip the known entity names so that
-        _build_node_text doesn't end up with names doubled.
-        """
-        text = nl.strip().rstrip(". ")
-        for name in (src_name, tgt_name):
-            if not name:
-                continue
-            name_l = name.lower()
-            if text.lower().startswith(name_l):
-                text = text[len(name) :].lstrip(" ")
-            if text.lower().endswith(name_l):
-                text = text[: -len(name)].rstrip(" ")
-        return text.strip() or nl
 
     def _build_node_text(  # pylint: disable=too-many-branches
         self, node: dict, relationships: list[dict], brief_root: bool = False
@@ -1449,9 +1422,7 @@ class RetrievalService:
                 for r in results:
                     if "index" not in r:
                         continue
-                    model_scores[r["index"]] = float(
-                        r.get("relevance_score", r.get("score", 0.0)) or 0.0
-                    )
+                    model_scores[r["index"]] = float(r.get("relevance_score") or 0.0)
                 if model_scores:
                     logger.info(
                         f"  [Reranker] {settings.MODEL_RERANKER_LOCAL} scored {len(model_scores)} "

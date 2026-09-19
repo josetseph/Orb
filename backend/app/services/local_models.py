@@ -354,14 +354,9 @@ def _min_expected_gguf_bytes(model_id: str) -> int:
 def _gguf_looks_complete(dest: Path, model_id: str) -> bool:
     if not dest.exists():
         return False
-    size = dest.stat().st_size
-    if size < _min_expected_gguf_bytes(model_id):
-        return False
-    # Truncated downloads often leave a tiny leftover or a half-written file;
-    # also reject leftover .partial siblings that indicate a crashed move.
-    if dest.with_suffix(dest.suffix + ".partial").exists():
-        return False
-    return True
+    # dest is only ever written by an atomic move, so a stale .partial sibling
+    # says nothing about it; size is the one signal of a truncated file.
+    return dest.stat().st_size >= _min_expected_gguf_bytes(model_id)
 
 
 def download_file(url: str, dest: Path, on_progress=None) -> Path:
@@ -436,14 +431,6 @@ def ensure_gguf(model_id: str, on_progress=None) -> Path:
         )
         try:
             dest.unlink()
-        except OSError:
-            pass
-    # Clean up abandoned NAS partials from older direct downloads
-    stale = dest.with_suffix(dest.suffix + ".partial")
-    if stale.exists():
-        logger.info(f"Removing incomplete partial {stale.name} before re-download")
-        try:
-            stale.unlink()
         except OSError:
             pass
     url = _hf_file_url(model_id)
@@ -618,6 +605,8 @@ def sync_embedding_infrastructure(
     # selected catalog id in settings so retrieval logs / UI stay accurate.
     try:
         sel = load_manifest().get("selection") or {}
+        # Once per boot (main.py calls this at startup), not on every read.
+        _heal_selection_paths(sel)
         reranker_id = (sel.get("reranker_id") or "").strip()
         if reranker_id:
             _settings.MODEL_RERANKER_LOCAL = reranker_id
@@ -873,7 +862,6 @@ def gguf_paths_if_present() -> dict[str, Path] | None:
     chat = selected_gguf(sel.get("chat_path"))
     embed = selected_gguf(sel.get("embed_path"))
     if chat and embed:
-        _heal_selection_paths(sel)
         if chat.stat().st_size > 1_000_000:
             out = {"chat": chat, "embed": embed}
             rp = selected_gguf(sel.get("reranker_path"))
@@ -881,10 +869,14 @@ def gguf_paths_if_present() -> dict[str, Path] | None:
                 out["reranker"] = rp
             return out
 
-    # Legacy fallback: env defaults
+    # Manifests from before selections were recorded: guess the env defaults
+    # once and persist the guess so this never runs again.
     chat = resolve_models_dir() / "gguf" / CHAT_MODEL_ID.rsplit("/", 1)[-1]
     embed = resolve_models_dir() / "gguf" / EMBED_MODEL_ID.rsplit("/", 1)[-1]
     if chat.exists() and chat.stat().st_size > 1_000_000 and embed.exists():
+        sel.update(chat_path=store_model_path(chat), embed_path=store_model_path(embed))
+        man["selection"] = sel
+        save_manifest(man)
         return {"chat": chat, "embed": embed}
     return None
 
@@ -985,13 +977,12 @@ class _ChatCompletions:
         messages = kwargs.get("messages") or []
         temperature = kwargs.get("temperature", 0.2)
         max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
-        # response_format / extra_body accepted for API compat; llama.cpp JSON mode
-        # is prompt-driven for our extraction path.
         return self._runtime.create_chat_completion(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             model=kwargs.get("model") or self._model_id,
+            response_format=kwargs.get("response_format"),
         )
 
 
@@ -1313,10 +1304,6 @@ class LocalLlamaRuntime:
             f"(expected {len(texts)} vectors, got {len(data) if data else 0})"
         )
 
-    def ensure_loaded(self) -> None:
-        """Back-compat: ensure chat GGUF is loaded (exclusive)."""
-        self.ensure_chat_loaded()
-
     def ensure_chat_loaded(self, chat_gguf: Path | None = None) -> None:
         """Load chat GGUF only — unloads embed / rerank / multimodal first.
 
@@ -1527,7 +1514,11 @@ class LocalLlamaRuntime:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         model: str | None = None,
+        response_format: dict | None = None,
     ) -> SimpleNamespace:
+        """``response_format={"type": "json_object"}`` turns on llama.cpp's JSON
+        grammar. Never pass a schema: schema-constrained sampling empties nested
+        arrays on small GGUFs."""
         self.ensure_chat_loaded(self.resolve_chat_gguf(model))
         assert self._chat is not None
         if max_tokens is None:
@@ -1547,6 +1538,7 @@ class LocalLlamaRuntime:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     repeat_penalty=repeat_penalty,
+                    response_format=response_format,
                 )
                 return _openaiish_chat_response(raw, model_id)
             except RepetitionLoopError as exc:
@@ -1566,6 +1558,7 @@ class LocalLlamaRuntime:
         temperature: float,
         max_tokens: int,
         repeat_penalty: float,
+        response_format: dict | None = None,
     ) -> dict:
         assert self._chat is not None
         kwargs: dict = {
@@ -1574,6 +1567,8 @@ class LocalLlamaRuntime:
             "max_tokens": max_tokens,
             "repeat_penalty": repeat_penalty,
         }
+        if response_format:
+            kwargs["response_format"] = response_format
         with self._lock:
             # Prefer streaming so we can abort mid-generation on ordinal loops.
             try:
@@ -1870,16 +1865,8 @@ class LocalGgufReranker:
             return []
         scored = []
         for i, doc in enumerate(documents):
-            score = self._score_one(query, doc)
-            # Use relevance_score to match the HTTP local-models service contract
-            # (retrieval.py reads r["relevance_score"]).
             scored.append(
-                {
-                    "index": i,
-                    "relevance_score": score,
-                    "score": score,
-                    "document": doc,
-                }
+                {"index": i, "relevance_score": self._score_one(query, doc), "document": doc}
             )
         scored.sort(key=lambda x: x["relevance_score"], reverse=True)
         if top_n is not None:

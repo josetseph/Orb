@@ -79,9 +79,12 @@ leaves nothing behind.
 
 ## 5. Window and bridge
 
-- The window may only navigate to the app origin (or the bundled page). Any other
-  URL, and anything that asks for a new window (`window.open`, `target=_blank`), is
-  opened in the system browser instead — note content renders in this window.
+- The window may only navigate to the app origin (or the bundled page): `trusted()`
+  accepts the `tauri`/`asset` schemes, the `tauri.localhost` host, and any URL whose
+  origin equals `Url::parse(app_url()).origin()` (an origin comparison, not a string
+  prefix). Any other URL, and anything that asks for a new window (`window.open`,
+  `target=_blank`), is opened in the system browser instead — note content renders
+  in this window.
 - `init.js` provides `window.orbDesktop` with `isDesktop`, `pickDirectory`, `pickFile`
   (Tauri dialog plugin), `restartBackend` (command) and `notify` (notification plugin,
   requests permission the first time). `frontend/src/lib/desktop.ts` is the typed

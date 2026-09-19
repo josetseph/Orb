@@ -27,7 +27,7 @@
 | `backend/app/models/note.py` | ORM for `notes` (metadata only) | `Note` |
 | `backend/app/models/wikilink.py` | ORM for `note_links` (directed wikilink edges) | `NoteLink` |
 | `backend/app/schemas/note.py` | Pydantic bodies for note/vault routes | `CreateNoteInput`, `MoveNoteInput`, `MoveVaultFileInput`, `DeleteVaultFileInput`, `BatchDeleteNotesInput`, `MkdirInput` |
-| `backend/app/services/note_files.py` | Body read/write against the vault; legacy `content` fallback | `note_body`, `persist_note_body`, `normalize_vault_file_refs` |
+| `backend/app/services/note_files.py` | Body read/write against the vault | `note_body`, `persist_note_body` |
 | `backend/app/services/vault.py` | Leaf helpers: sanitising, unique paths, raw file IO, self-write marks, attachment save, wikilink regex | `sanitize_title`, `unique_md_path`, `read_note_file`, `write_note_file`, `delete_note_file`, `save_attachment`, `_faststart_mp4`, `extract_wikilinks`, `WIKILINK_RE`, `title_from_filename`, `mark_self_write`, `is_recent_self_write`, `ensure_vault`, `clear_vault_contents` |
 | `backend/app/services/vault_ops.py` | Move/rename/delete with reference rewriting; path safety | `safe_vault_join`, `unique_rel_path`, `rewrite_refs_in_text`, `rewrite_wikilinks_in_text`, `strip_refs_in_text`, `strip_refs_across_notes`, `delete_vault_file`, `move_vault_file`, `rename_note_file_for_title`, `move_note_to_folder`, `_norm`, `_WIKILINK_TARGET_RE` |
 | `backend/app/services/wikilinks.py` | Link normalisation, `WikilinkResolver`, `note_links` refresh, graph payloads | `_normalize_link`, `_folder_of`, `_folder_proximity`, `WikilinkResolver`, `refresh_note_links`, `refresh_note_links_sync`, `rebuild_kb_note_links`, `notes_graph_payload`, `note_neighborhood_payload` |
@@ -60,7 +60,7 @@
 | `kb_id` | String NOT NULL, default `"default"`, indexed | Owning KB (`KBContext.kb_id`). |
 | `rel_path` | String NULL | Vault-relative path of the `.md`, forward slashes, e.g. `Life/Daily Log/2024-07-07.md`. `NULL` only for pre-vault legacy rows; every write path fills it. Composite index `ix_notes_kb_rel_path (kb_id, rel_path)` (created by `create_all` and re-ensured by `init_db` for older SQLite files). |
 | `title` | String NULL | User-facing title. `NULL`/blank allowed; the UI then shows the filename stem. |
-| `content` | Text NULL, default `""` | **Deprecated fallback.** Kept empty by `persist_note_body`; only read when the vault file is missing/empty (§4). |
+| `content` | Text NULL, default `""` | **Legacy, never read.** Kept empty by `persist_note_body`; a pre-vault row with a body is moved to disk once by `sync_vault_notes` (§4.3). |
 | `created_at` | tz-aware DateTime | User-editable "note date" (see 3.5), default now. Sort key for `GET /api/v1/notes` (desc). |
 | `updated_at` | tz-aware DateTime, `onupdate` now | Bumped on `PUT`, on vault adoption, and by the watcher. |
 | `processed` / `failed` | Boolean | Ingestion outcome flags (§13). |
@@ -130,19 +130,18 @@ There is none. Orb writes the body verbatim; no YAML frontmatter is added, parse
 
 ```
 if note.rel_path and kb.vault_path:
-    text = read_note_file(vault, rel_path)      # "" if the file does not exist
-    if text: return normalize_vault_file_refs(text)
-return normalize_vault_file_refs(note.content or "")   # legacy fallback
+    return read_note_file(vault, rel_path)      # "" if the file does not exist
+return ""
 ```
 
-- The fallback to `notes.content` fires when there is no `rel_path`, no vault, the file is missing, **or the file is empty**. An intentionally empty note therefore shows whatever stale legacy `content` the row still has (normally `""`).
+- There is no fallback to `notes.content`: no `rel_path`, no vault or a missing file all read as `""`. The body the API returns is exactly the file's bytes.
 - `read_note_file` goes through `safe_vault_join`, so a corrupted `rel_path` containing `..` raises `ValueError` (→ 500 on the listing route; it is not caught per note).
-- `normalize_vault_file_refs` collapses `(/vault-files/<kb>/)attachments/attachments/` → `attachments/` on read and write, repairing links doubled by an older buggy rewrite. This runs on **every** read, so bodies returned by the API can differ from the file until the next save rewrites it.
+- Nothing rewrites link targets at read time any more; the `attachments/attachments/` collapse that used to run on every read (`normalize_vault_file_refs`, removed 2026-09-19) became part of the one-time vault sweep (§4.3).
 
 ### 4.2 `persist_note_body(note, kb, content, title=None, folder=None)`
 
 1. `mkdir -p vault`.
-2. `content = normalize_vault_file_refs(content)`.
+2. `content = content or ""`.
 3. `display_title = title if title is not None else note.title`.
 4. If `note.rel_path` is empty → `note.rel_path = unique_md_path(vault, display_title or "Untitled", folder)`. (`folder` is only honoured for the *first* write; later saves never move the file.)
 5. Title bookkeeping: if `title` was passed, `note.title = display_title or None`; else if `display_title` differs from `note.title` it is assigned (no-op in practice).
@@ -150,6 +149,18 @@ return normalize_vault_file_refs(note.content or "")   # legacy fallback
 7. `note.content = ""` — the SQLite copy is always emptied.
 
 Callers: `create_note`, `ingest_note` (legacy combined route), `update_note`, `IngestionWorkflow._persist_note_body` (enriched body after multimedia), `strip_refs_across_notes`, `move_vault_file` (for rewritten bodies). None of them passes `folder` except `create_note`.
+
+### 4.3 One-time vault sweep and legacy bodies (`vault_sync.migrate_vault_files`, `sync_vault_notes`)
+
+`sync_vault_notes(db, kb)` (called by the notes listing and setup) starts with two idempotent repairs before it reconciles rows with files:
+
+1. **`migrate_vault_files(vault)`** (run in a thread), gated by the marker file `<vault>/.orb/migrated-v1` — when it exists the function returns `0` immediately. Otherwise every note `.md` (`iter_vault_md_files`, attachments excluded) is read and rewritten only if it changes, each write going through `mark_self_write` so the watcher ignores it:
+   - `_normalize_vault_targets`: in `](…)` targets and `orb:extract src="…"` markers, `attachments/attachments/` is collapsed to `attachments/` for `/vault-files/<kb>/…` URLs and for bare `attachments/attachments/` targets, and every segment of a `/vault-files/<kb>/…` path is `unquote`d then `quote(seg, safe="")`d — the encoding `vault_ops.rewrite_refs_in_text` writes, so a moved attachment's link and its marker keep matching.
+   - `ingestion_agent.wrap_legacy_enrichment_blocks`: pre-marker enrichment output (`[PDF Extraction (…)]`, `[Image: …]`, transcripts, …) is wrapped in `<!-- orb:extract src="" -->…<!-- /orb:extract -->` so re-ingest can find and drop it (doc 10 §6.2).
+   The marker is touched after the loop (`.orb/` is created if needed) and the count of rewritten files is logged.
+2. **Legacy SQLite bodies**: for every `Note` of the KB whose `content` is non-empty, `persist_note_body(n, kb, n.content)` writes it to the vault file (choosing a `rel_path` if the row has none) when the file is missing, or the column is simply blanked when `read_note_file` already returns a body. After this `notes.content` is `""` everywhere and `note_body` never consults it.
+
+Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `<vault>/.orb/migrated-v1` re-runs the sweep on the next listing.
 
 ## 5. `vault.py` primitives
 
@@ -174,7 +185,7 @@ Callers: `create_note`, `ingest_note` (legacy combined route), `update_note`, `I
 
 ### 6.2 `rewrite_refs_in_text(content, old_rel, new_rel, kb_id) -> str`
 
-Rewrites markdown link/image **targets only** — the pattern is `(\]\()(<src>)(\))`, i.e. the target must be exactly the whole parenthesised URL. Four `src → dst` pairs are tried in order: `/vault-files/<kb_id>/<old>`, its percent-encoded form (each segment `quote(seg, safe="")`), bare `<old>`, bare encoded `<old>`. Then the `attachments/attachments/` collapse. Rationale in the docstring: an earlier bare substring replace turned `…/attachments/x.mp4` into `…/attachments/attachments/x.mp4` when `old_rel` was just a filename. Limitation: links with a title (`](url "title")`) or with a query string are not rewritten.
+Rewrites markdown link/image **targets only** — the pattern is `(\]\(|orb:extract src=")(<src>)(\)|")`, i.e. the target must be exactly the whole parenthesised URL or the whole `src` of an extraction marker (so the marker keeps matching its link after a move and the attachment is not re-transcribed). Four `src → dst` pairs are tried in order: `/vault-files/<kb_id>/<old>`, its percent-encoded form (each segment `quote(seg, safe="")`), bare `<old>`, bare encoded `<old>`. Rationale in the docstring: an earlier bare substring replace turned `…/attachments/x.mp4` into `…/attachments/attachments/x.mp4` when `old_rel` was just a filename. Limitation: links with a title (`](url "title")`) or with a query string are not rewritten.
 
 ### 6.3 `rewrite_wikilinks_in_text(content, resolver, source_rel_path, moved_note_id, bare_target, path_target)`
 
@@ -286,9 +297,9 @@ Used by note delete (attachment discovery), `remove_upload`, `GET /api/v1/vault/
 
 ### 8.5 Client helpers (`frontend/src/lib/utils.ts`)
 
-- `resolveFileUrl(url, kbId)`: repairs doubled `attachments/attachments/`; `attachments/x` → `/vault-files/<kbId>/attachments/x` (kbId is whatever the caller has — the **slug** from `useKB`, which the server accepts); `/vault-files/…` passthrough.
+- `resolveFileUrl(url, kbId)`: `attachments/x` → `/vault-files/<kbId>/attachments/x` (kbId is whatever the caller has — the **slug** from `useKB`, which the server accepts); `/vault-files/…` passthrough.
 - **Serving** (`GET /vault-files/{kb_id}/{path}`): `FileResponse` with an explicit `media_type` from `_MEDIA_CONTENT_TYPES`, because Python's `mimetypes` guesses types no browser will decode — `.m4a` becomes `audio/mp4a-latm` (a LATM/LOAS packaging, not the MP4 container), and `.aac`/`.flac`/`.wav` get `x-` prefixed forms. `<audio>`/`<video>` trust `Content-Type`, so the wrong one fails to play with no useful error. The upload path already normalised this (`api/files.py` → `audio/mp4`); the serve path did not.
-- `encodeFileUrl(url)`: per-segment `encodePathSegment` (an `encodeURIComponent` that additionally escapes `(`, `)`, `[`, `]` as `%28 %29 %5B %5D`) after a safe decode, keeping the `/vault-files/<kb>/` prefix intact. `encodeURIComponent` leaves `!'()*` alone by design, and a bare `)` closes a `[label](url)` link early — so a filename with brackets used to produce a link that pointed at a truncated path and rendered as raw text. Every consumer below also accepts balanced parentheses, so links written before this are read correctly without rewriting the vault. The editor inserts encoded URLs; the backend's `rewrite_refs_in_text`/`strip_refs_in_text` handle both encoded and raw forms for this reason.
+- `encodeFileUrl(url)`: per-segment `encodePathSegment` (an `encodeURIComponent` that additionally escapes `(`, `)`, `[`, `]` as `%28 %29 %5B %5D`) with no decode round-trip — it only encodes, and is called only when a link is inserted (read sites use `resolveFileUrl`) — keeping the `/vault-files/<kb>/` prefix intact. `encodeURIComponent` leaves `!'()*` alone by design, and a bare `)` closes a `[label](url)` link early — so a filename with brackets used to produce a link that pointed at a truncated path and rendered as raw text. Every consumer below also accepts balanced parentheses, so links written before this are read correctly without rewriting the vault. The editor inserts encoded URLs; the backend's `rewrite_refs_in_text`/`strip_refs_in_text` handle both encoded and raw forms for this reason.
 
 ## 9. Attachment discovery regexes and markers (editor ↔ ingestion contract)
 
@@ -322,7 +333,7 @@ Who parses them:
 \n\n[Spreadsheet Extraction (<name>)]
 ```
 
-`_strip_prior_multimedia_enrichment` truncates the body at the first match, so on re-ingest the whole tail is regenerated once ("re-run multimedia once and rewrite a single clean enrichment section"). Consequences for this layer: anything the user types **after** an enrichment block is discarded on re-ingest; a user line that happens to start with `[Image:` after a blank line is treated as a marker. Adding a new enrichment type requires extending this regex. Details in [10](10-ingestion-pipeline.md)/[11](11-multimedia-enrichment.md).
+`_strip_prior_multimedia_enrichment(content, keep=linked)` removes only delimited `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` blocks whose attachment is no longer linked in the note; blocks for attachments still present are kept (and not re-processed), and new attachments get a fresh block placed under their link. Bare headers like the ones above are only produced by pre-marker versions; the one-time vault sweep (§4.3) wraps them in markers so they are handled the same way. Consequences for this layer: user text is never truncated on re-ingest, and a user line that starts with `[Image:` is left alone unless it sits inside a marker pair.
 
 ## 10. Wikilinks
 
@@ -434,7 +445,7 @@ Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and nev
 
 ## 14. Invariants and locked decisions
 
-1. **Body = file; `notes.content` stays empty.** `persist_note_body` enforces it; readers fall back only when the file is empty/missing.
+1. **Body = file; `notes.content` stays empty.** `persist_note_body` enforces it; `note_body` returns `""` for a missing file and never reads the column; `sync_vault_notes` moves any pre-vault body to disk once (§4.3).
 2. **All disk access goes through `safe_vault_join`.** No raw `vault / rel` joins in routes; never catch its `ValueError` and retry with a raw join.
 3. **Title is user-owned; filename follows title, not the reverse** (except filling blank titles). Case-only title changes do not rename.
 4. **Moves rewrite link *targets*, never do substring replacement** (the doubled-`attachments/` bug). New rewrite code must use anchored `](…)` or `[[…]]` patterns.
@@ -495,3 +506,4 @@ Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and nev
 - `b35d612` (2026-08-06): Obsidian-style `[[` autocomplete; exact-path-first resolution on both client and server; click-to-create.
 - `72413b9` (2026-08-06): title → filename sync (`rename_note_file_for_title`) with wikilink repointing; autocomplete labels prefer the display title so stale `Untitled N.md` filenames stop appearing.
 - `8de5cda` (0.2.0): batching/parallel IO — body reads moved to threads in list/reingest/delete routes; single resolver per rebuild.
+- Uncommitted working tree (2026-09-19, band-aid pass): `normalize_vault_file_refs` and the read-time `attachments/attachments/` collapse in `rewrite_refs_in_text` were removed in favour of the one-time `migrate_vault_files` sweep (§4.3); legacy `notes.content` bodies are moved to disk by `sync_vault_notes` and `note_body` no longer falls back to SQLite; `rel_path` is stored with `.as_posix()` and `init_db` repairs backslashes; `_strip_prior_multimedia_enrichment` keeps user text and only drops delimited blocks; `created_at` on note create/update is a `datetime` (422 on garbage, naive → UTC); the frontend `resolveFileUrl`/`encodeFileUrl` stopped repairing or decoding.

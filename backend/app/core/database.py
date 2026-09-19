@@ -58,12 +58,17 @@ async def init_db() -> None:
         await conn.run_sync(Base.metadata.create_all)
 
         # create_all skips new indexes on existing SQLite tables — ensure key ones.
-        def _ensure_sqlite_indexes(sync_conn) -> None:
+        def _sqlite_repairs(sync_conn) -> None:
             if sync_conn.dialect.name != "sqlite":
                 return
             sync_conn.exec_driver_sql(
                 "CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)"
             )
+            # rel_path was once str(Path) — backslashes on Windows.
+            sync_conn.exec_driver_sql(
+                "UPDATE notes SET rel_path = replace(rel_path, '\\', '/') "
+                "WHERE rel_path LIKE '%\\%'"
+            )
 
-        await conn.run_sync(_ensure_sqlite_indexes)
+        await conn.run_sync(_sqlite_repairs)
     logger.info("Database schema ensured (create_all)")

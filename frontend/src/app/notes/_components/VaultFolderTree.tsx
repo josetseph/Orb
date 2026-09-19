@@ -130,7 +130,7 @@ export function VaultFolderTree({
     const mediaByFolder = new Map<string, VaultFileEntry[]>();
     const rootMedia: VaultFileEntry[] = [];
     for (const f of mediaFiles) {
-      const rel = f.rel_path.replace(/\\/g, "/");
+      const rel = f.rel_path;
       if (rel === "attachments" || rel.startsWith("attachments/")) continue;
       const slash = rel.lastIndexOf("/");
       if (slash < 0) {
@@ -182,7 +182,7 @@ export function VaultFolderTree({
       const filesByFolder = new Map<string, VaultFileEntry[]>();
       const folders = new Set<string>();
       for (const f of attachmentFiles) {
-        const rel = f.rel_path.replace(/\\/g, "/");
+        const rel = f.rel_path;
         const parent = rel.slice(0, rel.lastIndexOf("/"));
         const list = filesByFolder.get(parent) || [];
         list.push(f);

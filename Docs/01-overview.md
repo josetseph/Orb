@@ -18,7 +18,7 @@ Key user-facing capabilities:
 |---|---|
 | Notes & vault | Real `.md` files in a per-knowledge-base vault folder (Obsidian-compatible), folders, attachments, `[[wikilinks]]` with autocomplete and disambiguation, entity highlighting in the editor, in-app voice recording |
 | Multimedia ingest | PDF text + vision on embedded images and scanned pages (Florence-2), image captions/OCR, audio and video transcription (Whisper), video visual understanding (Marlin); results are appended to the note markdown |
-| Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and relationships, optional community clustering (labelled "Leiden", implemented as a greedy cosine merge over embeddings) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
+| Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and relationships (relationship types are a closed 42-predicate vocabulary, off-list → `related_to`), optional community clustering (labelled "Leiden", implemented as a greedy cosine merge over embeddings) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
 | Chat | Multi-hop research loop combining entity lookup, keyword search (Meilisearch), vector search (Qdrant), graph expansion and a local cross-encoder reranker; persistent conversations; optional "thinking" display |
 | Knowledge bases | Multiple fully isolated KBs (separate vault, graph, vectors, keyword index, Firefly administration) switchable from the sidebar |
 | Finance | Per-KB Firefly III administration: accounts, transactions, budgets, categories, recurrences, rules, reports, search |
@@ -60,7 +60,7 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 | Vectors | Qdrant (local binary) + qdrant-client | Qdrant v1.18.2, client 1.17.1 |
 | Keyword search | Meilisearch (local binary) + meilisearch python | Meilisearch v1.49.0, client 0.34.1 |
 | Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Florence-2, Whisper, Marlin) | llama-cpp-python ≥ 0.3 |
-| Cloud LLMs | openai, anthropic, google-genai, HuggingFace; plain-JSON structured output cleaned with `json-repair` | – |
+| Cloud LLMs | openai, anthropic, google-genai, HuggingFace; structured output requested in each provider's JSON mode (llama.cpp grammar locally, prompt-only on Anthropic) and cleaned with `json-repair` | – |
 | Document parsing | PyMuPDF, Pillow, python-docx, openpyxl, `av` (media probing), ffmpeg (transcoding) | – |
 | Finance | Firefly III (Laravel) on a portable PHP 8.5 from NativePHP `php-bin` | Firefly v6.6.6, php-bin 1.2.0 |
 | Packaging | `desktop/build.py` + `cargo tauri build`: python-build-standalone CPython, Vite build, Firefly seed; no Node ships | Python 3.12.9 |
@@ -79,7 +79,7 @@ FastAPI ── per-KB KBContext ──▶ vault .md · SQLite metadata · Kuzu g
 ```
 
 Write path: note saved → attachments enriched → LLM extracts entities/relationships → graph + vectors + keyword index updated → communities recomputed after idle.
-Read path: question → query analysis → up to two hybrid retrieval rounds (`MAX_LOOP_ITERATIONS=3` counts the planning step) → cross-encoder rerank → answer with a `### References` block → conversation persisted.
+Read path: question → query analysis → up to two hybrid retrieval rounds (`MAX_LOOP_ITERATIONS=3` counts the planning step) → cross-encoder rerank → answer plus a `sources` list of the notes it drew on → conversation persisted.
 
 The full picture with diagrams is in [02-system-architecture.md](02-system-architecture.md).
 

@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.log import get_logger
 from app.services import ingestion_checkpoint as checkpoint
 from app.schemas.extraction import (
+    RELATIONSHIP_TYPES,
     ContextPass,
     EntityPass,
     Extraction,
@@ -58,9 +59,8 @@ EXTRACT_BLOCK_RE = re.compile(
 )
 _EXTRACT_SRC_RE = re.compile(r'<!-- orb:extract src="([^"]*)" -->')
 
-# Pre-marker format: blocks were appended contiguously at the end with no
-# closing delimiter, so "first header to end of note" is the only boundary
-# available. Kept so notes enriched before markers still re-ingest cleanly.
+# Pre-marker format: blocks were appended with no closing delimiter. Only
+# ``wrap_legacy_enrichment_blocks`` reads this, to give such blocks markers.
 _ENRICHMENT_BLOCK_RE = re.compile(
     r"\n\n\[(?:"
     r"PDF Extraction \([^\]]+\)|"
@@ -92,6 +92,39 @@ def _block_key(block: str) -> str:
     return attachment_key(m.group(1)) if m else ""
 
 
+def wrap_legacy_enrichment_blocks(content: str) -> str:
+    """Give pre-marker enrichment blocks the delimiters newer ones carry.
+
+    Each legacy header and the text up to the next header, the next delimited
+    block, or the end of the note becomes one ``orb:extract`` block with an
+    empty ``src`` — so it is found, kept or dropped by the same rules as any
+    other block. Text already inside a delimited block is left alone, which
+    also makes this idempotent.
+    """
+    if not content:
+        return content or ""
+
+    def _wrap_run(text: str) -> str:
+        heads = list(_ENRICHMENT_BLOCK_RE.finditer(text))
+        if not heads:
+            return text
+        parts = [text[: heads[0].start()]]
+        for i, head in enumerate(heads):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+            body = text[head.start() : end].strip("\n")
+            parts.append(f"\n\n{EXTRACT_OPEN.format(src='')}\n{body}\n{EXTRACT_CLOSE}")
+        return "".join(parts)
+
+    out: list[str] = []
+    last = 0
+    for m in EXTRACT_BLOCK_RE.finditer(content):
+        out.append(_wrap_run(content[last : m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(_wrap_run(content[last:]))
+    return "".join(out)
+
+
 def _strip_prior_multimedia_enrichment(
     content: str, keep: set[str] | None = None
 ) -> str:
@@ -101,33 +134,16 @@ def _strip_prior_multimedia_enrichment(
     attachments already processed, so ingestion does not redo them. ``None``
     (the default) removes every block, which is what a full redo wants.
 
-    Delimited blocks are removed individually wherever they sit, so text
-    written *below* an extraction survives — under the old truncate-from-the-
-    first-header rule it was silently deleted. Legacy undelimited blocks still
-    use that rule, applied only to text outside kept blocks.
+    Only delimited blocks are touched. A bare ``[Image: …]`` the user typed is
+    their text, not ours; legacy undelimited output gets its markers from
+    ``wrap_legacy_enrichment_blocks`` before it reaches here.
     """
     if not content:
-        return content or ""
-    pieces: list[tuple[str, bool]] = []  # (text, is_kept_block)
-    last = 0
-    for m in EXTRACT_BLOCK_RE.finditer(content):
-        pieces.append((content[last : m.start()], False))
-        if keep is not None and _block_key(m.group(0)) in keep:
-            pieces.append((m.group(0), True))
-        last = m.end()
-    pieces.append((content[last:], False))
-
-    out: list[str] = []
-    for text, kept in pieces:
-        if kept:
-            out.append(text)
-            continue
-        legacy = _ENRICHMENT_BLOCK_RE.search(text)
-        if legacy:
-            out.append(text[: legacy.start()])
-            break
-        out.append(text)
-    return "".join(out).rstrip()
+        return ""
+    return EXTRACT_BLOCK_RE.sub(
+        lambda m: m.group(0) if keep is not None and _block_key(m.group(0)) in keep else "",
+        content,
+    ).rstrip()
 
 
 def remove_extraction(content: str, src_url: str) -> str:
@@ -196,9 +212,12 @@ Identify every distinct entity in the note. For each, assign:
 List every relationship between entities. For each:
 - `source_name`: The entity the relationship originates from.
 - `target_name`: The entity the relationship points to.
-- `relationship_type`: A concise snake_case verb phrase (e.g. `attends`, `lives_in`, `is_friends_with`).
+- `relationship_type`: exactly one of the allowed predicates listed below. Use `related_to` when none fits.
 - `natural_language`: A short natural-language description of the relationship (e.g. "attends school").
 - Only include what the text explicitly states or directly implies.
+
+Allowed `relationship_type` values (no others):
+{", ".join(RELATIONSHIP_TYPES)}
 
 ### STEP 3 — Node Context Generation
 For each node, write a tightly focused contextual description using **only information from the note**.
@@ -229,7 +248,7 @@ Return a single JSON object structured exactly like this:
     {{
       "source_name": "string — the entity the relationship originates from",
       "target_name": "string — the entity the relationship points to",
-      "relationship_type": "string — concise snake_case verb phrase (e.g. attends, lives_in, is_friends_with)",
+      "relationship_type": "string — one of the allowed predicates, or related_to",
       "natural_language": "string — short natural-language description of the relationship"
     }}
   ]
@@ -278,14 +297,14 @@ Return a single JSON object structured exactly like this:
     }}
   ],
   "relationships": [
-    {{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "is_friends_with", "natural_language": "are mutual friends"}},
+    {{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "friend_of", "natural_language": "are mutual friends"}},
     {{"source_name": "Ama", "target_name": "Primary School", "relationship_type": "attends", "natural_language": "attends school"}},
     {{"source_name": "Ama", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives in the neighborhood"}},
-    {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_and_plays_in", "natural_language": "lives and plays in the neighborhood"}},
-    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Kofi during the weekend"}},
-    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Ama during the weekend"}},
-    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "completes_before_play", "natural_language": "completes homework before weekend play"}},
-    {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precondition_for", "natural_language": "must be completed before weekend play begins"}}
+    {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives and plays in the neighborhood"}},
+    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "related_to", "natural_language": "plays with Kofi during the weekend"}},
+    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "related_to", "natural_language": "plays with Ama during the weekend"}},
+    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "related_to", "natural_language": "completes homework before weekend play"}},
+    {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precedes", "natural_language": "must be completed before weekend play begins"}}
   ]
 }}
 
@@ -338,10 +357,10 @@ def _build_entity_prompt(content: str) -> str:
 `type` examples (not exhaustive — judge from the note): Person, Place, Organization, Event, Work, Thing, Concept, Time Period.
 
 Return ONLY this JSON:
-{{{{
+{{
   "title": "string — descriptive title capturing the main subject of the note",
-  "nodes": [{{{{"name": "canonical entity name", "type": "most fitting type"}}}}]
-}}}}
+  "nodes": [{{"name": "canonical entity name", "type": "most fitting type"}}]
+}}
 
 NOTE:
 {content}"""
@@ -355,19 +374,21 @@ def _build_relationship_prompt(content: str, entity_lines: str) -> str:
 - Use **only** names from the entity list, spelled exactly as given.
 - Only state what the text says or directly implies. Do not invent relationships.
 - Relationships spanning distant parts of the note are expected — you can see all of it.
+- `relationship_type` must be one of these, with `related_to` when none fits:
+  {", ".join(RELATIONSHIP_TYPES)}
 
 ENTITIES:
 {entity_lines}
 
 Return ONLY this JSON:
-{{{{
-  "relationships": [{{{{
+{{
+  "relationships": [{{
     "source_name": "entity the relationship starts from",
     "target_name": "entity it points to",
-    "relationship_type": "concise snake_case verb phrase (e.g. attends, lives_in)",
+    "relationship_type": "one of the allowed predicates",
     "natural_language": "short natural-language description"
-  }}}}]
-}}}}
+  }}]
+}}
 
 NOTE:
 {content}"""
@@ -385,9 +406,9 @@ ENTITIES:
 {entity_lines}
 
 Return ONLY this JSON:
-{{{{
-  "contexts": [{{{{"name": "entity name exactly as listed", "isolated_context": "entity-centric description"}}}}]
-}}}}
+{{
+  "contexts": [{{"name": "entity name exactly as listed", "isolated_context": "entity-centric description"}}]
+}}
 
 TEXT:
 {content}"""
@@ -477,7 +498,7 @@ async def _extract_chunk(
             # Free-form generate + JSON clean (not grammar-constrained sampling),
             # which small models often empty out for nested relationship arrays.
             raw, meta = await checkpoint.generate_with_meta(
-                llm, _build_extraction_prompt(text), temperature=0.1
+                llm, _build_extraction_prompt(text), temperature=0.1, json_mode=True
             )
             tokens = count_tokens(text)
             model_name = llm.get_ingestion_model()
@@ -525,7 +546,9 @@ async def _extract_chunk(
 async def _call_pass(llm, prompt: str, model_cls, label: str):
     """One task-split call, parsed into ``model_cls``. Never raises."""
     try:
-        raw, meta = await checkpoint.generate_with_meta(llm, prompt, temperature=0.1)
+        raw, meta = await checkpoint.generate_with_meta(
+            llm, prompt, temperature=0.1, json_mode=True
+        )
         if meta.get("truncated"):
             logger.warning("[Extraction] %s truncated — result may be partial", label)
         return model_cls.model_validate_json(llm._clean_json(raw))
@@ -703,7 +726,7 @@ async def _batch_image_titles(llm, items: list[dict[str, str]]) -> dict[str, str
         'Return ONLY a JSON array: [{"index": 1, "title": "..."}, ...]'
     )
     try:
-        raw = await checkpoint.generate(llm, prompt, temperature=0.0)
+        raw = await checkpoint.generate(llm, prompt, temperature=0.0, json_mode=True)
         match = re.search(r"\[.*\]", raw or "", re.DOTALL)
         if not match:
             return {}
@@ -953,7 +976,7 @@ async def multimodal_node(
                 try:
                     if kind == "image":
                         section = await asyncio.to_thread(
-                            describe_image_section, item, pending_image_titles
+                            describe_image_section, item, pending_image_titles, _llm
                         )
                     else:
                         section = await extract_attachment(kind, item, _set_status, _llm)
@@ -1165,11 +1188,9 @@ async def extraction_node(
         )
         try:
             rename_resp = await checkpoint.generate(
-                _llm,
-                rename_prompt,
-                temperature=0.0,
+                _llm, rename_prompt, temperature=0.0, json_mode=True
             )
-            match = _re.search(r"\[.*?\]", rename_resp, _re.DOTALL)
+            match = _re.search(r"\[.*\]", rename_resp, _re.DOTALL)
             if match:
                 name_list = _json.loads(match.group())
                 name_map = {

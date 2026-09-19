@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import uuid
 from typing import Any
@@ -711,6 +712,35 @@ class QdrantService:
             "community_level": core_payload.get("community_level"),
             "isolated_contexts": _scroll_contents(self._col_contexts),
         }
+
+    def strip_facts_prefixes(self) -> int:
+        """One-time: drop the legacy ``FACTS: k=v. `` prefix from stored descriptions.
+
+        Raises when Qdrant is unreachable so the caller does not mark it done.
+        """
+        fixed = 0
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self._col_cores,
+                limit=500,
+                offset=offset,
+                with_payload=["description"],
+                with_vectors=False,
+            )
+            for point in points:
+                desc = (point.payload or {}).get("description") or ""
+                if not desc.startswith("FACTS:"):
+                    continue
+                m = re.search(r"^FACTS:.*?[.]\s+(.*)", desc, re.DOTALL)
+                self.client.set_payload(
+                    collection_name=self._col_cores,
+                    payload={"description": m.group(1).strip() if m else ""},
+                    points=[point.id],
+                )
+                fixed += 1
+            if offset is None:
+                return fixed
 
     def get_nodes_content_by_ids(self, node_ids: list[str]) -> dict[str, dict]:
         """Bulk-fetch content for multiple nodes from Qdrant.

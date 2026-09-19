@@ -85,7 +85,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| (none) | — | `database.py` always uses `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (`paths.sqlite_url()`) with `NullPool`, `check_same_thread=False`, `PRAGMA foreign_keys=ON` | The `DATABASE_BACKEND` / `DATABASE_*_URL` (Postgres) settings were removed with the Tauri migration; `.env.example` still shows them commented out | code |
+| (none) | — | `database.py` always uses `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (`paths.sqlite_url()`; `sqlite_url(driver="pysqlite")` gives the vault watcher its sync engine URL) with `NullPool`, `check_same_thread=False`, `PRAGMA foreign_keys=ON` | The `DATABASE_BACKEND` / `DATABASE_*_URL` (Postgres) settings were removed with the Tauri migration; `.env.example` still shows them commented out | code |
 | `STORAGE_BACKEND`, `FILES_URL` | not `Settings` fields | nowhere in backend (`extra="ignore"`) | none; legacy (S3 vs local) | — |
 
 ### 3.3 LLM — chat/retrieval axis

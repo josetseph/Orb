@@ -21,6 +21,7 @@ run produces a precise error rather than a silent swap.
 
 from __future__ import annotations
 
+import json
 import platform
 from dataclasses import dataclass
 from importlib.util import find_spec
@@ -116,10 +117,11 @@ def is_asr_bundle(path: Path) -> bool:
     if not path.is_dir() or not config.exists():
         return False
     try:
-        text = config.read_text(encoding="utf-8").lower()
-    except OSError:
+        cfg = json.loads(config.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return False
-    return "qwen3asr" in text.replace("_", "").replace("-", "")
+    names = [cfg.get("model_type", ""), *(cfg.get("architectures") or [])]
+    return any("qwen3asr" in str(n).lower().replace("_", "") for n in names)
 
 
 def detect_engine_for(path: Path) -> str | None:

@@ -40,7 +40,7 @@ class FakeLLM:
     def ingestion_context_tokens(self):
         return self.context_tokens
 
-    async def ingestion_generate_with_meta(self, prompt, temperature=0.1):
+    async def ingestion_generate_with_meta(self, prompt, temperature=0.1, **kw):
         self.prompts.append(prompt)
         meta = {"truncated": self.truncated}
         if "entity extraction engine" in prompt:
@@ -103,6 +103,19 @@ class TestPassStructure:
         _run(llm, "note", budget=10_000)
         assert "- Ama (Person)" in llm.prompts[1]
         assert "- Kofi (Person)" in llm.prompts[1]
+
+    def test_json_templates_render_single_braces(self):
+        """The f-string templates once doubled ``{{`` — the model was shown ``{{``."""
+        llm = FakeLLM(ENTITIES, RELS, {"Ama": "x"})
+        _run(llm, "note", budget=10_000)
+        for prompt in llm.prompts:
+            assert "{{" not in prompt and "}}" not in prompt
+            assert '"name"' in prompt or '"source_name"' in prompt
+
+    def test_relationship_pass_lists_the_closed_vocabulary(self):
+        llm = FakeLLM(ENTITIES, RELS, {})
+        _run(llm, "note", budget=10_000)
+        assert "lives_in" in llm.prompts[1] and "related_to" in llm.prompts[1]
 
     def test_title_comes_from_the_entity_pass(self):
         llm = FakeLLM(ENTITIES, RELS, {})
@@ -178,10 +191,10 @@ class TestResilience:
 
     def test_a_failing_pass_does_not_abort_the_note(self):
         class Broken(FakeLLM):
-            async def ingestion_generate_with_meta(self, prompt, temperature=0.1):
+            async def ingestion_generate_with_meta(self, prompt, temperature=0.1, **kw):
                 if "relationship extraction engine" in prompt:
                     raise RuntimeError("endpoint fell over")
-                return await super().ingestion_generate_with_meta(prompt, temperature)
+                return await super().ingestion_generate_with_meta(prompt, temperature, **kw)
 
         llm = Broken(ENTITIES, RELS, {"Ama": "a girl"})
         result, _ = _run(llm, "note", budget=10_000)
@@ -343,7 +356,7 @@ class TestEntityNameMatching:
         """End to end: the exact shape that produced 0/135."""
 
         class EchoingLLM(FakeLLM):
-            async def ingestion_generate_with_meta(self, prompt, temperature=0.1):
+            async def ingestion_generate_with_meta(self, prompt, temperature=0.1, **kw):
                 if "context extraction engine" in prompt:
                     self.prompts.append(prompt)
                     return (
@@ -359,7 +372,7 @@ class TestEntityNameMatching:
                         ),
                         {},
                     )
-                return await super().ingestion_generate_with_meta(prompt, temperature)
+                return await super().ingestion_generate_with_meta(prompt, temperature, **kw)
 
         llm = EchoingLLM(ENTITIES, RELS, {})
         result, _ = _run(llm, "note", budget=10_000)

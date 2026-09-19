@@ -343,6 +343,16 @@ A repo-wide audit removed about 6,500 lines and 16 dependencies without changing
 - **Frontend**: native `fetch` client, native `<dialog>` modals, no hydration flag, no barrels, lint at 0 warnings.
 - Tests: 455 passing, 0 failing (stale tests fixed or deleted).
 
+**2026-09-19 (later the same day) — band-aid removal pass (uncommitted):** repairs that ran on every read became one-time migrations, and prompt-and-parse became JSON mode.
+
+- **Structured output**: `json_mode` on `_chat`/`generate`/`ingestion_generate[_with_meta]`/`_reason_step` (OpenAI `response_format`, Gemini `response_mime_type`, llama.cpp JSON grammar; Anthropic prompt-driven); the research step and community naming are JSON parsed by pydantic (`_ResearchStep`, `_CommunityName`), deleting `_section_re`, `_clean_next_query`, the first-turn/`FULL_ANSWER` rescues and `_parse_name_summary`; `_clean_json` is fence + curly quotes + `json_repair` (hard import).
+- **Closed relationship vocabulary**: `RELATIONSHIP_TYPES` (42 predicates, catch-all `related_to`) listed in the prompts and enforced by the schema; `clean_rel_type`, the alias validators and the `_` → space rewrites are gone; default `relates_to` → `related_to`.
+- **Enrichment blocks**: `wrap_legacy_enrichment_blocks` gives pre-marker output markers; `_strip_prior_multimedia_enrichment(keep=…)` removes delimited blocks only (no truncation from the first header). Task-split prompts no longer render doubled braces; `describe_image_section` gets its `llm` on the main path. Community names must pass `_name_fits_members` instead of a generic-word blocklist. Meili `isolated_contexts` is an array; `MeilisearchService.index_name`.
+- **One-time migrations** (doc 22 §9.1): vault sweep `migrate_vault_files` (`<vault>/.orb/migrated-v1`), `rel_path` backslash repair in `init_db`, legacy `notes.content` bodies moved to disk, `normalize_kuzu_path` and `llm_provider` coercion only in `kb_registry._load`, `main._migrate_stores` (`DATA_DIR/.stores-migrated-v1-<kb_id>`: `FACTS:` scrub, note-name backfill, `relates_to` → `related_to`).
+- **Deleted read-time repairs**: `normalize_vault_file_refs`, the collapse in `rewrite_refs_in_text`, `graph._strip_facts_prefix`, `_migrate_legacy_db_path`, `retrieval._extract_predicate`, `api/graph._meili_doc_as_dict` and its per-request title resolve/Kuzu backfill, `reranker._normalize_results` (rows carry `relevance_score` only), `core/log.LOGS_DIR`, `LocalLlamaRuntime.ensure_loaded`, `.partial` sibling checks; `_heal_selection_paths` runs once at boot and the env-default GGUF guess is persisted.
+- **API / frontend**: chat responses carry `sources: [{id, title}]` instead of a `### References` block; `created_at` is a `datetime` (422 on garbage); upload response is `{url}`; frontend URL helpers stopped repairing/decoding; Tauri `trusted()` compares URL origins.
+- Tests: 473 passing, 0 failing; new `test_vault_migration.py`, `test_note_created_at.py`, `test_ingestion_community_names.py`.
+
 ## 7. Open questions and discrepancies
 
 - `.cursor/rules/architecture-decisions.mdc` is deleted in the working tree but was the only in-repo statement of the locked decisions. If the deletion is intentional, `Docs/26-decisions-and-constraints.md` becomes the sole source; if not, it should be restored.

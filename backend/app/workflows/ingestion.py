@@ -8,6 +8,8 @@ import time
 import uuid
 from collections import defaultdict
 
+from pydantic import BaseModel
+
 from app.core.config import settings
 from app.core.log import get_logger
 from app.schemas.extraction import Extraction, NoteInput
@@ -27,6 +29,12 @@ from app.workflows.extraction_chunking import sentences_about
 
 logger = get_logger("IngestionPipeline")
 
+
+class _CommunityName(BaseModel):
+    name: str = ""
+    summary: str = ""
+
+
 #: Pipelines in flight, by (kb_id, note_id) — what the Cancel button stops.
 _running_ingestions: dict[tuple[str, str], asyncio.Task] = {}
 
@@ -38,7 +46,7 @@ def _failure_reason(exc: BaseException) -> str:
         return "the model provider is overloaded (503) — retry in a few minutes"
     if "429" in text or "rate limit" in text.lower():
         return "the model provider rate-limited us (429) — retry in a minute"
-    text = re.sub(r"^Ingestion Agent Failed: \[?['\"]?", "", text).strip("[]'\" ")
+    text = getattr(exc, "reason", text)
     return (text[:157] + "…") if len(text) > 160 else text
 
 
@@ -49,42 +57,6 @@ def cancel_ingestion(kb_id: str, note_id: str) -> bool:
         return False
     task.cancel()
     return True
-
-
-def clean_rel_type(rel_type: str, source_name: str, target_name: str) -> str:
-    """Remove entity name tokens from a relationship predicate.
-
-    LLMs frequently embed the object (or subject) name into the predicate,
-    e.g. "plays_corliss_archer" instead of just "plays".  This function
-    strips any token that appears verbatim (case-insensitive) in either
-    entity name, then collapses consecutive underscores left by the removal.
-
-    Examples:
-        clean_rel_type("plays_corliss_archer", "shirley temple", "corliss archer")
-        → "plays"
-        clean_rel_type("is_directed_by", "film", "director")
-        → "is_directed_by"   (no entity tokens present)
-    """
-    if not rel_type:
-        return rel_type
-
-    # Tokenise entity names into individual words (ignore single-char tokens)
-    entity_tokens: set[str] = set()
-    for name in (source_name, target_name):
-        for token in re.split(r"[\s_\-]+", name.lower()):
-            if len(token) > 1:
-                entity_tokens.add(token)
-
-    if not entity_tokens:
-        return rel_type
-
-    # Tokenise the predicate, drop entity tokens, rejoin
-    parts = re.split(r"_", rel_type.lower())
-    cleaned = [p for p in parts if p not in entity_tokens]
-    if not cleaned:
-        # Entire predicate was entity names — fall back to "relates_to"
-        return "relates_to"
-    return "_".join(cleaned)
 
 
 class IngestionWorkflow:
@@ -202,9 +174,11 @@ class IngestionWorkflow:
                     logger.error(
                         f"[Ingestion] FAILURE note_id={note_id}: {final_state['errors']}"
                     )
-                    raise RuntimeError(
+                    failed = RuntimeError(
                         f"Ingestion Agent Failed: {final_state['errors']}"
                     )
+                    failed.reason = "; ".join(map(str, final_state["errors"]))
+                    raise failed
 
                 extraction = final_state.get("extraction")
                 if extraction:
@@ -625,29 +599,8 @@ class IngestionWorkflow:
                         _rel_skipped += 1
                         continue
 
-                    # Default to "relates_to" if no relationship type provided
-                    rel_type = (
-                        rel.relationship_type.strip() if rel.relationship_type else ""
-                    )
-                    if not rel_type:
-                        rel_type = "relates_to"
-                        logger.warning(
-                            f"[Relationship] No type provided for {rel.source_name} -> {rel.target_name}, "
-                            f"defaulting to 'relates_to'"
-                        )
-
-                    # Strip entity name tokens from the predicate.
-                    # LLMs sometimes embed the object into the verb, e.g.
-                    # "plays_corliss_archer" → should be just "plays".
-                    cleaned_rel_type = clean_rel_type(
-                        rel_type, rel.source_name, rel.target_name
-                    )
-                    if cleaned_rel_type != rel_type:
-                        logger.debug(
-                            f"[Relationship] Predicate cleaned: '{rel_type}' → '{cleaned_rel_type}' "
-                            f"({rel.source_name} → {rel.target_name})"
-                        )
-                        rel_type = cleaned_rel_type
+                    # Validated against RELATIONSHIP_TYPES on the way in.
+                    rel_type = rel.relationship_type
 
                     source_label = "Indexable"
                     target_label = "Indexable"
@@ -697,7 +650,7 @@ class IngestionWorkflow:
                         target_name=target_name_normalized,
                         target_label=target_label,
                         relationship_type=rel_type,
-                        natural_language=(rel.natural_language or "").replace("_", " "),
+                        natural_language=rel.natural_language or "",
                         note_id=note_id,
                         source_id=src_node_id,
                         target_id=tgt_node_id,
@@ -716,8 +669,6 @@ class IngestionWorkflow:
                         nl_text = result.get("natural_language") or rel_type.replace(
                             "_", " "
                         )
-                        # Ensure natural language never contains underscores.
-                        nl_text = nl_text.replace("_", " ")
                         _qdrant_rel_pending.append(
                             (result, nl_text, src_node_id, tgt_node_id)
                         )
@@ -934,7 +885,7 @@ class IngestionWorkflow:
             )
             self._meili.index_node(
                 node_id=node_id, name=name, node_type=node_type,
-                isolated_contexts_text=merged, relationship_natural_language=rel_nl,
+                isolated_contexts=contexts, relationship_natural_language=rel_nl,
             )
 
         await asyncio.to_thread(_write)
@@ -1182,22 +1133,20 @@ class IngestionWorkflow:
                     for r in rel_qdrant
                     if r.get("natural_language")
                 )
-                contexts_text = " ".join(
-                    ctx for ctx in existing_contexts if ctx and ctx.strip()
-                )
+                contexts = [ctx for ctx in existing_contexts if ctx and ctx.strip()]
                 # Defense-in-depth: if we somehow ended up with no contexts, fetch
                 # what Meilisearch already has so we don't wipe it with a blank upsert.
-                if not contexts_text:
+                if not contexts:
                     try:
                         existing_meili = self._meili.get_node(node_id) or {}
-                        contexts_text = existing_meili.get("isolated_contexts", "")
+                        contexts = list(existing_meili.get("isolated_contexts") or [])
                     except Exception:  # pylint: disable=broad-exception-caught
                         pass
                 self._meili.index_node(
                     node_id=node_id,
                     name=name,
                     node_type=node_type,
-                    isolated_contexts_text=contexts_text,
+                    isolated_contexts=contexts,
                     relationship_natural_language=rel_nl,
                 )
 
@@ -1209,103 +1158,28 @@ class IngestionWorkflow:
             )
             return node_id
 
-    @staticmethod
-    def _parse_name_summary(raw: str) -> tuple[str | None, str | None]:
-        """Parse ``NAME: ...\nSUMMARY: ...`` LLM output into (name, summary)."""
-        name: str | None = None
-        summary_lines: list[str] = []
-        in_summary = False
-        for line in raw.splitlines():
-            stripped = line.strip()
-            if stripped.upper().startswith("NAME:") and not in_summary:
-                name = stripped.split(":", 1)[1].strip()
-            elif stripped.upper().startswith("SUMMARY:"):
-                in_summary = True
-                first = stripped.split(":", 1)[1].strip()
-                if first:
-                    summary_lines.append(first)
-            elif in_summary:
-                summary_lines.append(stripped)
-        summary = " ".join(s for s in summary_lines if s) or None
-        return name, summary
+    def _name_and_summary(self, prompt: str) -> tuple[str | None, str | None]:
+        """One ingestion-model call, parsed as ``{"name", "summary"}``.
 
-    @staticmethod
-    def _is_generic_community_name(  # pylint: disable=too-many-return-statements
-        name: str | None,
-    ) -> bool:
-        """Heuristic guardrail for low-quality community names.
-
-        Rejects template-like names that are not useful to end users.
+        Runs on the community worker thread, which has no event loop of its own.
         """
-        if not name:
-            return True
+        raw = asyncio.run(
+            self._llm.ingestion_generate(prompt, temperature=0.1, json_mode=True)
+        )
+        got = _CommunityName.model_validate_json(self._llm._clean_json(raw or ""))
+        return got.name.strip() or None, got.summary.strip() or None
 
-        normalized = re.sub(r"\s+", " ", name.strip()).lower()
-        if not normalized:
-            return True
+    @staticmethod
+    def _name_fits_members(name: str | None, member_rows: list[dict]) -> bool:
+        """A usable community name shares a real word with at least one member.
 
-        if re.fullmatch(r"community\s+l\d+[-\s]?\d+", normalized):
-            return True
-        if normalized.startswith("community "):
-            return True
-
-        # Names made only of generic words are not user-friendly.
-        generic_tokens = {
-            "isolated",
-            "conceptual",
-            "node",
-            "nodes",
-            "cluster",
-            "community",
-            "core",
-            "collection",
-            "fragment",
-            "echo",
-            "echoes",
-            "anomaly",
-            "pair",
-            "transient",
-            "single",
-            "concept",
-            "initial",
-            "state",
-            "provisional",
-            "connection",
-            # Additional filler words the LLM uses for empty/thin clusters:
-            "temporal",
-            "reflection",
-            "reflections",
-            "potential",
-            "seeds",
-            "seed",
-            "observation",
-            "observations",
-            "silent",
-            "silence",
-            "unresolved",
-            "statistical",
-            "minimal",
-            "interest",
-            "inquiry",
-            "shadow",
-            "shadows",
-            "whisper",
-            "whispers",
-            "remnant",
-            "remnants",
-            "trace",
-            "traces",
-            "fleeting",
-            "ephemeral",
-            "abstract",
-            "nascent",
-            "liminal",
-        }
-        words = [w for w in re.split(r"[^a-z0-9]+", normalized) if w]
-        if words and all(w in generic_tokens for w in words):
-            return True
-
-        return False
+        Anything the model invents from thin air — "Transient Echoes", "Node
+        Cluster 3" — fails this; a name anchored in the entities passes.
+        """
+        words = {w for w in re.split(r"[^a-z0-9]+", (name or "").lower()) if len(w) >= 3}
+        members = " ".join(str(row.get("name") or "") for row in member_rows).lower()
+        member_words = set(re.split(r"[^a-z0-9]+", members))
+        return bool(words & member_words)
 
     @staticmethod
     def _derive_fallback_community_name(member_rows: list[dict]) -> str:
@@ -1361,23 +1235,14 @@ class IngestionWorkflow:
             "- Anchor the name in concrete topics drawn from the entities themselves\n"
             "- Do NOT use meta-labels like 'Node Cluster', 'Isolated Group', 'Cluster L2-14', or any variant\n"
             "- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\n"
-            "Reply in EXACTLY this format — no preamble, no trailing text:\n"
-            "NAME: <name>\n"
-            "SUMMARY: <summary>"
+            'Return ONLY this JSON: {"name": "<name>", "summary": "<summary>"}'
         )
         if strict_naming:
             prompt += (
                 "\n\nThis is a retry because the previous name was too generic. "
-                "The NAME must be specific and user-facing."
+                "The name must be specific and user-facing."
             )
-        raw = (
-            self._llm.reason(
-                prompt,
-                model=self._llm.get_ingestion_model(),
-            )
-            or ""
-        )
-        return self._parse_name_summary(raw)
+        return self._name_and_summary(prompt)
 
     def _build_rollup_summary(
         self,
@@ -1414,23 +1279,14 @@ class IngestionWorkflow:
             "- Anchor the name in concrete topics drawn from the group descriptions\n"
             "- Do NOT use meta-labels like 'Node Cluster', 'Isolated Group', or any variant\n"
             "- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\n"
-            "Reply in EXACTLY this format — no preamble, no trailing text:\n"
-            "NAME: <name>\n"
-            "SUMMARY: <summary>"
+            'Return ONLY this JSON: {"name": "<name>", "summary": "<summary>"}'
         )
         if strict_naming:
             prompt += (
                 "\n\nThis is a retry because the previous name was too generic. "
-                "The NAME must be specific and user-facing."
+                "The name must be specific and user-facing."
             )
-        raw = (
-            self._llm.reason(
-                prompt,
-                model=self._llm.get_ingestion_model(),
-            )
-            or ""
-        )
-        return self._parse_name_summary(raw)
+        return self._name_and_summary(prompt)
 
     def rebuild_leiden_communities(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         self,
@@ -1641,7 +1497,7 @@ class IngestionWorkflow:
 
                 # Reject generic names and retry up to 2 times.
                 for retry_idx in range(2):
-                    if name and not self._is_generic_community_name(name):
+                    if self._name_fits_members(name, member_rows):
                         break
                     if _tracker.cancel_recompute.is_set():
                         return None
@@ -1669,9 +1525,7 @@ class IngestionWorkflow:
                             f"[Community] {cluster_label}: name retry failed: {_retry_err}"
                         )
 
-                if not name:
-                    name = self._derive_fallback_community_name(member_rows)
-                elif self._is_generic_community_name(name):
+                if not self._name_fits_members(name, member_rows):
                     logger.warning(
                         f"[Community] {cluster_label}: using fallback name after generic output '{name}'"
                     )
@@ -2203,7 +2057,7 @@ class IngestionWorkflow:
                 node_id=node_id,
                 name=node_name,
                 node_type="temporal_digest",
-                isolated_contexts_text=summary,
+                isolated_contexts=[summary],
             )
             logger.info(f"[TemporalDigest] Built '{node_name}'")
             built += 1

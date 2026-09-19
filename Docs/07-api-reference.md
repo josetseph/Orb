@@ -396,7 +396,6 @@ Response:
   "status": "ok",
   "chat": "/…/gguf/chat.gguf", "embed": "/…/gguf/embed.gguf", "reranker": "/…/gguf/rerank.gguf",
   "multimodal": {"florence": "/…", "whisper": "/…", "marlin": "/…"},
-  "multimodal_services": {"started": false, "deferred": true, "mode": "in_process", "hint": "Call /setup/start-multimodal-services?install_deps=true …"},
   "multimodal_error": null,
   "progress": [{"model": "chat", "percent": 42}, "… last 40 entries"],
   "warning": null
@@ -565,13 +564,13 @@ Path `kb_id` = UUID. Body (`RenameKBInput`): `name: str`. **400** if blank or if
  "processing_stage": "Saved" | "Queued for ingestion" | "…" | null, "processing_model": null | "…", "kb_id": "default"}
 ```
 
-`content` is read from `<vault_path>/<rel_path>` via `note_files.note_body` (falls back to the legacy `notes.content` column if the file is missing/empty) and has `attachments/attachments/` URL doubling normalised. The SQLite `content` column is always kept empty by `persist_note_body`.
+`content` is read from `<vault_path>/<rel_path>` via `note_files.note_body` — `""` when the file is missing; there is no SQLite fallback (a non-empty legacy `notes.content` is written to the vault file and blanked by `sync_vault_notes`). The SQLite `content` column is always kept empty by `persist_note_body`.
 
-Date parsing (`_parse_date_str`): `datetime.fromisoformat` (ISO 8601, `Z` and offsets accepted); naive datetimes get UTC; a non-ISO string → `now(UTC)` (never an error).
+`created_at` is a Pydantic `datetime | None` (ISO 8601, `Z` and offsets accepted; anything else → **422**); a naive datetime is taken as UTC (`_aware`).
 
 #### POST /api/v1/notes
 
-Body (`CreateNoteInput`): `title: str | null`, `content: str = ""`, `created_at: str | null`, `folder: str | null` (vault-relative, e.g. `"Life/Daily Log"`).
+Body (`CreateNoteInput`): `title: str | null`, `content: str = ""`, `created_at: datetime | null`, `folder: str | null` (vault-relative, e.g. `"Life/Daily Log"`).
 
 Side effects: `persist_note_body(note, kb, content, title, folder)` → `unique_md_path` picks `<folder>/<sanitised title>.md` (or `Untitled.md`; suffixes ` 2`, ` 3`… on collision; `..` segments in `folder` are dropped), writes the file (marking it as a self-write so the vault watcher ignores it for 12 s), inserts the `notes` row with `processing_stage="Saved"`, `processed=False`; `refresh_note_links` parses `[[wikilinks]]` into `note_links`; commit. **No ingestion.** Response: note object. Errors: 422 on bad body; OS errors → 500.
 
@@ -602,7 +601,7 @@ Body (`CreateNoteInput`): `content`, `title`, `created_at` (`folder` ignored). *
 Side effects in order:
 1. `persist_note_body(note, kb, content, title=<stripped or None>)` — rewrites the vault file at the existing `rel_path`; updates `title` column if provided.
 2. If `title` is present (not `null`): `vault_ops.rename_note_file_for_title` — when the sanitised title differs from the current file stem (case-insensitively), calls `move_vault_file` to rename the `.md` in place (uniquified), rewrites markdown attachment refs and `[[wikilinks]]` across **all** notes in the KB (re-reading and re-writing every note body), commits. Unhandled `FileNotFoundError`/`ValueError` here → 500.
-3. `created_at` re-parsed if given; `updated_at = now`.
+3. `created_at` set if given (naive → UTC); `updated_at = now`.
 4. Stage normalisation: if not processed and the stage is not user-queued (`Queued…`/`Starting…`), stages containing `pending`, starting with `External`/`Changed on disk`, or empty are reset to `"Saved"`. **Autosave never triggers ingestion.**
 5. `refresh_note_links`, commit, refresh. Response: note object.
 
@@ -640,7 +639,7 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 #### POST /api/v1/ingest
 
-Legacy combined endpoint for batch scripts. Body (`NoteInput`): `content: str` (required), `created_at: str | null`, `title: str | null`, `skip_ingestion: bool = false`. `require_ai()` unless `skip_ingestion`.
+Legacy combined endpoint for batch scripts. Body (`NoteInput`): `content: str` (required), `created_at: str | null`, `title: str | null`, `skip_ingestion: bool = false`. `require_ai()` unless `skip_ingestion`. `created_at` is parsed with `datetime.fromisoformat` (naive → UTC); a non-ISO string → **422** `"created_at: …"`.
 
 Creates the row and vault file **without a title** (`persist_note_body(new_note, kb, content)` — file becomes `Untitled.md`/`Untitled N.md`, `title` column `NULL`; the `title` field is only forwarded to the pipeline, which may set it later). Stage `"Queued for ingestion"` or `"Saved"`. Refreshes wikilinks, commits, then queues `process_note` unless skipped (filling `created_at` on the `NoteInput` if absent).
 
@@ -717,11 +716,10 @@ Multipart form, field `file` (required). **400** `"No vault configured for this 
 
 ```json
 {"filename": "voice.webm", "url": "/vault-files/default/attachments/recording-1a2b3c4d.m4a",
- "href": "<same as url>", "rel_path": "attachments/recording-1a2b3c4d.m4a",
- "local_path": "<same as url>", "key": "<same as rel_path>", "status": "success"}
+ "rel_path": "attachments/recording-1a2b3c4d.m4a", "key": "<same as rel_path>", "status": "success"}
 ```
 
-`url`/`href`/`local_path` are identical; `rel_path`/`key` are identical. The `/vault-files/<kb_id>/` prefix uses `kb.kb_id` (`default` or a UUID), which is why `vault_rel_from_url` strips any KB segment. No size limit server-side and no proxy in the desktop path (3.9).
+`rel_path`/`key` are identical. The `/vault-files/<kb_id>/` prefix uses `kb.kb_id` (`default` or a UUID), which is why `vault_rel_from_url` strips any KB segment. No size limit server-side and no proxy in the desktop path (3.9).
 
 #### DELETE /api/v1/files/{file_key:path}
 
@@ -735,7 +733,7 @@ Not under `/api/v1`. `kb_id` resolved by `kb_registry.get_kb(kb_id)` (UUID) **or
 
 ### Chat (`api/chat.py`, export in `api_desktop.py`)
 
-Persistence: `services/chat_store.py` (tables `chat_conversations`, `chat_messages`). Conversation dict: `{"id", "kb_id", "title", "created_at", "updated_at"}`. Message dict: `{"id", "conversation_id", "role": "user"|"assistant", "content", "thinking": str|null, "created_at"}`. The `metadata` JSON column (`rewritten_query`, `context_count`) is written on assistant messages but **not** returned by any route.
+Persistence: `services/chat_store.py` (tables `chat_conversations`, `chat_messages`). Conversation dict: `{"id", "kb_id", "title", "created_at", "updated_at"}`. Message dict: `{"id", "conversation_id", "role": "user"|"assistant", "content", "thinking": str|null, "sources": [{"id", "title"}], "created_at"}`. The `metadata` JSON column (`rewritten_query`, `context_count`, `sources`) is written on assistant messages; only `sources` is surfaced, as the message's `sources` field (`[]` when absent, so user messages and finance answers carry an empty list).
 
 #### GET /api/v1/chat/conversations
 
@@ -768,12 +766,12 @@ Flow: `require_ai()` → `chat_store.ensure_conversation(conversation_id, kb_id)
 Response (workflow result + ids):
 
 ```json
-{"query": "…", "rewritten_query": "…", "answer": "…\n\n### References\n- …", "thinking": "…" | null,
+{"query": "…", "rewritten_query": "…", "answer": "…", "sources": [{"id": "…", "title": "…"}], "thinking": "…" | null,
  "context": [{"text": "…", "score": 0.83, "original_obj": {"name": "…", "…": "…"}, "linked_notes": [{"id": "…", "title": "…"}]}, "…"],
  "request_id": "…", "conversation_id": "…", "assistant_message_id": "…"}
 ```
 
-The finance path returns the same keys plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source": "finance", "summary": {…}, "kb_id": "…"}` to `context`. Progress for sync chat is also written into `_chat_status[request_id]` (`{"stage", "model"}`) so a client could poll while waiting. Errors: 503 (AI), 422, or 500 (stage recorded as `"Failed"`). Not used by the frontend.
+`sources` (`schemas.chat.ChatSource`) lists the unique notes linked from the retrieved context, SQLite title preferred (else `"Untitled Note"`); the answer text carries no citation block. The finance path returns the same keys (without `sources`) plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source": "finance", "summary": {…}, "kb_id": "…"}` to `context`. Progress for sync chat is also written into `_chat_status[request_id]` (`{"stage", "model"}`) so a client could poll while waiting. Errors: 503 (AI), 422, or 500 (stage recorded as `"Failed"`). Not used by the frontend.
 
 #### POST /api/v1/chat/async
 
@@ -816,7 +814,7 @@ or `{"…", "stage": "Failed", "done": true, "error": "…"}`. Unknown ids look 
 
 `kb.graph.get_node_detail(node_id)` (thread): Kuzu row (indexable/note, else community) + Qdrant content (`get_nodes_content_by_ids`, then `get_node_content_by_id` fallback) + 1-hop connections (`get_node_connections`, limit 16, `SEMANTIC_REL|REFERENCES` both directions) + notes referencing the node (`get_notes_referencing_node`, limit 8). **404** `"Node not found"`.
 
-Post-processing in the route: if neither `description` nor `isolated_contexts` came back, fall back to the Meilisearch document (`kb.meili.get_node`) and split its `isolated_contexts` on `" | "`; for related notes/connections whose name is blank/`Unknown`/`Untitled…`, resolve titles from SQLite `notes` (title, else filename stem) then Qdrant, default to `"Untitled note"`/`"Untitled"`; and **write the resolved names back into Kuzu** (`SET n.name`) — a GET with a side effect.
+Post-processing in the route: if neither `description` nor `isolated_contexts` came back, fall back to the Meilisearch document (`kb.meili.get_node`): its `isolated_contexts` array becomes `isolated_contexts` (a bare string, from a document indexed before contexts were stored as a list, is wrapped as one entry) and its first entry fills an empty `description`/`summary`. Related notes/connections whose name is blank/`Unknown`/`Untitled…` are displayed as `"Untitled note"` (`"Untitled"` for non-note connections) — no lookup and no write-back; legacy note nodes were named once at startup by `main._migrate_stores`.
 
 ```json
 {"node_id": "…", "name": "…", "node_type": "person", "description": "…", "isolated_contexts": ["…"],
@@ -999,7 +997,7 @@ Totals only consider the most recent 100 transaction groups.
 | `ChatInput` | `query: str (min 1)`, `request_id: str\|None`, `conversation_id: str\|None` |
 | `CreateConversationInput` | `title: str\|None` |
 | `ChatTurn` (internal history item) | `role: str`, `content: str` |
-| `CreateNoteInput` | `title: str\|None`, `content: str = ""`, `created_at: str\|None`, `folder: str\|None` |
+| `CreateNoteInput` | `title: str\|None`, `content: str = ""`, `created_at: datetime\|None`, `folder: str\|None` |
 | `MoveNoteInput` | `folder: str = ""` |
 | `MoveVaultFileInput` | `from_rel: str`, `to_rel: str` |
 | `DeleteVaultFileInput` | `rel_path: str` |

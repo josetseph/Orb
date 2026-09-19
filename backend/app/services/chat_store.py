@@ -40,6 +40,7 @@ def _message_to_dict(msg: ChatMessage) -> dict[str, Any]:
         "role": msg.role,
         "content": msg.content,
         "thinking": msg.thinking,
+        "sources": (msg.metadata_json or {}).get("sources", []),
         "created_at": _iso(msg.created_at),
     }
 

@@ -6,6 +6,7 @@ from app.workflows.agents.ingestion_agent import (
     EXTRACT_BLOCK_RE,
     _strip_prior_multimedia_enrichment as strip_prior,
     place_extraction,
+    wrap_legacy_enrichment_blocks as wrap_legacy,
 )
 
 PDF = "/vault-files/kb/attachments/Agenda%20(v2).pdf"
@@ -78,20 +79,33 @@ class TestReIngestIsIdempotent:
 
 
 class TestLegacyNotes:
-    def test_pre_marker_blocks_are_still_stripped(self):
-        legacy = NOTE + "\n\n[PDF Extraction (Agenda (v2).pdf)]: old style text"
-        assert "PDF Extraction" not in strip_prior(legacy)
-        assert "Closing thoughts I wrote myself." in strip_prior(legacy)
+    """Undelimited blocks get markers first; the strip only knows delimited ones."""
 
-    def test_unsupported_block_no_longer_accumulates(self):
-        """It was missing from the legacy pattern, so it survived every pass."""
-        legacy = NOTE + "\n\n[Unsupported (old.doc)]: legacy .doc format — re-save"
-        assert "Unsupported" not in strip_prior(legacy)
+    def test_pre_marker_blocks_are_wrapped_then_stripped(self):
+        legacy = NOTE + "\n\n[PDF Extraction (Agenda (v2).pdf)]: old style text"
+        wrapped = wrap_legacy(legacy)
+        block = EXTRACT_BLOCK_RE.search(wrapped).group(0)
+        assert 'src=""' in block and "old style text" in block
+        assert "PDF Extraction" not in strip_prior(wrapped)
+        assert "Closing thoughts I wrote myself." in strip_prior(wrapped)
+
+    def test_wrapping_twice_is_a_no_op(self):
+        legacy = NOTE + "\n\n[Audio Transcript (x.m4a)]: old\n\n[Unsupported (old.doc)]: skip"
+        once = wrap_legacy(legacy)
+        assert once.count("<!-- orb:extract") == 2
+        assert wrap_legacy(once) == once
+
+    def test_hand_written_image_marker_is_not_our_text_to_remove(self):
+        note = "A paragraph.\n\n[Image: sketch]\n\nMore of my own words."
+        assert strip_prior(note) == note
 
     def test_mixed_legacy_and_new_are_both_cleared(self):
         mixed = place_extraction(NOTE, PDF, "new") + "\n\n[Audio Transcript (x.m4a)]: old"
-        cleaned = strip_prior(mixed)
+        wrapped = wrap_legacy(mixed)
+        assert wrapped.count("<!-- orb:extract") == 2
+        cleaned = strip_prior(wrapped)
         assert "orb:extract" not in cleaned and "Audio Transcript" not in cleaned
+        assert "Closing thoughts I wrote myself." in cleaned
 
     def test_a_note_with_nothing_to_strip_is_unchanged(self):
         assert strip_prior(NOTE) == NOTE.rstrip()

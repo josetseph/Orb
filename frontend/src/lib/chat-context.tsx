@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { api } from "@/lib/api";
-import type { ChatConversation } from "@/lib/types";
+import type { ChatConversation, ChatSource } from "@/lib/types";
 
 export interface Message {
   id: string;
@@ -16,6 +16,7 @@ export interface Message {
   content: string;
   timestamp: Date;
   thinking?: string;
+  sources?: ChatSource[];
 }
 
 interface ChatContextValue {
@@ -44,6 +45,7 @@ function toMessage(record: {
   id: string;
   role: "user" | "assistant";
   content: string;
+  sources?: ChatSource[];
   thinking?: string | null;
   created_at?: string | null;
 }): Message {
@@ -53,6 +55,7 @@ function toMessage(record: {
     content: record.content,
     timestamp: record.created_at ? new Date(record.created_at) : new Date(),
     thinking: record.thinking || undefined,
+    sources: record.sources,
   };
 }
 
@@ -211,6 +214,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       const complete = async (
         answer?: string,
+        sources?: ChatSource[],
         thinking?: string | null,
         resultConversationId?: string,
       ) => {
@@ -223,6 +227,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           content: answer || "I couldn't generate a response.",
           timestamp: new Date(),
           thinking: thinking || undefined,
+          sources,
         };
         setMessages((prev) => [...prev, assistantMessage]);
         if (resultConversationId) {
@@ -272,6 +277,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
             }
             void complete(
               status.result?.answer,
+              status.result?.sources,
               status.result?.thinking,
               status.result?.conversation_id || status.conversation_id,
             );

@@ -1,8 +1,8 @@
 """Unit tests for LLMService._clean_json in app/services/llm.py.
 
 _clean_json is a pure string-transformation method: it strips markdown code
-fences, removes control characters, normalises smart quotes, then runs
-json_repair. No LLM client or network access is needed.
+fences, normalises smart quotes, then runs json_repair (which escapes stray
+control characters itself). No LLM client or network access is needed.
 """
 
 import json
@@ -43,7 +43,7 @@ class TestMarkdownCodeFenceStripping:
         assert result["x"] == 1
 
 
-# ── control character removal ─────────────────────────────────────────────────
+# ── control characters (json_repair escapes them; output must parse) ──────────
 
 
 class TestControlCharacterRemoval:
@@ -51,11 +51,13 @@ class TestControlCharacterRemoval:
         raw = '{"a": "hel\x00lo"}'
         cleaned = svc._clean_json(raw)
         assert "\x00" not in cleaned
+        assert json.loads(cleaned)["a"].replace("\x00", "") == "hello"
 
     def test_bell_char_removed(self, svc):
         raw = '{"a": "te\x07xt"}'
         cleaned = svc._clean_json(raw)
         assert "\x07" not in cleaned
+        assert json.loads(cleaned)["a"].replace("\x07", "") == "text"
 
     def test_newline_preserved(self, svc):
         # \n (\x0a) is NOT in the removal set

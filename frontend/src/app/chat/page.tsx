@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
-import { cn, encodeFileUrl, isAudioUrl, isImageUrl, isVideoUrl, resolveFileUrl } from "@/lib/utils";
+import { cn, isAudioUrl, isImageUrl, isVideoUrl, resolveFileUrl } from "@/lib/utils";
 import { revealInFolder } from "@/lib/desktop";
 import { useKB } from "@/lib/kb-context";
 import { useChat } from "@/lib/chat-context";
@@ -125,14 +125,7 @@ function AssistantMessageBody({
     [onFileClick, onEntityClick],
   );
 
-  const refMatch = message.content.match(/###?\s*References[:\s]*\n([\s\S]+?)$/i);
-  const body = refMatch ? message.content.substring(0, refMatch.index) : message.content;
-  const sources = refMatch
-    ? refMatch[1]
-        .split("\n")
-        .map((t) => t.trim().match(/\[([^\]]+)\]\(\/notes\/([^)]+)\)/))
-        .filter((m): m is RegExpMatchArray => Boolean(m))
-    : [];
+  const sources = message.sources ?? [];
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-3">
@@ -156,24 +149,24 @@ function AssistantMessageBody({
 
       <div className="prose-orb">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={linkRenderer} urlTransform={urlTransform}>
-          {processContent(body)}
+          {processContent(message.content)}
         </ReactMarkdown>
       </div>
 
       {sources.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-0.5 text-[11px] text-n-500">Sources</span>
-          {sources.map((m, i) => (
+          {sources.map((s, i) => (
             <button
-              key={i}
+              key={s.id}
               type="button"
-              onClick={() => onOpenNote(m[2])}
+              onClick={() => onOpenNote(s.id)}
               className="inline-flex items-center gap-1.5 rounded-[6px] border border-n-800 py-1 pl-1.5 pr-2 text-[12px] text-n-200 hover:border-accent hover:text-accent-200"
             >
               <span className="grid h-4 w-4 place-items-center rounded bg-accent-800 text-[10px] text-accent-100">
                 {i + 1}
               </span>
-              {m[1]}
+              {s.title}
             </button>
           ))}
         </div>
@@ -257,7 +250,7 @@ export default function ChatPage() {
 
   const handleFileClick = useCallback(
     (url: string, filename: string) => {
-      const resolvedUrl = encodeFileUrl(resolveFileUrl(url, currentKB));
+      const resolvedUrl = resolveFileUrl(url, currentKB);
       let type: FilePreview["type"] = "other";
       if (isImageUrl(resolvedUrl) || isImageUrl(filename)) type = "image";
       else if (/\.pdf(\?|$)/i.test(resolvedUrl) || /\.pdf$/i.test(filename)) type = "pdf";

@@ -109,7 +109,7 @@ Import-time ordering inside `core/` matters and is enforced by which module impo
 |---|---|---|---|
 | `paths.py` | nothing (comment: "Avoid importing settings here (circular with config.py)") | `os.environ`, `paths.json` (lazily, cached) | none |
 | `config.py` | `paths` (function-local, inside `_default_data_dir` / `_default_models_dir`) | env, `backend/.env`, `paths.json` via `paths` | constructs `settings`; mutates `settings.KUZU_DB_PATH` and `settings.MODELS_PATH` |
-| `log.py` | `config.settings` | `settings.DATA_DIR`, `settings.LOG_LEVEL` | `LOGS_DIR = resolve_logs_dir()` creates `DATA_DIR/logs` |
+| `log.py` | `config.settings` | `settings.DATA_DIR`, `settings.LOG_LEVEL` | `resolve_logs_dir()` creates `DATA_DIR/logs` (called where needed; there is no module-level `LOGS_DIR` snapshot) |
 | `runtime_config.py` | `config`, `log` | — | none (file read only in `load()`) |
 | `database.py` | `config`, `log`, `paths` | `paths.sqlite_url()` | `ensure_data_layout()` creates the `DATA_DIR` subdirs; **creates the SQLAlchemy engine** (so `DATA_DIR` is frozen for the engine from this moment) |
 | `inference_device.py` | `log` | — | `import torch` (heavy; only imported by multimodal code paths) |
@@ -425,7 +425,7 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 | `looks_like_network_volume(path)` | `-> bool` | macOS: starts with `/Volumes/` and not `/Volumes/Macintosh HD*`; Linux: `/mnt/`, `/media/`, `/run/user/`; else `False`. Used by `local_models.download_file` to decide whether to stage downloads locally. |
 | `local_download_staging_dir()` | `-> Path` | `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` override; else macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%/Orb/model-downloads`, Linux `~/.cache/orb/model-downloads`. Always `mkdir -p`. |
 | `ensure_data_layout(data_dir=None)` | `-> Path` | creates `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/` under the data dir. Called at import of `database.py`, in `kb_registry._connect`, and by `sync_settings_paths`. |
-| `sqlite_url(data_dir=None)` | `-> str` | `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (absolute). |
+| `sqlite_url(data_dir=None, driver="aiosqlite")` | `-> str` | `sqlite+<driver>:///<DATA_DIR>/orb.db` (absolute). |
 | `clear_paths_cache()` | `-> None` | drop `_PATHS_CACHE` (tests / external edits). |
 | `sync_settings_paths(settings_obj=None)` | `-> None` | re-resolves data/models and writes `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH`, `KUZU_DB_PATH` onto `settings`; calls `ensure_data_layout`. Docstring is explicit: "SQLite/Qdrant engines created at import still need a restart to retarget storage roots." |
 
@@ -491,7 +491,7 @@ Other code paths open their **own** connections to the same `orb.db`: `kb_regist
 
 1. Imports `app.models.chat`, `kb`, `note`, `wikilink` so `Base.metadata` is populated (the comment notes finance has no local tables — it lives in Firefly).
 2. `Base.metadata.create_all` inside `engine.begin()`.
-3. On SQLite only, `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)` — because `create_all` never adds new indexes to tables that already exist, and this composite index was introduced (`fbcafe7`) after the `notes` table had shipped.
+3. On SQLite only, `_sqlite_repairs`: `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)` — because `create_all` never adds new indexes to tables that already exist, and this composite index was introduced (`fbcafe7`) after the `notes` table had shipped — and `UPDATE notes SET rel_path = replace(rel_path, '\', '/') WHERE rel_path LIKE '%\%'`, repairing rows written as `str(Path)` on Windows (`note_files` now stores `rel_path` with `.as_posix()`). Both are idempotent and run on every start.
 
 There is **no migration framework** (no Alembic). New columns on existing installs are handled ad hoc (`kb_registry._ensure_firefly_columns` for `firefly_group_id`/`firefly_group_title`); adding a column to `Note`/`ChatMessage` requires a similar manual `ALTER TABLE` path or it will only exist on fresh databases.
 
@@ -504,7 +504,7 @@ All tables share the pattern: `String` UUID4 primary key generated in Python (`d
 | Column | Type | Nullable | Default | Meaning |
 |---|---|---|---|---|
 | `id` | String PK | no | uuid4 | Note id used in every `/notes/{id}` route, Qdrant payloads, Kuzu `note_id`, wikilink edges |
-| `content` | Text | yes | `""` | **Deprecated.** Comment: "Deprecated fallback only — `persist_note_body` keeps this empty. Prefer vault file via `rel_path`; see `note_files.note_body`." Read only as a last-resort fallback when the vault file is missing. |
+| `content` | Text | yes | `""` | **Legacy, never read.** `persist_note_body` keeps it empty; `note_files.note_body` returns `""` when the vault file is missing. A pre-vault row with a non-empty body is moved into the vault file by `vault_sync.sync_vault_notes` (written via `persist_note_body`, or just blanked when the file already exists) — see doc 09 §4.3. |
 | `title` | String | yes | — | Display title; kept in sync with the vault filename (`72413b9`) |
 | `rel_path` | String | yes | — | Path of the `.md` file **relative to the KB's `vault_path`** (e.g. `Life/Daily Log/2026-08-01.md`). `NULL` only for legacy rows. |
 | `created_at` | DateTime(tz) | — | utcnow | Creation (client may pass `created_at` on create) |
@@ -529,7 +529,7 @@ Derived status contract (`api/notes.py get_note_ingestion_status`): `processed �
 | `name` | String | no | Display name |
 | `slug` | String, unique, indexed | no | URL/path-safe key derived from name (`re.sub(r"[^a-z0-9_-]", "-", name.lower().replace(" ", "_"))`); used in `?kb=`, vault folder, Qdrant/Meili names |
 | `vault_path` | Text | no | Absolute vault folder |
-| `kuzu_path` | Text | no | Kuzu database **file** (`<DATA_DIR>/kuzu/<slug>/kuzu_graph`; default KB `<DATA_DIR>/kuzu/kuzu_graph`); `kb_registry.normalize_kuzu_path` heals legacy directory paths |
+| `kuzu_path` | Text | no | Kuzu database **file** (`<DATA_DIR>/kuzu/<slug>/kuzu_graph`; default KB `<DATA_DIR>/kuzu/kuzu_graph`); `kb_registry._load` heals legacy directory paths once at startup via `normalize_kuzu_path` and persists the fix |
 | `qdrant_col_cores`, `qdrant_col_rels`, `qdrant_col_contexts` | String | no | Per-KB Qdrant collection names (`<slug>_node_cores`, `<slug>_node_relationships`, `<slug>_node_isolated_contexts`; default KB uses the `QDRANT_COLLECTION_*` settings) |
 | `typesense_collection` | String | no | **Meilisearch index name**; column name kept for existing DBs. `meili_index = synonym("typesense_collection")` gives ORM code the modern name. |
 | `created_at` | DateTime(tz) | — | |
@@ -582,7 +582,7 @@ The current working tree (uncommitted at the time of writing) adds three nullabl
 
 | Column | Type | Meaning |
 |---|---|---|
-| `llm_provider` | String | Pinned chat/ingestion provider for this KB (`local`, `openai`, `gemini`, `anthropic`, `huggingface`); `NULL` = inherit `settings.LLM_PROVIDER` |
+| `llm_provider` | String | Pinned chat/ingestion provider for this KB (`local`, `openai`, `gemini`, `anthropic`, `huggingface`); `NULL` = inherit `settings.LLM_PROVIDER`. Rows holding the deprecated `ollama`/`lm_studio` are rewritten to `local` by `kb_registry._load` (`UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')`); `set_llm_config` still coerces on write |
 | `llm_model` | String | Pinned chat model id; `NULL` = inherit |
 | `llm_ingestion_model` | String | Pinned ingestion model id; `NULL` = inherit `llm_model`, then system |
 
@@ -617,14 +617,13 @@ These models are the contract between the extraction prompt and the graph writer
 
 **`Node`** — `name: str = ""`, `type: str = "thing"`, `isolated_context: str = ""`.
 
-- `normalize_keys` (`model_validator(mode="before")`): if `name` missing, take `trait` then `title`; if `isolated_context` missing, take `evidence_quote` then `context`.
-- `handle_none` (`field_validator("*", mode="before")`): `None` → `"thing"` for `type`, `""` for every other field.
+- `handle_none` (`field_validator("*", mode="before")`): `None` → `"thing"` for `type`, `""` for every other field. There is no key aliasing (`trait`/`title`/`evidence_quote`/`context`); a wrong key is an empty field.
 - `type` is a free string chosen by the LLM (person, song, event, …); there is no enum.
 
-**`ExtractedRelationship`** — `source_name`, `target_name`, `relationship_type = "relates_to"`, `natural_language`. There are no per-edge scores: no prompt ever asked for them, so the old `strength`/`confidence`/`relevance` fields were constants and were removed together with the `edge_weight` they fed.
+**`ExtractedRelationship`** — `source_name`, `target_name`, `relationship_type = "related_to"`, `natural_language`. There are no per-edge scores: no prompt ever asked for them, so the old `strength`/`confidence`/`relevance` fields were constants and were removed together with the `edge_weight` they fed.
 
-- `normalize_keys`: `entity1→source_name`, `entity2→target_name`, `description→natural_language` (only when the canonical key is empty).
-- `handle_none_strings`: `None` → `""` (or `"relates_to"` for `relationship_type`); a blank/whitespace `relationship_type` also becomes `"relates_to"`.
+- `handle_none_strings` (`source_name`, `target_name`, `natural_language`): `None` → `""`. No `entity1`/`entity2`/`description` aliasing.
+- `closed_vocabulary` (`relationship_type`, mode=before): `"_".join(str(v or "").strip().lower().split())`, then the key must be in `RELATIONSHIP_TYPES` — a module-level tuple of 42 snake_case predicates headed by the catch-all `related_to` (`works_at`, `works_with`, `reports_to`, `manages`, `leads`, `founded`, `owns`, `part_of`, `member_of`, `instance_of`, `has_property`, `located_in`, `lives_in`, `born_in`, `occurs_at`, `attends`, `participates_in`, `created`, `authored`, `produces`, `uses`, `depends_on`, `mentions`, `discusses`, `causes`, `precedes`, `follows`, `knows`, `friend_of`, `married_to`, `parent_of`, `child_of`, `sibling_of`, `studied_at`, `teaches`, `competes_with`, `partners_with`, `invests_in`, `funds`, `sells`, `buys`) — or it becomes `related_to`. No fuzzy matching; the same tuple is rendered into the extraction prompts (doc 13 §9.1).
 
 **`Extraction`** — `nodes: list[Node]`, `relationships: list[ExtractedRelationship]`, `title: str | None`.
 
@@ -819,7 +818,6 @@ Replaces the former RustFS/S3 object store. Attachments live at `<vault_path>/at
 - `resolve_default_vault_path()` prefers `paths.json` over env — the opposite of `resolve_data_dir()`.
 - `get_kb_by_name` treats an empty `?kb=` as default; `"Default"` (any case) also resolves to default, but a KB *named* "default" cannot be created distinctly.
 - `store_upload` builds URLs with the KB **id**, while `?kb=` accepts name **or slug**; the `files` router resolves both.
-- `LOGS_DIR` in `log.py` is a snapshot; use `resolve_logs_dir()` after setup changes `DATA_DIR`.
 - Unit tests (`backend/tests/unit/conftest.py`) monkeypatch `settings.LLM_PROVIDER="lm_studio"` (a deprecated alias) — keep the alias mapping in `LLMService.__init__` or the suite breaks.
 - The FastAPI `version="0.1.0"` string is stale relative to the `0.2.0` app version.
 

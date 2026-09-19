@@ -129,11 +129,10 @@ function makeLinkComponent(
         const isAttachment =
             Boolean(href) &&
             (text.startsWith("📎") ||
-                text.startsWith("🖇") ||
                 text.startsWith("🎤") ||
                 isAttachmentHref(href!));
         const filename =
-            text.replace(/^[📎🖇🎤]\s*/u, "").trim() ||
+            text.replace(/^[📎🎤]\s*/u, "").trim() ||
             (href ? decodeURIComponent(href.split("/").pop() ?? "file") : "file");
 
         // Entity mention pseudo-link: entity://node_id

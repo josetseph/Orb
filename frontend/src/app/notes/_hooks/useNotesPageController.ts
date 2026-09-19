@@ -303,7 +303,7 @@ export function useNotesPageController() {
   const handleDeleteVaultFolder = useCallback(
     async (path: string) => {
       const open = selection.selectedNote;
-      const inside = Boolean(open?.rel_path && open.rel_path.replace(/\\/g, "/").startsWith(`${path}/`));
+      const inside = Boolean(open?.rel_path && open.rel_path.startsWith(`${path}/`));
       if (inside) autosave.cancelPendingAutosave();
       const deleted = await vault.handleDeleteVaultFolder(path);
       if (deleted && inside) {

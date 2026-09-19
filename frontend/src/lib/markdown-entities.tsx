@@ -15,6 +15,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { makeEntityRegex } from "@/components/markdown-editor/entityExtension";
 
 export type ScannedEntity = { node_id: string; name: string; node_type: string };
 
@@ -31,10 +32,6 @@ export function urlTransformAllowing(...prefixes: string[]) {
 /** Allow entity:// pseudo-links through react-markdown's URL sanitizer. */
 export const urlTransform = urlTransformAllowing("entity://");
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 /**
  * Injects entity:// pseudo-links directly into plain text for ReactMarkdown.
  * Uses a single-pass range-collection approach so no entity name is ever
@@ -50,7 +47,7 @@ export function injectEntityLinks(text: string, entities: ScannedEntity[]): stri
     // Collect non-overlapping ranges against the ORIGINAL text, longest-match wins
     const ranges: { start: number; end: number; name: string; node_id: string }[] = [];
     for (const { name, node_id } of sorted) {
-      const re = new RegExp(`\\b${escapeRegex(name)}\\b`, "gi");
+      const re = makeEntityRegex(name);
       let m: RegExpExecArray | null;
       while ((m = re.exec(plain)) !== null) {
         const start = m.index;
@@ -165,8 +162,6 @@ export function flattenLinkText(children: React.ReactNode): string {
 /** True when href points at an uploaded vault attachment. */
 export function isAttachmentHref(href: string): boolean {
   return (
-    /\/files\//.test(href) ||
-    /\/uploads\//.test(href) ||
     /\/vault-files\//.test(href) ||
     /^attachments\//.test(href)
   );

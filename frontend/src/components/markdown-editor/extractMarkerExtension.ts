@@ -1,5 +1,6 @@
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 import { StateEffect, StateField, type EditorState } from "@codemirror/state";
+import { isAudioUrl, isImageUrl, isVideoUrl } from "@/lib/utils";
 
 /**
  * Ingestion wraps each extraction in `<!-- orb:extract src="…" -->` … `<!-- /orb:extract -->`
@@ -36,10 +37,8 @@ export function extractedKeys(doc: string): Set<string> {
 /** What a block is, by its attachment's extension. */
 export function extractNoun(src: string): "Transcript" | "Description" | "Extracted text" {
   const k = extractKey(src);
-  if (/\.(m4a|m4b|mp3|wav|ogg|oga|opus|aac|flac|weba|webm|mp4|mov|m4v|ogv|mkv|avi)$/.test(k)) {
-    return "Transcript";
-  }
-  if (/\.(jpg|jpeg|png|gif|webp|svg|avif|bmp)$/.test(k)) return "Description";
+  if (isVideoUrl(k) || isAudioUrl(k)) return "Transcript";
+  if (isImageUrl(k)) return "Description";
   return "Extracted text";
 }
 

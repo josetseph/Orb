@@ -164,11 +164,11 @@ def ensure_data_layout(data_dir: Path | None = None) -> Path:
     return root
 
 
-def sqlite_url(data_dir: Path | None = None) -> str:
+def sqlite_url(data_dir: Path | None = None, driver: str = "aiosqlite") -> str:
     root = data_dir or resolve_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     db_path = (root / "orb.db").resolve()
-    return f"sqlite+aiosqlite:///{db_path}"
+    return f"sqlite+{driver}:///{db_path}"
 
 
 def sync_settings_paths(settings_obj=None) -> None:

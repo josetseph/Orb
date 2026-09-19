@@ -18,6 +18,7 @@ from app.services.credentials import (
 )
 from google import genai
 from google.genai import types
+from json_repair import repair_json
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -48,6 +49,16 @@ def describe_call_failure(exc: Exception) -> str:
 # their own limit. Anthropic is the one API that refuses a request without
 # ``max_tokens``, so it gets this single high value everywhere.
 ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
+
+
+class _ResearchStep(BaseModel):
+    """One turn of the iterative research loop, as the model returns it."""
+
+    # Small models write null for an empty string field.
+    reasoning: str | None = ""
+    finding: str | None = ""
+    answer: str | None = None
+    next_query: str | None = None
 
 
 class LLMService:
@@ -183,36 +194,17 @@ class LLMService:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
     def _clean_json(self, json_str: str) -> str:
-        """
-        Uses json_repair to robustly fix malformed JSON from LLMs.
-        Also strips markdown code blocks, sanitizes control characters,
-        and normalizes smart/curly quotes to straight quotes.
-        """
-        # 1. Unwrap markdown (Common failure mode)
-        if "```" in json_str:
-            match = re.search(r"```(?:json)?(.*?)```", json_str, re.DOTALL)
-            if match:
-                json_str = match.group(1)
-
-        # 2. Remove control characters (except allowed ones: \n \r \t inside strings are handled by json_repair)
-        # This handles \u0000-\u001F that break JSON parsing
-        json_str = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", json_str)
-
-        # 3. Normalize smart/curly quotes to straight quotes
-        # Single quotes: ' ' ‛ → '
+        """Model output → parseable JSON text: unwrap a code fence, then json_repair."""
+        match = re.search(r"```(?:json)?(.*?)```", json_str, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+        # json_repair escapes stray control characters itself, but it does not
+        # read curly quotes as string delimiters.
         json_str = re.sub(r"[\u2018\u2019\u201B]", "'", json_str)
-        # Double quotes: " " „ → "
         json_str = re.sub(r"[\u201C\u201D\u201E]", '"', json_str)
+        return repair_json(json_str)
 
-        try:
-            from json_repair import repair_json
-
-            return repair_json(json_str)
-        except ImportError:
-            logger.warning("json_repair not installed! Falling back to raw string.")
-            return json_str
-
-    def _chat(  # pylint: disable=too-many-locals
+    def _chat(  # pylint: disable=too-many-locals,too-many-branches
         self,
         messages: list[dict],
         *,
@@ -220,6 +212,7 @@ class LLMService:
         temperature: float | None = None,
         max_tokens: int | None = None,
         ingestion: bool = False,
+        json_mode: bool = False,
     ) -> tuple[str, dict]:
         """One chat completion on the main (or ingestion) provider.
 
@@ -228,11 +221,21 @@ class LLMService:
         server exposes it (``reasoning_content`` or ``<think>`` tags), stripped
         from ``text``; ``truncated`` is True when the provider stopped at its
         output limit.
+
+        ``json_mode`` asks the provider for a JSON object structurally where it
+        can (OpenAI-style ``response_format``, Gemini ``response_mime_type``,
+        llama.cpp's JSON grammar); callers still parse through ``_clean_json``.
         """
         provider = self.ingestion_provider if ingestion else self.provider
         model = model or (self.get_ingestion_model() if ingestion else self.get_chat_model())
         system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
         user = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
+        if json_mode and "JSON" not in system + user:
+            # OpenAI rejects response_format unless the prompt mentions JSON.
+            messages = [dict(m) for m in messages]
+            last = next(m for m in reversed(messages) if m["role"] == "user")
+            last["content"] += "\n\nRespond with a JSON object."
+            user += "\n\nRespond with a JSON object."
         try:
             if provider == "gemini":
                 client = self.i_gemini_client if ingestion else self.gemini_client
@@ -242,6 +245,7 @@ class LLMService:
                     config=types.GenerateContentConfig(
                         temperature=temperature,
                         thinking_config=types.ThinkingConfig(thinking_budget=0),
+                        response_mime_type="application/json" if json_mode else None,
                     ),
                 )
                 candidates = getattr(response, "candidates", None) or []
@@ -253,6 +257,10 @@ class LLMService:
                 }
 
             if provider == "anthropic":
+                # json_mode is prompt-driven here: a `{` assistant prefill
+                # returns 400 on every Claude model since 4.6, and structured
+                # output (output_config.format) needs a full JSON schema.
+                # ponytail: thread a pydantic schema through when a caller needs it.
                 client = self.i_anthropic_client if ingestion else self.anthropic_client
                 kwargs = {"system": system} if system else {}
                 if temperature is not None:
@@ -278,16 +286,18 @@ class LLMService:
                 kwargs["temperature"] = temperature
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
             choice = client.chat.completions.create(model=model, messages=messages, **kwargs).choices[0]
             text = choice.message.content or ""
             # LM Studio and some OpenAI-compat servers expose thinking in
             # reasoning_content; others embed <think>…</think> in the content.
+            # An unclosed <think> is reasoning the output limit cut off.
             thinking = getattr(choice.message, "reasoning_content", None) or None
             if not thinking and "<think>" in text:
-                match = re.search(r"<think>(.*?)</think>", text, re.DOTALL)
-                if match:
-                    thinking = match.group(1).strip()
-                    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+                match = re.search(r"<think>(.*?)(?:</think>|\Z)", text, re.DOTALL)
+                thinking = match.group(1).strip() or None
+                text = text[: match.start()] + text[match.end() :]
             reason = getattr(choice, "finish_reason", None)
             return text.strip(), {
                 "finish_reason": reason,
@@ -308,13 +318,14 @@ class LLMService:
         "Detect conflicts, subtleties, or hidden connections."
     )
 
-    def _reason_step(self, prompt: str) -> tuple[str, str | None]:
+    def _reason_step(self, prompt: str, *, json_mode: bool = False) -> tuple[str, str | None]:
         """Like reason(), but also returns the model's thinking (None if it produced none)."""
         text, meta = self._chat(
             [
                 {"role": "system", "content": self._REASONING_SYSTEM},
                 {"role": "user", "content": prompt},
-            ]
+            ],
+            json_mode=json_mode,
         )
         return text, meta["thinking"]
 
@@ -534,7 +545,7 @@ class LLMService:
             Return only the JSON object, no preamble or explanation.
             """
 
-        raw, _ = self._chat([{"role": "user", "content": prompt}], temperature=0)
+        raw, _ = self._chat([{"role": "user", "content": prompt}], temperature=0, json_mode=True)
         if not raw:
             raise ValueError("Empty extraction result")
         return QueryAnalysis.model_validate_json(self._clean_json(raw)).model_dump()
@@ -545,6 +556,7 @@ class LLMService:
         temperature: float = 0.1,
         max_tokens: int | None = None,
         model: str | None = None,
+        json_mode: bool = False,
     ) -> str:
         """Generic text generation - provider-agnostic (alias comparison, classification, etc)."""
         text, _ = await asyncio.to_thread(
@@ -553,6 +565,7 @@ class LLMService:
             model=model,
             temperature=temperature,
             max_tokens=max_tokens,
+            json_mode=json_mode,
         )
         return text
 
@@ -588,7 +601,7 @@ class LLMService:
                 "next_query":   str | None,    # next search query (if not can_answer)
             }
         """
-        _non_answers = {"INSUFFICIENT", "NONE", "N/A", "UNKNOWN", "NOT FOUND"}
+        _non_answers = {"INSUFFICIENT", "NONE", "NULL", "N/A", "UNKNOWN", "NOT FOUND"}
 
         # ── Build prior findings block ────────────────────────────────────────
         prior_block = ""
@@ -635,25 +648,22 @@ class LLMService:
         # ── Build task instructions ───────────────────────────────────────────
         if search_query and docs:
             task_instructions = (
-                "Assess the current results:\n"
-                "REASONING: <how these documents relate to the question "
-                "and what you have found so far>\n"
-                "FINDING: <a summary of what is relevant in these documents — "
-                "key facts, entities, relationships. Always write something; "
-                "use 'Not found' only if truly nothing here is relevant>\n\n"
-                "Then decide:\n"
-                "  If you have enough information to answer the ORIGINAL QUESTION:\n"
-                "  ANSWER: <a complete, natural-language answer covering everything "
-                "relevant you found — see output rules below>\n\n"
-                "  If you need more information:\n"
-                "  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n"
+                "Assess the current results and reply with one JSON object with exactly these keys:\n"
+                '{"reasoning": "how these documents relate to the question and what you have found so far",\n'
+                ' "finding": "what is relevant in these documents — key facts, entities, relationships. '
+                "Always write something; 'Not found' only if truly nothing here is relevant\",\n"
+                ' "answer": "a complete, natural-language answer to the ORIGINAL QUESTION covering everything '
+                'relevant you found — see output rules below — or null if you need more information",\n'
+                ' "next_query": "one specific search query, different from all prior ones, or null if you answered"}\n'
+                "Set exactly one of answer / next_query.\n\n"
                 f"{self._REASONING_RULES_GENERAL}\n"
                 f"{self._OUTPUT_RULES_GENERAL}"
             )
         else:
             task_instructions = (
-                "Output the first search query needed to start answering this question:\n"
-                "NEXT_QUERY: <one specific search query>\n"
+                "Reply with one JSON object: "
+                '{"reasoning": "", "finding": "", "answer": null, '
+                '"next_query": "the first specific search query needed to start answering this question"}\n'
             )
 
         prompt = (
@@ -664,13 +674,12 @@ class LLMService:
             f"{tried_block}"
             f"{current_block}"
             f"{task_instructions}"
-            "\nReply:"
         )
 
         try:
-            raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt)
-            raw = raw or ""
+            raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt, json_mode=True)
             logger.info(f"[LLM] iterative_step raw response:\n{raw}")
+            step = _ResearchStep.model_validate_json(self._clean_json(raw or ""))
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.warning(f"[LLM] iterative_step failed: {e}")
             return {
@@ -682,92 +691,17 @@ class LLMService:
                 "thinking": None,
             }
 
-        # ── Parse response ────────────────────────────────────────────────────
-        reasoning = ""
-        full_answer = ""
-        can_answer = False
-        final_answer: str | None = None
-        next_query: str | None = None
+        def _real(value: str | None) -> str | None:
+            value = (value or "").strip()
+            return value if value and value.upper() not in _non_answers else None
 
-        # Regex-based section extractor — handles:
-        #   * markdown bold: **ANSWER:** or **FINDING:**
-        #   * multi-line section content (FINDING:\ntext on next line)
-        #   * any mix of the above
-        _section_re = re.compile(
-            r"\*{0,3}(REASONING|FINDING|FULL_ANSWER|ANSWER|NEXT_QUERY)\*{0,3}\s*:[ \t]*(.*?)"
-            r"(?=\*{0,3}(?:REASONING|FINDING|FULL_ANSWER|ANSWER|NEXT_QUERY)\*{0,3}\s*:|\Z)",
-            re.IGNORECASE | re.DOTALL,
-        )
-        sections: dict[str, str] = {}
-        for m in _section_re.finditer(raw):
-            key = m.group(1).upper()
-            val = m.group(2).strip()
-            if key not in sections:  # first occurrence wins
-                sections[key] = val
-
-        def _clean_next_query(value: str) -> str:
-            """Keep only the actual search phrase from a NEXT_QUERY section."""
-            first_line = next((line.strip() for line in value.splitlines() if line.strip()), "")
-            first_line = re.sub(r"^\s*(?:[-*]\s*)+", "", first_line)
-            first_line = re.sub(r"^\*{1,3}|\*{1,3}$", "", first_line).strip()
-            return first_line.strip().strip('"').strip("'").strip()
-
-        reasoning = sections.get("REASONING", "")
-        full_answer = sections.get("FINDING", "") or sections.get("FULL_ANSWER", "")
-        answer_val = sections.get("ANSWER", "")
-        next_query_val = sections.get("NEXT_QUERY", "")
-
-        if answer_val and answer_val.upper() not in _non_answers:
-            can_answer = True
-            final_answer = answer_val
-        elif next_query_val:
-            next_query = _clean_next_query(next_query_val)
-
-        # Some local models occasionally ignore the literal NEXT_QUERY label on
-        # the first planning turn and return only a quoted search phrase, e.g.
-        # `Reply: "Fido meaning and history"`. Treat that as the next query
-        # only before any docs have been retrieved; later turns must use the
-        # explicit ANSWER/NEXT_QUERY protocol.
-        if not can_answer and not next_query and not docs:
-            candidate = raw.strip()
-            candidate = re.sub(r"^\s*(?:reply|query)\s*:\s*", "", candidate, flags=re.I)
-            candidate = candidate.strip().strip('"').strip("'").strip()
-            if (
-                candidate
-                and "\n" not in candidate
-                and len(candidate) <= 200
-                and candidate.upper() not in _non_answers
-            ):
-                logger.info(
-                    "[LLM] iterative_step unlabeled NEXT_QUERY fallback: "
-                    f"'{candidate}'"
-                )
-                next_query = candidate
-
-        # ── Post-process ANSWER ───────────────────────────────────────────────
-        # Fallback: if the LLM committed FULL_ANSWER but gave neither ANSWER nor
-        # NEXT_QUERY, it found the information but forgot to switch to the
-        # terminating format.  Treat FULL_ANSWER as the final answer.
-        _not_found_vals = {"not found", "none", "insufficient", "n/a", "unknown"}
-        if (
-            not can_answer
-            and not next_query
-            and full_answer
-            and full_answer.lower().strip() not in _not_found_vals
-        ):
-            logger.info(
-                "[LLM] iterative_step FULL_ANSWER fallback (no ANSWER/NEXT_QUERY): "
-                f"'{full_answer}'"
-            )
-            can_answer = True
-            final_answer = full_answer
-
+        final_answer = _real(step.answer)
         return {
-            "reasoning": reasoning,
-            "full_answer": full_answer,
-            "can_answer": can_answer,
+            "reasoning": step.reasoning or "",
+            "full_answer": step.finding or "",
+            "can_answer": final_answer is not None,
             "final_answer": final_answer,
-            "next_query": next_query,
+            "next_query": None if final_answer else _real(step.next_query),
             "thinking": step_thinking,
         }
 
@@ -793,7 +727,7 @@ class LLMService:
         - Stick strictly to what the documents say — do not invent or infer beyond the evidence
         - If something relevant could not be found, acknowledge it briefly
         - Do not pad with filler phrases — every sentence should add information
-        - If you cannot answer yet → output NEXT_QUERY, not ANSWER
+        - If you cannot answer yet → set "next_query", leave "answer" null
         """
 
     def get_base_url(self) -> str | None:
@@ -858,8 +792,6 @@ class LLMService:
         ingestion_model_map = {
             "local": _local,
             "openai_compat": settings.LLM_MODEL or None,
-            "ollama": _local,  # deprecated alias
-            "lm_studio": _local,  # deprecated alias
             "gemini": settings.INGESTION_GEMINI_MODEL or settings.GEMINI_MODEL or None,
             "openai": settings.OPENAI_MODEL or None,
             "anthropic": settings.ANTHROPIC_MODEL or None,
@@ -874,13 +806,14 @@ class LLMService:
         prompt: str,
         temperature: float = 0.1,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         """
         Like ``generate()`` but always routes to the ingestion provider/server.
         Use this for all LLM calls inside the ingestion pipeline.
         """
         content, _meta = await self.ingestion_generate_with_meta(
-            prompt, temperature=temperature, max_tokens=max_tokens
+            prompt, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
         )
         return content
 
@@ -889,6 +822,7 @@ class LLMService:
         prompt: str,
         temperature: float = 0.1,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> tuple[str, dict]:
         """``ingestion_generate`` plus ``{"finish_reason", "truncated"}``.
 
@@ -902,6 +836,7 @@ class LLMService:
             temperature=temperature,
             max_tokens=max_tokens,
             ingestion=True,
+            json_mode=json_mode,
         )
         if not text:
             raise ValueError(

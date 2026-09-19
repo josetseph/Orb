@@ -24,9 +24,8 @@ _FILTERABLE = ["type", "community_level"]
 class MeilisearchService:
     """Meilisearch client managing per-KB node indexes for keyword search."""
 
-    def __init__(self, collection_name: str | None = None) -> None:
-        # Keep attribute name `collection` for call-site compatibility
-        self.collection = collection_name or settings.MEILI_INDEX_NAME
+    def __init__(self, index_name: str | None = None) -> None:
+        self.index_name = index_name or settings.MEILI_INDEX_NAME
         self._client = None
         self._retry_at = 0.0
         self._connect()
@@ -56,19 +55,19 @@ class MeilisearchService:
             logger.warning(f"Meilisearch not reachable yet (retrying on use): {exc}")
 
     def _index(self):
-        return self.client.index(self.collection)
+        return self.client.index(self.index_name)
 
     def _ensure_collection(self) -> None:
         """Create the index if it does not already exist and apply settings."""
         try:
-            self.client.get_index(self.collection)
+            self.client.get_index(self.index_name)
         except MeilisearchApiError:
             try:
                 task = self.client.create_index(
-                    self.collection, {"primaryKey": "node_id"}
+                    self.index_name, {"primaryKey": "node_id"}
                 )
                 self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
-                logger.info(f"[Meili] Created index '{self.collection}'")
+                logger.info(f"[Meili] Created index '{self.index_name}'")
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.warning(f"[Meili] Index creation failed: {exc}")
                 return
@@ -98,13 +97,13 @@ class MeilisearchService:
         if not self.client:
             return
         try:
-            task = self.client.delete_index(self.collection)
+            task = self.client.delete_index(self.index_name)
             self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
-            logger.info(f"[Meili] Deleted index '{self.collection}'")
+            logger.info(f"[Meili] Deleted index '{self.index_name}'")
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[Meili] Could not delete index '{self.collection}': {exc}")
+            logger.warning(f"[Meili] Could not delete index '{self.index_name}': {exc}")
         self._ensure_collection()
-        logger.info(f"[Meili] Index '{self.collection}' reset.")
+        logger.info(f"[Meili] Index '{self.index_name}' reset.")
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Fetch one document by node id."""
@@ -171,7 +170,7 @@ class MeilisearchService:
         node_id: str,
         name: str,
         node_type: str,
-        isolated_contexts_text: str = "",
+        isolated_contexts: list[str] | None = None,
         relationship_natural_language: str = "",
         community_level: int | None = None,
     ) -> None:
@@ -182,8 +181,8 @@ class MeilisearchService:
             "name": name,
             "type": node_type,
         }
-        if isolated_contexts_text:
-            doc["isolated_contexts"] = isolated_contexts_text
+        if isolated_contexts:
+            doc["isolated_contexts"] = list(isolated_contexts)
         if relationship_natural_language:
             doc["relationship_natural_language"] = relationship_natural_language
         if community_level is not None:

@@ -28,7 +28,7 @@
 
 | Path | Purpose | Key exports |
 |---|---|---|
-| `backend/app/services/graph.py` | Kuzu-backed `GraphService`; schema DDL; all Cypher | `GraphService`, `graph_service` (default-KB singleton), `_SCHEMA_STMTS`, `_strip_facts_prefix` |
+| `backend/app/services/graph.py` | Kuzu-backed `GraphService`; schema DDL; all Cypher | `GraphService`, `graph_service` (default-KB singleton), `_SCHEMA_STMTS` |
 | `backend/app/utils/graph_layout.py` | Pure-Python deterministic 3D layouts | `compute_solar_positions`, `compute_spring_layout_3d`, `SOLAR_*` constants, `_fibonacci_sphere`, `_deterministic_jitter`, `_majority_key` |
 | `backend/app/api/graph.py` | FastAPI router: 3D full graph, node detail, entity autocomplete, text scan, note subgraph | `router`, `ScanTextInput`, `_apply_meili_content`, `_needs_title` |
 | `backend/app/api/admin.py` | FastAPI router: maintenance status, rebuild communities, temporal digests, reset, reingest | `router`, `TemporalDigestInput` |
@@ -53,7 +53,7 @@ flowchart LR
         DIG["IngestionWorkflow.build_temporal_digests<br/>(temporal_digest nodes)"]
         DEL["api/notes.py delete_note<br/>(DETACH DELETE note + orphans)"]
         ADM["api/admin.py reset-ingestion-data<br/>(wipe_all_nodes)"]
-        BF["api/graph.py node detail<br/>(name backfill SET n.name)"]
+        BF["main._migrate_stores<br/>(one-time: note-name backfill, relates_to → related_to)"]
     end
     KUZU[("Kuzu<br/>DATA_DIR/kuzu/&lt;slug&gt;/kuzu_graph")]
     subgraph Readers
@@ -96,7 +96,7 @@ erDiagram
     }
     Node ||--o{ SEMANTIC_REL : "indexable -> indexable"
     SEMANTIC_REL {
-        STRING rel_type "snake_case predicate"
+        STRING rel_type "one of schemas.extraction.RELATIONSHIP_TYPES (default related_to)"
         DOUBLE confidence
         DOUBLE strength
         DOUBLE relevance
@@ -157,15 +157,14 @@ Repairs a historical bug where `create_kb` `mkdir`'d `…/kuzu/<slug>` as a *dir
 4. Path does not exist but its parent is named `kuzu` → `<path>/kuzu_graph`.
 5. Otherwise unchanged.
 
-It is applied in four places: `KBRegistry._load` (repairs and persists rows on startup), `KBRegistry.get_kb` (repairs on first access and persists), `KBRegistry._build_context`, `KBContext.graph`, and `_cleanup_stores`. Because rule 2 short-circuits on any suffix, a KB named e.g. `notes.v2` gets slug `notes-v2` (dots are not in the allowed set), so suffix collisions cannot arise from slugs — but a hand-edited `kuzu_path` with a dot will be trusted as-is.
+It is applied in one place: `KBRegistry._load`, which repairs each row on startup and persists the fix with an `UPDATE`. `get_kb`, `_build_context`, `KBContext.graph` and `_cleanup_stores` use the stored path as-is. Because rule 2 short-circuits on any suffix, a KB named e.g. `notes.v2` gets slug `notes-v2` (dots are not in the allowed set), so suffix collisions cannot arise from slugs — but a hand-edited `kuzu_path` with a suffix is never repaired.
 
 ### 4.3 Opening: `GraphService.__init__(db_path=None, qdrant=None)`
 
 1. `self._qdrant = qdrant or qdrant_service` — the injected per-KB `QdrantService` is used for every name→id resolution and content join. Passing the wrong instance silently mixes KBs.
 2. Path resolution: `Path(db_path or settings.KUZU_DB_PATH).expanduser()`; relative paths are anchored at `REPO_ROOT`; `parent.mkdir(parents=True, exist_ok=True)`.
-3. `_migrate_legacy_db_path(path)`: if the target does not exist and the pre-`DATA_DIR` location `REPO_ROOT/data/kuzu_graph` (and/or its `.wal`) does, `rename` both into place. Any error is logged and ignored. No-op when the target already exists or *is* the legacy path.
-4. `self.db = kuzu.Database(str(path))`; `self.conn = kuzu.Connection(self.db)`; `self._lock = threading.RLock()`.
-5. `_init_schema()` runs each statement of `_SCHEMA_STMTS` under the lock; exceptions whose text contains `already exist` are ignored, anything else is logged at WARNING and **not raised** (so a broken schema surfaces later as query failures).
+3. `self.db = kuzu.Database(str(path))`; `self.conn = kuzu.Connection(self.db)`; `self._lock = threading.RLock()`. (The pre-`DATA_DIR` `REPO_ROOT/data/kuzu_graph` file is no longer moved into place — `_migrate_legacy_db_path` was removed 2026-09-19; copy it by hand if such an install still exists.)
+4. `_init_schema()` runs each statement of `_SCHEMA_STMTS` under the lock; exceptions whose text contains `already exist` are ignored, anything else is logged at WARNING and **not raised** (so a broken schema surfaces later as query failures).
 
 There is **one connection per service** used for both reads and writes; Kuzu's own concurrency model is not relied on — the `RLock` in `execute_query` serialises everything. `RLock` (not `Lock`) because `_init_schema` and callers such as `wipe_all_nodes` nest `execute_query` calls on the same thread.
 
@@ -189,7 +188,7 @@ All Kuzu work is synchronous. Every API call site wraps it in `asyncio.to_thread
 
 - Bootstrap = `_SCHEMA_STMTS` (`CREATE NODE TABLE IF NOT EXISTS Node(...)`, `CREATE REL TABLE IF NOT EXISTS REFERENCES/MEMBER_OF/CONTAINS/SEMANTIC_REL(...)`).
 - There is **no migration framework** for Kuzu. Adding a property to an existing table requires either an `ALTER TABLE … ADD` executed manually or deleting the DB file (users: Settings → reset; devs: `POST /api/v1/admin/reset-ingestion-data` only clears rows, it does not drop tables). Removing/renaming a property is likewise manual.
-- Two data-level "migrations" exist: `_migrate_legacy_db_path` (file location) and `normalize_kuzu_path` (registry rows). Neither touches schema.
+- Two data-level "migrations" exist: `normalize_kuzu_path` (registry rows, at `KBRegistry._load`) and `main._migrate_stores` (per KB, once, gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`: renames `SEMANTIC_REL.rel_type = 'relates_to'` to `'related_to'`, backfills `Node.name` for `kind='note'` nodes whose name is NULL/`''`/`Unknown`/`Untitled` from SQLite titles or the `rel_path` stem, and scrubs legacy `FACTS:` prefixes from Qdrant descriptions; the marker is touched only after all three succeeded). Neither touches schema. See doc 22.
 - The module docstring's `kind` list (`note | indexable | community`) is stale: `temporal_digest` is a fourth kind written by `create_temporal_digest_node`.
 
 ## 5. Schema
@@ -217,7 +216,7 @@ CREATE REL TABLE IF NOT EXISTS SEMANTIC_REL(FROM Node TO Node,
 |---|---|---|---|
 | `id` | STRING PK | all writers | See §6.1. Shared namespace for notes, entities, communities, digests. |
 | `kind` | STRING | `ON CREATE SET` in every MERGE | `note`, `indexable`, `community`, `temporal_digest`. Replaces Neo4j labels (`:Note`, `:Indexable`, `:Community`). Never NULL for rows written by current code, but rows created by `create_or_update_relationship`'s endpoint MERGE get `kind='indexable'` **and nothing else** (no name/type). |
-| `name` | STRING | `_write_ontology` (entities: normalised lowercase; note: title as-is, `"Untitled"` fallback), `create_leiden_community`, `create_temporal_digest_node`, `api/graph.py` backfill | Entity names are lowercase; all lookups use `toLower(n.name)` anyway. |
+| `name` | STRING | `_write_ontology` (entities: normalised lowercase; note: title as-is, `"Untitled"` fallback), `create_leiden_community`, `create_temporal_digest_node`, `main._migrate_stores` one-time note-name backfill | Entity names are lowercase; all lookups use `toLower(n.name)` anyway. |
 | `type` | STRING | `_write_ontology` (`node.type.strip().lower()` → `"thing"` if empty → `"unknown"` at the UNWIND site if still falsy), communities (`'community'`), digests (`'temporal_digest'`) | Notes have `type` NULL. `get_full_3d_graph` maps NULL → `"unknown"`. |
 | `pos_x`,`pos_y`,`pos_z` | DOUBLE | `store_node_positions` (after each community rebuild) | NULL until the first successful rebuild. **Not read by any current endpoint** — `get_full_3d_graph` recomputes positions on the fly with `compute_solar_positions` (see §11.4). |
 
@@ -282,11 +281,11 @@ Entity ID resolution order in `_write_ontology` (this is the anti-duplicate cont
 - Note node `name` is the resolved title (user title > LLM-extracted title > `llm_service.generate_title`), stored with original casing; `"Untitled"` if blank. Because notes are included in `kind IN ['indexable','note']` lookups, a note title can match an entity query.
 - Community and digest names are LLM/format-generated display strings (e.g. `"May 2024 — Month Digest"`).
 - Duplicates: nothing in Kuzu enforces name uniqueness. `find_nodes_by_exact_names` returns the lexicographically smallest id per name so callers converge on one canonical id.
-- `api/graph.py` backfills `n.name` for nodes whose graph name is empty/`Unknown`/`Untitled*` using SQLite note titles or Qdrant `name`, so hop queries stop returning placeholders.
+- Note nodes whose graph name was empty/`Unknown`/`Untitled` were backfilled once from SQLite titles (or the `rel_path` stem) by `main._migrate_stores`; `api/graph.py` writes nothing and only substitutes the display default `"Untitled note"` (`_needs_title`).
 
 ### 6.3 The legacy `FACTS:` prefix
 
-Older ingests stored descriptions as `"FACTS: k=v | k=v. Prose…"`. `_strip_facts_prefix(text)` removes everything up to the first `". "` after `FACTS:` (regex `^FACTS:.*?[.]\s+(.*)`, DOTALL). If the prefix exists but no sentence terminator follows, it returns `""`. Applied to `description`/`summary` in `get_node_storage_payload` and `get_node_detail`. Descriptions live in Qdrant, so this is a read-side shim only.
+Older ingests stored descriptions as `"FACTS: k=v | k=v. Prose…"`. They were scrubbed in place, once per KB, by `QdrantService.strip_facts_prefixes()` from `main._migrate_stores` (regex `^FACTS:.*?[.]\s+(.*)`, DOTALL, over every `node_cores` payload; a prefix with no `". "` terminator leaves an empty description). There is no read-side shim any more — `get_node_storage_payload` and `get_node_detail` return the stored description as-is.
 
 ## 7. Relationship model (`SEMANTIC_REL`)
 
@@ -302,7 +301,7 @@ create_or_update_relationship(
 `source_label`, `target_label`, `context` are accepted for call-site compatibility and ignored (all nodes are `indexable`).
 
 Steps:
-1. Empty `relationship_type` → `ValueError`. Otherwise `re.sub(r"[^A-Za-z0-9_]", "_", relationship_type.strip())`. (The ingestion caller has already run `clean_rel_type`, which strips entity-name tokens from the predicate and falls back to `relates_to`.)
+1. Empty `relationship_type` → `ValueError`. Otherwise `re.sub(r"[^A-Za-z0-9_]", "_", relationship_type.strip())`. (The ingestion caller passes `ExtractedRelationship.relationship_type`, which the schema has already coerced onto `RELATIONSHIP_TYPES` — default `related_to`, doc 10 §6.3 — so in practice the sanitiser is a no-op.)
 2. `relationship_id = relationship_id or str(uuid4())`.
 3. No per-edge score is computed. `confidence`, `strength`, `relevance` and `edge_weight` remain in the DDL (kept from 033589d's symbolic ranking era) but the writer no longer sets them; no query or ranker reads them.
 4. Resolve ids: if `source_id`/`target_id` not passed, `resolve_node_id(name.lower().strip())` via Qdrant. Either missing → return `{"action": "failed", "reason": "unresolvable IDs", …}` without touching Kuzu.
@@ -402,7 +401,7 @@ Member sets are transitive: an L1 community's `member_entity_ids` is the union o
 
 ### 9.3 What gets written per community (`_commit_community`)
 
-1. Name + summary via LLM: `_build_community_summary(member_rows, level)` for L2, `_build_rollup_summary(rollup_rows, level)` for L1/L0. Generic names (`_is_generic_community_name`) are rejected with up to 2 `strict_naming=True` retries; then `_derive_fallback_community_name(member_rows)`. Empty summary falls back to `"Community at level {L} containing {n} related nodes."`. Summary failures skip the community entirely.
+1. Name + summary via LLM: `_build_community_summary(member_rows, level)` for L2, `_build_rollup_summary(rollup_rows, level)` for L1/L0 — one `ingestion_generate(json_mode=True)` call parsed as `{"name", "summary"}`. A name that fails `_name_fits_members` (no token of ≥ 3 letters shared with a member entity name) is rejected with up to 2 `strict_naming=True` retries; then `_derive_fallback_community_name(member_rows)`. Empty summary falls back to `"Community at level {L} containing {n} related nodes."`. Summary failures skip the community entirely.
 2. `community_id = f"community_l{level}_{uuid4().hex}"`.
 3. `GraphService.create_leiden_community(community_id, level, name, summary, member_node_ids)`:
    - Kuzu `MERGE (c:Node {id}) ON CREATE SET c.kind='community', c.type='community', c.name=$name ON MATCH SET c.name=$name`
@@ -465,7 +464,7 @@ Pending ids come from `_queue_leiden_recompute_if_due(note_id)`: the note's 1-ho
 | Node name | `f"{label} — {period.capitalize()} Digest"` |
 | Kuzu | `GraphService.create_temporal_digest_node(node_id, name, summary, period_key)`: `MERGE (d:Node {id}) ON CREATE SET d.kind='temporal_digest', d.type='temporal_digest', d.name=$name ON MATCH SET d.name=$name`. **No edges.** |
 | Qdrant | same method: `upsert_node_core(node_id, name, node_type="temporal_digest", description=summary, description_vector=embed(summary), extra_payload={"period_key": key})` — `period_key` is what retrieval filters on (`search_all_collections(period_key_filter=…)`) |
-| Meilisearch | `index_node(node_id, name, node_type="temporal_digest", isolated_contexts_text=summary)` |
+| Meilisearch | `index_node(node_id, name, node_type="temporal_digest", isolated_contexts=[summary])` |
 | Clearing | `GraphService.clear_all_temporal_digests()` (`MATCH (d:Node) WHERE d.kind='temporal_digest' RETURN d.id` then `DETACH DELETE`) → caller deletes each id from Qdrant/Meili. Runs **after** bucketing succeeds, so an empty KB does not wipe existing digests. |
 | Triggers | (a) debounced per-workflow `threading.Timer(COMMUNITY_IDLE_SECONDS, self.build_temporal_digests)` restarted by every `_queue_leiden_recompute_if_due` when `TEMPORAL_DIGESTS_ENABLED`; (b) `POST /api/v1/admin/build-temporal-digests` `{period?}`. |
 | Gates | The method itself returns 0 when `settings.TEMPORAL_DIGESTS_ENABLED` is False (default False) — so, contrary to the admin endpoint's docstring ("this manual endpoint is always available"), the endpoint returns `started` but the job no-ops when the flag is off. Also returns 0 (and relies on the timer restarting later) if `_tracker.has_active_ingestions()`. |
@@ -529,7 +528,7 @@ Conventions: every method returns plain Python (`list[dict]` rows keyed by Cyphe
 
 | Method | Signature | What it does / Cypher | Returns | Callers |
 |---|---|---|---|---|
-| `execute_query` | `(query: str, params: dict=None) -> list[dict]` | Runs one Cypher statement under `self._lock`; iterates `QueryResult` into `dict(zip(column_names, row))`. Logs query+params at ERROR and **re-raises** on failure. | rows | everything; also directly from `api/notes.py` (delete), `api/graph.py` (name backfill), `ingestion.py` (MERGEs, neighbour query) |
+| `execute_query` | `(query: str, params: dict=None) -> list[dict]` | Runs one Cypher statement under `self._lock`; iterates `QueryResult` into `dict(zip(column_names, row))`. Logs query+params at ERROR and **re-raises** on failure. | rows | everything; also directly from `api/notes.py` (delete), `main.py` (`_migrate_stores`), `ingestion.py` (MERGEs, neighbour query) |
 | `close` | `() -> None` | `self.conn.close()`; errors swallowed | — | `KBRegistry.delete_kb` |
 | `resolve_node_id` | `(name) -> str|None` | `self._qdrant.find_node_id_by_name(name)` — **Qdrant, not Kuzu** | id | `get_related_nodes`, `create_or_update_relationship` |
 | `find_nodes_by_name` | `(names: list[str], fuzzy=True) -> list[dict]` | lowercases names; fuzzy: `UNWIND $names AS q MATCH (n:Node) WHERE n.kind IN ['indexable','note'] AND toLower(n.name) CONTAINS q RETURN DISTINCT n.id AS node_id, n.name AS name, [n.kind] AS labels, n.type AS entity_type, q AS matched_query LIMIT 50`; exact: `toLower(n.name) IN $names`, `matched_query = toLower(n.name)` | rows `{node_id,name,labels,entity_type,matched_query}` | `RetrievalService` (entity lookup), `_update_node_summary` (`fuzzy=False`) |
@@ -543,7 +542,7 @@ Conventions: every method returns plain Python (`list[dict]` rows keyed by Cyphe
 | `create_temporal_digest_node` | `(node_id, name, summary, period_key) -> None` | §10; Qdrant failure logged, not raised | — | `build_temporal_digests` |
 | `set_node_community_membership` | `(node_ids, community_id, community_level) -> None` | one UNWIND MERGE of `MEMBER_OF` with `SET r.level` | — | `_commit_community` |
 | `create_leiden_community` | `(community_id, community_level, name, summary, member_node_ids) -> dict` | §9.3 step 3 | `{"community_id"}` | `_commit_community` |
-| `get_node_storage_payload` | `(node_id) -> dict|None` | Kuzu existence check (`RETURN n.id, [n.kind] AS labels`) then Qdrant `get_node_content_by_id` + `get_relationships_for_node_ids`; strips `FACTS:` | `{node_id, labels, name, description, facts, potential_questions, isolated_contexts, community_level, relationship_natural_language}` (`facts`/`potential_questions` are always `[]` — Qdrant no longer returns them) | none currently (kept for API compatibility) |
+| `get_node_storage_payload` | `(node_id) -> dict|None` | Kuzu existence check (`RETURN n.id, [n.kind] AS labels`) then Qdrant `get_node_content_by_id` + `get_relationships_for_node_ids` | `{node_id, labels, name, description, facts, potential_questions, isolated_contexts, community_level, relationship_natural_language}` (`facts`/`potential_questions` are always `[]` — Qdrant no longer returns them) | none currently (kept for API compatibility) |
 | `get_linked_evidence` | `(node_names, limit_per_node=3) -> list[dict]` | §8.2 | `[{node_id, evidence:[{id,title}], node_name}]` | `RetrievalService` |
 | `get_linked_evidence_by_node_ids` | `(node_ids, limit_per_node=3, node_id_to_name=None) -> list[dict]` | §8.2 | same | `RetrievalService`, `get_linked_evidence` |
 | `create_or_update_relationship` | §7.1 | §7.1 | `{action, …}` | `_write_ontology` |
@@ -592,7 +591,7 @@ Service payload:
 ```json
 {
   "node_id": "…", "name": "…", "node_type": "person|…|community",
-  "description": "<Qdrant description, FACTS: stripped>",
+  "description": "<Qdrant description>",
   "isolated_contexts": ["…"], "facts": [], "domain": null, "status": null,
   "community_id": "community_l2_…", "community_name": "…",
   "summary": "<same as description>", "themes": [], "member_count": 0,
@@ -607,9 +606,8 @@ Service payload:
 - `connections`: `get_node_connections(id)` (≤16), `related_notes`: `get_notes_referencing_node(id)` (≤8).
 
 API-level enrichment in `api/graph.py`:
-1. If `description` and `isolated_contexts` are both empty, `kb.meili.get_node(id)` and `_apply_meili_content` fills `name`, `node_type`, `isolated_contexts` (split on `" | "`), `description`, `summary`.
-2. Names that are empty/`unknown`/`untitled`/`untitled note` in `related_notes`/`connections` are resolved from SQLite `Note.title` (or `rel_path` stem) then Qdrant `name`; unresolved → `"Untitled note"` / `"Untitled"`.
-3. Resolved names are **written back to Kuzu** (`MATCH (n:Node {id}) SET n.name=$name`) — a read endpoint with a write side effect.
+1. If `description` and `isolated_contexts` are both empty, `kb.meili.get_node(id)` and `_apply_meili_content` fills `name`, `node_type`, `isolated_contexts` (the stored array; a document indexed before contexts became a list is wrapped as a one-element list) and, when `description` is empty, `description`/`summary` = the first context.
+2. Names that are empty/`unknown`/`untitled`/`untitled note` in `related_notes`/`connections` get the display default `"Untitled note"` (`"Untitled"` for non-note connections) via `_needs_title`. Nothing is resolved per request and nothing is written to Kuzu — the one-time backfill lives in `main._migrate_stores`.
 
 ### 13.3 `GET /api/v1/graph/entities/search?q=&limit=5`
 
@@ -694,7 +692,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 | Layout computation error | Caught, WARNING, communities remain valid; positions stale/NULL. |
 | `store_node_positions` batch error | Falls back to per-row writes; per-row errors DEBUG-logged and skipped. |
 | >4000 semantic edges / >5000 union edges | Silently truncated in the 3D payload / spring input. |
-| Legacy path migration or `normalize_kuzu_path` persistence errors | WARNING, continue with whatever path resolves. |
+| `normalize_kuzu_path` persistence errors in `_load` | WARNING, continue with whatever path resolves. |
 | `temporal_digest` run raises unexpectedly | `_temporal_digest_running` is left `True` (only reset on normal/handled exits) → status shows running until the next successful run or restart. |
 | Kuzu parser assertion (`KU_UNREACHABLE`) | Native assertion in the Kuzu binary; may abort the process rather than raise. Avoid the forbidden constructs (§16.1). |
 
@@ -713,7 +711,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 11. **Notes are "indexable" for name lookup** (`kind IN ['indexable','note']`), so `find_nodes_by_name("meeting")` can return note titles.
 12. **`get_node_detail.community_id` is an arbitrary one** of the node's up-to-three communities (`OPTIONAL MATCH … LIMIT 1`), while `get_full_3d_graph.community_id` is the finest level.
 13. **Community level lives on `MEMBER_OF.level`, not on the community node**; Qdrant payload also has it.
-14. **`GET /graph/3d/node/{id}` writes to Kuzu** (name backfill).
+14. **`GET /graph/3d/node/{id}` is read-only**; note names that used to be backfilled per request were fixed once by `main._migrate_stores`.
 15. **The ingestion tracker is process-global**, so KBs cancel each other's rebuilds and the idle callback may target the wrong KB.
 16. **Importing `app.services.graph` opens the default Kuzu DB** — tests must patch `kuzu.Database`/`kuzu.Connection` first (`_get_graph_service_class` pattern); any script importing `app.services.*` while the backend runs will contend for the file.
 17. **`KBRegistry.delete_kb` evaluates `ctx.graph` to close it**, opening a never-opened DB just to close it.
@@ -723,7 +721,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 21. **`delete_note` leaves Qdrant `*_node_relationships` points for deleted orphans** (`delete_node` clears cores+contexts only).
 22. **`get_all_node_ids_and_edges`' `LIMIT 5000` applies to the whole `UNION`**, so MEMBER_OF edges can be starved by many SEMANTIC_REL edges; `get_full_3d_graph` avoids this by building MEMBER_OF edges from the unlimited membership query.
 23. **Kuzu accepts `MERGE … ON CREATE SET … SET …`** (unconditional SET after ON CREATE) — the ingestion MERGEs rely on it.
-24. **`_strip_facts_prefix` returns `""`** when a `FACTS:` prefix has no `". "` terminator — a legacy description can vanish entirely.
+24. **`FACTS:` prefixes are scrubbed once, not at read time** (`strip_facts_prefixes` from `_migrate_stores`); a legacy description with no `". "` terminator became empty in that scrub.
 
 ## 19. Extension points / how to modify safely
 

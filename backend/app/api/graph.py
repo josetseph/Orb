@@ -4,16 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
 
 from app.api.deps import get_kb
-from app.core.database import AsyncSessionLocal
 from app.core.log import get_logger
-from app.models.note import Note
 from app.services.ai_gate import ai_is_configured
 from app.services.kb_registry import KBContext
 
@@ -27,30 +23,6 @@ class ScanTextInput(BaseModel):
     text: str
 
 
-def _meili_doc_as_dict(doc: object) -> dict | None:
-    """Normalize a Meili hit/document into a plain dict."""
-    if doc is None:
-        return None
-    if isinstance(doc, dict):
-        return doc
-    try:
-        return dict(doc)  # type: ignore[arg-type]
-    except Exception:  # pylint: disable=broad-exception-caught
-        keys = (
-            "node_id",
-            "name",
-            "type",
-            "isolated_contexts",
-            "relationship_natural_language",
-            "community_level",
-        )
-        return {
-            k: getattr(doc, k)
-            for k in keys
-            if getattr(doc, k, None) is not None
-        } or None
-
-
 def _needs_title(name: object) -> bool:
     n = (str(name) if name is not None else "").strip()
     return not n or n.lower() in {"unknown", "untitled", "untitled note"}
@@ -61,20 +33,15 @@ def _apply_meili_content(detail: dict, doc: dict) -> None:
         detail["name"] = doc["name"]
     if not detail.get("node_type") and doc.get("type"):
         detail["node_type"] = doc["type"]
-    ctx = doc.get("isolated_contexts") or ""
-    if isinstance(ctx, str) and ctx.strip():
-        parts = [p.strip() for p in ctx.split(" | ") if p.strip()]
-        if not parts:
-            parts = [ctx.strip()]
-        detail["isolated_contexts"] = parts
+    ctx = doc.get("isolated_contexts") or []
+    if isinstance(ctx, str):  # indexed before contexts were stored as a list
+        ctx = [ctx]
+    ctx = [str(x) for x in ctx if x]
+    if ctx:
+        detail["isolated_contexts"] = ctx
         if not detail.get("description"):
-            detail["description"] = parts[0]
-            detail["summary"] = parts[0]
-    elif isinstance(ctx, list) and ctx:
-        detail["isolated_contexts"] = [str(x) for x in ctx if x]
-        if not detail.get("description"):
-            detail["description"] = str(ctx[0])
-            detail["summary"] = str(ctx[0])
+            detail["description"] = ctx[0]
+            detail["summary"] = ctx[0]
 
 
 @router.get("/api/v1/graph/3d/full")
@@ -101,92 +68,21 @@ async def graph_3d_node_detail(node_id: str, kb: KBContext = Depends(get_kb)):
     needs_content = not (detail.get("description") or detail.get("isolated_contexts"))
     if needs_content:
         try:
-            doc = _meili_doc_as_dict(await asyncio.to_thread(kb.meili.get_node, node_id))
+            doc = await asyncio.to_thread(kb.meili.get_node, node_id)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.debug("[graph] Meili content fallback failed: %s", exc)
             doc = None
         if isinstance(doc, dict):
             _apply_meili_content(detail, doc)
 
-    # Prefer DB/Qdrant titles over empty/placeholder graph node.name values
-    # (legacy rows can show as "Unknown" on REFERENCES connections).
-    related = detail.get("related_notes") or []
-    connections = detail.get("connections") or []
-
-    resolve_ids: set[str] = set()
-    for note in related:
-        nid = note.get("note_id")
-        if nid and _needs_title(note.get("name")):
-            resolve_ids.add(str(nid))
-    for conn in connections:
-        cid = conn.get("node_id")
-        if cid and _needs_title(conn.get("name")):
-            resolve_ids.add(str(cid))
-
-    resolved: dict[str, str] = {}
-    if resolve_ids:
-        try:
-            async with AsyncSessionLocal() as session:
-                rows = (
-                    await session.execute(
-                        select(Note.id, Note.title, Note.rel_path).where(
-                            Note.id.in_(list(resolve_ids))
-                        )
-                    )
-                ).all()
-            for rid, title, rel_path in rows:
-                if not rid:
-                    continue
-                label = (title or "").strip()
-                if not label and rel_path:
-                    label = Path(str(rel_path)).stem.strip()
-                if label:
-                    resolved[str(rid)] = label
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[graph] Note title resolve failed: %s", exc)
-
-        still = [i for i in resolve_ids if i not in resolved]
-        if still:
-            try:
-                content_map = await asyncio.to_thread(
-                    kb.qdrant.get_nodes_content_by_ids, still
-                ) or {}
-                for sid in still:
-                    label = (content_map.get(sid) or {}).get("name") or ""
-                    if isinstance(label, str) and label.strip():
-                        resolved[sid] = label.strip()
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.warning("[graph] Qdrant title resolve failed: %s", exc)
-
-    for note in related:
-        nid = note.get("note_id")
-        if nid and resolved.get(str(nid)):
-            note["name"] = resolved[str(nid)]
-        elif _needs_title(note.get("name")):
+    # Legacy note nodes were named at startup (main._migrate_stores); anything
+    # still blank has no SQLite row to name it from.
+    for note in detail.get("related_notes") or []:
+        if _needs_title(note.get("name")):
             note["name"] = "Untitled note"
-
-    for conn in connections:
-        cid = conn.get("node_id")
-        if cid and resolved.get(str(cid)):
-            conn["name"] = resolved[str(cid)]
-        elif _needs_title(conn.get("name")):
-            conn["name"] = (
-                "Untitled note" if conn.get("kind") == "note" else "Untitled"
-            )
-
-    # Backfill Kuzu so the next hop query returns real names.
-    if resolved:
-        try:
-            def _backfill() -> None:
-                for nid, name in resolved.items():
-                    kb.graph.execute_query(
-                        "MATCH (n:Node {id: $id}) SET n.name = $name",
-                        {"id": nid, "name": name},
-                    )
-
-            await asyncio.to_thread(_backfill)
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[graph] Kuzu name backfill failed: %s", exc)
+    for conn in detail.get("connections") or []:
+        if _needs_title(conn.get("name")):
+            conn["name"] = "Untitled note" if conn.get("kind") == "note" else "Untitled"
 
     return detail
 
@@ -254,7 +150,7 @@ async def scan_entities_in_text(
             node_id = payload.get("node_id", "")
             if not node_id or node_type in ("note", "community"):
                 continue
-            if re.search(re.escape(name), text, re.IGNORECASE) and node_id not in found:
+            if name.lower() in text.lower() and node_id not in found:
                 found[node_id] = {
                     "node_id": node_id,
                     "name": name,

@@ -53,7 +53,7 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `src/lib/types.ts` | Wire types shared across pages | `Note`, `ChatStatus`, `KnowledgeBase`, `SetupStatus`, finance types, … |
 | `src/lib/utils.ts` | `cn`, vault URL helpers, media URL classifiers, YouTube/Vimeo embed, blob fetch | see §9 |
 | `src/lib/desktop.ts` | Tauri bridge typing + helpers | `getDesktopBridge`, `isDesktopApp`, `pickDesktopDirectory`, `pickDesktopFile`, `notifyIfUnfocused`, `revealInFolder` (API call), `revealInFolderLabel` |
-| `src/lib/kb-context.tsx` | Active-KB context, `localStorage` persistence, legacy key migration | `KBProvider`, `useKB` |
+| `src/lib/kb-context.tsx` | Active-KB context, `localStorage` persistence | `KBProvider`, `useKB`, `kbSlug` |
 | `src/lib/chat-context.tsx` | Chat session state machine + async polling | `ChatProvider`, `useChat`, `Message` |
 | `src/lib/markdown-entities.tsx` | Entity-link injection, URL sanitiser, scan cache hook, anchor renderer | `urlTransform`, `injectEntityLinks`, `useScannedEntities`, `flattenLinkText`, `isAttachmentHref`, `MarkdownAnchor` |
 | `src/components/sidebar.tsx` | Fixed 80 px left rail with nav + KB label + status light | `Sidebar` |
@@ -348,9 +348,10 @@ Context value:
 
 Persistence: key **`orb_current_kb`**, value `JSON.stringify({slug, name})`, read and written through `loadJson`/`saveJson` in `lib/utils.ts`. `readStorage()`:
 
-1. Reads `orb_current_kb`; if absent, tries legacy keys `lifeos_current_kb` then `liveos_current_kb`, copies the first hit to the new key and deletes the legacy key (one-time migration from the LifeOS/LiveOS names).
-2. If the raw value does not start with `{` it is treated as the old plain-string format: `{slug: raw, name: raw}`.
-3. Any exception (no `localStorage`, bad JSON) → `{slug:"default", name:"default"}`.
+1. Reads `orb_current_kb` and parses `{slug, name}` (missing `slug` → `"default"`, missing `name` → the slug). No other key or format is read.
+2. Absent key or any exception (no `localStorage`, bad JSON) → `{slug:"default", name:"default"}`.
+
+`kbSlug(kb)` is the slug the app stores for a workspace record: `"default"` for the built-in KB, else `kb.slug` (required on the wire — nothing derives a slug from the name client-side).
 
 The provider initialises its state from storage in a lazy `useState` initialiser, so the first render already has the stored KB and pages fetch the right KB on their first effect. There is no hydration flag (a leftover from the Next.js era) and nothing to gate on.
 
@@ -460,8 +461,8 @@ Active state uses **exact** `pathname === item.href` (so `/notes?note=…` still
 | `SystemStatusIndicator` | — | Sidebar activity light; see §15. | `GET /admin/maintenance-status?kb=` | `Sidebar` |
 | `AiLimitedBanner` | — | Fixed bottom banner when AI is not configured; see §16. | `GET /setup/status` (once per mount) | `layout.tsx` |
 | `ShaderBackground` | — | Full-viewport `<canvas class="fixed inset-0 z-0 opacity-30">`; 100 `ParticleImpl` dots (size 3–8, speed ±0.25 px/frame, bluish rgba) drawn via `requestAnimationFrame`, wrapping at edges. Canvas is sized once from `offsetWidth/Height` on mount and on `resize` (particles keep the original bounds — a known cosmetic imperfection). Cancels rAF on unmount. Despite its name it is 2D canvas, not WebGL. | — | home, chat, notes, notes-graph, kb, settings, setup, finance (not graph-3d) |
-| `BlobMediaPlayer` | `url`, `kbId="default"`, `kind:"video"\|"audio"`, `className?` | Renders an `<iframe>` when `youtubeEmbedUrl`/`vimeoEmbedUrl` match; otherwise a `<video controls playsInline>` / `<audio controls>` whose `src` is `encodeFileUrl(resolveFileUrl(url, kbId))`. On the first `onError` it retries **once** by `fetchMediaObjectUrl` → `blob:` object URL (handles moov-at-end MP4s and proxies that mishandle Range); a second failure shows "Could not play this video/audio." Object URLs are revoked on unmount/url change, including when the blob resolves after unmount. | `GET /vault-files/...` (media) | chat file preview, `SegmentedNoteContent`, notes `FilePreviewModal` |
-| `SegmentedNoteContent` | `content`, `onFileClick(url, filename)`, `onEntityClick?(nodeId, name)`, `proseClassName`, `kb="default"` | Note-content renderer used for read-only previews. Splits `content` on multimedia markers produced by ingestion — `[Image: <title>]`, `[PDF Extraction (<file>)]:`, `[Audio Transcript (<title>)]:`, `[Video Transcript (<title>)]:` — into `Segment{type,label,content}`; each non-text segment gets a coloured `SegmentDivider` pill (image blue, pdf amber, audio emerald, video purple) and each segment is rendered by `ReactMarkdown` + `remark-gfm` with `urlTransform` and a custom `a` renderer. Entity scan (`useScannedEntities`) runs only when `onEntityClick` is provided; matches are injected as `entity://` links before rendering. Link renderer: `entity://<id>` → blue pill button; attachment links (text starting with 📎/🖇/🎤 or `isAttachmentHref`) render inline `<img>`, `BlobMediaPlayer` (video), `<iframe>` (pdf) or a purple file button, all calling `onFileClick(resolvedUrl, filename)`; everything else → `MarkdownAnchor`. Empty content renders `*Empty note*`. | `POST /graph/entities/scan-text` (when entity clicks enabled) | chat note-preview modal |
+| `BlobMediaPlayer` | `url`, `kbId="default"`, `kind:"video"\|"audio"`, `className?` | Renders an `<iframe>` when `youtubeEmbedUrl`/`vimeoEmbedUrl` match; otherwise a `<video controls playsInline>` / `<audio controls>` whose `src` is `resolveFileUrl(url, kbId)`. On the first `onError` it retries **once** by `fetchMediaObjectUrl` → `blob:` object URL (handles moov-at-end MP4s and proxies that mishandle Range); a second failure shows "Could not play this video/audio." Object URLs are revoked on unmount/url change, including when the blob resolves after unmount. | `GET /vault-files/...` (media) | chat file preview, `SegmentedNoteContent`, notes `FilePreviewModal` |
+| `SegmentedNoteContent` | `content`, `onFileClick(url, filename)`, `onEntityClick?(nodeId, name)`, `proseClassName`, `kb="default"` | Note-content renderer used for read-only previews. Splits `content` on multimedia markers produced by ingestion — `[Image: <title>]`, `[PDF Extraction (<file>)]:`, `[Audio Transcript (<title>)]:`, `[Video Transcript (<title>)]:` — into `Segment{type,label,content}`; each non-text segment gets a coloured `SegmentDivider` pill (image blue, pdf amber, audio emerald, video purple) and each segment is rendered by `ReactMarkdown` + `remark-gfm` with `urlTransform` and a custom `a` renderer. Entity scan (`useScannedEntities`) runs only when `onEntityClick` is provided; matches are injected as `entity://` links before rendering. Link renderer: `entity://<id>` → blue pill button; attachment links (text starting with 📎/🎤 or `isAttachmentHref`) render inline `<img>`, `BlobMediaPlayer` (video), `<iframe>` (pdf) or a purple file button, all calling `onFileClick(resolvedUrl, filename)`; everything else → `MarkdownAnchor`. Empty content renders `*Empty note*`. | `POST /graph/entities/scan-text` (when entity clicks enabled) | chat note-preview modal |
 | `EntityDetailPanel` | `nodeId: string\|null`, `name?`, `kb="default"`, `onClose` | `AnimatePresence` slide-in (`absolute right-0 w-80`, z-40). When `nodeId` is set fetches `api.getNodeDetail` and shows: type badge, description, up to 6 `isolated_contexts`, all `facts`, `domain`, community name/id, up to 10 `connections` with `←/→ relationship`, `related_notes` titles, or an empty-state hint ("No stored contexts yet… Re-ingest"). Fetch errors are swallowed (`detail` stays null → "Entity details unavailable"). Footer links to `/graph-3d` with a plain `<a>` (full navigation). | `GET /graph/3d/node/{id}?kb=` | chat, notes |
 | `ConnectedNotesPanel` | `noteId`, `noteContent`, `kb`, `onClose`, `onSelectNote?(id)`, `onSelectEntity?(nodeId, name)`, `className?` | 340 px right-hand `aside` with two modes: **Note** (`GET /graph/notes/{id}/neighbors`, refetched on `noteId`/`kb` only — deliberately *not* on content) and **Nodes** (`POST /graph/entities/note-subgraph` with the note text, debounced 500 ms while typing, aborted on change). Runs its own tiny force simulation in React state (`SimNode` with repulsion `700/d²`, spring to an ideal length `70 + hash%50`, centring `0.008`, damping 0.86→0.92, max 180 frames or until max speed < 0.05) inside a 320×420 SVG. Seeded layout (`hashSeed(noteId:mode:layoutNonce)`) so re-opening gives the same picture; "Shuffle" bumps `layoutNonce`. Node colours: centre/entities purple, wikilink notes teal, `type === "missing"` red (ids prefixed `missing:` are not clickable). | see left | notes page |
 
@@ -503,9 +504,10 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 | `NoteStatus` | `id, processed, failed, status, processing_stage?, processing_model?` | `GET /notes/{id}/status` |
 | `ChatStatus` | `request_id, conversation_id?, stage, model?, done?, result?{answer?, thinking?, conversation_id?, assistant_message_id?}, error?` | `GET /chat/status/{id}` |
 | `ChatConversation` | `id, kb_id, title, created_at?, updated_at?` | `GET /chat/conversations` |
-| `ChatMessageRecord` | `id, conversation_id, role, content, thinking?, created_at?` | `GET /chat/conversations/{id}/messages` |
+| `ChatSource` | `id, title` — a note the answer drew on | `sources` on chat results and stored messages |
+| `ChatMessageRecord` | `id, conversation_id, role, content, sources?: ChatSource[], thinking?, created_at?` | `GET /chat/conversations/{id}/messages` |
 | `EffectiveLLM` | `provider, model: string\|null, ingestion_model: string\|null, inherited: boolean` (`inherited=true` → KB follows Settings) | embedded in `KnowledgeBase.effective_llm` and `KBLLMConfig.effective` |
-| `KnowledgeBase` | `id, name, slug?, vault_path?, kuzu_path?, qdrant_col_cores?, typesense_collection?` (legacy field name from the Typesense era; now Meilisearch), `created_at`, per-KB override `llm_provider?, llm_model?, llm_ingestion_model?` (null = inherit), `effective_llm?` | `GET /kb` |
+| `KnowledgeBase` | `id, name, slug, vault_path?, kuzu_path?, qdrant_col_cores?, typesense_collection?` (legacy field name from the Typesense era; now Meilisearch), `created_at`, per-KB override `llm_provider?, llm_model?, llm_ingestion_model?` (null = inherit), `effective_llm?` | `GET /kb` |
 | `KBLLMConfig` | `kb_id, override{provider, model, ingestion_model}` (nullable), `effective: EffectiveLLM`, `providers: string[]`, `local_models: {id,label,size_gb}[]` (chat GGUFs on disk — the only local models a KB may pin) | `GET/PATCH /kb/{id}/llm` |
 | `FinanceAccount`, `FinanceTransaction`, `FinanceBudget`, `FinanceCategory`, `FinanceRecurrence`, `FinanceRuleGroup`, `FinanceRule`, `FinanceSearchResult`, `FinanceWorkspace`, `FinanceSummary`, `FinanceReport` | Firefly-derived shapes; see [17](17-finance-firefly.md) | `/finance/*` |
 | `NotesGraphPayload` | `nodes:{id, title, type, rel_path?}[]` (`type` is `"note"` or `"missing"`), `edges:{source,target,type}[]`, `center_id?` | `/graph/notes`, `/graph/notes/{id}/neighbors`, `/graph/entities/note-subgraph` |
@@ -518,14 +520,14 @@ Types that live outside `types.ts`: `Message` (`chat-context.tsx`), `ScannedEnti
 | Function | Behaviour |
 |---|---|
 | `cn(...inputs)` | `twMerge(clsx(inputs))`. |
-| `resolveFileUrl(url, kbId="default")` | Normalises backslashes; repairs a historical double `attachments/attachments/` segment; returns `/vault-files/...` unchanged; converts `attachments/<x>` to `/vault-files/<encoded kb>/attachments/<x>`; anything else passthrough. |
+| `resolveFileUrl(url, kbId="default")` | Returns `/vault-files/...` unchanged; converts `attachments/<x>` to `/vault-files/<encoded kb>/attachments/<x>`; anything else passthrough. No normalisation or repair — stored links are canonical (the one-time vault sweep `vault_sync.migrate_vault_files` rewrote legacy ones). |
 | `isImageUrl` / `isVideoUrl` / `isAudioUrl` / `isPdfUrl` / `isTextUrl` / `isTabularUrl` | Extension regexes applied to the URL-decoded string, tolerant of `?query`: `jpg jpeg png gif webp svg avif bmp ico` / `mp4 webm mov m4v ogv` / `m4a m4b mp3 wav ogg oga opus aac flac weba` / `pdf` / `txt md markdown log json yaml yml xml ini cfg toml` / `csv tsv`. The lists are what **Chromium actually decodes**, not what the pipeline accepts: `.mkv` and `.avi` ingest fine but are deliberately absent (Chromium cannot demux Matroska or AVI, so a `<video>` would render a permanently broken player), and HEIC/HEIF are absent for the same reason. |
 | `youtubeEmbedUrl(url)` | `youtu.be/<id>`, `youtube.com/watch?v=`, `/embed/`, `/shorts/`, `m.`/`youtube-nocookie` hosts → `https://www.youtube-nocookie.com/embed/<id>`; id must match `^[\w-]{6,}$`; else `null`. |
 | `vimeoEmbedUrl(url)` | `vimeo.com`/`player.vimeo.com` numeric path segment → `https://player.vimeo.com/video/<id>`; else `null`. |
-| `encodeFileUrl(url)` | Percent-encodes each path segment (after a safe decode so already-encoded input is not double-encoded) for `/vault-files/<kb>/<path>` and relative/`attachments/` URLs; leaves absolute URLs with `://` alone. |
-| `fetchMediaObjectUrl(url, kbId)` | Returns external `http(s)` URLs as-is; otherwise `fetch(encodeFileUrl(resolveFileUrl(url)))` → `URL.createObjectURL(blob)`; throws on non-OK. Caller must revoke. |
+| `encodeFileUrl(url)` | Percent-encodes a freshly uploaded `/vault-files/<kb>/<raw path>` URL for a markdown link (`encodeURIComponent` on the kb, `encodePathSegment` per path segment); anything else is returned unchanged. Encode-only, no decode round-trip — so it runs exactly once, at insert time (`useNoteMedia`), never on links read back from a note. |
+| `fetchMediaObjectUrl(url, kbId)` | Returns external `http(s)` URLs as-is; otherwise `fetch(resolveFileUrl(url, kbId))` → `URL.createObjectURL(blob)`; throws on non-OK. Caller must revoke. |
 
-Rule of thumb used across pages: `encodeFileUrl(resolveFileUrl(raw, currentKB))` is the canonical "make this note attachment reference loadable" transform.
+Rule of thumb used across pages: `resolveFileUrl(raw, currentKB)` is the canonical "make this note attachment reference loadable" transform on read; `encodeFileUrl` is applied once to an upload response before insertion.
 
 ## 15. `SystemStatusIndicator` — polling and states
 
@@ -605,7 +607,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 - **Client-only rendering.** A static Vite build; no server code in `frontend/`. The backend must remain reachable from the browser at `/api/v1` (same origin: the API serves the build).
 - **`api.ts` is the single HTTP boundary** (two documented exceptions: keepalive PUT inside `api.ts`, blob fetch of `/vault-files` in `utils.ts`).
 - **`kb` is omitted for the default KB** (`withKb`/`kbQuery`); the backend interprets absence as default. Never introduce a global default header.
-- **KB slug in storage key `orb_current_kb`** as `{slug,name}` JSON; legacy keys are migrated once and deleted. Do not add a second source of truth for the active KB.
+- **KB slug in storage key `orb_current_kb`** as `{slug,name}` JSON. Do not add a second source of truth for the active KB.
 - **Providers stay in `App.tsx`** so chat polling and the KB survive navigation. Do not move `ChatProvider` into `/chat`.
 - **Every URL is relative** (`/api/v1`, `/vault-files`). Never hardcode a host or port in the frontend; the API port is the UI origin.
 - **The bridge stays minimal** (`isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`). Anything that can be an HTTP call must be one — the Tauri capability file grants the UI exactly those plugin commands.
@@ -618,7 +620,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 ## 21. Gotchas and non-obvious behaviours
 
 - `npm run dev` proxies to `http://127.0.0.1:17401` by default; set `API_PROXY_TARGET` to point it at an API on another port, or every request 502s.
-- Old notes that embed `/files/…` links (RustFS era) will 404; `isAttachmentHref` still recognises the prefix but nothing serves it.
+- Old notes that embed `/files/…` links (RustFS era) will 404; `isAttachmentHref` recognises only `/vault-files/` and a leading `attachments/`, so they render as plain `MarkdownAnchor` links.
 - `getChatMessages`, `deleteChatConversation`, `getNoteStatus` never send `kb`, so they only resolve resources in the default KB (07 §8). `ChatProvider.selectConversation` takes a `_kb` argument it ignores — that is the visible symptom.
 - `KnowledgeBase.typesense_collection` is the historical field name; the value refers to the Meilisearch index.
 - The chat page passes the note-preview setter to message bodies through `window.__chatSetPreview` rather than props/context. It is installed in a mount effect and deleted on unmount; any second chat instance would clobber it.
@@ -632,7 +634,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 
 - `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" — introduced the desktop bridge, the (since removed) Next.js standalone build and proxy layer, and the settings-page cleanup actions; the container/`rustfs` targets became legacy at this point.
 - `2c10d8d` "Improve KB handling, Qdrant, LLM async, ingestion" — async chat (`/chat/async` + status polling) and the KB context.
-- `6162be2` "Rebrand LifeOS / LiveOS to Orb across product and docs" — storage key `orb_current_kb` with migration from `lifeos_current_kb`/`liveos_current_kb`; bridge name `orbDesktop` (the `liveosDesktop` fallback has since been dropped).
+- `6162be2` "Rebrand LifeOS / LiveOS to Orb across product and docs" — storage key `orb_current_kb` with migration from `lifeos_current_kb`/`liveos_current_kb` (that migration has since been removed); bridge name `orbDesktop` (the `liveosDesktop` fallback has since been dropped).
 - `6365686` "Add entity mention highlighting & editor" — `entity://` link injection and `EntityDetailPanel`.
 - `b84ca73` "Speed up chat, notes UI, and graph writes from deferred audit work" — `ENTITY_SCAN_RECENT_LIMIT`, `scanCache`, poll caps in `ChatProvider`, adaptive status polling.
 - `f8f527f` "Harden security and fix data-loss and perf issues from full-codebase audit" — `urlTransform` scheme allow-list, external-link hardening, fit-once camera guards, blob revoke on unmount.

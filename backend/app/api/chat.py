@@ -145,6 +145,7 @@ async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
             metadata={
                 "rewritten_query": result.get("rewritten_query"),
                 "context_count": len(result.get("context") or []),
+                "sources": result.get("sources") or [],
             },
         )
         _progress("Complete")
@@ -190,6 +191,7 @@ async def _run_chat_job(
             metadata={
                 "rewritten_query": result.get("rewritten_query"),
                 "context_count": len(result.get("context") or []),
+                "sources": result.get("sources") or [],
             },
         )
         result["request_id"] = request_id

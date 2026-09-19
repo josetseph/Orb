@@ -1,5 +1,6 @@
 """Unit tests for chat follow-up query rewrite and history shaping."""
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
@@ -59,3 +60,99 @@ class TestRewriteFollowUpQuery:
         prompt = mock_reason.call_args[0][0]
         assert "..." in prompt
         assert long_text not in prompt
+
+
+# ── json_mode + <think> handling in _chat ────────────────────────────────────
+
+
+class _FakeOpenAI:
+    """Records the kwargs of one chat.completions.create call and returns ``text``."""
+
+    def __init__(self, text: str):
+        self.seen: dict = {}
+        create = self._create
+        self.chat = type("Chat", (), {"completions": type("C", (), {"create": staticmethod(create)})()})()
+        self._text = text
+
+    def _create(self, **kwargs):
+        self.seen = kwargs
+        msg = type("M", (), {"content": self._text, "reasoning_content": None})()
+        return type("R", (), {"choices": [type("Ch", (), {"message": msg, "finish_reason": "stop"})()]})()
+
+
+def _openai_svc(text: str) -> tuple[LLMService, _FakeOpenAI]:
+    svc = LLMService.__new__(LLMService)
+    svc.provider = svc.ingestion_provider = "openai"
+    svc._chat_model_override = "m"
+    svc._base_url_override = None
+    svc.chat_client = svc.i_chat_client = _FakeOpenAI(text)
+    return svc, svc.chat_client
+
+
+class TestJsonMode:
+    def test_response_format_lands_and_prompt_gets_json_guard(self):
+        svc, client = _openai_svc('{"a": 1}')
+        text, _ = svc._chat([{"role": "user", "content": "give me a thing"}], json_mode=True)
+        assert client.seen["response_format"] == {"type": "json_object"}
+        assert client.seen["messages"][-1]["content"].endswith("Respond with a JSON object.")
+        assert text == '{"a": 1}'
+
+    def test_prompt_already_naming_json_is_untouched(self):
+        svc, client = _openai_svc("{}")
+        svc._chat([{"role": "user", "content": "Return a JSON object"}], json_mode=True)
+        assert client.seen["messages"][-1]["content"] == "Return a JSON object"
+
+    def test_off_by_default(self):
+        svc, client = _openai_svc("hi")
+        svc._chat([{"role": "user", "content": "x"}])
+        assert "response_format" not in client.seen
+
+    def test_unclosed_think_is_cut_to_end(self):
+        svc, _ = _openai_svc("answer <think>reasoning that got truncated")
+        text, meta = svc._chat([{"role": "user", "content": "x"}])
+        assert text == "answer"
+        assert meta["thinking"] == "reasoning that got truncated"
+
+    def test_closed_think_still_stripped(self):
+        svc, _ = _openai_svc("<think>why</think>\nanswer")
+        text, meta = svc._chat([{"role": "user", "content": "x"}])
+        assert (text, meta["thinking"]) == ("answer", "why")
+
+
+# ── iterative_step parses the JSON research step ─────────────────────────────
+
+
+def _step(svc, raw: str, docs=None):
+    with patch.object(svc, "_reason_step", return_value=(raw, "thought")):
+        return asyncio.run(
+            svc.iterative_step("q?", [], "search" if docs else None, docs or [], tried_queries=["search"])
+        )
+
+
+class TestIterativeStep:
+    def test_answer_wins(self, svc):
+        got = _step(svc, '{"reasoning": "r", "finding": "f", "answer": "42", "next_query": "ignored"}', [{"text": "d"}])
+        assert got == {
+            "reasoning": "r", "full_answer": "f", "can_answer": True,
+            "final_answer": "42", "next_query": None, "thinking": "thought",
+        }
+
+    def test_next_query_when_no_answer(self, svc):
+        got = _step(svc, '```json\n{"reasoning": "", "finding": null, "answer": null, "next_query": "who?"}\n```')
+        assert not got["can_answer"] and got["next_query"] == "who?"
+        assert got["full_answer"] == ""
+
+    def test_non_answer_strings_do_not_count(self, svc):
+        got = _step(svc, '{"answer": "INSUFFICIENT", "next_query": "null"}', [{"text": "d"}])
+        assert not got["can_answer"] and got["next_query"] is None
+
+    def test_garbage_is_a_no_op_step(self, svc):
+        got = _step(svc, "not json at all")
+        assert got["can_answer"] is False and got["next_query"] is None and got["thinking"] is None
+
+    def test_prompt_asks_for_json(self, svc):
+        with patch.object(svc, "_reason_step", return_value=("{}", None)) as reason:
+            asyncio.run(svc.iterative_step("q?", [], "s", [{"text": "d"}]))
+        prompt = reason.call_args.args[0]
+        assert reason.call_args.kwargs == {"json_mode": True}
+        assert '"next_query"' in prompt and "NEXT_QUERY" not in prompt

@@ -1,49 +1,13 @@
 """Unit tests for app/schemas/extraction.py — Pydantic model validators.
 
-Tests cover normalize_keys, handle_none, and the complex Extraction
-outer-wrapper normalizer. All tests are synchronous with no I/O.
+Tests cover handle_none, the closed relationship vocabulary, and the
+Extraction outer-wrapper normalizer. All tests are synchronous with no I/O.
 """
 
 
-from app.schemas.extraction import ExtractedRelationship, Extraction, Node
+from app.schemas.extraction import RELATIONSHIP_TYPES, ExtractedRelationship, Extraction, Node
 
 # ── Node.normalize_keys ───────────────────────────────────────────────────────
-
-
-class TestNodeNormalizeKeys:
-    def test_trait_aliased_to_name(self):
-        node = Node.model_validate({"trait": "bravery", "type": "quality"})
-        assert node.name == "bravery"
-
-    def test_title_aliased_to_name(self):
-        node = Node.model_validate({"title": "Dr.", "type": "honorific"})
-        assert node.name == "Dr."
-
-    def test_name_takes_priority_over_trait(self):
-        node = Node.model_validate(
-            {"name": "Alice", "trait": "ignored", "type": "person"}
-        )
-        assert node.name == "Alice"
-
-    def test_name_takes_priority_over_title(self):
-        node = Node.model_validate(
-            {"name": "Alice", "title": "ignored", "type": "person"}
-        )
-        assert node.name == "Alice"
-
-    def test_evidence_quote_aliased_to_isolated_context(self):
-        node = Node.model_validate({"name": "X", "evidence_quote": "some text"})
-        assert node.isolated_context == "some text"
-
-    def test_context_aliased_to_isolated_context(self):
-        node = Node.model_validate({"name": "X", "context": "ctx"})
-        assert node.isolated_context == "ctx"
-
-    def test_isolated_context_takes_priority_over_context(self):
-        node = Node.model_validate(
-            {"name": "X", "isolated_context": "primary", "context": "secondary"}
-        )
-        assert node.isolated_context == "primary"
 
 
 # ── Node.handle_none ──────────────────────────────────────────────────────────
@@ -67,52 +31,30 @@ class TestNodeHandleNone:
         assert node.type == "city"
 
 
-# ── ExtractedRelationship.normalize_keys ──────────────────────────────────────
+# ── ExtractedRelationship.relationship_type ──────────────────────────────────
 
 
-class TestExtractedRelationshipNormalizeKeys:
-    def test_entity1_aliased_to_source_name(self):
-        rel = ExtractedRelationship.model_validate(
-            {"entity1": "Alice", "entity2": "Bob", "relationship_type": "knows"}
-        )
-        assert rel.source_name == "Alice"
+class TestRelationshipTypeVocabulary:
+    def _rel(self, rel_type):
+        return ExtractedRelationship.model_validate(
+            {"source_name": "A", "target_name": "B", "relationship_type": rel_type}
+        ).relationship_type
 
-    def test_entity2_aliased_to_target_name(self):
-        rel = ExtractedRelationship.model_validate(
-            {"entity1": "Alice", "entity2": "Bob", "relationship_type": "knows"}
-        )
-        assert rel.target_name == "Bob"
+    def test_none_and_empty_become_related_to(self):
+        assert self._rel(None) == "related_to"
+        assert self._rel("") == "related_to"
 
-    def test_description_aliased_to_natural_language(self):
-        rel = ExtractedRelationship.model_validate(
-            {
-                "source_name": "Alice",
-                "target_name": "Bob",
-                "description": "Alice loves Bob",
-                "relationship_type": "loves",
-            }
-        )
-        assert rel.natural_language == "Alice loves Bob"
+    def test_unknown_predicate_becomes_related_to(self):
+        assert self._rel("plays_corliss_archer") == "related_to"
+        assert self._rel("is_friends_with") == "related_to"  # no fuzzy matching
 
-    def test_none_relationship_type_becomes_relates_to(self):
-        rel = ExtractedRelationship.model_validate(
-            {
-                "source_name": "A",
-                "target_name": "B",
-                "relationship_type": None,
-            }
-        )
-        assert rel.relationship_type == "relates_to"
+    def test_known_predicate_is_normalised_not_rejected(self):
+        assert self._rel(" Lives In ") == "lives_in"
+        assert self._rel("WORKS_AT") == "works_at"
 
-    def test_empty_relationship_type_becomes_relates_to(self):
-        rel = ExtractedRelationship.model_validate(
-            {
-                "source_name": "A",
-                "target_name": "B",
-                "relationship_type": "",
-            }
-        )
-        assert rel.relationship_type == "relates_to"
+    def test_every_listed_predicate_round_trips(self):
+        for t in RELATIONSHIP_TYPES:
+            assert self._rel(t) == t
 
 
 # ── Extraction.normalize_keys ─────────────────────────────────────────────────

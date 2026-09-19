@@ -11,7 +11,6 @@ import type { KnowledgeBase } from "@/lib/types";
 import { saveJson } from "@/lib/utils";
 
 const STORAGE_KEY = "orb_current_kb";
-const LEGACY_STORAGE_KEYS = ["lifeos_current_kb", "liveos_current_kb"];
 
 interface StoredKB {
     slug: string;
@@ -39,25 +38,13 @@ const KBContext = createContext<KBContextValue | null>(null);
 /** Slug the app stores for a workspace record. */
 export function kbSlug(kb: KnowledgeBase): string {
     if (kb.id === "default") return "default";
-    return kb.slug ?? kb.name.toLowerCase().replace(/\s+/g, "_");
+    return kb.slug;
 }
 
 function readStorage(): StoredKB {
     try {
-        let raw = localStorage.getItem(STORAGE_KEY);
-        if (!raw) {
-            for (const key of LEGACY_STORAGE_KEYS) {
-                raw = localStorage.getItem(key);
-                if (raw) {
-                    localStorage.setItem(STORAGE_KEY, raw);
-                    localStorage.removeItem(key);
-                    break;
-                }
-            }
-        }
+        const raw = localStorage.getItem(STORAGE_KEY);
         if (!raw) return { slug: "default", name: "default" };
-        // Handle old format (plain string slug).
-        if (!raw.startsWith("{")) return { slug: raw, name: raw };
         const parsed = JSON.parse(raw) as StoredKB;
         return { slug: parsed.slug || "default", name: parsed.name || parsed.slug || "default" };
     } catch {

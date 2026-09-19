@@ -29,12 +29,8 @@ logger = get_logger("API")
 router = APIRouter()
 
 
-def _parse_date_str(s: str) -> datetime:
-    """ISO-8601 → aware datetime (UTC when no offset); ``now(UTC)`` when unparseable."""
-    try:
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        return datetime.now(timezone.utc)
+def _aware(dt: datetime) -> datetime:
+    """A naive datetime is taken as UTC."""
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
@@ -63,11 +59,7 @@ async def create_note(
 ):
     """Create a note as a vault .md file + metadata row (no ingest)."""
     note_id = str(uuid.uuid4())
-    c_at = (
-        _parse_date_str(note_input.created_at)
-        if note_input.created_at
-        else datetime.now(timezone.utc)
-    )
+    c_at = _aware(note_input.created_at or datetime.now(timezone.utc))
 
     new_note = Note(
         id=note_id,
@@ -354,11 +346,14 @@ async def ingest_note(
     if not note_data.skip_ingestion:
         require_ai(kb)
     note_id = str(uuid.uuid4())
-    c_at = (
-        _parse_date_str(note_data.created_at)
-        if note_data.created_at
-        else datetime.now(timezone.utc)
-    )
+    try:
+        c_at = _aware(
+            datetime.fromisoformat(note_data.created_at)
+            if note_data.created_at
+            else datetime.now(timezone.utc)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"created_at: {exc}") from exc
 
     new_note = Note(
         id=note_id,
@@ -544,7 +539,7 @@ async def update_note(
         await rename_note_file_for_title(db, kb, existing_note, note_input.title)
 
     if note_input.created_at:
-        existing_note.created_at = _parse_date_str(note_input.created_at)
+        existing_note.created_at = _aware(note_input.created_at)
 
     existing_note.updated_at = datetime.now(timezone.utc)
     # Autosave must never start ingestion. Clear watcher false-positives while

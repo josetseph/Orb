@@ -116,3 +116,21 @@ class TestHealIsIdempotent:
         assert writes == [1], "first read repairs"
         local_models._heal_selection_paths(json.loads(store.read_text())["selection"])
         assert writes == [1], "second read must be a no-op"
+
+
+class TestSelectionWrites:
+    def test_read_never_rewrites_the_manifest(self, models_dir, monkeypatch):
+        """Healing runs once at boot (sync_embedding_infrastructure), not per read."""
+        _manifest(monkeypatch, {"chat_path": "/old/chat.gguf", "embed_path": "/old/embed.gguf"})
+        monkeypatch.setattr(local_models, "save_manifest", lambda m: pytest.fail("wrote on read"))
+        assert local_models.gguf_paths_if_present() is not None
+
+    def test_legacy_guess_is_persisted_once(self, models_dir, monkeypatch):
+        _manifest(monkeypatch, {})
+        monkeypatch.setattr(local_models, "CHAT_MODEL_ID", "org/repo/chat.gguf")
+        monkeypatch.setattr(local_models, "EMBED_MODEL_ID", "org/repo/embed.gguf")
+        writes = []
+        monkeypatch.setattr(local_models, "save_manifest", writes.append)
+        got = local_models.gguf_paths_if_present()
+        assert got == {"chat": models_dir / "gguf" / "chat.gguf", "embed": models_dir / "gguf" / "embed.gguf"}
+        assert writes == [{"selection": {"chat_path": "gguf/chat.gguf", "embed_path": "gguf/embed.gguf"}}]

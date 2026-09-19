@@ -178,6 +178,7 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 | `delete_community_relationships` | `() -> None` | delete-by-filter `is_community_rel == True` in rels | `GraphService.clear_all_communities` |
 | `reset_all` | `() -> None` | `delete_collection` ×3 (warn on failure) then `_ensure_collections()` | admin reset-ingestion-data, KB empty |
 | `ensure_vector_size` | `(vector_len) -> None` | adopts `vector_len` into `settings.EMBEDDING_DIMENSIONS` (warn if changed) and re-runs `_ensure_collections()` — always, even if settings already matched | `sync_embedding_infrastructure` only |
+| `strip_facts_prefixes` | `() -> int` | one-time scrub: pages `*_node_cores` (500/page, payload `description` only) and `set_payload`s every description starting `FACTS:` to the text after its first `". "` (empty if none). Raises when Qdrant is unreachable so the caller does not mark the migration done. | `main._migrate_stores` only (doc 22) |
 
 ### 4.7 Read / search functions
 
@@ -199,9 +200,9 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 
 ### 5.1 Client setup
 
-`MeilisearchService.__init__(collection_name=None)`:
+`MeilisearchService.__init__(index_name=None)`:
 
-1. `self.collection = collection_name or settings.MEILI_INDEX_NAME` — the attribute is still called `collection` "for call-site compatibility" with the Typesense era; it is the **index uid**.
+1. `self.index_name = index_name or settings.MEILI_INDEX_NAME` — the **index uid** (the Typesense-era `collection` name for this attribute is gone; `_ensure_collection` keeps its old method name).
 2. `self.client = meilisearch.Client(f"http://{MEILI_HOST}:{MEILI_PORT}", MEILI_MASTER_KEY)` (`meilisearch==0.34.1`). No timeout override.
 3. `_ensure_collection()` immediately. Any exception in 2–3 (including a refused connection) → `_enabled=False`, `client=None`, WARNING; all methods become no-ops.
 
@@ -242,7 +243,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 | `node_id` | all | Kuzu/Qdrant node id |
 | `name` | all | entity name (lowercase), community/digest display name |
 | `type` | all | entity type / `"community"` / `"temporal_digest"` |
-| `isolated_contexts` | `_update_node_summary` (all accumulated contexts joined by `" "`), `build_temporal_digests` (the summary) | **one string**, not a list. `api/graph.py._apply_meili_content` splits on `" | "` when falling back — but the writer joins with `" "`, so the split yields a single element in practice |
+| `isolated_contexts` | `_update_node_summary` / `_reindex_node` (the node's context list), `build_temporal_digests` (`[summary]`) | **a JSON array of strings** (`index_node(..., isolated_contexts: list[str])` stores `list(isolated_contexts)`). `api/graph.py._apply_meili_content` reads it as a list and wraps a pre-array string document in a one-element list. |
 | `relationship_natural_language` | `_update_node_summary` (all NL sentences for the node joined by `" "`), `update_nodes_community` (refreshed after community rebuild, includes membership sentences) | one string |
 | `community_level` | `_commit_community` for community docs only | int |
 
@@ -254,7 +255,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 |---|---|---|---|---|
 | `get_node` | `(node_id) -> dict|None` | `index.get_document(node_id)`; normalises the SDK `Document` object to a dict (`vars(doc)` minus private attrs, then `dict(doc)`, then attribute pick of the six known fields); any error → `None` | — | `_update_node_summary`, `update_nodes_community`, `api/graph.py` content fallback |
 | `search_nodes` | `(query, limit=20) -> list[{score, payload}]` | `index.search(query, {"limit": limit})`; **no filter, no highlighting, no attributesToRetrieve**; `score = float(total - idx)` — a synthetic rank-based score (top hit = N, last = 1), **not** Meilisearch's `_rankingScore` | — | retrieval `_search_meili_by_keyword(query, 100)` fanned out over the query plus extracted keywords/concepts; `api/graph.py` autocomplete (`limit*2`), scan-text (`2` per candidate) |
-| `index_node` | `(node_id, name, node_type, isolated_contexts_text="", relationship_natural_language="", community_level=None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
+| `index_node` | `(node_id, name, node_type, isolated_contexts: list[str] | None = None, relationship_natural_language="", community_level=None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
 | `update_nodes_community` | `(rows: list[{node_id, relationship_natural_language?, name?}]) -> None` | for each row `get_node` (or `{node_id}`), overlay non-empty fields, one `add_documents(docs)` | `wait_for_task(…, 30000)` | `rebuild_leiden_communities` end-of-run refresh |
 | `delete_node` | `(node_id) -> None` | `index.delete_document(node_id)`; 404/"not found" silently ignored | `wait_for_task(…, 5000)` | `api/notes.py`, community/digest rebuilds |
 | `reset_all` | `() -> None` | `delete_index(uid)` (+wait 10 s) then `_ensure_collection()` | 10000 | admin reset, KB empty |
@@ -338,7 +339,7 @@ Rationale in code: avoid "split-brain cores@1024 + contexts@768". Recreation is 
 |---|---|---|---|
 | **Backend import** | default `QdrantService()` constructed → `_ensure_collections` for `node_cores`/`node_relationships`/`node_isolated_contexts` | default `MeilisearchService()` → `orb_nodes` index + settings | module singletons |
 | **Startup** | `sync_embedding_infrastructure()` → `ensure_vector_size` on default + every registered KB (constructs a temporary `QdrantService` per KB, which itself runs `_ensure_collections`) | untouched | `main.startup_event` |
-| **KB create** | `KBRegistry.create_kb` → `_build_context` → `QdrantService(col_cores=…, col_relationships=…, col_contexts=…)` → collections created immediately | `MeilisearchService(collection_name=f"{slug}_nodes")` → index + settings created immediately | `kb_registry.py` |
+| **KB create** | `KBRegistry.create_kb` → `_build_context` → `QdrantService(col_cores=…, col_relationships=…, col_contexts=…)` → collections created immediately | `MeilisearchService(index_name=f"{slug}_nodes")` → index + settings created immediately | `kb_registry.py` |
 | **KB load at startup** | `_load` → `_build_context` per row (collections re-ensured) | same | `kb_registry.py` |
 | **KB delete** | `_cleanup_stores`: temporary `QdrantService` (which first *re-creates* any missing collection via `_ensure_collections`, then) `client.delete_collection` ×3, errors ignored | `client.delete_index(uid)` + `wait_for_task(…, 10000)` | `KBRegistry.delete_kb(wipe_indexes=True)` |
 | **KB empty** (`api/kb.py`) | `kb.qdrant.reset_all()` in `asyncio.to_thread` (delete ×3 + recreate) | `kb.meili.reset_all()` | after Firefly destroy, SQL note purge, `graph.wipe_all_nodes`; before vault clear |
@@ -439,7 +440,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 2. **No payload indexes** — all filters are full scans; `find_node_ids_by_names` pages the whole cores collection in the worst case.
 3. **`search_nodes` scores are synthetic ranks** (`N..1`), not BM25 or `_rankingScore`; comparing them with Qdrant cosine scores is meaningless — retrieval treats them as separate candidate sources.
 4. **`get_relationships_for_node_ids` dedups by sentence text**, so two distinct edges with the same NL collapse; `relationship_id` is not in the payload so they cannot be told apart.
-5. **`isolated_contexts` returned from Qdrant carry `" - <note_created_at>"` appended**; the same field in Meili is a single space-joined string; `api/graph.py` splits Meili contexts on `" | "` which never matches the writer's `" "` join.
+5. **`isolated_contexts` returned from Qdrant carry `" - <note_created_at>"` appended**; the same field in Meili is the array of context strings, which is what `api/graph.py` reads back.
 6. **`note_created_at` is stored as whatever ISO string ingestion passed** (`NoteInput.created_at`, typically full `datetime.isoformat()`), while retrieval filters with `MatchValue("YYYY-MM-DD")` / `MatchAny([...days])` — exact string equality. Date filters only hit when the stored value is a bare date; check what `_update_node_summary` receives before relying on temporal filtering ([10](10-ingestion-pipeline.md)).
 7. **`delete_node` never deletes relationship points**; deleted entities leave dangling `source_node_id`/`target_node_id` in `*_node_relationships` that still match vector searches.
 8. **`_cleanup_stores` constructs a `QdrantService` (recreating missing collections) right before deleting them** — harmless but confusing in logs ("Created collection … / Deleted collection …").
@@ -451,7 +452,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 14. **Meili `type` filterability is configured but unused**; `community_level` is filterable and unused; there are no sortable attributes.
 15. **Community docs in Meili have no `isolated_contexts`/`relationship_natural_language`** — only `name`, `type`, `community_level` — so BM25 can only match communities by name.
 16. **`search_all_collections` with `day_only=True` skips cores and rels entirely**, so entity descriptions never match day-scoped queries.
-17. **The Typesense era is still visible:** SQLite column `typesense_collection`, `self.collection`, `mock_typesense_service`, conftest docstring — all now mean Meilisearch. The `TYPESENSE_*` settings aliases are gone.
+17. **The Typesense era is still visible:** SQLite column `typesense_collection`, the `_ensure_collection` method name, `mock_typesense_service`, conftest docstring — all now mean Meilisearch. The `TYPESENSE_*` settings aliases are gone.
 18. **`QdrantService.__init__` mutates global `settings.EMBEDDING_DIMENSIONS`** as a side effect of constructing any KB's service.
 19. **Meili master key differs between fresh desktop installs (random, in `DATA_DIR/meili_master_key`) and upgraded/dev installs (`orb-dev-key`)** — `curl` debugging must use the file's value.
 20. **Contract tests construct services via `__new__`** — they never exercise `_ensure_collections`, `_prepare_vector`, or task waiting; those paths are untested.

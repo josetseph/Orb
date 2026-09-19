@@ -111,13 +111,10 @@ async def upload_file(
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
 
     logger.info(f"File uploaded to vault: {result['url']}")
-    # Prefer vault-relative path in markdown for portability; also return href for UI.
     return {
         "filename": file.filename,
         "url": result["url"],
-        "href": result["url"],
         "rel_path": result["key"],
-        "local_path": result["url"],
         "key": result["key"],
         "status": "success",
     }

@@ -48,7 +48,7 @@ export function useWikilinkPreview({
         const title = parsed.title;
         // Bare names land beside the linking note (same folder).
         if (!folder && sourceNote?.rel_path) {
-          const src = sourceNote.rel_path.replace(/\\/g, "/");
+          const src = sourceNote.rel_path;
           const slash = src.lastIndexOf("/");
           if (slash >= 0) folder = src.slice(0, slash);
         }

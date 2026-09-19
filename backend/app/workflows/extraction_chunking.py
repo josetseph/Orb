@@ -166,10 +166,6 @@ def normalize_entity_name(name: str) -> str:
     return (name or "").lstrip("#").strip().lower()
 
 
-def _norm(name: str) -> str:
-    return (name or "").lstrip("#").strip().lower()
-
-
 def merge_extractions(parts: list[Extraction]) -> Extraction:
     """Combine chunk extractions: dedupe nodes by name, concatenate their contexts."""
     nodes: dict[str, Node] = {}
@@ -183,7 +179,7 @@ def merge_extractions(parts: list[Extraction]) -> Extraction:
         if not title and (part.title or "").strip():
             title = part.title.strip()
         for node in part.nodes:
-            key = _norm(node.name)
+            key = normalize_entity_name(node.name)
             if not key:
                 continue
             ctx = (node.isolated_context or "").strip()
@@ -198,8 +194,8 @@ def merge_extractions(parts: list[Extraction]) -> Extraction:
                     contexts[key].append(ctx)
         for rel in part.relationships:
             key = (
-                _norm(rel.source_name),
-                _norm(rel.target_name),
+                normalize_entity_name(rel.source_name),
+                normalize_entity_name(rel.target_name),
                 (rel.relationship_type or "").strip().lower(),
             )
             if not key[0] or not key[1]:

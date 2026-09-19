@@ -40,7 +40,7 @@ class _StubLLM:
         # The note is the last thing in the prompt, after the final blank line.
         return prompt.rsplit("nothing else:\n\n", 1)[-1].strip()
 
-    async def ingestion_generate_with_meta(self, prompt: str, temperature=0.1, max_tokens=None):
+    async def ingestion_generate_with_meta(self, prompt: str, temperature=0.1, max_tokens=None, **kw):
         note = self._note_text(prompt)
         self.calls.append(note)
         words = note.split()
@@ -57,7 +57,7 @@ class _StubLLM:
         payload = {"title": f"Title for {words[0]}", "nodes": nodes, "relationships": rels}
         return json.dumps(payload), {"finish_reason": "stop", "truncated": False}
 
-    async def ingestion_generate(self, prompt: str, temperature=0.0, max_tokens=None):
+    async def ingestion_generate(self, prompt: str, temperature=0.0, max_tokens=None, **kw):
         content, _ = await self.ingestion_generate_with_meta(prompt, temperature)
         return content
 
@@ -119,7 +119,7 @@ async def test_truncated_chunk_is_split_and_reextracted(monkeypatch):
 @pytest.mark.asyncio
 async def test_batch_image_titles_maps_tokens_and_falls_back():
     class _TitleLLM:
-        async def ingestion_generate_with_meta(self, prompt, temperature=0.0):
+        async def ingestion_generate_with_meta(self, prompt, temperature=0.0, **kw):
             return 'Sure! [{"index": 1, "title": "Company Logo"}, {"index": 2, "title": ""}, {"index": 9, "title": "x"}]', {}
 
     items = [
@@ -130,7 +130,7 @@ async def test_batch_image_titles_maps_tokens_and_falls_back():
     assert titles == {"{{ORB_IMAGE_TITLE_0}}": "Company Logo"}
 
     class _BrokenLLM:
-        async def ingestion_generate_with_meta(self, prompt, temperature=0.0):
+        async def ingestion_generate_with_meta(self, prompt, temperature=0.0, **kw):
             raise RuntimeError("model down")
 
     assert await agent._batch_image_titles(_BrokenLLM(), items) == {}

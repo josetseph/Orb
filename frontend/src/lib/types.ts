@@ -49,6 +49,7 @@ export type ChatStatus = {
     done?: boolean;
     result?: {
         answer?: string;
+        sources?: ChatSource[];
         thinking?: string | null;
         conversation_id?: string;
         assistant_message_id?: string;
@@ -64,11 +65,18 @@ export interface ChatConversation {
     updated_at?: string | null;
 }
 
+/** A note the assistant drew on for an answer. */
+export interface ChatSource {
+    id: string;
+    title: string;
+}
+
 export interface ChatMessageRecord {
     id: string;
     conversation_id: string;
     role: "user" | "assistant";
     content: string;
+    sources?: ChatSource[];
     thinking?: string | null;
     created_at?: string | null;
 }
@@ -88,7 +96,7 @@ export interface EffectiveLLM {
 export interface KnowledgeBase {
     id: string;
     name: string;
-    slug?: string;
+    slug: string;
     vault_path?: string;
     kuzu_path?: string;
     qdrant_col_cores?: string;

@@ -14,7 +14,6 @@ import {
   isTextUrl,
   isTabularUrl,
   resolveFileUrl,
-  encodeFileUrl,
   fetchMediaObjectUrl,
   youtubeEmbedUrl,
   vimeoEmbedUrl,
@@ -53,13 +52,12 @@ function processingLabel(kind: MediaKind): string {
 
 /** Markdown images + paperclip/mic attachment links + plain links to embeddable video.
  * URLs may contain spaces (unencoded filenames) — match until `)`.
- * Accepts 📎 (paperclip) and 🖇 (paperclips) markers used by older/newer inserts.
  */
 // A markdown URL may hold balanced parentheses ("Report (2026).pdf"), so
 // [^)\n]+ stopped mid-filename and the embed silently did not render.
 const MEDIA_URL = "(?:[^()\\n]|\\([^()\\n]*\\))+";
 const MEDIA_RE = new RegExp(
-  `(?:!\\[([^\\]]*)\\]\\((${MEDIA_URL})\\)|\\[([📎🖇🎤]?[^\\]]*)\\]\\((${MEDIA_URL})\\))`,
+  `(?:!\\[([^\\]]*)\\]\\((${MEDIA_URL})\\)|\\[([📎🎤]?[^\\]]*)\\]\\((${MEDIA_URL})\\))`,
   "gu",
 );
 
@@ -103,8 +101,8 @@ export function mediaEmbedClaimsLink(
   const kind = kindForUrl(rawUrl);
   if (!kind) return false;
   if (isImage) return true;
-  // 📎/🖇/🎤 marks an attachment Orb inserted; those always embed.
-  if (/^[📎🖇🎤]/u.test(rawLabel)) return true;
+  // 📎/🎤 marks an attachment Orb inserted; those always embed.
+  if (/^[📎🎤]/u.test(rawLabel)) return true;
   return kind === "youtube" || kind === "vimeo";
 }
 
@@ -431,7 +429,7 @@ export function createMediaEmbedDecorations(
             const to = from + m[0].length;
             const isMdImage = m[0].startsWith("![");
             const label = (isMdImage ? m[1] : m[3] || "").replace(
-              /^[📎🖇🎤]\s*/u,
+              /^[📎🎤]\s*/u,
               "",
             );
             const rawUrl = (isMdImage ? m[2] : m[4] || "").trim();
@@ -440,7 +438,7 @@ export function createMediaEmbedDecorations(
             const kind = kindForUrl(rawUrl);
             if (!kind) continue;
 
-            // Plain markdown links (no 📎/🖇/🎤 / image) only embed for
+            // Plain markdown links (no 📎/🎤 / image) only embed for
             // YouTube/Vimeo; the rest are hidden-syntax links instead.
             if (!mediaEmbedClaimsLink(isMdImage, m[3] || "", rawUrl)) continue;
 
@@ -453,7 +451,7 @@ export function createMediaEmbedDecorations(
             } else if (kind === "vimeo") {
               src = vimeoEmbedUrl(rawUrl) || rawUrl;
             } else {
-              src = encodeFileUrl(resolveFileUrl(rawUrl.trim(), kbId));
+              src = resolveFileUrl(rawUrl.trim(), kbId);
             }
 
             marks.push(

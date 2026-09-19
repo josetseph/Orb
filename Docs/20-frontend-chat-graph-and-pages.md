@@ -62,7 +62,7 @@ Everything about the conversation itself (`messages`, `conversations`, `activeCo
 - Assistant messages: `AssistantMessageBody` in a translucent bubble with a `Sparkles` avatar. Rendering pipeline per message:
   1. `useScannedEntities(message.content, kb, { enabled: scanEnabled, cacheKey: message.id })` — `scanEnabled` is true only for ids in `scannableMessageIds`, the **last 5 assistant messages** (`ENTITY_SCAN_RECENT_LIMIT`), computed by walking `messages` backwards. Older messages still show highlights if their `kb:id` is in the module cache.
   2. `processContent(text)` = `injectEntityLinks(text, scannedEntities)` (no-op when no entities) converts mentions to `[Name](entity://node_id)`.
-  3. **Reference split**: `refMatch = content.match(/###?\s*References[:\s]*\n([\s\S]+?)$/i)`. If the answer ends with a `## References` / `### References` block, the body before it is rendered as markdown and the block is turned into chips: each line matching `[title](/notes/<id>)` becomes a `FileText` button that calls `api.getNote(id, kb)` and opens the preview via `window.__chatSetPreview`. Lines that do not match are dropped silently. This is the citation contract with the backend answer prompt ([16](16-retrieval-and-chat.md)).
+  3. **Sources**: `message.sources ?? []` (`ChatSource[]` — the response's `sources` field, carried through `ChatProvider` and returned on stored messages) renders under the body as numbered chips keyed by `s.id`; clicking one calls `onOpenNote(s.id)` → `api.getNote(id, kb)` → note preview. The answer text is rendered whole; it carries no citation block ([16](16-retrieval-and-chat.md)).
   4. `ReactMarkdown` with `remarkGfm`, `urlTransform` (allows `entity://`), and `makeLinkRenderer(onFileClick, onEntityClick)`:
      - `entity://<id>` → inline blue dashed-underline button → `handleEntityClick(nodeId, text)` → opens `EntityDetailPanel`.
      - Links whose text starts with 📎 or 🎤 → purple attachment button → `handleFileClick(href, filename)`.
@@ -90,7 +90,7 @@ Everything about the conversation itself (`messages`, `conversations`, `activeCo
 
 ### 3.6 Previews and desktop integration
 
-- `handleFileClick(url, filename)`: `resolvedUrl = encodeFileUrl(resolveFileUrl(url, currentKB))`; classifies by extension on the URL **or filename** (`image` → `pdf` → `video` → `audio` → `other`); sets `filePreview`. Modal renders `<img>`, `<iframe>` (pdf), `BlobMediaPlayer` (video/audio, **without** `kbId` — safe because the URL is already resolved), or a "Preview not available" placeholder.
+- `handleFileClick(url, filename)`: `resolvedUrl = resolveFileUrl(url, currentKB)`; classifies by extension on the URL **or filename** (`image` → `pdf` → `video` → `audio` → `other`); sets `filePreview`. Modal renders `<img>`, `<iframe>` (pdf), `BlobMediaPlayer` (video/audio, **without** `kbId` — safe because the URL is already resolved), or a "Preview not available" placeholder.
 - Reveal/Open button: `handleRevealPreviewFile` → `api.resolveVaultLocalPath(filePreview.url, currentKB)` → `revealInFolder(local_path)` (`POST /api/v1/desktop/reveal`); if it returns false → `window.open(url, "_blank")`; on exception → `alert("Could not reveal this file on disk: …")`. Label is `revealInFolderLabel()` in the desktop app, "Open"/"Open file" otherwise.
 - `handleNoteReference(noteId)` exists for direct note links (`GET /notes/{id}?kb=`) but the reference chips use the `window.__chatSetPreview` path instead.
 - Note preview modal uses `SegmentedNoteContent` with `onEntityClick` enabled, so opening a preview triggers a `scan-text` POST for the note body (uncached — `SegmentedNoteContent` does not pass `cacheKey`).
@@ -98,8 +98,7 @@ Everything about the conversation itself (`messages`, `conversations`, `activeCo
 ### 3.7 Edge cases and gotchas
 
 - Sending while a poll is in flight is blocked at both the page (`isLoading`) and provider level; there is no queue.
-- If the backend answer lacks a References block, no citations render even if the answer mentions notes.
-- Reference chip parsing expects `/notes/<id>` links; any other citation format is dropped.
+- If `sources` is empty or absent (finance answers, user messages), no citation chips render even if the answer mentions notes.
 - Switching KB in `/kb` and returning re-runs `initializeForKb`, discarding an in-progress optimistic transcript only visually (the poll continues in the provider and its completion will still append to `messages`; `isStale()` only guards against *newer sends*, not KB switches). Practical effect: after a KB switch mid-answer the answer may appear under the new KB's conversation list until the final `getChatMessages` refresh replaces `messages`.
 - `expandedThinking` keys are message ids; after the post-completion refresh replaces optimistic ids with server ids, an expanded block collapses (id changed).
 - `getChatMessages`/`deleteChatConversation` do not send `kb` (07 §8) — conversations in non-default KBs cannot be reopened or deleted through this UI if the backend enforces KB scoping on those routes.
@@ -247,7 +246,7 @@ The save effect writes controls only when `controlsLoadedKbRef.current === curre
 
 `kbs: KnowledgeBase[]`, `isLoading`, `isCreating`, `showForm`, `newName`, `newVaultPath`, `deletingId` (`kb.id` or the sentinel `"__all__"`), `renamingId`, `renameValue`, `isRenaming`, `error`. `canBrowse = Boolean(getDesktopBridge()?.pickDirectory)` decides whether "Browse…" buttons render. `fetchKBs()` → `GET /kb` → `data.knowledge_bases` (each row now carries `effective_llm` and the `llm_*` override fields); on error: "Failed to load knowledge bases. Is the backend running?". Runs once on mount (not on `currentKB`).
 
-Slug/identity helpers (mirrors backend slugging): `slugOf(kb) = kb.slug ?? kb.name.toLowerCase().replace(/\s+/g, "_")`; `isActive(kb)` = `currentKB === "default"` for the default KB, else `currentKB === slug || currentKB === kb.name` (legacy stored names still match). `handleSelect(kb)` → `setCurrentKB(kb.id === "default" ? "default" : slug, kb.name)`.
+Slug/identity: `kbSlug(kb)` from `kb-context` (`"default"` for the built-in KB, else `kb.slug` — required on the wire, never derived from the name). The active record is `currentKBRecord ?? kbs.find(k => kbSlug(k) === currentKB || k.name === currentKB)`; selecting a KB calls `setCurrentKB(kbSlug(kb), kb.name)`, and deleting the active one (`currentKB === kb.name || currentKB === kbSlug(kb)`) resets to `"default"`.
 
 ### 6.2 Flows
 
@@ -280,7 +279,7 @@ Rendered inside every KB card under the metadata with `kb`, `onSaved={fetchKBs}`
 
 ### 6.4 Gotchas
 
-- Slug derivation is duplicated client-side; if the backend slugging changes, `isActive`/`handleSelect` must follow.
+- Slugs are not derived client-side; `KnowledgeBase.slug` is required, so a `GET /kb` row without one is a type error, not a fallback.
 - `emptyKB` is addressed by slug, `deleteKB`/`renameKB`/LLM routes by `id`.
 - Deleting the active KB resets to default but does not clear `ChatProvider` state until `/chat` re-initialises.
 - `window.confirm` dialogs are native; in the Tauri WebView they render as OS dialogs.
@@ -376,7 +375,7 @@ First-run and re-configuration page for paths, AI mode and local model download.
 
 ## 10. History / rationale
 
-- Chat moved from a synchronous `POST /chat` to `POST /chat/async` + `GET /chat/status` polling in `2c10d8d` so long local-model answers survive proxy timeouts and show stage text; the References-block citation contract and `window.__chatSetPreview` came with the entity highlighting work (`6365686`).
+- Chat moved from a synchronous `POST /chat` to `POST /chat/async` + `GET /chat/status` polling in `2c10d8d` so long local-model answers survive proxy timeouts and show stage text; the References-block citation contract and `window.__chatSetPreview` came with the entity highlighting work (`6365686`); the markdown References block has since been replaced by the `sources` field.
 - `b84ca73` limited entity scans to recent messages and added the scan cache after long conversations flooded `/graph/entities/scan-text`.
 - The 3D page was split into `components/graph3d` hooks/components in `fbcafe7`; fit-once camera guards on both graph pages and the quaternion look (to fix gimbal lock stopping horizontal drag) came from the audit commits (`f8f527f`).
 - The notes graph's per-KB persisted controls and the "controlsLoadedKbRef" guard fixed a bug where switching KB wrote the old KB's sliders under the new key.

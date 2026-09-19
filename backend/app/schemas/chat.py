@@ -12,6 +12,13 @@ class ChatTurn(BaseModel):
     content: str
 
 
+class ChatSource(BaseModel):
+    """A note the answer drew on; ``sources`` on the chat response."""
+
+    id: str
+    title: str
+
+
 class CreateConversationInput(BaseModel):
     """Optional body when explicitly creating a conversation."""
 

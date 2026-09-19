@@ -9,7 +9,7 @@ import {
 import { StateField, type EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
-import { encodeFileUrl, resolveFileUrl } from "@/lib/utils";
+import { resolveFileUrl } from "@/lib/utils";
 import { mediaEmbedClaimsLink } from "./mediaEmbedExtension";
 
 /*
@@ -61,7 +61,7 @@ function openHref(
     window.open(href, "_blank", "noopener,noreferrer");
     return;
   }
-  const resolved = encodeFileUrl(resolveFileUrl(href, kbId));
+  const resolved = resolveFileUrl(href, kbId);
   const filename = decodeSafe(resolved.split("/").pop() || href);
   if (onOpenFile) onOpenFile(resolved, filename);
   else window.open(resolved, "_blank", "noopener,noreferrer");

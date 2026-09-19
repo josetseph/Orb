@@ -106,3 +106,31 @@ class TestResolveChatGguf:
 
     def test_unknown_name_falls_back_to_selection(self):
         assert lm.LocalLlamaRuntime().resolve_chat_gguf("something-else") is None
+
+
+class TestJsonMode:
+    def test_response_format_reaches_llama(self, runtime):
+        seen = {}
+
+        def fake(**kw):
+            seen.update(kw)
+            return iter([{"choices": [{"delta": {"content": "{}"}, "finish_reason": "stop"}]}])
+
+        runtime._chat.create_chat_completion = fake
+        raw = runtime._chat_completion_once(
+            messages=[{"role": "user", "content": "hi"}],
+            temperature=0.0,
+            max_tokens=10,
+            repeat_penalty=1.0,
+            response_format={"type": "json_object"},
+        )
+        assert seen["response_format"] == {"type": "json_object"}
+        assert raw["choices"][0]["message"]["content"] == "{}"
+
+    def test_compat_client_forwards_response_format(self, runtime):
+        seen = {}
+        runtime.create_chat_completion = lambda **kw: seen.update(kw)
+        lm.LocalOpenAICompat(runtime, "m").chat.completions.create(
+            messages=[], response_format={"type": "json_object"}
+        )
+        assert seen["response_format"] == {"type": "json_object"}

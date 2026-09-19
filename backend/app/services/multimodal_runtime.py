@@ -218,8 +218,6 @@ class MultimodalRuntime:
         if bin_dir not in path_now.split(os.pathsep):
             os.environ["PATH"] = bin_dir + os.pathsep + path_now
         AudioSegment.converter = ffmpeg
-        # Back-compat attribute used by some pydub call sites.
-        AudioSegment.ffmpeg = ffmpeg  # type: ignore[attr-defined]
 
         segment = AudioSegment.from_file(audio_path)
         segment = segment.set_frame_rate(16000).set_channels(1)

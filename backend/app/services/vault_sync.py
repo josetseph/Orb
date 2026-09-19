@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote, unquote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,7 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.log import get_logger
 from app.models.note import Note
 from app.services.kb_registry import KBContext
-from app.services.vault import title_from_filename
+from app.services.note_files import persist_note_body
+from app.services.vault import mark_self_write, read_note_file, title_from_filename
 
 logger = get_logger("VaultSync")
 
@@ -59,17 +63,73 @@ def iter_vault_md_files(vault: Path) -> list[str]:
     return sorted(rel for _, rel in found)
 
 
+# ``](target)`` and the extraction marker's ``src="…"`` — the marker must keep
+# matching its link or ingestion re-transcribes the attachment.
+_TARGET_OPEN = r'(\]\(|orb:extract src=")'
+# A target may hold balanced parens (``encodeURI`` leaves them raw).
+_VAULT_TARGET_RE = re.compile(
+    _TARGET_OPEN + r'(/vault-files/[^/)"]+/)((?:[^()"\n]|\([^()"\n]*\))+)'
+)
+_BARE_DOUBLED_RE = re.compile(_TARGET_OPEN + r"attachments/attachments/")
+
+
+def _normalize_vault_targets(text: str) -> str:
+    """Collapse ``attachments/attachments/`` and re-encode vault-file URLs the
+    way ``vault_ops.rewrite_refs_in_text`` writes them (each segment fully quoted)."""
+
+    def _fix(m: re.Match[str]) -> str:
+        segs = [unquote(s) for s in m.group(3).split("/")]
+        if segs[:2] == ["attachments", "attachments"]:
+            del segs[0]
+        return m.group(1) + m.group(2) + "/".join(quote(s, safe="") for s in segs)
+
+    return _BARE_DOUBLED_RE.sub(r"\1attachments/", _VAULT_TARGET_RE.sub(_fix, text))
+
+
+def migrate_vault_files(vault: Path) -> int:
+    """One-time in-place rewrite of legacy link shapes; gated by ``.orb/migrated-v1``."""
+    marker = vault / ".orb" / "migrated-v1"
+    if marker.exists():
+        return 0
+    from app.workflows.agents.ingestion_agent import wrap_legacy_enrichment_blocks
+
+    rewritten = 0
+    for rel in iter_vault_md_files(vault):
+        path = vault / rel
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        fixed = wrap_legacy_enrichment_blocks(_normalize_vault_targets(text))
+        if fixed != text:
+            mark_self_write(vault, rel)
+            path.write_text(fixed, encoding="utf-8")
+            rewritten += 1
+    marker.parent.mkdir(exist_ok=True)
+    marker.touch()
+    logger.info("Vault migration v1 (%s): %d files rewritten", vault, rewritten)
+    return rewritten
+
+
 async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
     """Async wrapper used by notes list / setup."""
     vault = Path(kb.vault_path) if kb.vault_path else None
     if not vault or not vault.exists():
         return {"files": 0, "created": 0, "updated": 0}
 
-    rels = iter_vault_md_files(vault)
+    await asyncio.to_thread(migrate_vault_files, vault)
     existing = list(
         (await db.execute(select(Note).where(Note.kb_id == kb.kb_id))).scalars().all()
     )
-    by_rel = { (n.rel_path or "").replace("\\", "/"): n for n in existing if n.rel_path }
+    # Bodies lived in SQLite before notes were vault-backed — move them to disk.
+    for n in existing:
+        if n.content:
+            if n.rel_path and read_note_file(vault, n.rel_path):
+                n.content = ""
+            else:
+                persist_note_body(n, kb, n.content)
+    rels = iter_vault_md_files(vault)
+    by_rel = {n.rel_path: n for n in existing if n.rel_path}
     by_title = { (n.title or "").lower(): n for n in existing if n.title }
     on_disk = set(rels)
 
@@ -82,8 +142,7 @@ async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
         row = by_title.get(stem)
         if row is None or not row.rel_path:
             return None
-        current = row.rel_path.replace("\\", "/")
-        if "/" in current or current in on_disk:
+        if "/" in row.rel_path or row.rel_path in on_disk:
             return None
         return row
 

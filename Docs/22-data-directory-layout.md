@@ -30,6 +30,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 ├── orb.db                                  SQLite: notes, note_links, knowledge_bases, chat_conversations, chat_messages
 ├── runtime_config.json                     {"provider","model","ingestion_model","base_url"} (MUTABLE_KEYS only)
 ├── meili_master_key                        random base64url key (mode 0600) or "orb-dev-key" for pre-hardening installs
+├── .stores-migrated-v1-<kb_id>             marker per KB: main._migrate_stores ran (see §9.1)
 ├── kuzu/
 │   ├── kuzu_graph                          default KB Kuzu database FILE
 │   ├── kuzu_graph.wal                      its write-ahead log (may be absent)
@@ -44,6 +45,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 │   └── <slug>/                             Orb-provisioned vault (only when no explicit vault_path was given / legacy migration)
 │       ├── attachments/                    uploads: <stem>-<8hex>.<ext>
 │       ├── <Folder>/.keep                  empty-folder marker written by vault/mkdir
+│       ├── .orb/migrated-v1                marker: vault_sync.migrate_vault_files ran for this vault (see §9.1)
 │       └── **/*.md                         note bodies (vault-relative path = notes.rel_path)
 │   (the default KB vault is usually OUTSIDE DATA_DIR — wherever paths.json.default_vault_path points)
 ├── logs/
@@ -200,7 +202,7 @@ When neither env vars nor `paths.json` exist (e.g. `uvicorn app.main:app` in `ba
 | `DATA_DIR` | `<repo>/data/` (gitignored via `/data`) | full layout is created here: `orb.db`, `kuzu/`, `vaults/default/`, `logs/`… |
 | `MODELS_DIR` | `<repo>/backend/models/` (gitignored `backend/models/`) | `manifest.json`, `gguf/`, snapshots |
 | `runtime_config.json` | `<repo>/data/runtime_config.json` (explicit fallback in `runtime_config._data_path`) | |
-| Legacy Kuzu | `<repo>/data/kuzu_graph[.wal]` → moved to `<DATA_DIR>/kuzu/kuzu_graph` by `GraphService._migrate_legacy_db_path` when the target does not exist | |
+| Legacy Kuzu | `<repo>/data/kuzu_graph[.wal]` — **no longer moved** into `<DATA_DIR>/kuzu/` (`GraphService._migrate_legacy_db_path` removed 2026-09-19); copy by hand | |
 | Engine binaries | none in the repo; always `DATA_DIR/bin/<triple>/` | downloaded by `desktop_runtime.ensure_binaries` |
 | Firefly seed | `<repo>/desktop/resources/firefly/` (gitignored `build.py` output) | used by `desktop_runtime._bundled_firefly_root()` when `ORB_RESOURCES_ROOT` is set (packaged, or `ORB_USE_RESOURCES=1` in dev) |
 | Backend logs (legacy) | `backend/logs/` is gitignored but no longer written; logs go to `DATA_DIR/logs` | |
@@ -236,9 +238,9 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 | Env vars `LIVEOS_*` | **no longer read** (removed 2026-09-19); only the `ORB_*` names exist. |
 | `DATA_DIR` env (bare) / `MODELS_DIR` env (bare) | third-priority aliases (container era). |
 | `<repo>/data/kb_registry.json` | the one-shot import into `knowledge_bases` was removed 2026-09-19; the file is ignored. |
-| `<repo>/data/kuzu_graph` (Kuzu file at data root) | moved to `<DATA_DIR>/kuzu/kuzu_graph` by `GraphService`. |
-| `…/kuzu/<slug>` stored as a **directory** path | healed to `…/kuzu/<slug>/kuzu_graph` by `normalize_kuzu_path` (registry load, `get_kb`, cleanup). |
-| `notes.content` bodies in SQLite | still read as fallback when the vault file is missing/empty; never written. |
+| `<repo>/data/kuzu_graph` (Kuzu file at data root) | no longer moved (removed 2026-09-19); copy it to `<DATA_DIR>/kuzu/kuzu_graph` by hand. |
+| `…/kuzu/<slug>` stored as a **directory** path | healed to `…/kuzu/<slug>/kuzu_graph` by `normalize_kuzu_path` at registry load only (`KBRegistry._load`), persisted to the row. |
+| `notes.content` bodies in SQLite | moved into the vault file (or blanked when the file already exists) by `vault_sync.sync_vault_notes` on the next notes listing / setup; never read by `note_body`, never written. |
 | `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; ORM synonym `meili_index`). The `TYPESENSE_*` env aliases are gone. |
 | Meili master key `orb-dev-key` | used automatically when `meilisearch/` already has data but no `meili_master_key` file exists. |
 | `localStorage` keys `lifeos_current_kb` / `liveos_current_kb` | migrated to `orb_current_kb` on first read. |
@@ -246,6 +248,20 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 | `credentials.enc` (Electron `safeStorage` file in the App Support folder) | no longer read or written; keys now live in the OS keychain via `keyring`. Delete it by hand if present. |
 | Alembic migrations (`backend/alembic/versions/d4f891a2b5c3_add_kb_id_to_notes.py`) | removed; schema is `create_all` + ad-hoc `ALTER TABLE … ADD COLUMN` (`_ensure_firefly_columns`, LLM override columns) + `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path`. |
 | RustFS / S3 uploads | replaced by `local_storage` → `<vault>/attachments/`; `vault_rel_from_url` still maps any `…/attachments/<name>` URL for old bodies. |
+
+### 9.1 One-time migrations and their gates (2026-09-19)
+
+Every repair that used to run on each read now runs once and leaves a marker (or is naturally idempotent SQL). None has an undo; deleting the marker re-runs the step.
+
+| Migration | Where it runs | Gate / marker | What it does |
+|---|---|---|---|
+| Vault sweep | `vault_sync.migrate_vault_files(vault)` from `sync_vault_notes` (thread) — notes listing / setup | `<vault>/.orb/migrated-v1` (touched after the loop) | Rewrites note `.md` files in place: collapses `attachments/attachments/` in `/vault-files/<kb>/…` and bare targets, re-encodes vault-file URL segments (`unquote` → `quote(seg, safe="")`) in `](…)` targets and `orb:extract src="…"`, wraps pre-marker enrichment blocks in `<!-- orb:extract -->` markers. Writes go through `mark_self_write`. |
+| `rel_path` backslash repair | `core/database.init_db` → `_sqlite_repairs` | none — idempotent `UPDATE notes SET rel_path = replace(rel_path,'\','/') WHERE rel_path LIKE '%\%'` on every start | Rows written as `str(Path)` on Windows; `note_files` now stores `.as_posix()`. |
+| Legacy note bodies | `vault_sync.sync_vault_notes` | none — a row qualifies while `notes.content` is non-empty | Writes the body to the vault file via `persist_note_body` (or blanks the column when the file already has a body). `note_body` never falls back to SQLite. |
+| Kuzu path repair | `kb_registry._load` | none — idempotent; persisted with `UPDATE knowledge_bases SET kuzu_path` when `normalize_kuzu_path` changes it | Directory-shaped `kuzu_path` → `…/kuzu_graph` file path. Removed from `get_kb`/`graph`/`_build_context`/`_cleanup_stores`. |
+| `llm_provider` coercion | `kb_registry._load` | none — idempotent `UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')` | Deprecated provider names in KB rows. |
+| Store scrub | `main._migrate_stores()` at the end of `_background_startup`, per KB | `DATA_DIR/.stores-migrated-v1-<kb_id>`, touched **only after** all three steps succeeded (an unreachable Qdrant/Kuzu leaves it absent, so the KB is retried next boot) | Kuzu: `SEMANTIC_REL {rel_type:'relates_to'}` → `'related_to'` (closed vocabulary default rename); Qdrant: `QdrantService.strip_facts_prefixes()` removes legacy `FACTS: …. ` prefixes from `node_cores` descriptions; Kuzu: `kind='note'` nodes with NULL/`''`/`Unknown`/`Untitled` names are backfilled from `orb.db` (`notes.title`, else the `rel_path` stem). |
+
 
 ## 10. Backup, move and recovery guidance
 

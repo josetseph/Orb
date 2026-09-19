@@ -124,6 +124,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: fixed, explainable blend computed at ingest time and stored on every `SEMANTIC_REL` (it was the input to the now-removed symbolic reranker).
 - History: `edge_weight = strength×0.5 + confidence×0.3 + relevance×0.2` was written from 033589d until 2026-09-19, but the extraction prompt never asked for scores, so every edge carried the defaults (5/7/5 → 5.6). The fields and the formula were removed; the Kuzu columns stay (NULL on new edges) so old databases open unchanged. Re-introduce scores only together with a prompt that produces them.
 - Enforced: `schemas/extraction.py` comment, `services/graph.py`, `tests/unit/test_extraction_schemas.py`.
+- Note (2026-09-19): with the closed vocabulary (D13) the `relationship_type` default was renamed `relates_to` → `related_to`; `main._migrate_stores` renames existing `SEMANTIC_REL` edges once per KB (marker `DATA_DIR/.stores-migrated-v1-<kb_id>`).
 
 ### D3. Temporal digests instead of bi-temporal relationship evolution
 - Rejected (reversed): the Feb 2026 bi-temporal design (`033589d`: `valid_from/valid_to/is_active`, "evolved" relationships, `schemas/relationships.py`) and the symbolic reranker introduced with it.
@@ -140,7 +141,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### D6. Enrichment blocks are stripped before re-ingest
 - Rationale: transcripts were duplicated on every re-ingest.
-- Enforced: block markers + strip step in `multimedia.py` / `ingestion.py`.
+- Enforced: `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` markers; `ingestion_agent._strip_prior_multimedia_enrichment(content, keep=…)` removes only delimited blocks whose attachment is gone (user text is never truncated); pre-marker blocks get markers once from `wrap_legacy_enrichment_blocks` in the vault sweep (`vault_sync.migrate_vault_files`).
 
 ### D7. Community detection is idle-triggered, pre-emptible, and off by default
 - Rejected: synchronous recompute after every note.
@@ -164,6 +165,16 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### D11. External vault edits mark notes stale, never auto-ingest
 - Rationale: cloud-sync bursts (hundreds of events) would otherwise trigger runaway LLM work.
 - Enforced: `vault_watcher.py`, self-write suppression TTL (12 s), shared sync engine.
+
+### D12. Structured JSON output over prompt-and-repair
+- Rejected: labelled-prose protocols (`REASONING:`/`ANSWER:`/`NEXT_QUERY:`, `NAME:`/`SUMMARY:`) with regex parsers and per-model rescues; grammar-constrained sampling against a full schema (empties nested arrays on small GGUFs).
+- Rationale: every structured call asks the provider for a JSON object structurally where it can (`json_mode` → OpenAI `response_format`, Gemini `response_mime_type`, llama.cpp's generic JSON grammar; Anthropic stays prompt-driven) and validates with a pydantic model after `json_repair`. A probe on Gemma-4 E4B Q4 returned 23 nodes/22 rels in JSON mode vs 25/24 in prose, with `finish=stop` instead of `length`.
+- Enforced: `LLMService._chat(json_mode=)`, `_ResearchStep`, `_CommunityName`, `Extraction`; `_clean_json` is fence-unwrap + curly quotes + `repair_json` only.
+
+### D13. Closed relationship vocabulary
+- Rejected: free-text predicates cleaned per edge (`clean_rel_type` stripping entity tokens, `_` → space rewrites) — one edge label per note.
+- Rationale: the graph should never accumulate predicates it cannot query; the model picks from a listed set and anything else collapses to a catch-all rather than being fuzzy-matched.
+- Enforced: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates, catch-all `related_to`) rendered into the extraction and relationship-pass prompts; `ExtractedRelationship.closed_vocabulary` coerces off-list values; `SEMANTIC_REL.rel_type` therefore only holds listed values (legacy `relates_to` renamed by `_migrate_stores`).
 
 ---
 

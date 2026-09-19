@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  encodeFileUrl,
   fetchMediaObjectUrl,
   resolveFileUrl,
   youtubeEmbedUrl,
@@ -21,7 +20,7 @@ export function BlobMediaPlayer({
 }) {
   const yt = youtubeEmbedUrl(url);
   const vimeo = vimeoEmbedUrl(url);
-  const directUrl = !yt && !vimeo ? encodeFileUrl(resolveFileUrl(url, kbId)) : null;
+  const directUrl = !yt && !vimeo ? resolveFileUrl(url, kbId) : null;
 
   const [src, setSrc] = useState<string | null>(directUrl);
   const [error, setError] = useState<string | null>(null);

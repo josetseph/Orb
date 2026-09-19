@@ -10,26 +10,6 @@ from app.core.log import get_logger
 logger = get_logger("RerankerService")
 
 
-def _normalize_results(results: list[dict]) -> list[dict]:
-    """Ensure each result has both relevance_score and score."""
-    out: list[dict] = []
-    for item in results or []:
-        if not isinstance(item, dict) or "index" not in item:
-            continue
-        score = item.get("relevance_score", item.get("score"))
-        if score is None:
-            continue
-        try:
-            score_f = float(score)
-        except (TypeError, ValueError):
-            continue
-        normalized = dict(item)
-        normalized["relevance_score"] = score_f
-        normalized["score"] = score_f
-        out.append(normalized)
-    return out
-
-
 class RerankerService:  # pylint: disable=too-few-public-methods
     """Score query/document pairs via the selected on-disk GGUF in-process."""
 
@@ -58,7 +38,7 @@ class RerankerService:  # pylint: disable=too-few-public-methods
             results = await asyncio.to_thread(
                 local_gguf_reranker.rerank, query, documents, top_n
             )
-            return _normalize_results(results)
+            return results or []
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error(f"[Reranker] In-process GGUF failed: {exc}")
             return []

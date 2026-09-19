@@ -31,8 +31,7 @@ def _get_engine():
 
                 from app.core.paths import sqlite_url
 
-                url = sqlite_url().replace("sqlite+aiosqlite://", "sqlite://")
-                _engine = create_engine(url, future=True)
+                _engine = create_engine(sqlite_url(driver="pysqlite"), future=True)
     return _engine
 
 

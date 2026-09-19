@@ -24,12 +24,12 @@ export function buildFolderTree(
   };
 
   for (const folder of extraFolders) {
-    const parts = folder.replace(/\\/g, "/").split("/").filter(Boolean);
+    const parts = folder.split("/").filter(Boolean);
     if (parts.length) ensureFolder(parts);
   }
 
   for (const note of notes) {
-    const rel = (note.rel_path || "").replace(/\\/g, "/");
+    const rel = note.rel_path || "";
     if (!rel) {
       root.push({
         name: note.title || "Untitled",

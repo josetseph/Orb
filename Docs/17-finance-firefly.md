@@ -433,7 +433,7 @@ Conventions for this section: every method takes `kb: KBContext` first and runs 
 `summary(kb, *, days=30)` — the Overview tab's payload:
 1. `accounts = _list_accounts_unlocked(gid)`.
 2. `GET /transactions?limit=100&user_group_id=gid`; keep gid groups; flatten; sort desc.
-3. Sum within `[today-(days-1), today]` (date parsed with `datetime.fromisoformat(str.replace("Z", "+00:00")).date()`): `expense_total` (withdrawals), `income_total` (deposits), `transfers_total` (transfers). Only the newest 100 groups are considered — a busy ledger with >100 groups in the window under-reports.
+3. Sum within `[today-(days-1), today]` (date parsed with `datetime.fromisoformat(str(date)).date()` — Python 3.11+ accepts a trailing `Z`): `expense_total` (withdrawals), `income_total` (deposits), `transfers_total` (transfers). Only the newest 100 groups are considered — a busy ledger with >100 groups in the window under-reports.
 4. `asset_balance = Σ balance` of accounts with `account_type in ("asset", "liability", "liabilities")` — liabilities are **added**, not subtracted (Firefly reports liability balances as negative numbers when `liability_direction` is debit, so the sum usually nets correctly, but it depends on Firefly's sign convention).
 5. `GET /chart/balance/balance?start=&end=&period=1D&user_group_id=gid` → returned raw under `chart` (`payload["data"]`); the UI does not render it.
 6. Returns `{days, start, end, asset_balance, income_total, expense_total, transfer_total, net_flow: income-expense, chart, accounts, recent_transactions: txs[:12], kb_id, kb_name}`.

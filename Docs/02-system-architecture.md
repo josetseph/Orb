@@ -148,7 +148,7 @@ sequenceDiagram
   API-->>UI: note (processing_stage = "Queued for ingestion")
   API->>AG: BackgroundTask: run agent(note_id)
   AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF/Florence/Whisper/Marlin → append enrichment blocks to the .md
-  AG->>LLM: extraction node — nodes + relationships (Extraction schema, JSON-repair tolerant)
+  AG->>LLM: extraction node — nodes + relationships (Extraction schema, provider JSON mode, json_repair on parse; relationship_type from the closed RELATIONSHIP_TYPES vocabulary)
   AG->>IW: storage node — resolve entities by exact normalised name (Qdrant node_cores → Kuzu fallback), merge, write; prior data is never deleted on re-ingest
   IW->>QD: upsert cores / relationships / isolated contexts (embeddings via in-process GGUF)
   IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(mention_count, ingested_at)
@@ -156,6 +156,8 @@ sequenceDiagram
   AG->>AG: summarization node — mark processed, stage = done
   IW->>TR: note finished → idle timer (120 s) → community recompute ("Leiden" = greedy cosine merge) + 3D layout, temporal digests — both feature-flagged, off by default
 ```
+
+Every LLM call that expects structured output passes `json_mode=True` to `LLMService._chat`, which asks the provider for a JSON object structurally — `response_format={"type": "json_object"}` for openai/openai_compat/huggingface/local (llama.cpp's JSON grammar), `response_mime_type="application/json"` for Gemini; Anthropic stays prompt-driven — and the reply is still parsed through `_clean_json` (`json_repair`). Relationship types are a closed vocabulary: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates) is listed in the extraction prompts, and anything off-list is coerced to `related_to`.
 
 Concurrency: `INGESTION_PIPELINE_CONCURRENCY` (default 1) makes full-note ingestion FIFO; `MULTIMEDIA_CONCURRENCY` (default 1) serialises heavy model jobs within a note; graph/Qdrant writes are batched and offloaded with `asyncio.to_thread`. Stage strings are written to `notes.processing_stage` and polled by the UI through `GET /notes/{id}/status`. Details: [10-ingestion-pipeline.md](10-ingestion-pipeline.md), [11-multimedia-enrichment.md](11-multimedia-enrichment.md).
 
@@ -181,12 +183,12 @@ flowchart TD
   end
   L --> iter --> N{FINDING answers the question /<br/>no new query / iterations exhausted?}
   N -- no --> L
-  N -- yes --> S[ChatWorkflow: dedupe, truncate context,<br/>answer with "### References" block]
+  N -- yes --> S[ChatWorkflow: dedupe, truncate context,<br/>answer + sources list]
   S --> P[persist assistant message + thinking]
   P --> O[GET /chat/status/{request_id} → done, answer, sources]
 ```
 
-Points that surprise people (all detailed in [16](16-retrieval-and-chat.md)): the cross-encoder is the **only** ranking signal, so a disabled or missing reranker GGUF yields empty results rather than a degraded fallback; `MAX_LOOP_ITERATIONS=3` means at most two actual retrievals per turn because iteration one only plans the query; all evidence text comes from Qdrant payloads, Kuzu supplies structure and note provenance; citations are emitted as a literal `### References` list of `/notes/<id>` links that the frontend parses with a regex; temporal filters (`date_filter`, `period_filter`) are produced by the query-analysis LLM call, not by date parsing.
+Points that surprise people (all detailed in [16](16-retrieval-and-chat.md)): the cross-encoder is the **only** ranking signal, so a disabled or missing reranker GGUF yields empty results rather than a degraded fallback; `MAX_LOOP_ITERATIONS=3` means at most two actual retrievals per turn because iteration one only plans the query; all evidence text comes from Qdrant payloads, Kuzu supplies structure and note provenance; citations are a `sources: [{id, title}]` field on the chat response (the answer text carries no reference block) that the frontend renders as chips; temporal filters (`date_filter`, `period_filter`) are produced by the query-analysis LLM call, not by date parsing.
 
 Model residency during one chat on a fully local setup: embed GGUF (query vectors) → rerank GGUF → chat GGUF, repeated per iteration. Each swap unloads the previous model (exclusive residency). Details: [16-retrieval-and-chat.md](16-retrieval-and-chat.md), [12-local-models-and-inference.md](12-local-models-and-inference.md).
 
@@ -236,7 +238,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 9. **Trace IDs.** Every request gets `X-Request-Id` (incoming or generated) via a ContextVar; log lines from the same request can be correlated.
 10. **Community detection is idle-triggered and optional.** New ingestions pre-empt a running recompute; do not call it synchronously from a request. It is disabled unless `COMMUNITY_DETECTION_ENABLED=true`.
 11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`.
-12. **Legacy names are read, never emitted.** `lifeos_current_kb` (browser storage) and the `typesense_collection` column name exist only to read old installs; the `LIVEOS_*` env aliases were removed.
+12. **Legacy names are read, never emitted.** The `typesense_collection` column name exists only to read old installs; the `LIVEOS_*` env aliases and the `lifeos_current_kb`/`liveos_current_kb` browser-storage fallbacks were removed.
 
 ---
 

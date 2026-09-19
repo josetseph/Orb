@@ -21,7 +21,7 @@ const SWATCHES = ["bg-accent-700", "bg-accent-800", "bg-n-700", "bg-accent-600"]
 
 function vaultFolderName(path?: string): string {
   if (!path) return "";
-  const parts = path.replace(/\\/g, "/").split("/").filter(Boolean);
+  const parts = path.split("/").filter(Boolean);
   return parts[parts.length - 1] ?? path;
 }
 

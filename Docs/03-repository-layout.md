@@ -107,6 +107,9 @@ backend/
 │   └── utils/graph_layout.py   deterministic 3D layouts (solar + Fruchterman–Reingold)
 ├── tests/
 │   ├── unit/                   pytest contract tests (conftest stubs Kuzu / Qdrant / Meili / LLM)
+│   │   ├── test_vault_migration.py          one-time vault sweep (doubled attachments/, legacy enrichment blocks, URL encoding)
+│   │   ├── test_note_created_at.py          created_at validation on note create/update/ingest
+│   │   └── test_ingestion_community_names.py community naming JSON + member-fit check
 ├── requirements.txt            base deps (FastAPI, SQLAlchemy, kuzu, qdrant, meilisearch, llama-cpp-python, …)
 ├── requirements-multimodal.txt torch / transformers ≥ 5.7 / qwen-vl-utils (installed on demand)
 ├── .env.example                fully commented configuration reference

@@ -54,13 +54,13 @@
 | **Ingestion** | The pipeline that turns a note into graph nodes, edges, vectors and keyword documents. | [10](10-ingestion-pipeline.md) |
 | **Ingestion agent** | Sequential `run_ingestion_agent` (`multimodal → extraction → storage → summarization`, stops on errors) in `workflows/agents/ingestion_agent.py`. | [10](10-ingestion-pipeline.md) |
 | **IngestionWorkflow** | Per-KB class holding the storage logic (dedup, merge, write to Kuzu/Qdrant/Meili, post-triggers). | [10](10-ingestion-pipeline.md) |
-| **Extraction** | Pydantic root schema of LLM output: `nodes`, `relationships`, `sentiment`, `title`. Tolerant of messy LLM shapes. | [06](06-backend-core-and-configuration.md) |
+| **Extraction** | Pydantic root schema of LLM output: `nodes`, `relationships`, `title`. Tolerant of messy LLM shapes (wrappers, bare lists); `relationship_type` is coerced onto the closed vocabulary. | [06](06-backend-core-and-configuration.md) |
 | **Node (schema)** | Extracted entity: `name`, free-form `type`, `type_reasoning`, `isolated_context`. | [06](06-backend-core-and-configuration.md) |
 | **Isolated context** | The note-local snippet that justifies an entity; embedded into the `node_isolated_contexts` collection. | [15](15-search-indexes-qdrant-meilisearch.md) |
 | **Core** | An entity's consolidated description/summary across notes; embedded into `node_cores`. | [15](15-search-indexes-qdrant-meilisearch.md) |
 | **Joint Approach** | The ingestion design (Apr 2026) that extracts nodes and relationships in one LLM pass and merges with existing entities; adopted for the final implementation. | [25](25-development-history.md) |
 | **Entity resolution** | Matching a newly extracted entity to an existing node by exact normalised name (Qdrant `node_cores` payload `name` is the lookup source, Kuzu the fallback). There is no embedding-similarity matching today; `SEMANTIC_REL.is_similarity` is a never-set leftover of the removed bi-temporal design. | [10](10-ingestion-pipeline.md) |
-| **Enrichment block** | Markdown appended to a note by multimedia processing (transcripts, captions, PDF text); stripped and regenerated on re-ingest. | [11](11-multimedia-enrichment.md) |
+| **Enrichment block** | Markdown placed under an attachment link by multimedia processing (transcripts, captions, PDF text), delimited by `<!-- orb:extract src="…" -->…<!-- /orb:extract -->`; on re-ingest only blocks whose attachment is gone are removed. Pre-marker blocks get markers once from the vault sweep. | [11](11-multimedia-enrichment.md) |
 | **Florence** | Microsoft Florence-2-large vision model: captions/OCR for images and PDF pages. | [11](11-multimedia-enrichment.md), [12](12-local-models-and-inference.md) |
 | **Whisper** | OpenAI whisper-large-v3-turbo: audio/video transcription. | [11](11-multimedia-enrichment.md) |
 | **Marlin** | Marlin-2B (Qwen3.5 backbone) video-understanding model. | [11](11-multimedia-enrichment.md) |
@@ -77,6 +77,7 @@
 | **Indexable** | A graph node that represents an extracted entity (as opposed to a note or community). | [14](14-graph-storage-kuzu.md) |
 | **REFERENCES** | Rel table: note → entity, carries `note_id`. | [14](14-graph-storage-kuzu.md) |
 | **SEMANTIC_REL** | Rel table for LLM-extracted relationships (`rel_type`, temporal fields, `mention_count`; legacy score columns are schema-only). | [14](14-graph-storage-kuzu.md) |
+| **Relationship types (`RELATIONSHIP_TYPES`)** | The closed vocabulary of `SEMANTIC_REL.rel_type`: 42 snake_case predicates in `schemas/extraction.py` (`works_at`, `part_of`, `located_in`, `knows`, …) headed by the catch-all `related_to`. Listed in the extraction prompts; anything the model returns off the list is coerced to `related_to` by the schema, never fuzzy-matched. Edges written with the old default `relates_to` were renamed once by `main._migrate_stores`. | [10](10-ingestion-pipeline.md), [14](14-graph-storage-kuzu.md) |
 | **Bi-temporal (historical)** | Feb 2026 design (`033589d`) where relationships carried `valid_from/valid_to/is_active` and "evolved" over time. Removed in `da75dfc` (2026-05-28) in favour of temporal digests; `SEMANTIC_REL.created_at` and `is_similarity` remain as never-set leftover columns. | [14](14-graph-storage-kuzu.md), [25](25-development-history.md) |
 | **Symbolic ranking (historical)** | Graph-structure-based reranking introduced in `033589d` to replace a neural reranker; itself replaced by the current GGUF cross-encoder reranker. Not present in today's code. | [25](25-development-history.md) |
 | **Solar layout / spring layout** | Deterministic 3D layouts (`compute_solar_positions`, `compute_spring_layout_3d`) stored as `pos_x/y/z` so the UI does no physics. | [14](14-graph-storage-kuzu.md) |

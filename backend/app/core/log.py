@@ -58,10 +58,6 @@ def resolve_logs_dir() -> Path:
     return root
 
 
-# Back-compat alias — prefer ``resolve_logs_dir()`` so path changes are picked up.
-LOGS_DIR = resolve_logs_dir()
-
-
 def get_file_handler(filename: str, level: int) -> RotatingFileHandler:
     """Create a rotating file handler under the current logs directory."""
     handler = RotatingFileHandler(
@@ -92,11 +88,10 @@ def _strip_rotating_handlers(logger: logging.Logger) -> None:
 
 def setup_logging() -> None:
     """Initialize logging. Safe to call once at startup; use ``reconfigure_logging`` after path changes."""
-    global _configured, LOGS_DIR  # noqa: PLW0603
+    global _configured  # noqa: PLW0603
 
     log_level_str = settings.LOG_LEVEL.upper()
     log_level = getattr(logging, log_level_str, logging.INFO)
-    LOGS_DIR = resolve_logs_dir()
 
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -126,14 +121,12 @@ def setup_logging() -> None:
 
     _configured = True
     logging.info(
-        "Logging initialized at level %s | Logs dir: %s", log_level_str, LOGS_DIR
+        "Logging initialized at level %s | Logs dir: %s", log_level_str, resolve_logs_dir()
     )
 
 
 def reconfigure_logging() -> None:
     """Re-bind file handlers after DATA_DIR changes (first-run wizard)."""
-    global LOGS_DIR  # noqa: PLW0603
-    LOGS_DIR = resolve_logs_dir()
     if _configured:
         setup_logging()
 

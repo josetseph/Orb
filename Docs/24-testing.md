@@ -26,17 +26,20 @@ Boundary facts that matter when modifying code:
 | `backend/tests/__init__.py`, `backend/tests/unit/__init__.py` | Make `tests` a package so pytest's default (`prepend`) import mode inserts `backend/` on `sys.path`; `app.*` imports then work from any cwd. | — |
 | `backend/tests/unit/conftest.py` | Shared fixtures: autouse settings patch, `MagicMock`/`AsyncMock` service stubs, sample-data helpers. | `event_loop_policy`, `patch_settings` (autouse), `mock_llm_service`, `mock_graph_service`, `mock_meili_service`, `mock_typesense_service` (alias), `mock_qdrant_service`, `make_node()`, `make_relationship()` |
 | `backend/tests/unit/test_chat_context.py` | Follow-up query rewrite (`LLMService.rewrite_follow_up_query`). | 6 tests in `TestRewriteFollowUpQuery` |
-| `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (key aliasing, `None` handling, wrapper unwrapping). | 24 tests |
+| `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (`None` handling, wrapper unwrapping, the closed `RELATIONSHIP_TYPES` vocabulary — off-list predicates become `related_to`). | 16 tests |
 | `backend/tests/unit/test_graph_layout.py` | Pure geometry in `app/utils/graph_layout.py`. | `TestFibonacciSphere`, `TestDeterministicJitter`, `TestComputeSolarPositions`, `TestComputeSpringLayout3d` |
 | `backend/tests/unit/test_graph_queries.py` | Cypher-shape regression guards for `GraphService.get_related_nodes`. | `_get_graph_service_class()` (imports `app.services.graph` with `kuzu.Database`/`kuzu.Connection` patched), `_make_graph_service()`, `_row()` |
-| `backend/tests/unit/test_llm_json_cleaning.py` | `LLMService._clean_json` (fence stripping, control chars, smart quotes, `json_repair`). | 4 classes, 15 tests |
-| `backend/tests/unit/test_meili_contract.py` | Meilisearch document contract: `node_id` (primary key) always present in `index_node` payloads. | `_make_meili_service()` |
+| `backend/tests/unit/test_llm_json_cleaning.py` | `LLMService._clean_json` (fence stripping, smart quotes, `json_repair`). | 16 tests |
+| `backend/tests/unit/test_meili_contract.py` | Meilisearch document contract: `node_id` (primary key) always present in `index_node` payloads; `isolated_contexts` stored as a list. | `_make_meili_service()`, 2 tests |
 | `backend/tests/unit/test_qdrant_contract.py` | Qdrant payload/filter contract for `upsert_node_core` and `search_node_cores`. | `_make_service()` |
 | `backend/tests/unit/test_extraction_chunking.py` | Paragraph-bounded chunking, token budget, and extraction merge in `app/workflows/extraction_chunking.py`. | `TestSplitForExtraction`, `TestChunkTokenBudget`, `TestMergeExtractions` |
 | `backend/tests/unit/test_ingestion_chunked_extraction.py` | Chunk/truncate/retry loop and batched image titling in `ingestion_agent`; documents the duck-typed LLM protocol via `_StubLLM`. | 4 async tests |
 | `backend/tests/unit/test_kb_llm_config.py` | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
 | `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf` |
 | `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
+| `backend/tests/unit/test_vault_migration.py` | The one-time vault sweep (`vault_sync.migrate_vault_files`): legacy link shapes fixed in place, `.orb/migrated-v1` marker written, second run is a no-op. | 1 test |
+| `backend/tests/unit/test_note_created_at.py` | `created_at` on note create/update is a `datetime`: garbage → 422, naive → UTC. | 4 tests |
+| `backend/tests/unit/test_ingestion_community_names.py` | Community names come back as `{name, summary}` JSON and are accepted only when anchored in a member entity (`_name_fits_members`), else the derived fallback. | 2 tests |
 | `backend/tests/unit/test_gguf_metadata.py` | GGUF header parsing against **synthesised** fixtures (`build_gguf` writes spec-conformant bytes), including the guards for corrupt/hostile headers and the `pooling_type` vs `chat_template` role distinction. | 24 tests |
 | `backend/tests/unit/test_model_discovery.py` | Disk scanning: shard grouping, AppleDouble/partial/dotfile filtering, venv + depth pruning, `MODELS_DIR`-relative refs, the metadata cache, `inspect_chat_model`. | 31 tests |
 | `backend/tests/unit/test_byo_model_selection.py` | End-to-end bring-your-own model: `resolve_chat_gguf` for catalog ids / relative refs / absolute paths, loud failure for missing or unusable files, `n_ctx` clamping, KB-API validation, payload listing. | 18 tests |
@@ -96,7 +99,7 @@ In short: the unit tests need the **full** backend environment installed, even t
 
 ### 3.4 Observed state of the suite (2026-09-19)
 
-`pytest tests/unit -q` → **455 passed, 0 failed** against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
+`pytest tests/unit -q` → **473 passed, 0 failed** (2026-09-19, after the band-aid removal pass; 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
 
 Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing_helpers.py` and `test_chat_runtimes.py` were deleted with the code they covered; `test_graph_queries.py` lost the three tests for `min_confidence` / `find_paths_between_nodes` (APIs removed in `fbcafe7`); `test_qdrant_*.py` and `test_meili_contract.py` now set the backing `_client` attribute instead of the read-only lazy `client` property; `test_model_formats.py` shrank to the GGUF cases; `test_credentials.py` fakes `keyring` (it used to write into the developer's real keychain); the image-title stub speaks `ingestion_generate_with_meta`; the whitespace-query assertion in `test_chat_context.py` matches the stripping behaviour.
 
@@ -129,17 +132,20 @@ Nine tracked modules plus five untracked (uncommitted as of 2026-09-02) modules.
 | Module | Target | Tests | Status |
 |---|---|---|---|
 | `test_chat_context.py` | `LLMService.rewrite_follow_up_query` | 6 | pass |
-| `test_extraction_schemas.py` | `app/schemas/extraction.py` validators | 24 | pass |
+| `test_extraction_schemas.py` | `app/schemas/extraction.py` validators, `RELATIONSHIP_TYPES` coercion | 16 | pass |
 | `test_graph_layout.py` | `app/utils/graph_layout.py` | 19 | pass |
 | `test_graph_queries.py` | `GraphService.get_related_nodes` | 3 | pass |
 | `test_llm_json_cleaning.py` | `LLMService._clean_json` | 16 | pass |
-| `test_meili_contract.py` | `MeilisearchService.index_node` | 1 | pass |
+| `test_meili_contract.py` | `MeilisearchService.index_node` (primary key, `isolated_contexts` list) | 2 | pass |
 | `test_qdrant_contract.py` | `QdrantService.upsert_node_core` / `search_node_cores` | 13 | pass |
 | `test_extraction_chunking.py` | `app/workflows/extraction_chunking.py` | 15 | pass |
 | `test_ingestion_chunked_extraction.py` | `ingestion_agent._extract_with_chunking`, `_batch_image_titles` | 4 (async) | pass |
 | `test_kb_llm_config.py` | `kb_registry.effective_llm_config`, `LLMService.get_chat_model/get_ingestion_model` | 18 | pass |
-| `test_local_runtime_budget.py` | `LocalLlamaRuntime` budgeting / GGUF resolution | 14 | pass |
+| `test_local_runtime_budget.py` | `LocalLlamaRuntime` budgeting / GGUF resolution / `response_format` pass-through | 16 | pass |
 | `test_model_load_clock.py` | `ModelLoadClock` | 4 | pass |
+| `test_vault_migration.py` | `vault_sync.migrate_vault_files` (one-time sweep + marker) | 1 | pass |
+| `test_note_created_at.py` | `schemas.note` / `POST /ingest` `created_at` parsing | 4 | pass |
+| `test_ingestion_community_names.py` | `IngestionWorkflow._name_and_summary`, `_name_fits_members` | 2 | pass |
 | (30 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments, extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime, vision routing, … | 300+ | pass |
 
 ### 5.1 `test_chat_context.py` — follow-up query rewriting
@@ -163,10 +169,8 @@ Pins the pre-validators in `app/schemas/extraction.py` that absorb the many shap
 
 | Class / validator | Contract |
 |---|---|
-| `Node.normalize_keys` (`mode="before"`) | `trait` or `title` → `name` when `name` missing (`name` wins); `evidence_quote` or `context` → `isolated_context` (`isolated_context` wins). Non-dict input passes through. |
-| `Node.handle_none` (`field_validator("*")`) | `None` → `""` for every field except `type` → `"thing"`. |
-| `ExtractedRelationship.normalize_keys` | `entity1`→`source_name`, `entity2`→`target_name`, `description`→`natural_language`. |
-| `ExtractedRelationship.handle_none_strings` | `None`/blank `relationship_type` → `"relates_to"`; other string fields `None` → `""`. |
+| `Node.handle_none` (`field_validator("*")`, `TestNodeHandleNone`) | `None` → `""` for every field except `type` → `"thing"`; a valid `type` is preserved. |
+| `ExtractedRelationship.closed_vocabulary` (`TestRelationshipTypeVocabulary`) | `None`/empty and unknown predicates → `"related_to"`; a listed predicate is normalised (case, whitespace → `_`), not rejected; every entry of `RELATIONSHIP_TYPES` round-trips unchanged. |
 | `Extraction.normalize_keys` | `None` → empty; unwrap `{"extraction"|"data"|"result": {...}}` when the inner dict has `nodes` or `relationships`; Gemma two-list `[nodes, rels]`; bare list of dicts/strings → nodes (strings become `{"name": s}`); a node's embedded `"relationships"` list is hoisted to the top level. |
 | `Extraction.ensure_list` | `nodes`/`relationships` `None` or scalar → `[]`; string items in `nodes` → `{"name": …}`. |
 
@@ -199,15 +203,15 @@ Why it matters: Kuzu's Cypher dialect differs from Neo4j's; the Neo4j-era hyphen
 
 ### 5.5 `test_llm_json_cleaning.py` — `_clean_json`
 
-`LLMService._clean_json(json_str) -> str`, in order: (1) if ` ``` ` present, take the first fenced block (` ```json ` or bare) with `re.DOTALL`; (2) strip control characters `\x00-\x08 \x0b \x0c \x0e-\x1f` (newline, CR and tab survive); (3) map `‘ ’ ‛` → `'` and `“ ” „` → `"`; (4) `json_repair.repair_json(...)`, or return the cleaned string unchanged with a warning if `json_repair` is missing. Tests cover fence extraction with surrounding prose, null/bell removal, smart-quote normalisation, missing closing brace, trailing comma, and a combined case. The repair-dependent cases (`{"key": "value"` → valid JSON) fail without `json-repair==0.55.0`.
+`LLMService._clean_json(json_str) -> str`, in order: (1) if ` ``` ` present, take the first fenced block (` ```json ` or bare) with `re.DOTALL`; (2) map `‘ ’ ‛` → `'` and `“ ” „` → `"` (`json_repair` escapes stray control characters itself); (3) `json_repair.repair_json(...)` — a hard import. Tests cover fence extraction with surrounding prose, smart-quote normalisation, missing closing brace, trailing comma, and a combined case.
 
 Why it matters: every structured LLM call (ingestion extraction, query analysis) goes through this; it is the first line of defence behind the validators in §5.2.
 
 ### 5.6 `test_meili_contract.py` — primary-key invariant
 
-`_make_meili_service()` sets the backing `_client` (the `client` property is a lazy reconnecting getter), `collection="test_nodes"`, `is_available`, and replaces `_index()` with a mock whose `add_documents` returns a task with `task_uid=1`. Contract:
+`_make_meili_service()` sets the backing `_client` (the `client` property is a lazy reconnecting getter), `index_name="test_nodes"`, `is_available`, and replaces `_index()` with a mock whose `add_documents` returns a task with `task_uid=1`. Contract:
 
-- `index_node(node_id, name, node_type, isolated_contexts_text="", relationship_natural_language="", community_level=None)` → document has `node_id` and `name`.
+- `index_node(node_id, name, node_type, isolated_contexts=None, relationship_natural_language="", community_level=None)` → document has `node_id` and `name`; a passed `isolated_contexts` list is stored as a list, not joined.
 - Index errors are caught and logged — never raised into ingestion.
 
 Why it matters: Meilisearch's index is created with `primaryKey: "node_id"`; a document without it is rejected, silently dropping the node from keyword search. See [Search indexes](15-search-indexes-qdrant-meilisearch.md).

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
@@ -10,7 +12,7 @@ class CreateNoteInput(BaseModel):
 
     title: str | None = None
     content: str = ""
-    created_at: str | None = None
+    created_at: datetime | None = None
     # Vault-relative folder (e.g. "Life/Daily Log")
     folder: str | None = None
 

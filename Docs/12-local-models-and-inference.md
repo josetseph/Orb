@@ -45,7 +45,7 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/app/core/inference_device.py` | torch device/dtype selection and the Qwen3.5 fast-path shim. Imports `torch` at module top — only import it lazily. | `resolve_torch_device`, `resolve_torch_dtype`, `prepare_qwen3_5_inference` |
 | `backend/app/core/paths.py` | (shared) `resolve_models_dir`, `looks_like_network_volume`, `local_download_staging_dir` used by both download paths. | see [06](06-backend-core-and-configuration.md) |
 | `backend/app/api_desktop.py` (setup section) | HTTP surface: `/api/v1/setup/status`, `/model-catalog`, `/download-models`, `/select-chat-model`, `/start-local-llm`, `/start-multimodal-services`, `/multimodal-status`, `/paths`. | route handlers |
-**Moving `MODELS_DIR`.** `manifest.json` stores absolute `chat_path` / `embed_path` / `reranker_path`. When the models directory moves (external drive → local disk), those point at files that are no longer there, and the user is told a model "is not downloaded" while it sits in the new directory under the same name. `selected_gguf(path)` resolves a selection: the recorded path when it exists, else the same **basename** under the current `resolve_models_dir()/gguf` (logged when it happens), else `None`. `gguf_paths_if_present` and `reranker_gguf_path` both go through it, so a move degrades to a log line rather than a false "missing model".
+**Moving `MODELS_DIR`.** `manifest.json` stores absolute `chat_path` / `embed_path` / `reranker_path`. When the models directory moves (external drive → local disk), those point at files that are no longer there, and the user is told a model "is not downloaded" while it sits in the new directory under the same name. `selected_gguf(path)` resolves a selection: the recorded path when it exists, else the same **basename** under the current `resolve_models_dir()/gguf` (logged when it happens), else `None`. `gguf_paths_if_present` and `reranker_gguf_path` both go through it, so a move degrades to a log line rather than a false "missing model". The manifest itself is repaired once per boot: `sync_embedding_infrastructure()` (called from `main` at startup) runs `_heal_selection_paths(sel)`, which resolves `chat_path`/`embed_path`/`reranker_path` through `selected_gguf`, compares the **stored** form (`store_model_path`) and saves any that changed — reads never rewrite the manifest. Likewise, when a manifest predates recorded selections, `gguf_paths_if_present` guesses the env-default filenames under `MODELS_DIR/gguf` once and persists that guess into `selection.chat_path`/`embed_path`, so the guess never runs again.
 
 | `backend/app/services/ai_gate.py` | `ai_is_configured()` reports ready when `gguf_paths_if_present()` is truthy (or a cloud key / `LLM_BASE_URL` exists). | `ai_is_configured`, `require_ai` (details in [13](13-llm-providers-and-prompting.md)) |
 | `backend/app/main.py` | Startup hook calls `sync_embedding_infrastructure()` after applying runtime-config overrides. | `startup_event` |
@@ -305,7 +305,7 @@ How the fields are consumed:
 
 | Reader | Uses |
 |---|---|
-| `gguf_paths_if_present()` | `selection.chat_path`, `selection.embed_path` (both must exist; chat > 1 MB), optional `selection.reranker_path`. Falls back to `MODELS_DIR/gguf/<env default filenames>`. This is the single source of truth for "local AI is ready" (`ai_gate`, `/setup/status.local_models_ready`, `ensure_chat_loaded`, `ensure_embed_loaded`). |
+| `gguf_paths_if_present()` | `selection.chat_path`, `selection.embed_path` (both must exist; chat > 1 MB), optional `selection.reranker_path`. Falls back to `MODELS_DIR/gguf/<env default filenames>` and, when those exist, writes them into the manifest selection so the fallback is one-time. This is the single source of truth for "local AI is ready" (`ai_gate`, `/setup/status.local_models_ready`, `ensure_chat_loaded`, `ensure_embed_loaded`). |
 | `reranker_gguf_path()` | `selection.reranker_path` else `MODELS_DIR/gguf/<RERANK_MODEL_ID filename>` else `None`. |
 | `sync_embedding_infrastructure()` | `selection.embedding_dims`, else dims of `get_option(selection.embed_id)`, else `settings.EMBEDDING_DIMENSIONS`; `selection.embed_id`, `selection.reranker_id`. |
 | `recommend_stack()` | `selection.chat_id` → `selected_chat`. |
@@ -329,9 +329,9 @@ How the fields are consumed:
 
 `ensure_gguf(model_id, on_progress) -> Path` (dest = `MODELS_DIR/gguf/<last path segment>`):
 
-- Returns immediately if `_gguf_looks_complete(dest, model_id)`: file exists, `size >= _min_expected_gguf_bytes` and no `<dest>.partial` sibling exists.
+- Returns immediately if `_gguf_looks_complete(dest, model_id)`: file exists and `size >= _min_expected_gguf_bytes`. Size is the only completeness signal — `dest` is only ever written by an atomic move, so a stale `.partial` sibling says nothing about it and is not checked.
 - `_min_expected_gguf_bytes`: looks the file up in `ALL_MODELS` by `hf_file` or `hf_path` and returns `max(50 MB, size_gb * 1e9 * 0.92)` (8 % tolerance "HF mirrors vary slightly"); unknown files → 50 MB. **Consequence:** if you lower a catalog `size_gb` below the true file size nothing breaks, but if you raise it above the real size the file will be considered incomplete forever and re-downloaded on every call.
-- Otherwise deletes the undersized dest and any stale `.partial`, downloads, re-validates (raises `RuntimeError("Downloaded … looks incomplete")` if still short), and records `manifest["gguf"][filename] = {source, path, bytes}`.
+- Otherwise deletes the undersized dest, downloads (`download_file` deletes any stale `.partial` and restarts from zero), re-validates (raises `RuntimeError("Downloaded … looks incomplete")` if still short), and records `manifest["gguf"][filename] = {source, path, bytes}`.
 
 `ensure_chat_and_embed_models(on_progress=None, chat_id=None) -> {"chat","embed","reranker": Path}` is the setup entry point (called in `asyncio.to_thread` by `/setup/download-models` and `/setup/start-local-llm`):
 
@@ -434,7 +434,6 @@ Public API summary:
 | `any_gguf_loaded` | — | chat or embed resident |
 | `status()` | — | `{loaded, chat_loaded, embed_loaded, chat_model, embed_model, accel, idle_seconds, idle_unload_after, exclusive: True}`; currently has no HTTP caller |
 | `load(chat_gguf, embed_gguf=None)` | yes | setup path: evict peers, load chat, **temporarily swap to embed to probe the dimension**, sync Qdrant + manifest dims, swap back to chat, write `manifest.runtime`. Returns a dict (`loaded, started, engine, backend, n_gpu_layers, reason, install_hint, chat_model, embed_model, n_ctx, idle_unload_after, exclusive`). |
-| `ensure_loaded()` | yes | alias of `ensure_chat_loaded()` |
 | `ensure_chat_loaded(chat_gguf=None)` | yes | no-op + touch if chat resident **and** (`chat_gguf is None` or equals the resident path); otherwise a different path logs `Switching chat GGUF a → b` and swaps. Requires `gguf_paths_if_present()` (raises `RuntimeError("Local GGUF models are not downloaded. Open Setup → Download selected models.")`), evicts reranker + multimodal + embed, loads chat |
 | `ensure_embed_loaded()` | yes | symmetrical for embed (`"Local embed GGUF is not downloaded…"`) |
 | `unload()` | yes | close both handles, `release_accelerator_memory()` |
@@ -449,7 +448,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 ### 7.4 OpenAI-compat shim
 
-`LocalOpenAICompat(runtime, model_id=None)` exposes `.chat.completions.create(**kwargs)` and `.models.list()`. `create` reads `messages`, `temperature` (default 0.2), `max_tokens` **or** `max_completion_tokens`, `model`; **`response_format`, `stop`, `top_p`, `stream`, etc. are accepted and ignored** ("llama.cpp JSON mode is prompt-driven for our extraction path"). It returns a `SimpleNamespace` shaped like an OpenAI `ChatCompletion` (`.choices[0].message.content`, `.choices[0].finish_reason`, `.model`, `.usage`, `.id="local-chat"`). Async callers (`LLMService.generate`, `ingestion_generate_with_meta`) wrap the call in `asyncio.to_thread` themselves. Default `model_id` is `settings.LLM_MODEL or "local-chat"`; the model string is echoed back and does **not** select a file — the resident chat GGUF is always used.
+`LocalOpenAICompat(runtime, model_id=None)` exposes `.chat.completions.create(**kwargs)` and `.models.list()`. `create` reads `messages`, `temperature` (default 0.2), `max_tokens` **or** `max_completion_tokens`, `model`; `response_format` is passed through to `create_chat_completion` (JSON mode, below); **`stop`, `top_p`, `stream`, etc. are accepted and ignored**. It returns a `SimpleNamespace` shaped like an OpenAI `ChatCompletion` (`.choices[0].message.content`, `.choices[0].finish_reason`, `.model`, `.usage`, `.id="local-chat"`). Async callers (`LLMService.generate`, `ingestion_generate_with_meta`) wrap the call in `asyncio.to_thread` themselves. Default `model_id` is `settings.LLM_MODEL or "local-chat"`; the model string is echoed back and does **not** select a file — the resident chat GGUF is always used.
 
 ## 8. Chat generation and the repetition-loop guard
 
@@ -457,7 +456,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 `_chat_completion_once(messages, temperature, max_tokens, repeat_penalty)` under `_lock`:
 
-- Parameters passed to `Llama.create_chat_completion`: `messages` (verbatim OpenAI-style dicts; llama.cpp applies the GGUF's embedded **chat template**, there is no Orb-side templating), `temperature`, `max_tokens` (caller's or `ORB_LLAMA_MAX_TOKENS`, **capped to the remaining context budget** computed by `_remaining_output_budget` — see §13.2; with no env cap the budget itself is used), `repeat_penalty` (`ORB_LLAMA_REPEAT_PENALTY`, default **1.12**, invalid → 1.12). No `stop` sequences, no `top_p`/`top_k`/`min_p`, no grammar/JSON schema, no seed.
+- Parameters passed to `Llama.create_chat_completion`: `messages` (verbatim OpenAI-style dicts; llama.cpp applies the GGUF's embedded **chat template**, there is no Orb-side templating), `temperature`, `max_tokens` (caller's or `ORB_LLAMA_MAX_TOKENS`, **capped to the remaining context budget** computed by `_remaining_output_budget` — see §13.2; with no env cap the budget itself is used), `repeat_penalty` (`ORB_LLAMA_REPEAT_PENALTY`, default **1.12**, invalid → 1.12). `response_format={"type": "json_object"}` is forwarded when the caller asked for `json_mode` (doc 13 §6.1) — it turns on llama.cpp's generic JSON grammar; a JSON *schema* is never passed because schema-constrained sampling empties nested arrays on small GGUFs. No `stop` sequences, no `top_p`/`top_k`/`min_p`, no seed.
 - Prefers `stream=True` so generation can be **aborted mid-way**: every 32 streamed pieces the concatenated text (content **and** `reasoning_content` deltas) is matched against `_ORDINAL_LOOP_RE`; a match logs "Aborting chat stream: ordinal/or-the repetition detected" and raises `RepetitionLoopError`. The finished text is checked once more with `_raise_if_degeneration`. If `stream=True` raises `TypeError` (very old binding) it falls back to a blocking call and checks the whole output.
 - The streaming branch returns a synthetic dict whose `finish_reason` is the last non-null `finish_reason` seen in the stream (`"length"` when `max_tokens` was hit — also logged as a warning "Chat generation hit max_tokens=… — output is truncated"), else `"stop"`, and **no `usage`** (so `LLMService` never sees token counts for local); the non-streaming branch returns llama.cpp's dict (which includes `usage`).
 - Note the streamed path collapses `reasoning_content` into `content` — for models whose template emits thinking as a separate channel, the thinking text ends up in the answer string and is later stripped by `LLMService` (`<think>` handling, see doc 13).
@@ -547,11 +546,11 @@ then calls `self._model(prompt, max_tokens=1, temperature=0.0, logprobs=5)` and 
 
 Note that only the two exact token strings are looked up; a leading-space variant (`" yes"`) is not matched, which is why the text fallback exists. Documents are scored **one at a time, sequentially** (no batching; each call re-processes the full prompt — the dominant cost for large candidate sets). No truncation is applied to `document`; overly long texts hit the `n_ctx` limit inside llama.cpp and surface as an exception → score 0.0 for that document.
 
-`rerank(query, documents, top_n=None) -> list[dict]` returns `[{"index", "relevance_score", "score", "document"}]` sorted descending, optionally truncated to `top_n`; `[]` when not loadable.
+`rerank(query, documents, top_n=None) -> list[dict]` returns `[{"index", "relevance_score", "document"}]` sorted descending by `relevance_score` (the only score key), optionally truncated to `top_n`; `[]` when not loadable.
 
 ### 10.2 `RerankerService` façade (`reranker.py`)
 
-`await reranker_service.rerank(query, documents, top_n=None)`: returns `[]` for empty input or when `reranker_gguf_path()` is `None` (warning "No GGUF selected — download/select a reranker in Setup"); otherwise runs `local_gguf_reranker.rerank` in `asyncio.to_thread` and normalises every item to have both `relevance_score` and `score` as floats (dropping malformed entries). **Any exception is logged and converted to `[]`** — retrieval treats an empty result as "model returned no scores" and continues without model scores.
+`await reranker_service.rerank(query, documents, top_n=None)`: returns `[]` for empty input or when `reranker_gguf_path()` is `None` (warning "No GGUF selected — download/select a reranker in Setup"); otherwise runs `local_gguf_reranker.rerank` in `asyncio.to_thread` and returns its rows as-is (`results or []`). **Any exception is logged and converted to `[]`** — retrieval treats an empty result as "model returned no scores" and continues without model scores.
 
 ### 10.3 Settings consumed by retrieval (for context; policy in [16](16-retrieval-and-chat.md))
 
@@ -796,7 +795,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `LLMService` → runtime | `local_llama_runtime.make_chat_client()` returns an OpenAI-shaped shim; `LLMService._chat` calls `chat.completions.create(model=…, messages=…, temperature?, max_tokens?)`; `model` is passed through `resolve_chat_gguf` (per-KB pinning). Only `.choices[0].message.content` and `.choices[0].finish_reason` are consumed. `LLMService.ingestion_count_tokens` / `ingestion_context_tokens` read `count_tokens` / `_default_chat_n_ctx`. |
 | Ingestion / graph → `EmbeddingService` | `embed_documents(list[str]) -> list[list[float]]` (same order, same length or exception). Vectors must be `EMBEDDING_DIMENSIONS` long or `QdrantService._prepare_vector` raises. |
 | Retrieval → `EmbeddingService.embed_query` | single vector with the Qwen3 instruction prefix when `is_qwen3`. |
-| Retrieval → `RerankerService.rerank` | async; returns `[]` on any failure; items carry `index`, `relevance_score`, `score`, `document`. |
+| Retrieval → `RerankerService.rerank` | async; returns `[]` on any failure; items carry `index`, `relevance_score`, `document`. |
 | Multimedia → `multimodal_runtime` | `describe_image_path(path) -> str`, `transcribe_audio_path(path) -> str`, `caption_video_path(path) -> {scene, events, elapsed_seconds}`, `unload(family)`; all raise `RuntimeError` when weights are missing. |
 | Setup API → this layer | see §6.3. |
 | `main.startup_event` → `sync_embedding_infrastructure()` | after `runtime_config` overrides are applied; failures logged, never fatal. |

@@ -84,12 +84,6 @@ def rewrite_refs_in_text(content: str, old_rel: str, new_rel: str, kb_id: str) -
             rf"\1{dst}\3",
             text,
         )
-    # Collapse accidental doubled attachments/ from older buggy rewrites
-    text = re.sub(
-        r"(/vault-files/[^/]+/)attachments/attachments/",
-        r"\1attachments/",
-        text,
-    )
     return text
 
 

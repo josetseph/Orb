@@ -15,24 +15,8 @@ from app.services.vault import (
 
 def note_body(note: Note, kb: KBContext) -> str:
     if note.rel_path and kb.vault_path:
-        text = read_note_file(Path(kb.vault_path), note.rel_path)
-        if text:
-            return normalize_vault_file_refs(text)
-    # Legacy fallback: body stored in SQLite before vault-backed notes.
-    return normalize_vault_file_refs(note.content or "")
-
-
-def normalize_vault_file_refs(content: str) -> str:
-    """Collapse accidental ``attachments/attachments/`` in vault-file URLs."""
-    if not content:
-        return content or ""
-    import re
-
-    return re.sub(
-        r"(/vault-files/[^/\s)]+/)attachments/attachments/",
-        r"\1attachments/",
-        content,
-    )
+        return read_note_file(Path(kb.vault_path), note.rel_path)
+    return ""
 
 
 def persist_note_body(
@@ -44,15 +28,15 @@ def persist_note_body(
 ) -> None:
     vault = Path(kb.vault_path)
     vault.mkdir(parents=True, exist_ok=True)
-    content = normalize_vault_file_refs(content or "")
+    content = content or ""
     display_title = (title if title is not None else note.title) or ""
     if not note.rel_path:
         filename_title = display_title or "Untitled"
-        note.rel_path = str(unique_md_path(vault, filename_title, folder=folder))
+        note.rel_path = unique_md_path(vault, filename_title, folder=folder).as_posix()
     if title is not None:
         note.title = display_title or None
     elif display_title and display_title != note.title:
         note.title = display_title
-    write_note_file(vault, note.rel_path, content or "")
+    write_note_file(vault, note.rel_path, content)
     # Keep nullable content empty — body is file-backed
     note.content = ""

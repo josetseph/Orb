@@ -32,7 +32,7 @@ Example file line: `2026-09-02 10:14:03 | IngestionPipeline | INFO | [Extraction
 
 ### 3.2 Logs directory
 
-`resolve_logs_dir()` → `Path(settings.DATA_DIR).expanduser() / "logs"`, created with `mkdir(parents=True, exist_ok=True)` on every call. It reads the **live** `settings.DATA_DIR`, so after `paths.sync_settings_paths()` it returns the new location. `LOGS_DIR = resolve_logs_dir()` is a module constant snapshot kept for back-compat; `setup_logging`/`reconfigure_logging` refresh it (`global LOGS_DIR`). Nothing else in the backend reads `LOGS_DIR` — prefer the function.
+`resolve_logs_dir()` → `Path(settings.DATA_DIR).expanduser() / "logs"`, created with `mkdir(parents=True, exist_ok=True)` on every call. It reads the **live** `settings.DATA_DIR`, so after `paths.sync_settings_paths()` it returns the new location. There is no module-level constant: `get_file_handler` and the startup log line call the function each time.
 
 Desktop: `DATA_DIR/logs` is the same directory the shell and runtime use for `backend.log`, `qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`, so one folder holds both the Python component logs and the raw process stdio.
 
@@ -92,14 +92,13 @@ Plus, always: `errors.log` (ERROR and above from **every** logger, root and comp
 Called once at the top of `main.py` (before importing routers/services) and again by `reconfigure_logging()`.
 
 1. `log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)` — unknown names (`TRACE`, `VERBOSE`, typos) silently become INFO.
-2. `LOGS_DIR = resolve_logs_dir()`.
-3. Root logger: `setLevel(log_level)`, **`handlers.clear()`** (this discards uvicorn's default handlers because `main.py` is imported after uvicorn configured logging), add console handler.
-4. `error_handler = get_file_handler("errors.log", logging.ERROR)` added to root — one shared handler instance.
-5. For each `(name, filename)` in `COMPONENT_LOG_FILES`: get the logger, `setLevel(log_level)`, `_strip_rotating_handlers` (removes + closes old `RotatingFileHandler`s so reconfiguration does not leak file descriptors), remove any existing plain `StreamHandler`s (dedupe on reconfigure; note `RotatingFileHandler` is a `StreamHandler` subclass, hence the `not isinstance(..., RotatingFileHandler)` guard), then add: rotating file handler for `filename`, a console handler, and the shared `error_handler`; set **`propagate = False`**.
-6. `httpx`, `httpcore`, `asyncio`, `urllib3`, `multipart` → `WARNING` (suppresses per-request DEBUG/INFO chatter). Not suppressed: `sqlalchemy` (only logs at echo), `llama_cpp` (prints via stderr, `verbose=False` is passed), `transformers` (only `transformers.tokenization_utils_base` is set to ERROR, by `services/retrieval.py`).
-7. `_configured = True`; root `logging.info("Logging initialized at level %s | Logs dir: %s", ...)`.
+2. Root logger: `setLevel(log_level)`, **`handlers.clear()`** (this discards uvicorn's default handlers because `main.py` is imported after uvicorn configured logging), add console handler.
+3. `error_handler = get_file_handler("errors.log", logging.ERROR)` added to root — one shared handler instance.
+4. For each `(name, filename)` in `COMPONENT_LOG_FILES`: get the logger, `setLevel(log_level)`, `_strip_rotating_handlers` (removes + closes old `RotatingFileHandler`s so reconfiguration does not leak file descriptors), remove any existing plain `StreamHandler`s (dedupe on reconfigure; note `RotatingFileHandler` is a `StreamHandler` subclass, hence the `not isinstance(..., RotatingFileHandler)` guard), then add: rotating file handler for `filename`, a console handler, and the shared `error_handler`; set **`propagate = False`**.
+5. `httpx`, `httpcore`, `asyncio`, `urllib3`, `multipart` → `WARNING` (suppresses per-request DEBUG/INFO chatter). Not suppressed: `sqlalchemy` (only logs at echo), `llama_cpp` (prints via stderr, `verbose=False` is passed), `transformers` (only `transformers.tokenization_utils_base` is set to ERROR, by `services/retrieval.py`).
+6. `_configured = True`; root `logging.info("Logging initialized at level %s | Logs dir: %s", log_level_str, resolve_logs_dir())`.
 
-Consequences of step 5:
+Consequences of step 4:
 
 - Component loggers **do not propagate**, so a component record appears exactly once on stdout (via the component's own console handler) and once in its file, plus `errors.log` when ≥ ERROR. Root-attached handlers never see component records.
 - Because `uvicorn.access`/`uvicorn.error` are in the table, uvicorn's request lines go to `api.log` and stdout in Orb's format, not uvicorn's coloured default. The runtime calls `uvicorn.run` without a log level; `LOG_LEVEL` governs.
@@ -108,7 +107,7 @@ Consequences of step 5:
 
 ### 3.6 `reconfigure_logging()`
 
-`LOGS_DIR = resolve_logs_dir(); if _configured: setup_logging()`. Called by `POST /api/v1/setup/paths` right after `sync_settings_paths(settings)` so that, when the user picks a new `DATA_DIR` in Setup, subsequent log lines go to `<new DATA_DIR>/logs` without a restart. Old files are closed by `_strip_rotating_handlers`. (The `backend.log` fd, opened by the shell, keeps pointing at the old directory until the runtime is restarted — `window.orbDesktop.restartBackend` or a relaunch.)
+`if _configured: setup_logging()`. Called by `POST /api/v1/setup/paths` right after `sync_settings_paths(settings)` so that, when the user picks a new `DATA_DIR` in Setup, subsequent log lines go to `<new DATA_DIR>/logs` without a restart. Old files are closed by `_strip_rotating_handlers`. (The `backend.log` fd, opened by the shell, keeps pointing at the old directory until the runtime is restarted — `window.orbDesktop.restartBackend` or a relaunch.)
 
 ### 3.7 `get_logger(name)`
 
@@ -173,6 +172,8 @@ All paths relative to `DATA_DIR/logs/` (desktop: `~/Library/Application Support/
 | Dimension mismatch errors from Qdrant | `retrieval.log`, `api.log` (startup) | `Embedding infrastructure sync skipped`, `dims`, `recreat`; `models_manifest.json` `embedding_dims` vs `EMBEDDING_DIMENSIONS` |
 | Graph queries fail / "No Kuzu path" | `graph.log`, `api.log` | `Repaired kuzu_path`, Kuzu exceptions; check `knowledge_bases.kuzu_path` is a file path |
 | External `.md` edits not detected | `ingestion.log` | `VaultWatcher`, `Vault watcher not started` (startup warning) |
+| Notes still carry `attachments/attachments/` links or undelimited legacy enrichment blocks after an upgrade | `ingestion.log` | `Vault migration v1 (<vault>): N files rewritten` — one-time sweep by `vault_sync.migrate_vault_files`, gated by `<vault>/.orb/migrated-v1`; absent means the sweep has not run for that vault |
+| Graph detail still shows `FACTS:` descriptions, `relates_to` edges or `Untitled note` for real notes | `api.log` | `Store migration v1 for KB '<name>': N descriptions scrubbed, M note names filled`, or `Store migration v1 for KB '<name>' deferred to next start: <error>` — `main._migrate_stores`, marker `DATA_DIR/.stores-migrated-v1-<kb_id>` touched only on success |
 | Finance pages error | `finance.log`, `firefly.log`, `DATA_DIR/firefly/app/storage/logs/` | `FireflyService`, token/`runtime.json` problems, `user_group` switch failures |
 | `database is locked` / 503 from status polling | `database.log`, `errors.log` | concurrent writers (watcher + API); usually transient |
 | Wrong data directory in use | `api.log` startup, `backend.log` | `Logging initialized at level … Logs dir:`, `Using SQLite database at`; compare with `paths.json` and `ORB_DATA_DIR` |

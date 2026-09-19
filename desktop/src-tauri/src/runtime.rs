@@ -358,7 +358,7 @@ fn fail(app: &AppHandle, message: &str) {
 fn trusted(url: &Url) -> bool {
     matches!(url.scheme(), "tauri" | "asset")
         || url.host_str() == Some("tauri.localhost")
-        || url.as_str().starts_with(&app_url())
+        || Url::parse(&app_url()).is_ok_and(|app| app.origin() == url.origin())
 }
 
 pub fn ensure_window(app: &AppHandle) -> WebviewWindow {

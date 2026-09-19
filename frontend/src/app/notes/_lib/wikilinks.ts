@@ -1,7 +1,7 @@
 import type { Note } from "@/lib/types";
 
 export function normalizeLink(value: string | null | undefined): string {
-  let text = (value || "").replace(/\\/g, "/").trim().toLowerCase();
+  let text = (value || "").trim().toLowerCase();
   text = text.replace(/^\/+|\/+$/g, "");
   while (text.startsWith("./")) text = text.slice(2);
   return text.endsWith(".md") ? text.slice(0, -3) : text;
@@ -14,7 +14,7 @@ export function folderOf(relPath: string): string {
 
 /** Vault path without `.md`, preserving original casing for inserts. */
 export function noteVaultPath(note: Note): string {
-  const rel = (note.rel_path || "").replace(/\\/g, "/").trim();
+  const rel = (note.rel_path || "").trim();
   if (rel) {
     return rel.replace(/\.md$/i, "").replace(/^\/+|\/+$/g, "");
   }

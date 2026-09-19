@@ -93,7 +93,7 @@ Key consequences:
 | `_kuzu_path` | `str` | constructor | file path; normalised on first `.graph` access |
 | `retrieval_service` / `ingestion_workflow` / `chat_workflow` | `object` (None until built) | `_ensure_lazy()` | typed `object` to avoid import cycles |
 
-**`graph` property.** Lazily opens Kuzu: `normalize_kuzu_path(_kuzu_path)`, `mkdir -p` the parent, then `GraphService(db_path=path, qdrant=self.qdrant)`. Raises `RuntimeError("No Kuzu path configured for KB …")` if the path is empty. Rationale in code: *"notes/finance must work even if Kuzu path was misconfigured"* — creating the context must never fail because Kuzu cannot open, so only graph/ingest/chat/graph-API routes touch `.graph`.
+**`graph` property.** Lazily opens Kuzu: takes `_kuzu_path` as stored (already normalised by `_load`), `mkdir -p` the parent, then `GraphService(db_path=path, qdrant=self.qdrant)`. Raises `RuntimeError("No Kuzu path configured for KB …")` if the path is empty. Rationale in code: *"notes/finance must work even if Kuzu path was misconfigured"* — creating the context must never fail because Kuzu cannot open, so only graph/ingest/chat/graph-API routes touch `.graph`.
 
 **`_ensure_lazy()`** builds, in order and only once: `RetrievalService(graph, qdrant, meili)`, `IngestionWorkflow(graph, qdrant, meili)`, `ChatWorkflow(retrieval=retrieval_service)`. All three are built together on the first call of `get_ingestion_workflow()` or `get_chat_workflow()`. Accessing `graph` inside this opens Kuzu, so the first ingest or chat request on a KB pays the Kuzu open + schema init cost.
 
@@ -146,7 +146,7 @@ Consequence: once the default row exists, **the DB row's `vault_path` wins over 
 
 ### 5.3 `_load()` — startup migration and healing
 
-1. **Row load**: `SELECT * FROM knowledge_bases`. For each row, `normalize_kuzu_path(kuzu_path)` is applied and persisted with an `UPDATE` if it changed (heals the "create_kb mkdir'd a directory" bug, see 5.5). Non-default rows → `_build_context` into `_cache` (errors logged, row still kept in `_metadata`). The default row → a `KBContext` built with the singletons but with `vault_path` and `kuzu_path` from the row.
+1. **Row load**: first `UPDATE knowledge_bases SET llm_provider = 'local' WHERE llm_provider IN ('ollama', 'lm_studio')` (one-time coercion of the deprecated provider names, committed before reading), then `SELECT * FROM knowledge_bases`. For each row, `normalize_kuzu_path(kuzu_path)` is applied and persisted with an `UPDATE` if it changed (heals the "create_kb mkdir'd a directory" bug, see 5.5) — this is the **only** place the repair runs. Non-default rows → `_build_context` into `_cache` (errors logged, row still kept in `_metadata`). The default row → a `KBContext` built with the singletons but with `vault_path` and `kuzu_path` from the row.
 2. Any exception in step 1 is swallowed with a warning (`Failed to load from SQLite`), after which `__init__` falls back to `_default_kb()`.
 
 ### 5.4 Slug rules and sanitisation
@@ -178,14 +178,14 @@ if not slug:
 | non-existent, parent named `kuzu` | `<path>/kuzu_graph` |
 | otherwise | unchanged |
 
-Applied in `_load`, `get_kb`, `_build_context`, `KBContext.graph`, and `_cleanup_stores`. `GraphService.__init__` additionally migrates the very old `<repo>/data/kuzu_graph` file into the new location when the target does not exist.
+Applied only in `_load` (repair + persist at startup); `get_kb`, `_build_context`, `KBContext.graph` and `_cleanup_stores` use the stored value. `GraphService.__init__` no longer moves the very old `<repo>/data/kuzu_graph` file into place (removed 2026-09-19).
 
 ### 5.6 Lookup API
 
 | Method | Behaviour |
 |---|---|
 | `list_kbs() -> list[dict]` | Copies of `_metadata` values (raw row dicts incl. `kuzu_path`, collection names, Firefly ids). If `_metadata` is empty (DB load failed), returns a synthetic default entry with `created_at: None`. Used by `GET /api/v1/kb` and by the vault watcher to discover vaults. |
-| `get_kb(kb_id) -> KBContext \| None` | Cache hit → context. Else if metadata known → heal `kuzu_path`, `_build_context`, cache. Else `None`. Accepts **ids only**. |
+| `get_kb(kb_id) -> KBContext \| None` | Cache hit → context. Else if metadata known → `_build_context`, cache. Else `None`. Accepts **ids only**. |
 | `get_kb_by_name(name)` | `name.lower().strip()`; `""` or `"default"` → default context (or a fresh `_default_kb()` if somehow absent). Otherwise the first row whose `name.lower() == normalized` **or** `slug == normalized` (slug compared case-sensitively against the lower-cased input, which is fine because slugs are lower-case). Used by `get_kb` dependency and `/vault-files/{kb_id}` fallback. |
 | `get_metadata(kb_id) -> dict \| None` | Shallow copy of the row dict. Used by `firefly_service` to read `firefly_group_id`, and by the delete routes for the response payload. |
 
@@ -252,7 +252,7 @@ Route order: `firefly_service.destroy_kb_administration(ctx)` (best-effort) → 
 3. `wipe_indexes` → `_cleanup_stores(meta)`:
    - Qdrant: new `QdrantService(...)` with the KB's names (this *re-creates* the collections in its constructor if they were missing, then) `delete_collection` each of the three. Errors swallowed.
    - Meili: `MeilisearchService(collection_name=index)` (again ensures the index exists) then `delete_index` + `wait_for_task(10 s)`.
-   - Kuzu: resolve `normalize_kuzu_path(kuzu_path)`; refuse unless under `DATA_DIR/kuzu` (comment: *"A crafted KB name used to be able to point this at arbitrary paths — never delete outside DATA_DIR/kuzu"*). Unlink file + `.wal`; remove the now-empty `<slug>` folder (never the `kuzu` root); if it is a directory, `rmtree`.
+   - Kuzu: `Path(kuzu_path).resolve()` as stored (normalised at `_load`); refuse unless under `DATA_DIR/kuzu` (comment: *"A crafted KB name used to be able to point this at arbitrary paths — never delete outside DATA_DIR/kuzu"*). Unlink file + `.wal`; remove the now-empty `<slug>` folder (never the `kuzu` root); if it is a directory, `rmtree`.
 4. `delete_vault_files` → `rmtree` **only** if under `DATA_DIR/vaults` (§6.4).
 
 Both flags default to `True` and no caller passes `False`; the route docstring states the product path "always destroys Firefly admin, SQLite notes, vault folder, and indexes".
@@ -312,6 +312,7 @@ All helpers compute `rel = path.resolve().relative_to(vault.resolve())`, skip an
 
 Called from `GET /api/v1/notes` (default `sync_vault=true`, wrapped in try/except so a scan failure never breaks listing) and from the setup flow. Algorithm:
 
+0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v1`, doc 09 §4.3), then every row of this KB with a non-empty legacy `notes.content` is moved to disk — `persist_note_body(n, kb, n.content)` when its file is missing, or just `content = ""` when `read_note_file` already returns a body.
 1. `rels = iter_vault_md_files(vault)`; load all `Note` rows for `kb.kb_id`; build `by_rel` (normalised `rel_path` → row) and `by_title` (`title.lower()` → row).
 2. For each `rel` on disk with no row:
    - **Adoption**: `adoptable(stem)` returns a row whose `title.lower() == stem`, whose current `rel_path` is **root-level** (no `/`), and whose current file is **not on disk** — i.e. "a root note was moved into a folder outside Orb". The row's `rel_path` is repointed, `updated_at` bumped, `updated += 1`. The on-disk check exists because *"a second note of the same name in another folder would steal the root note's row and orphan the root file"* (added in `f8f527f`).
@@ -445,7 +446,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 ## 16. Gotchas
 
 - **Name vs slug in `?kb=`.** `get_kb_by_name` accepts either, but after `PATCH` rename the *old name* stops resolving while the slug keeps working. Store slugs client-side (the frontend does).
-- **`typesense_collection` is Meilisearch.** The column and the `meta` key are legacy names; `KBContext.meili.collection` is the same value. Don't add a second "meili_index" column — use the ORM synonym.
+- **`typesense_collection` is Meilisearch.** The column and the `meta` key are legacy names; `KBContext.meili.index_name` is the same value. Don't add a second "meili_index" column — use the ORM synonym.
 - **Default KB vault path lives in two places.** `paths.json.default_vault_path` seeds the row only once. Hand-editing `paths.json` afterwards does nothing until `POST /api/v1/setup/paths` (or a direct row update). `GET /api/v1/setup/status` exposes both: `default_vault_path` (paths.json) and `active_vault_path` (registry).
 - **`create_kb` eagerly creates Qdrant collections and the Meili index** (via service constructors) but not the Kuzu file, the Firefly group, or any notes row.
 - **`kb/empty` has no external-folder guard** while `DELETE /kb/{id}` does. Emptying a KB pointed at a user's Obsidian vault deletes every file in it.
@@ -476,7 +477,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 - `3f21e08` (2026-08-02) *Ship LifeOS as a Docker-free desktop app with in-app data cleanup* — vault-backed notes (`vault.py`, `vault_sync.py`, `vault_watcher.py`, `wikilinks.py`), SQLite registry, `kb/empty` and `delete-non-default`, Meilisearch replacing Typesense (column name kept).
 - `6162be2` / `fbcafe7` (2026-08-02/03) rename to Orb; `orb.db`, `orb_nodes`, `orb_current_kb`; the `LIVEOS_*` env aliases and `LifeOS`/`LiveOS` App Support fallbacks added then were dropped on 2026-09-19.
 - `f8f527f` (2026-08-06) security/data-loss audit: slug sanitisation, vault/Kuzu deletion contained to `DATA_DIR`, `adoptable()` on-disk check in `sync_vault_notes`, shared watcher engine, Kuzu/vault work moved to threads, watcher no longer touching ingestion state beyond stale marking.
-- The Kuzu "directory vs file" healing (`normalize_kuzu_path`) exists because an earlier `create_kb` created `…/kuzu/<slug>` as a directory, which Kuzu rejects; the code comments in `_kuzu_db_file`, `get_kb` and `_load` all reference this.
+- The Kuzu "directory vs file" healing (`normalize_kuzu_path`) exists because an earlier `create_kb` created `…/kuzu/<slug>` as a directory, which Kuzu rejects; the code comments in `normalize_kuzu_path` and `_kuzu_db_file` reference this.
 
 ## 19. Per-KB overrides: LLM pin and finance switch
 

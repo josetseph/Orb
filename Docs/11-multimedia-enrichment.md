@@ -28,7 +28,7 @@
 | Path | Purpose | Key exports |
 |---|---|---|
 | `backend/app/services/multimedia.py` | `MultimediaService`: path resolution, temp-file rules, SSRF guard, per-type extractors, cloud vision fallback, unload helpers | `multimedia_service`, `MultimediaService`, `_format_timestamp` |
-| `backend/app/workflows/agents/ingestion_agent.py` (`multimodal_node`, `_batch_image_titles`, `_ENRICHMENT_BLOCK_RE`, `_strip_prior_multimedia_enrichment`, `multimedia_concurrency_limit`) | Discovery, classification, phase ordering, status updates, block assembly, vault write-back | see [10](10-ingestion-pipeline.md) §6.2 |
+| `backend/app/workflows/agents/ingestion_agent.py` (`multimodal_node`, `_batch_image_titles`, `_ENRICHMENT_BLOCK_RE`, `wrap_legacy_enrichment_blocks`, `_strip_prior_multimedia_enrichment`, `multimedia_concurrency_limit`) | Discovery, classification, phase ordering, status updates, block assembly, vault write-back | see [10](10-ingestion-pipeline.md) §6.2 |
 | `backend/app/services/multimodal_runtime.py` | In-process Florence-2 / Whisper / Marlin: `describe_image_path`, `_describe_pil`, `_resize_for_florence`, `transcribe_audio_path`, `_load_audio_mono_16k*`, `_resolve_ffmpeg_bins`, `caption_video_path`, `unload`, `status` | `multimodal_runtime` |
 | `backend/app/services/multimodal_models.py` | `multimodal_model_path(kind)`, `is_hf_snapshot_ready(path)`, `ensure_multimodal_models` (download) | — |
 | `backend/app/api/files.py` | `POST /api/v1/upload` (ffmpeg transcode of webm/ogg/opus → m4a), `DELETE /api/v1/files/{key}` | `router`, `_transcode_to_m4a` |
@@ -115,7 +115,7 @@ if self._is_ephemeral_download(original_ref, local_path) and os.path.exists(loca
 
 ### 4.4 What upload produces (context for the URL shapes above)
 
-`POST /api/v1/upload` (`api/files.py`): if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}`, the bytes are transcoded with system `ffmpeg -y -i in -c:a aac -b:a 128k out.m4a` (60 s timeout; on missing ffmpeg/timeout/failure the original bytes and extension are kept) and the filename hint becomes `recording.m4a`; otherwise the original filename is used. `local_storage.store_upload` → `vault.save_attachment` writes under `<vault>/attachments/` and returns `url = /vault-files/{kb_id}/{rel}` (also echoed as `href`, `local_path`; `rel` as `rel_path`/`key`). The notes editor inserts `[📎 <filename>](<url>)`, `[🎤 Voice Recording](<url>)` or `![alt](<url>)`.
+`POST /api/v1/upload` (`api/files.py`): if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}`, the bytes are transcoded with system `ffmpeg -y -i in -c:a aac -b:a 128k out.m4a` (60 s timeout; on missing ffmpeg/timeout/failure the original bytes and extension are kept) and the filename hint becomes `recording.m4a`; otherwise the original filename is used. `local_storage.store_upload` → `vault.save_attachment` writes under `<vault>/attachments/` and returns `url = /vault-files/{kb_id}/{rel}` (`rel` as `rel_path`/`key`). The notes editor inserts `[📎 <filename>](<url>)`, `[🎤 Voice Recording](<url>)` or `![alt](<url>)`.
 
 ## 5. Per-type handlers
 
@@ -241,19 +241,15 @@ Re-ingest **replaces**: prior blocks are removed, then regenerated. It never app
 EXTRACT_BLOCK_RE = re.compile(
     r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->", re.S
 )
-def _strip_prior_multimedia_enrichment(content):
-    cleaned = EXTRACT_BLOCK_RE.sub("", content)   # each block, wherever it sits
-    match = _ENRICHMENT_BLOCK_RE.search(cleaned)  # pre-marker notes only
-    if match:
-        cleaned = cleaned[: match.start()]
-    return cleaned.rstrip()
+def _strip_prior_multimedia_enrichment(content, keep=None):
+    # each delimited block, wherever it sits; blocks whose attachment key is in
+    # `keep` (already processed) survive, `keep=None` removes every block
+    return EXTRACT_BLOCK_RE.sub(lambda m: m.group(0) if keep is not None and _block_key(m.group(0)) in keep else "", content).rstrip()
 ```
 
 Removing blocks **individually** is what makes text written *below* an extraction survive. The previous rule cut from the first block header to the end of the note, so anything after it was silently deleted on the next ingest.
 
-`_ENRICHMENT_BLOCK_RE` still exists for notes enriched before delimiters. Those blocks have no closing marker, so "first header to end of note" remains the only boundary available, and its data loss still applies to them — until one re-ingest rewrites them with delimiters. It matches `PDF Extraction`, `Image:`, `Audio Transcript`, `Video Audio Transcript`, `Video Visual Analysis`, `Word Extraction`, `Spreadsheet Extraction` and `Unsupported`.
-
-Detection is by the **first** marker preceded by a blank line; everything from there to the end of the note is discarded. Therefore: (a) blocks are assumed to be a trailing section — user text written after the first block is lost on re-ingest; (b) a marker without a preceding blank line (e.g. at the top of the file, or after a single newline) is not detected and gets re-extracted as user text plus a second copy appended; (c) a user paragraph that happens to start with `[Image: …]` is treated as a block. `content_changed` is True when stripping alone changed the body, so a re-ingest of a note whose attachments were removed still rewrites the `.md` without the stale blocks.
+Only delimited blocks are touched. A bare `[Image: …]` paragraph the user typed is their text and is never stripped. Notes enriched before delimiters existed get their markers from the one-time vault sweep instead: `vault_sync.migrate_vault_files` (run from `sync_vault_notes`, gated by `<vault>/.orb/migrated-v1`) calls `wrap_legacy_enrichment_blocks(content)`, which wraps each legacy header — matched by `_ENRICHMENT_BLOCK_RE` (`PDF Extraction`, `Image:`, `Audio Transcript`, `Video Audio Transcript`, `Video Visual Analysis`, `Word Extraction`, `Spreadsheet Extraction`, `Unsupported`, each preceded by a blank line) — and the text up to the next header, the next delimited block, or the end of the note in `<!-- orb:extract src="" -->…<!-- /orb:extract -->`. Text already inside a delimited block is left alone, so the wrap is idempotent. From then on those blocks are found, kept or dropped by the same rules as any other. `content_changed` is True when stripping alone changed the body, so a re-ingest of a note whose attachments were removed still rewrites the `.md` without the stale blocks.
 
 ### 6.3 Consumers of the markers
 
@@ -314,7 +310,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 4. **Whisper is called with a single 30-second feature window and `language="en"`**; long or non-English recordings are truncated/mis-transcribed. No timestamps are produced for audio (only Marlin events carry timestamps).
 5. **PDF images are captioned with Florence regardless of `PDF_VISUAL_EXTRACTION_ENABLED`**; that flag only controls whole-page renders. A 300-page image-heavy PDF therefore means hundreds of Florence calls.
 6. **One failing attachment fails the whole note** and discards the other attachments' successful output (nothing is cached).
-7. **Strip-on-reingest truncates at the first marker** — never let users write below the enrichment section, and never generate a marker without the `\n\n` prefix.
+7. **Strip-on-reingest only removes delimited blocks** — always emit the `<!-- orb:extract src="…" -->` delimiters around generated text; an undelimited block is user text to the stripper and would be re-extracted alongside a second copy.
 8. **Frontend marker mismatch** (`[Video Transcript …]` vs `[Video Audio Transcript …]`, no Word/Spreadsheet segment types).
 9. **Image titles come from the chat LLM, not Florence**; if the LLM is down, image entities are named after their filenames.
 10. **`process_video()` is dead code** for the agent; do not "fix" ordering by calling it — it would load Whisper and Marlin back to back inside one handler.

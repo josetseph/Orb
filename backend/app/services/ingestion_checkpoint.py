@@ -52,7 +52,9 @@ def _slot(llm, prompt: str, temperature: float) -> Path | None:
     return _dir(*key) / f"{digest}.json"
 
 
-async def generate_with_meta(llm, prompt: str, temperature: float = 0.1) -> tuple[str, dict]:
+async def generate_with_meta(
+    llm, prompt: str, temperature: float = 0.1, json_mode: bool = False
+) -> tuple[str, dict]:
     """``llm.ingestion_generate_with_meta`` with a replay from disk when the call was already made."""
     slot = _slot(llm, prompt, temperature)
     if slot is not None and slot.exists():
@@ -61,7 +63,7 @@ async def generate_with_meta(llm, prompt: str, temperature: float = 0.1) -> tupl
             return saved["raw"], saved["meta"]
         except (OSError, ValueError, KeyError):
             pass  # unreadable checkpoint: just make the call again
-    raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=temperature)
+    raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=temperature, json_mode=json_mode)
     if slot is not None:
         try:
             slot.parent.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,6 @@ async def generate_with_meta(llm, prompt: str, temperature: float = 0.1) -> tupl
     return raw, meta
 
 
-async def generate(llm, prompt: str, temperature: float = 0.1) -> str:
-    raw, _ = await generate_with_meta(llm, prompt, temperature=temperature)
+async def generate(llm, prompt: str, temperature: float = 0.1, json_mode: bool = False) -> str:
+    raw, _ = await generate_with_meta(llm, prompt, temperature=temperature, json_mode=json_mode)
     return raw

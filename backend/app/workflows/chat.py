@@ -7,7 +7,7 @@ from collections.abc import Callable
 from app.core.database import AsyncSessionLocal
 from app.core.log import get_logger
 from app.models.note import Note
-from app.schemas.chat import ChatTurn
+from app.schemas.chat import ChatSource, ChatTurn
 from app.services.llm import llm_service
 from app.services.local_models import ModelLoadClock, model_load_clock
 from app.services.retrieval import RetrievalService, retrieval_service
@@ -156,11 +156,9 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             )
             logger.info("[Chat] Iterative loop exhausted — no answer produced.")
 
-        references = await self._extract_references(unique_docs)
+        sources = await self._extract_references(unique_docs)
         if progress_callback:
             progress_callback("Formatting answer", None)
-        if references:
-            answer += "\n\n### References\n" + "\n".join(references)
 
         total = time.perf_counter() - start_time
         logger.info(f"[Chat] Total pipeline duration: {total:.2f}s\n")
@@ -169,6 +167,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             "query": user_query,
             "rewritten_query": rewritten_query,
             "answer": answer,
+            "sources": [s.model_dump() for s in sources],
             "context": unique_docs,
             "thinking": thinking,
         }
@@ -195,8 +194,8 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             "thinking": thinking,
         }
 
-    async def _extract_references(self, docs: list) -> list:
-        """Extract unique note references, preferring SQLite titles over graph titles."""
+    async def _extract_references(self, docs: list) -> list[ChatSource]:
+        """Unique note sources, preferring SQLite titles over graph titles."""
         seen_refs: set[str] = set()
         id_to_title: dict[str, str | None] = {}
 
@@ -218,13 +217,13 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.debug(f"[Chat] Note title lookup failed: {e}")
 
-        references = []
+        references: list[ChatSource] = []
         for d in docs:
             for linked_note in d.get("linked_notes", []):
                 lnid = linked_note.get("id")
                 if lnid and lnid not in seen_refs:
                     ltitle = id_to_title.get(lnid) or "Untitled Note"
-                    references.append(f"- [{ltitle}](/notes/{lnid})")
+                    references.append(ChatSource(id=lnid, title=ltitle))
                     seen_refs.add(lnid)
 
         logger.info(f"[Chat] Found {len(references)} references for response")

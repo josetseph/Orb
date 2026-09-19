@@ -1,6 +1,6 @@
 # LLM Providers and Prompting
 
-**What this covers.** The `LLMService` abstraction in `backend/app/services/llm.py` — provider clients (in-process `local`, OpenAI, Gemini, Anthropic, Hugging Face router, and the OpenAI-compatible shape they all present), the separate ingestion client set, chat/ingestion model-name resolution including the per-KB override layer (`kb_registry.effective_llm_config`, `KBContext.llm`, `/api/v1/kb/{id}/llm`), structured output (prompt-guided JSON + `json_repair` on every provider), timeouts, thinking extraction, output-truncation metadata, the AI gate (`ai_gate.py`), the runtime settings API, and a catalogue of **every prompt** in the backend with its call site, inputs and expected output format. The local GGUF runtime that backs `provider=local` is documented in [12-local-models-and-inference.md](12-local-models-and-inference.md).
+**What this covers.** The `LLMService` abstraction in `backend/app/services/llm.py` — provider clients (in-process `local`, OpenAI, Gemini, Anthropic, Hugging Face router, and the OpenAI-compatible shape they all present), the separate ingestion client set, chat/ingestion model-name resolution including the per-KB override layer (`kb_registry.effective_llm_config`, `KBContext.llm`, `/api/v1/kb/{id}/llm`), structured output (a `json_mode` flag that turns on the provider's JSON mode where one exists, plus `json_repair` on every provider), timeouts, thinking extraction, output-truncation metadata, the AI gate (`ai_gate.py`), the runtime settings API, and a catalogue of **every prompt** in the backend with its call site, inputs and expected output format. The local GGUF runtime that backs `provider=local` is documented in [12-local-models-and-inference.md](12-local-models-and-inference.md).
 
 **Related docs:** [Local models & inference](12-local-models-and-inference.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Graph storage](14-graph-storage-kuzu.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Finance](17-finance-firefly.md) · [Configuration reference](21-configuration-reference.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -73,7 +73,7 @@ Every public generation method (`generate`, `generate_text`, `reason`, `_reason_
 
 1. `api/chat.py` → `require_ai(kb)` → `kb.get_chat_workflow().chat(...)`.
 2. `ChatWorkflow._retrieve_context` → `self._llm.rewrite_follow_up_query(history, query)` (sync, one chat call; blocks the event loop briefly).
-3. `RetrievalService.retrieve_with_iterative_loop` → `self._llm.analyze_query(query)` (sync, one JSON chat call, `lru_cache`d per `(query, today)`), then up to `MAX_LOOP_ITERATIONS` (3) × `await self._llm.iterative_step(...)` (each `asyncio.to_thread(self._reason_step, prompt)`).
+3. `RetrievalService.retrieve_with_iterative_loop` → `self._llm.analyze_query(query)` (sync, one JSON chat call, `lru_cache`d per `(query, today)`), then up to `MAX_LOOP_ITERATIONS` (3) × `await self._llm.iterative_step(...)` (each `asyncio.to_thread(self._reason_step, prompt, json_mode=True)`).
 4. The final answer text and `thinking` bubble back to the API response.
 
 For `provider=local` every one of those calls goes through `LocalOpenAICompat.chat.completions.create` → `LocalLlamaRuntime.create_chat_completion` (doc 12 §8), so a chat turn is 2 + N generations on the resident GGUF.
@@ -124,7 +124,7 @@ Callers that accept `model=` (`reason`, `generate_title`, `generate_text`, `gene
 _ingestion_model_override or _chat_model_override   (per-KB) →
 settings.INGESTION_MODEL                                     →
 by ingestion_provider:
-  local/ollama/lm_studio: INGESTION_LLM_MODEL (default "local-chat") or LLM_MODEL
+  local:       INGESTION_LLM_MODEL (default "local-chat") or LLM_MODEL   # ollama/lm_studio were already coerced to local
   gemini:      INGESTION_GEMINI_MODEL or GEMINI_MODEL
   openai:      OPENAI_MODEL
   anthropic:   ANTHROPIC_MODEL
@@ -183,18 +183,28 @@ Frontend: `api.getKBLLM(id)`, `api.updateKBLLM(id, {provider, model, ingestion_m
 
 ## 6. Structured output and JSON cleaning
 
-### 6.1 Structured output is plain JSON
+### 6.1 Structured output: `json_mode` + prompt + repair
 
-There is no structured-output client layer. The one structured call, `analyze_query` (§9.8), asks the chat model for a JSON object, runs the text through `_clean_json`, and validates it with `QueryAnalysis.model_validate_json`. Any failure raises inside the cached helper (so bad results are never cached) and `analyze_query` returns safe defaults. Ingestion extraction (doc 10) does the same with the ingestion client: `ingestion_generate_with_meta` → `_clean_json` → pydantic.
+There is no structured-output client layer. Every structured call is a chat call with `json_mode=True`, whose text is run through `_clean_json` and validated with a pydantic model: `analyze_query` (§9.8, `QueryAnalysis`), `iterative_step` (§7.2, `_ResearchStep`), ingestion extraction (doc 10, `Extraction` via `ingestion_generate_with_meta`), garbage-name recovery (§9.3), image titling and community naming (§9.5, `_CommunityName`). Any failure raises in the caller (for `analyze_query` inside the cached helper, so bad results are never cached, and it returns safe defaults).
+
+`json_mode: bool = False` is a keyword on `_chat`, `_reason_step`, `generate`, `ingestion_generate`, `ingestion_generate_with_meta` and on `ingestion_checkpoint.generate[_with_meta]`. `_chat` translates it per provider:
+
+| Provider | What `json_mode=True` sends |
+|---|---|
+| `openai`, `openai_compat`, `huggingface` | `response_format={"type": "json_object"}` |
+| `local` | the same `response_format`, which `LocalOpenAICompat` passes to `LocalLlamaRuntime.create_chat_completion` → llama.cpp's generic JSON grammar (doc 12) |
+| `gemini` | `GenerateContentConfig(response_mime_type="application/json")` |
+| `anthropic` | nothing — prompt-driven only (a `{` assistant prefill is rejected by current Claude models, and schema-based structured output needs a full JSON schema; a `# ponytail:` comment in `_chat` names that upgrade) |
+
+Before the call, if neither the system nor the user text contains the literal `JSON`, `_chat` appends `"\n\nRespond with a JSON object."` to the last user message (OpenAI rejects `response_format` otherwise). Callers still parse through `_clean_json`: JSON mode makes the output well-formed, not necessarily the right shape.
 
 ### 6.2 `_clean_json(json_str) -> str` (pure; tested in `test_llm_json_cleaning.py`)
 
 1. If the text contains ```` ``` ````, keep only the first fenced block (`re.search(r"```(?:json)?(.*?)```", DOTALL)`).
-2. Strip control characters `[\x00-\x08\x0b\x0c\x0e-\x1f]` (keeps `\t`, `\n`, `\r`).
-3. Normalise smart quotes: `‘ ’ ‛` → `'`, `“ ” „` → `"`.
-4. `json_repair.repair_json(...)` (fixes missing braces/commas, single quotes, trailing text); if `json_repair` is not installed, return the string as-is with a warning.
+2. Normalise smart quotes: `‘ ’ ‛` → `'`, `“ ” „` → `"` (`json_repair` escapes stray control characters itself but does not read curly quotes as string delimiters).
+3. `json_repair.repair_json(...)` (fixes missing braces/commas, single quotes, trailing text). `json_repair` is a hard import at the top of `llm.py`.
 
-Used by: `_analyze_query_cached` and — as `llm._clean_json` — by the ingestion agent for the extraction JSON. Callers still `json.loads` / `model_validate_json` afterwards; `repair_json` can return `""` for hopeless input, which then raises in the caller.
+Used by: `_analyze_query_cached`, `iterative_step`, and — as `llm._clean_json` — by the ingestion agent for the extraction JSON and by `IngestionWorkflow._name_and_summary`. Callers still `json.loads` / `model_validate_json` afterwards; `repair_json` can return `""` for hopeless input, which then raises in the caller.
 
 ### 6.3 Truncation metadata — `ingestion_generate_with_meta`
 
@@ -206,23 +216,23 @@ Returns `(content, {"finish_reason", "truncated"})`: Gemini `candidates[0].finis
 
 | Method | Sync/async | Provider paths | System prompt | Returns |
 |---|---|---|---|---|
-| `generate(prompt, temperature=0.1, max_tokens=None, model=None)` | async (`to_thread(_chat)`) | all, via `_chat` | none (single user message) | stripped text; re-raises errors |
+| `generate(prompt, temperature=0.1, max_tokens=None, model=None, json_mode=False)` | async (`to_thread(_chat)`) | all, via `_chat` | none (single user message) | stripped text; re-raises errors |
 | `generate_text(system_prompt, user_prompt, model=None)` | sync | all, via `_chat` (Gemini concatenates system and user; Anthropic sends `system=`) | caller's | stripped text |
 | `reason(prompt, model=None)` | sync | all, via `_chat` | `"You are a deep reasoning engine. Analyze the input carefully. Detect conflicts, subtleties, or hidden connections."` | raw text |
-| `_reason_step(prompt) -> (content, thinking)` | sync (called via `to_thread` from `iterative_step`) | as `reason`; returns `meta["thinking"]` | same | `(content, thinking|None)` |
+| `_reason_step(prompt, *, json_mode=False) -> (content, thinking)` | sync (called via `to_thread` from `iterative_step`) | as `reason`; returns `meta["thinking"]` | same | `(content, thinking|None)` |
 | `_reason_step_sync(prompt, model=None)` | sync | all, via `_chat` | `"You are a precise query rewriter. Output only the rewritten query."` | stripped text |
 | `generate_title(text, model=None)` | sync | all three shapes | `"Generate a concise, descriptive title for the provided note content. Do not use quotes."` | title with `"` removed; `"Untitled Note"` for blank input |
 | `rewrite_follow_up_query(history, latest_query, model=None)` | sync | via `_reason_step_sync` | — | rewritten query if non-empty and ≤ 300 chars, else the original |
 | `analyze_query(query)` | sync | one JSON chat call via `_chat` (temperature 0), `lru_cache(64)` per `(query, today)` | — | dict (see §9) or safe defaults `{"intent":"search","entities":[],"keywords":query.split(),…}` |
-| `iterative_step(...)` | async (`to_thread(_reason_step)`) | via `_reason_step` | — | protocol dict (below) |
-| `ingestion_generate[_with_meta]` | async | ingestion clients | none | text (+meta) |
+| `iterative_step(...)` | async (`to_thread(_reason_step, json_mode=True)`) | via `_reason_step` | — | protocol dict (below) |
+| `ingestion_generate[_with_meta](prompt, temperature=0.1, max_tokens=None, json_mode=False)` | async | ingestion clients | none | text (+meta) |
 
 ### 7.1 Thinking extraction
 
 `_chat` always returns `meta["thinking"]`; only `_reason_step` (and therefore `iterative_step`) passes it on:
 
 1. `message.reasoning_content` if the OpenAI-shaped response carries it (LM-Studio-style servers; the local shim never sets it — the local runtime folds `reasoning_content` deltas into `content`).
-2. Else, if `<think>` appears in `content`: `thinking = first <think>…</think> block (stripped)`, and **all** `<think>…</think>` blocks are removed from `content`.
+2. Else, if `<think>` appears in `content`: `thinking` = the first `<think>…</think>` block (stripped), and that block is cut out of `content`. The regex is `<think>(.*?)(?:</think>|\Z)`, so an unclosed `<think>` — reasoning the output limit cut off — is treated as thinking running to the end of the text rather than leaking into the answer.
 3. Gemini and Anthropic branches return `thinking=None` (Gemini is always called with `thinking_budget=0`).
 
 `iterative_step` returns `"thinking": step_thinking`; `RetrievalService.retrieve_with_iterative_loop` returns the last non-empty thinking as the third tuple element; `ChatWorkflow.chat/retrieve_for_query` put it in `"thinking"`; the chat API persists/returns it on the message (see doc 16 / `schemas/chat.py`). Gemma 4 GGUFs via llama.cpp's chat template do not emit `<think>` unless prompted, so `thinking` is usually `None` on the desktop path; Qwen 3.5/3.6 GGUFs do emit it and it is stripped here.
@@ -236,7 +246,7 @@ Inputs: `original_question`, `accumulated_steps [{query, full_answer, reasoning}
  "final_answer": str | None, "next_query": str | None, "thinking": str | None}
 ```
 
-Parsing: a regex extracts labelled sections `REASONING | FINDING | FULL_ANSWER | ANSWER | NEXT_QUERY` (tolerating `**bold**` labels and multi-line values; first occurrence wins). `ANSWER` not in `{INSUFFICIENT, NONE, N/A, UNKNOWN, NOT FOUND}` → `can_answer`. Else `NEXT_QUERY` (first non-empty line, bullets/asterisks/quotes stripped). Two fallbacks: (a) on the **first** planning turn (no docs) a bare one-line quoted phrase (optionally prefixed `Reply:`/`Query:`, ≤ 200 chars) is accepted as `next_query`; (b) if there is a `FINDING`/`FULL_ANSWER` but neither `ANSWER` nor `NEXT_QUERY` and the finding is not a "not found" token, the finding becomes the final answer. On any exception → all-empty dict with `can_answer=False`. `settings.BENCHMARK_MODE` selects the strict HotPotQA-style rules (`_REASONING_RULES`/`_OUTPUT_RULES`) instead of the personal-KB rules (`_REASONING_RULES_GENERAL`/`_OUTPUT_RULES_GENERAL`).
+Parsing: the model is asked (with `json_mode=True`) for one JSON object `{"reasoning", "finding", "answer", "next_query"}`; the text goes through `_clean_json` and `_ResearchStep.model_validate_json` (a four-field pydantic model whose fields all accept `null`, because small models write null for an empty string). `answer`, stripped, not empty and not in `{INSUFFICIENT, NONE, NULL, N/A, UNKNOWN, NOT FOUND}` → `final_answer` and `can_answer=True`; otherwise `next_query` gets the same non-answer filter. `finding` becomes `full_answer`. There is no labelled-prose parser and no rescue for an unlabelled first turn or a finding without an answer any more. On any exception (call or parse) → all-empty dict with `can_answer=False`. `settings.BENCHMARK_MODE` selects the strict HotPotQA-style rules (`_REASONING_RULES`/`_OUTPUT_RULES`) instead of the personal-KB rules (`_REASONING_RULES_GENERAL`/`_OUTPUT_RULES_GENERAL`).
 
 ## 8. AI gating, runtime settings and persistence
 
@@ -278,8 +288,8 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
 
 ### 9.1 Knowledge extraction ("Knowledge Architect") — `workflows/agents/ingestion_agent.py::_build_extraction_prompt(extraction_content)`
 
-- **Purpose**: turn one note (or one chunk of a long note) into `Extraction{title, nodes[{name,type,type_reasoning,isolated_context}], relationships[{source_name,target_name,relationship_type,natural_language,reasoning}]}`.
-- **Call**: `llm.ingestion_generate_with_meta(prompt, temperature=0.1)` (free-form generate + `llm._clean_json` + `Extraction.model_validate_json`; comment: grammar-constrained sampling "small models often empty out for nested relationship arrays"). Up to `_MAX_EXTRACTION_ATTEMPTS=3` with `asyncio.sleep(30*(attempt+1))` between attempts ("KV-cache pressure … lets Metal/CPU recover"). If `meta.truncated` and the chunk is > `MIN_SPLIT_TOKENS` (400) and depth < 3 → split in half (`split_for_extraction`) and `merge_extractions`.
+- **Purpose**: turn one note (or one chunk of a long note) into `Extraction{title, nodes[{name,type,isolated_context}], relationships[{source_name,target_name,relationship_type,natural_language}]}`. `relationship_type` must be one of `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates, listed verbatim in the prompt under "Allowed `relationship_type` values (no others)"); the schema validator coerces anything else to `related_to` (doc 10).
+- **Call**: `checkpoint.generate_with_meta(llm, prompt, temperature=0.1, json_mode=True)` → `llm.ingestion_generate_with_meta` (provider JSON mode, §6.1) + `llm._clean_json` + `Extraction.model_validate_json`. Up to `_MAX_EXTRACTION_ATTEMPTS=3` with `asyncio.sleep(30*(attempt+1))` between attempts ("KV-cache pressure … lets Metal/CPU recover"). If `meta.truncated` and the chunk is > `MIN_SPLIT_TOKENS` (400) and depth < 3 → split in half (`split_for_extraction`) and `merge_extractions`.
 - **Inputs**: `extraction_content` = optional `# {user title}\n\n` + note body after multimedia enrichment. Chunking: `chunk_token_budget(llm.ingestion_context_tokens(), overhead=count(_build_extraction_prompt("")))` = `max(400, min(ORB_EXTRACTION_CHUNK_TOKENS|4000, (ctx - overhead - 64)/3.5))`; paragraphs → lines → sentences → words → chars.
 - **Skeleton** (≈1.9 k tokens of instructions; all braces doubled in source because it is an f-string):
 
@@ -314,7 +324,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 ### 9.3 Garbage-name recovery — `ingestion_agent.py::extraction_node` (`rename_prompt`)
 
 - **Purpose**: nodes whose `name` ∈ `{untitled, none, unknown, ""}` but that have `isolated_context` get a specific name; unnamed context-less nodes are dropped.
-- **Call**: `llm.ingestion_generate(rename_prompt, temperature=0.0)`.
+- **Call**: `checkpoint.generate(_llm, rename_prompt, temperature=0.0, json_mode=True)`.
 - **Prompt**: `"For each numbered excerpt below, provide the most specific descriptive name for the node it describes (1–5 words each).\n\nReturn null if an excerpt has insufficient information to name specifically.\n\nReturn ONLY a JSON array: [{\"index\": 1, \"name\": \"Name Here\"}, {\"index\": 2, \"name\": null}, ...]\n\n{batch_lines}\n\nReturn ONLY: [{\"index\": 1, \"name\": \"...\"}, ...]"`, lines `N. (type=<type>) "<isolated_context>"`.
 - **Format**: first non-greedy `[...]`; accepted names `2 < len ≤ 80` and not garbage; then de-duplicated case-insensitively against clean nodes.
 
@@ -327,13 +337,13 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 ### 9.5 Community name + summary — `workflows/ingestion.py::_build_community_summary(member_rows, level, strict_naming)`
 
 - **Purpose**: Leiden community (L2) naming/summarisation from member nodes.
-- **Call**: `self._llm.reason(prompt, model=get_ingestion_model())` (system prompt "deep reasoning engine" on OpenAI-shaped providers).
-- **Prompt skeleton**: `"The following entities are closely related based on how they appear across a knowledge graph.\n\nCluster level: {level}  [L2 = most fine-grained → L1 = mid-level → L0 = broadest]\nEntities ({n} total):\n{- name (Label): ctx | ctx …}\n\nGenerate:\n1. A short descriptive name …\n2. A thorough summary … Write as many sentences as needed.\n\nName rules:\n- Use plain, natural language\n- Anchor the name in concrete topics …\n- Do NOT use meta-labels like 'Node Cluster', 'Isolated Group', 'Cluster L2-14', or any variant\n- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\nReply in EXACTLY this format — no preamble, no trailing text:\nNAME: <name>\nSUMMARY: <summary>"` + (strict retry) `"\n\nThis is a retry because the previous name was too generic. The NAME must be specific and user-facing."`.
-- **Format**: `NAME:` / `SUMMARY:` lines parsed by `_parse_name_summary`; generic names (token list in `_is_generic_community_name`) trigger one strict retry, then `_derive_fallback_community_name`. Community summaries are embedded with `embed_documents` (doc 12/14).
+- **Call**: `_name_and_summary(prompt)` → `asyncio.run(self._llm.ingestion_generate(prompt, temperature=0.1, json_mode=True))` (the community worker thread has no event loop) → `_clean_json` → `_CommunityName.model_validate_json` (two string fields, `name`/`summary`).
+- **Prompt skeleton**: `"The following entities are closely related based on how they appear across a knowledge graph.\n\nCluster level: {level}  [L2 = most fine-grained → L1 = mid-level → L0 = broadest]\nEntities ({n} total):\n{- name (Label): ctx | ctx …}\n\nGenerate:\n1. A short descriptive name …\n2. A thorough summary … Write as many sentences as needed.\n\nName rules:\n- Use plain, natural language\n- Anchor the name in concrete topics …\n- Do NOT use meta-labels like 'Node Cluster', 'Isolated Group', 'Cluster L2-14', or any variant\n- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\nReturn ONLY this JSON: {\"name\": \"<name>\", \"summary\": \"<summary>\"}"` + (strict retry) `"\n\nThis is a retry because the previous name was too generic. The name must be specific and user-facing."`.
+- **Format**: JSON `{name, summary}`; empty strings become `None`. A name is accepted only if `_name_fits_members(name, member_rows)` — some token of ≥ 3 letters in the name also occurs in a member entity's name — otherwise `_commit_community` retries with `strict_naming=True` up to 2 times, then uses `_derive_fallback_community_name` (`About X` / `X and Y` / `X and related topics`). There is no generic-word blocklist. Community summaries are embedded with `embed_documents` (doc 12/14).
 
 ### 9.6 Community roll-up (L1/L0) — `workflows/ingestion.py::_build_rollup_summary(child_rows, level, strict_naming)`
 
-- Same call/format as 9.5; prompt: `"The following are descriptions of {n} related groups that together form a broader connected topic.\n\nCluster level: {level} …\n\nGroups:\n{- name: summary}\n\nSynthesize:\n1. A short descriptive name capturing the overarching theme across all groups\n2. A thorough summary covering the shared themes, what connects the groups, major patterns, and the big-picture significance. …\n\nName rules: (same)\n\nReply in EXACTLY this format …\nNAME: <name>\nSUMMARY: <summary>"`.
+- Same call/format as 9.5; prompt: `"The following are descriptions of {n} related groups that together form a broader connected topic.\n\nCluster level: {level} …\n\nGroups:\n{- name: summary}\n\nSynthesize:\n1. A short descriptive name capturing the overarching theme across all groups\n2. A thorough summary covering the shared themes, what connects the groups, major patterns, and the big-picture significance. …\n\nName rules: (same)\n\nReturn ONLY this JSON: {\"name\": \"<name>\", \"summary\": \"<summary>\"}"`.
 
 ### 9.7 Temporal digest — `workflows/ingestion.py::build_temporal_digests`
 
@@ -359,8 +369,8 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 ### 9.10 Iterative research step — `LLMService.iterative_step(...)`
 
-- **Purpose**: one hop of the retrieval loop (plan first query → assess docs → `ANSWER` or `NEXT_QUERY`).
-- **Call**: `_reason_step` (system `"You are a deep reasoning engine. …"` on OpenAI-shaped providers; Gemini/Anthropic get the prompt alone).
+- **Purpose**: one hop of the retrieval loop (plan first query → assess docs → `answer` or `next_query`).
+- **Call**: `_reason_step(prompt, json_mode=True)` (system `"You are a deep reasoning engine. …"` on OpenAI-shaped providers; Gemini/Anthropic get the prompt alone).
 - **Prompt assembly**:
 
   ```
@@ -373,11 +383,10 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
   QUERIES ALREADY TRIED (do NOT repeat these — choose a different angle):\n  - q …            (when tried_queries)
   CURRENT SEARCH: '<search_query>'\n\nRETRIEVED DOCUMENTS:\n<doc texts joined by \n\n---\n\n>   (when docs)
   <task instructions>
-  Reply:
   ```
 
-  Task instructions, first turn (no docs): `"Output the first search query needed to start answering this question:\nNEXT_QUERY: <one specific search query>\n"`. With docs, general mode: `"Assess the current results:\nREASONING: <…>\nFINDING: <a summary of what is relevant … Always write something; use 'Not found' only if truly nothing here is relevant>\n\nThen decide:\n  If you have enough information to answer the ORIGINAL QUESTION:\n  ANSWER: <a complete, natural-language answer …>\n\n  If you need more information:\n  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n{_REASONING_RULES_GENERAL}\n{_OUTPUT_RULES_GENERAL}"`. `BENCHMARK_MODE=True` swaps in the strict single-fact rules (`_REASONING_RULES`: chain tracing, comparison/yes-no discipline, answer type, specificity, exact extraction, temporal; `_OUTPUT_RULES`: bare fact only, YES/NO, one option, exact phrase…).
-- **Format**: labelled sections parsed as in §7.2.
+  Task instructions, first turn (no docs): `"Reply with one JSON object: {\"reasoning\": \"\", \"finding\": \"\", \"answer\": null, \"next_query\": \"the first specific search query needed to start answering this question\"}\n"`. With docs, general mode: `"Assess the current results and reply with one JSON object with exactly these keys:\n{\"reasoning\": \"how these documents relate to the question and what you have found so far\",\n \"finding\": \"what is relevant in these documents — key facts, entities, relationships. Always write something; 'Not found' only if truly nothing here is relevant\",\n \"answer\": \"a complete, natural-language answer to the ORIGINAL QUESTION covering everything relevant you found — see output rules below — or null if you need more information\",\n \"next_query\": \"one specific search query, different from all prior ones, or null if you answered\"}\nSet exactly one of answer / next_query.\n\n{_REASONING_RULES_GENERAL}\n{_OUTPUT_RULES_GENERAL}"`. `BENCHMARK_MODE=True` swaps in the strict single-fact rules (`_REASONING_RULES`: chain tracing, comparison/yes-no discipline, answer type, specificity, exact extraction, temporal; `_OUTPUT_RULES`: bare fact only, YES/NO, one option, exact phrase…).
+- **Format**: JSON object parsed as in §7.2.
 
 ### 9.11 Reasoning system prompt — `reason`, `_reason_step`
 
@@ -437,7 +446,7 @@ Gotchas:
 - `analyze_query` prompt/schema field-name mismatch (`entity_types` vs `expected_entity_types`) — the schema wins because the examples use the schema name.
 - The extraction prompt is an f-string: every literal `{`/`}` must be doubled.
 - `generate_title` strips all `"` characters, including ones inside the title.
-- Thinking is only extracted in `_reason_step`; `reason()` returns `<think>` blocks verbatim (community prompts parse `NAME:`/`SUMMARY:` after them, which works only if the model puts the labels after the think block).
+- `_chat` strips the `<think>` block from every OpenAI-shaped response, but only `_reason_step` (and so `iterative_step`) returns it; `reason()`, `generate()` and the ingestion calls discard it.
 - The local runtime raises `PromptTooLongError` / `RuntimeError` for too-long prompts or missing per-KB GGUFs; `iterative_step` swallows all exceptions into an empty result (the loop then ends with "couldn't find enough information"), while `generate`/`ingestion_generate` re-raise.
 - `ai_is_configured` is true whenever `LLM_BASE_URL` is non-empty, even if nothing listens there.
 
@@ -449,7 +458,7 @@ Failure modes:
 | Gemini 429/503/504 / content filter | the call fails; ingestion's own retry loop (doc 10) decides whether to try again |
 | Local model missing / not downloaded | `RuntimeError` from runtime → extraction error / chat error; per-KB pinned missing model → explicit "not downloaded" error |
 | Truncated ingestion output | `truncated=True` → chunk split (doc 10); for chat loop the answer is simply cut |
-| Malformed JSON | `_clean_json` + `json_repair`; still-invalid → exception → retry (ingestion, 3× with 30/60 s waits) or `None` (query analysis → safe defaults) |
+| Malformed JSON | provider JSON mode where available (§6.1), then `_clean_json` + `json_repair`; still-invalid → exception → retry (ingestion, 3× with 30/60 s waits) or `None` (query analysis → safe defaults) |
 | Empty local output | `ValueError("Local LLM returned empty content…")` → retry path |
 
 ## 12. Discrepancies noticed and history
@@ -471,3 +480,4 @@ History:
 - `8de5cda` (2026-08-07): `_query_analysis_cache` (per-day memo; avoids repeated model swaps on local).
 - Uncommitted working tree (2026-09): per-KB overrides (`LLMService` kwargs, `kb_registry.effective_llm_config`, `KBContext.llm`, `/kb/{id}/llm`), `ai_gate.provider_is_configured` + `require_ai(kb)`, `ingestion_generate_with_meta` with truncation metadata, no default `max_tokens`, `ingestion_count_tokens`/`ingestion_context_tokens`, chunked extraction + batched image titling in the ingestion agent, `[Timing]` lines via `services/timing.py`.
 - Uncommitted working tree (2026-09-19): `instructor`, `extract_structured` and the per-provider extraction helpers, `GeminiChatWrapper`, the fallback provider, the async client twins and `_init_ingestion_clients` were removed; every generation method now goes through one `_chat()`; `_build_clients` is called for the main and the ingestion provider; query analysis is plain JSON with `lru_cache`; `LLM_RESPONSE_FORMAT`, `LLM_FALLBACK_PROVIDER`, `LLM_KEEP_ALIVE` and `AI_SETUP_MODE` are gone. `llm.py` went from 1903 to ~1070 lines.
+- Uncommitted working tree (2026-09-19, band-aid pass): `json_mode` on `_chat`/`generate`/`ingestion_generate[_with_meta]`/`_reason_step` (provider JSON mode per §6.1); `iterative_step` and community naming moved from labelled prose to JSON parsed with pydantic (`_ResearchStep`, `_CommunityName`), deleting `_section_re`, `_clean_next_query`, the first-turn/`FULL_ANSWER` rescues and `_parse_name_summary`; `_clean_json` dropped control-character stripping and made `json_repair` a hard import; the `<think>` regex tolerates an unclosed tag. Probe on Gemma-4 E4B Q4: JSON mode returned 23 nodes/22 rels vs 25/24 in prose with `finish=stop` instead of `length`; the research step was correct in both modes.

@@ -243,7 +243,7 @@ export function useVaultTree({
       alert("File name cannot contain path separators");
       return;
     }
-    const parts = renameDialog.rel_path.replace(/\\/g, "/").split("/");
+    const parts = renameDialog.rel_path.split("/");
     parts[parts.length - 1] = newName;
     const toRel = parts.join("/");
     if (toRel === renameDialog.rel_path) {

@@ -13,25 +13,6 @@ class Node(BaseModel):
     type: str = "thing"
     isolated_context: str = ""
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        """Map common LLM key aliases onto canonical fields."""
-        if not isinstance(data, dict):
-            return data
-        out = dict(data)
-        if not out.get("name"):
-            if out.get("trait"):
-                out["name"] = out["trait"]
-            elif out.get("title"):
-                out["name"] = out["title"]
-        if not out.get("isolated_context"):
-            if out.get("evidence_quote"):
-                out["isolated_context"] = out["evidence_quote"]
-            elif out.get("context"):
-                out["isolated_context"] = out["context"]
-        return out
-
     @field_validator("*", mode="before")
     @classmethod
     def handle_none(cls, v: Any, info) -> Any:
@@ -43,49 +24,74 @@ class Node(BaseModel):
         return v
 
 
+#: The only predicates the graph stores. The model is shown this list; anything
+#: else it returns collapses to ``related_to`` rather than minting a new edge
+#: label per note.
+RELATIONSHIP_TYPES: tuple[str, ...] = (
+    "related_to",
+    "works_at",
+    "works_with",
+    "reports_to",
+    "manages",
+    "leads",
+    "founded",
+    "owns",
+    "part_of",
+    "member_of",
+    "instance_of",
+    "has_property",
+    "located_in",
+    "lives_in",
+    "born_in",
+    "occurs_at",
+    "attends",
+    "participates_in",
+    "created",
+    "authored",
+    "produces",
+    "uses",
+    "depends_on",
+    "mentions",
+    "discusses",
+    "causes",
+    "precedes",
+    "follows",
+    "knows",
+    "friend_of",
+    "married_to",
+    "parent_of",
+    "child_of",
+    "sibling_of",
+    "studied_at",
+    "teaches",
+    "competes_with",
+    "partners_with",
+    "invests_in",
+    "funds",
+    "sells",
+    "buys",
+)
+
+
 class ExtractedRelationship(BaseModel):
     """Relationship between two nodes extracted from content."""
 
     source_name: str = ""
     target_name: str = ""
-    relationship_type: str = "relates_to"
+    relationship_type: str = "related_to"
     natural_language: str = ""
 
-    @model_validator(mode="before")
+    @field_validator("source_name", "target_name", "natural_language", mode="before")
     @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        """Map common LLM key aliases onto canonical fields."""
-        if not isinstance(data, dict):
-            return data
-        out = dict(data)
-        if not out.get("source_name") and out.get("entity1"):
-            out["source_name"] = out["entity1"]
-        if not out.get("target_name") and out.get("entity2"):
-            out["target_name"] = out["entity2"]
-        if not out.get("natural_language") and out.get("description"):
-            out["natural_language"] = out["description"]
-        return out
+    def handle_none_strings(cls, v: Any) -> Any:
+        return "" if v is None else v
 
-    @field_validator(
-        "source_name",
-        "target_name",
-        "relationship_type",
-        "natural_language",
-        mode="before",
-    )
+    @field_validator("relationship_type", mode="before")
     @classmethod
-    def handle_none_strings(cls, v: Any, info) -> Any:
-        if v is None:
-            if info.field_name == "relationship_type":
-                return "relates_to"
-            return ""
-        if (
-            info.field_name == "relationship_type"
-            and isinstance(v, str)
-            and not v.strip()
-        ):
-            return "relates_to"
-        return v
+    def closed_vocabulary(cls, v: Any) -> str:
+        """Normalise spelling, then reject anything off the list — no fuzzy matching."""
+        key = "_".join(str(v or "").strip().lower().split())
+        return key if key in RELATIONSHIP_TYPES else "related_to"
 
 
 class Extraction(BaseModel):

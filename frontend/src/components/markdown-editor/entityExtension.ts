@@ -20,7 +20,8 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function makeEntityRegex(name: string): RegExp {
+/** Case-insensitive match of `name` at Unicode word boundaries (global). */
+export function makeEntityRegex(name: string): RegExp {
   const escaped = escapeRegex(name);
   const firstChar = name[0];
   const lastChar = name[name.length - 1];

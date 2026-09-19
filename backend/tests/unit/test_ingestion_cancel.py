@@ -32,6 +32,8 @@ def test_failure_reason_is_actionable():
     err = RuntimeError("Ingestion Agent Failed: [\"Extraction failed after 3 attempts: Error code: 503 - "
                        "[{'error': {'code': 503, 'message': 'This model is currently experiencing high demand.'}}]\"]")
     assert "503" in ingestion._failure_reason(err) and "retry" in ingestion._failure_reason(err)
-    assert ingestion._failure_reason(RuntimeError("Ingestion Agent Failed: ['boom']")) == "boom"
+    failed = RuntimeError("Ingestion Agent Failed: ['boom']")
+    failed.reason = "boom"
+    assert ingestion._failure_reason(failed) == "boom"
     long = ingestion._failure_reason(RuntimeError("x" * 500))
     assert len(long) <= 160 and long.endswith("…")

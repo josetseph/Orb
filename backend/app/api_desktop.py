@@ -155,16 +155,6 @@ async def download_models(body: DownloadModelsInput | None = None):
         "embed": str(paths.get("embed", "")),
         "reranker": str(paths.get("reranker", "")),
         "multimodal": multimodal,
-        # Compat key — historically named "services"; runtime is in-process.
-        "multimodal_services": {
-            "started": False,
-            "deferred": True,
-            "mode": "in_process",
-            "hint": (
-                "Call /setup/start-multimodal-services?install_deps=true "
-                "to prepare the in-process Qwen3-ASR/Marlin runtime"
-            ),
-        },
         "multimodal_error": multimodal_error,
         "progress": progress[-40:],
         "warning": (

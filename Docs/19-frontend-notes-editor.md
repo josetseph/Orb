@@ -413,7 +413,7 @@ The header's Ingest button mirrors this: disabled + spinner while active; "Re-in
 
 Pure function producing `FolderTreeNode[]` (`{name, path, note?, children}`):
 1. `ensureFolder(parts)` walks/creates folder nodes; a folder node is identified by `name` **and** `!node.note` at that level.
-2. All `extraFolders` (backslashes normalised, split on `/`) are created first so empty folders appear.
+2. All `extraFolders` (split on `/`) are created first so empty folders appear.
 3. Each note: no `rel_path` → root leaf with `name = title || "Untitled"`, `path = note.id`. Otherwise strip `.md`, split; last segment is the leaf name (falls back to title), the rest becomes the folder chain; leaf `path = rel` (with `.md`).
 4. `sortTree`: folders (nodes with no note **and** ≥1 child) before leaves, then `localeCompare` on name, recursively. An *empty* folder therefore sorts among leaves, not among folders.
 
@@ -462,7 +462,7 @@ Indent guides: one 1-px vertical line per depth level at `left = 10 + i*12`; fol
 
 ### 9.7 `rewriteVaultPathsInContent(content, kb, from, to)`
 
-Single-pass regex `oldUrl|from` (longest alternative first, both escaped) where `oldUrl = /vault-files/<kb>/<from>`. Full URLs are always rewritten; a bare relative `from` is rewritten only when the preceding character is `(`, `<` or `[` (markdown link target, autolink or wikilink), never in prose. The docstring records the bug this replaced: chained `replaceAll(oldUrl,newUrl).replaceAll(from,to)` re-matched inside the just-rewritten URL, producing `attachments/attachments/foo.png`, and autosave then persisted the corruption. `resolveFileUrl` in `lib/utils.ts` still contains a repair for that historic doubling.
+Single-pass regex `oldUrl|from` (longest alternative first, both escaped) where `oldUrl = /vault-files/<kb>/<from>`. Full URLs are always rewritten; a bare relative `from` is rewritten only when the preceding character is `(`, `<` or `[` (markdown link target, autolink or wikilink), never in prose. The docstring records the bug this replaced: chained `replaceAll(oldUrl,newUrl).replaceAll(from,to)` re-matched inside the just-rewritten URL, producing `attachments/attachments/foo.png`, and autosave then persisted the corruption. Notes that still carried the doubled segment are rewritten once by the backend vault sweep (`vault_sync.migrate_vault_files`); `resolveFileUrl` does not repair it at read time.
 
 ## 10. Restore and refresh effects (`useNoteRestoreEffects`)
 
@@ -480,7 +480,7 @@ One effect with deps `[currentKB, openNoteById, refreshSelectedNote]`:
 
 ### 11.1 Upload path
 
-`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload${kbQuery(kb)}` `` with a 10-minute timeout. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response provides `url` (or legacy `href`) which is normalised with `encodeFileUrl`.
+`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload${kbQuery(kb)}` `` with a 10-minute timeout. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response's `url` is percent-encoded once with `encodeFileUrl` before it is inserted into the note.
 
 ### 11.2 `attachFiles(files)` and `handleFileAttach(e)`
 
@@ -506,7 +506,7 @@ The backend transcodes/transcribes audio during ingestion (commit `acb19a5`, see
 
 ### 11.4 Preview, delete and reveal
 
-- `handleFileClick(url, filename)` → `resolvedUrl = encodeFileUrl(resolveFileUrl(url, kb))`; type by `isImageUrl`/`isPdfUrl`/`isVideoUrl`/`isAudioUrl` tested on both the URL and the filename; `setFilePreview({url, filename, type})`. `resolveFileUrl` maps bare `attachments/...` to `/vault-files/<kb>/attachments/...`, leaves `/vault-files/...` alone, and repairs doubled `attachments/attachments/`.
+- `handleFileClick(url, filename)` → `resolvedUrl = resolveFileUrl(url, kb)`; type by `isImageUrl`/`isPdfUrl`/`isVideoUrl`/`isAudioUrl` tested on both the URL and the filename; `setFilePreview({url, filename, type})`. `resolveFileUrl` maps bare `attachments/...` to `/vault-files/<kb>/attachments/...` and leaves `/vault-files/...` alone.
 - `handleDeleteFile(fileUrl, _markdownText)` (from the attachments strip): confirm → derive vault-relative path (`/vault-files/<kb>/<path>` → decoded `<path>`; `attachments/...` kept; bare filename → `attachments/<name>`) → `POST /vault/delete` → `refreshSelectedNote` (server already stripped the markdown links across notes) → `fetchNotes`. The `_markdownText` argument is unused.
 - `handleRevealPreviewFile()` → `GET /vault/local-path?rel=<url>&kb=` → `{rel_path, local_path, vault_path, exists}` → `revealInFolder(local_path)` (`POST /api/v1/desktop/reveal`); outside the desktop app, `window.open(url, "_blank")`. Errors → `alert("Could not reveal this file on disk.")`.
 
@@ -532,7 +532,7 @@ The client keeps a resolver that mirrors `backend/app/services/wikilinks.py` so 
 
 | Function | Behaviour |
 |---|---|
-| `normalizeLink(v)` | backslashes → `/`, trim, lowercase, strip leading/trailing `/`, strip leading `./` repeatedly, drop a trailing `.md`. |
+| `normalizeLink(v)` | trim, lowercase, strip leading/trailing `/`, strip leading `./` repeatedly, drop a trailing `.md`. |
 | `folderOf(relPath)` | text before the last `/` or `""`. |
 | `noteVaultPath(note)` | `rel_path` without `.md` and outer slashes, original casing; falls back to trimmed `title`. |
 | `noteDisplayName(note)` | trimmed `title` if any; else basename of the vault path; else `"Untitled"`. Comment: filenames can lag a retitle (`Untitled 3.md`), the title is what the user knows. |
@@ -653,11 +653,11 @@ The page wires these to `useWikilinkPreview` (§13.4): click resolves via `Wikil
 
 ### 14.7 `mediaEmbedExtension.ts`
 
-- `MEDIA_RE = /(?:!\[([^\]]*)\]\(([^)\n]+)\)|\[([📎🖇🎤]?[^\]]*)\]\(([^)\n]+)\))/g` — markdown images, and links whose label may start with 📎/🖇/🎤; URLs may contain spaces (matched up to `)`).
+- `MEDIA_RE` = `!\[label\](MEDIA_URL)` or `\[([📎🎤]?label)\](MEDIA_URL)` (`gu`) — markdown images, and links whose label may start with 📎/🎤; `MEDIA_URL = (?:[^()\n]|\([^()\n]*\))+` so a URL may contain spaces and one level of balanced parentheses (`Report (2026).pdf`).
 - `kindForUrl(url)`: `youtube` / `vimeo` (via `youtubeEmbedUrl`/`vimeoEmbedUrl`), else by extension `image` / `video` / `audio` / `pdf` / `table` (`.csv`/`.tsv`) / `text` (`.txt .md .log .json .yaml .xml .ini .cfg .toml`), else `null`.
 - `text` and `table` widgets fetch the file and render it inline — `<pre>` for text, an HTML table for delimited files. Capped at 64 KB and 50 rows so a large log cannot lock up the editor; both append a "truncated" note when they cut. Fetch failures degrade to "Could not load this file." rather than throwing. These kinds exist because `.csv` and `.md` attachments were ingested but had no viewer: a chip you could not look at without leaving the app.
 - Rule: a **plain** link (not `![`, label without an emoji marker) is embedded only for YouTube/Vimeo; emoji-marked links and images embed for every kind. Active-line matches are skipped (raw markdown stays editable).
-- `src`: embed URL for YouTube/Vimeo; otherwise `encodeFileUrl(resolveFileUrl(rawUrl, kbId))` — bare `attachments/x` becomes `/vault-files/<kb>/attachments/x`.
+- `src`: embed URL for YouTube/Vimeo; otherwise `resolveFileUrl(rawUrl, kbId)` — bare `attachments/x` becomes `/vault-files/<kb>/attachments/x`.
 - `MediaWidget.toDOM()` builds a `contenteditable="false"` `<div class="cm-media-embed">`: iframe (YouTube/Vimeo, lazy, restricted `allow`/`referrerPolicy`), caption + PDF iframe, `<img loading=lazy>` with an error fallback message, `<video controls playsInline preload=metadata>` that on error retries once with `fetchMediaObjectUrl(src, kbId)` (blob) unless the src is an `http(s)` URL, or caption + `<audio controls>`. `ignoreEvent → true` so media controls receive pointer events. Decorations use `Decoration.replace({widget, block:false})`.
 
 ### 14.8 `markdownCommands.ts` and `MarkdownToolbar.tsx`
@@ -688,17 +688,17 @@ Props: `content: string; onFileClick(url, filename); onEntityClick?(nodeId, name
 1. `useScannedEntities(content, kb, { enabled: Boolean(onEntityClick) })` — entity scan only when a click handler exists.
 2. `parseSegments(content)` splits on the enrichment markers the ingestion pipeline writes into note bodies: `[Image: <title>]`, `[PDF Extraction (<file>)]:`, `[Audio Transcript (<title>)]:`, `[Video Transcript (<title>)]:` (regex `MARKER_RE`). Text before/between markers becomes `text` segments; each marker plus the following chunk becomes an `image` / `pdf` / `audio` / `video` segment with a `label`. Empty content renders `*Empty note*`.
 3. Each non-text segment is preceded by a `SegmentDivider` pill (blue image / amber pdf / emerald audio / purple video with a lucide icon) and every segment is rendered by `ReactMarkdown` with `remarkGfm`, `components={{ a: LinkComponent }}` and `urlTransform`, after `injectEntityLinks(text, scannedEntities)`.
-4. `makeLinkComponent(onFileClick, onEntityClick, kb)` decides per anchor: `entity://<node_id>` → blue pill button calling `onEntityClick`; attachment links (label starts with 📎/🖇/🎤 or `isAttachmentHref`) → inline `<img>`, `BlobMediaPlayer kind="video"`, PDF `<iframe>` + "open full preview" button, or a purple attachment button calling `onFileClick(resolvedUrl, filename)`; everything else → `MarkdownAnchor`.
+4. `makeLinkComponent(onFileClick, onEntityClick, kb)` decides per anchor: `entity://<node_id>` → blue pill button calling `onEntityClick`; attachment links (label starts with 📎/🎤 or `isAttachmentHref`) → inline `<img>`, `BlobMediaPlayer kind="video"`, PDF `<iframe>` + "open full preview" button, or a purple attachment button calling `onFileClick(resolvedUrl, filename)`; everything else → `MarkdownAnchor`.
 
 ### 15.2 `lib/markdown-entities.tsx` (shared with chat)
 
 | Export | Purpose |
 |---|---|
 | `urlTransform(url)` | Security boundary for react-markdown: allows `entity://`, otherwise reproduces the default (`http(s)`, `irc(s)`, `mailto`, `xmpp`, or scheme-less); everything else (incl. `javascript:`) → `""`. |
-| `injectEntityLinks(text, entities)` | Splits text on existing `[label](url)` links and `[[wikilinks]]` so they are never corrupted; in plain parts collects non-overlapping ranges longest-name-first (word-boundary, case-insensitive) and rewrites them to `[name](entity://node_id)`. `[[name|id]]` pairs are converted to entity links (legacy convention). |
+| `injectEntityLinks(text, entities)` | Splits text on existing `[label](url)` links and `[[wikilinks]]` so they are never corrupted; in plain parts collects non-overlapping ranges longest-name-first (`makeEntityRegex` from `markdown-editor/entityExtension.ts`: case-insensitive, Unicode letter/digit boundaries) and rewrites them to `[name](entity://node_id)`. `[[name|id]]` pairs are converted to entity links (legacy convention). |
 | `useScannedEntities(content, kb, {enabled?, cacheKey?})` | POSTs `scan-text` with an `AbortController`; results keyed by `kb\0(cacheKey ?? content)` so a KB/content switch never shows stale entities; optional bounded FIFO cache (200 entries) keyed by `kb:cacheKey` used by chat message ids. |
 | `flattenLinkText(children)` | Recursive text extraction from react-markdown children. |
-| `isAttachmentHref(href)` | `/files/`, `/uploads/`, `/vault-files/`, or leading `attachments/`. |
+| `isAttachmentHref(href)` | `/vault-files/` or leading `attachments/`. |
 | `MarkdownAnchor` | Plain `<a>`; external `http(s)` links get `target=_blank rel=noopener noreferrer` — *"web-ingested content must not be able to navigate the app window away from Orb."* |
 
 ## 16. Side panels: `ConnectedNotesPanel`, `EntityDetailPanel`, `BlobMediaPlayer`
@@ -722,7 +722,7 @@ Props: `nodeId: string | null; name?; kb?; onClose`. Absolutely positioned right
 
 ### 16.3 `BlobMediaPlayer`
 
-Props: `url; kbId?; kind: "video" | "audio"; className?`. YouTube/Vimeo URLs render an `<iframe>`. Otherwise it sets `src = encodeFileUrl(resolveFileUrl(url, kbId))` and renders `<video controls playsInline>` or `<audio controls>`; on the first media `error` it falls back **once** to `fetchMediaObjectUrl(url, kbId)` (blob download, object URL revoked on unmount or if it resolves after disposal), then shows "Could not play this video/audio." Comment: *"Prefer direct URL (Range + faststart). Blob-fetch only if playback fails."* (f8f527f).
+Props: `url; kbId?; kind: "video" | "audio"; className?`. YouTube/Vimeo URLs render an `<iframe>`. Otherwise it sets `src = resolveFileUrl(url, kbId)` and renders `<video controls playsInline>` or `<audio controls>`; on the first media `error` it falls back **once** to `fetchMediaObjectUrl(url, kbId)` (blob download, object URL revoked on unmount or if it resolves after disposal), then shows "Could not play this video/audio." Comment: *"Prefer direct URL (Range + faststart). Blob-fetch only if playback fails."* (f8f527f).
 
 ## 17. API client methods and backend contracts
 
@@ -746,7 +746,7 @@ All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL
 | `moveVaultFile(fromRel, toRel, kb)` | `POST /vault/move` | `{from_rel, to_rel}` | `vault_ops.move_vault_file` — moves note **or** attachment and rewrites markdown links in all notes; 409 exists / 404 missing / 400 invalid | `{from, to, …}` (client reads `from`/`to`) |
 | `deleteVaultFile(relPath, kb)` | `POST /vault/delete` | `{rel_path}` | `vault_ops.delete_vault_file` — deletes the file and strips links to it from note bodies; 404 / 400 | `{deleted: <rel>, …}` |
 | `resolveVaultLocalPath(relOrUrl, kb)` | `GET /vault/local-path` | `rel` | accepts a vault-relative path or `/vault-files/...` URL; `safe_vault_join`; 404 if missing | `{rel_path, local_path, vault_path, exists:true}` |
-| `upload(file, kb)` | `POST /upload` (direct FastAPI origin on desktop) | multipart `file` | see [09](09-notes-wikilinks-and-vault-files.md) — stores under `attachments/`, transcodes audio | `{url, href?…}` |
+| `upload(file, kb)` | `POST /upload` (direct FastAPI origin on desktop) | multipart `file` | see [09](09-notes-wikilinks-and-vault-files.md) — stores under `attachments/`, transcodes audio | `{filename, url, rel_path, key, status}` |
 | `searchEntities(q, kb, limit=5)` | `GET /graph/entities/search` | `q, limit` | Meili `search_nodes(q, limit*2)`, drops `note`/`community`; `[]` if `q` < 2 chars or AI not configured | `[{node_id, name, node_type}]` |
 | `scanTextEntities(text, kb, {signal})` | `POST /graph/entities/scan-text` | `{text}` | regex candidates (multi-word Capitalised sequences + single Capitalised words ≥ 4 letters), first 40 candidates each searched in Meili (2 hits), kept if the entity name occurs in the text; excludes notes/communities | `[{node_id, name, node_type}]` |
 | `getNoteEntitySubgraph(text, kb)` | `POST /graph/entities/note-subgraph` | `{text}` | scan-text + Kuzu 1-hop edges among the found set | `NotesGraphPayload` (`center_id: null`) |
@@ -798,7 +798,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 10. **Vault path rewrites are single-pass, longest-match-first, and only inside link targets** (`rewriteVaultPathsInContent`). The chained-`replaceAll` form is a known data corrupter.
 11. **`kb` is omitted from requests for the default KB** (`withKb`/`kbQuery`). Backend endpoints must therefore default to the default KB.
 12. **Client and backend wikilink resolvers must keep identical precedence** (exact path → suffix path → source-folder relative → basename by proximity) and identical normalisation; autocomplete `insert` targets are chosen so that both resolve to the selected note.
-13. **Inserted attachment markdown conventions are load-bearing**: `![name](url)` for images (ingestion discovers them for Florence), `[📎 name](url)` for files, `[🎤 Voice Recording](url)` for recordings; `parseNoteAttachments`, `MEDIA_RE`, `SegmentedNoteContent` and the backend `_attachment_rels_from_note_body` all key off these shapes (🖇 accepted for legacy content).
+13. **Inserted attachment markdown conventions are load-bearing**: `![name](url)` for images (ingestion discovers them for Florence), `[📎 name](url)` for files, `[🎤 Voice Recording](url)` for recordings; `parseNoteAttachments`, `MEDIA_RE`, `SegmentedNoteContent` and the backend `_attachment_rels_from_note_body` all key off these shapes.
 14. **`processing_stage` strings are a contract** between backend tracker/watcher and `processing-status.ts`; new stage vocabulary must be classified on both sides.
 15. **External links open outside the app** (`MarkdownAnchor`) and `urlTransform` blocks non-allowlisted schemes; entity links use the `entity://` pseudo-scheme only.
 

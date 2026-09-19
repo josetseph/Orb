@@ -1627,9 +1627,7 @@ class FireflyService:
                 tx_date_raw = tx.get("date")
                 if not tx_date_raw:
                     continue
-                tx_day = datetime.fromisoformat(
-                    str(tx_date_raw).replace("Z", "+00:00")
-                ).date()
+                tx_day = datetime.fromisoformat(str(tx_date_raw)).date()
                 if not (start <= tx_day <= end):
                     continue
                 amount = _as_float(tx.get("amount"))

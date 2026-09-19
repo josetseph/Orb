@@ -102,10 +102,10 @@ class TestMergeExtractions:
 
     def test_relationships_dedupe_keeping_first(self):
         first = ExtractedRelationship(
-            source_name="Ama", target_name="Kofi", relationship_type="is_friends_with", natural_language="a"
+            source_name="Ama", target_name="Kofi", relationship_type="friend_of", natural_language="a"
         )
         later = ExtractedRelationship(
-            source_name="ama", target_name="kofi", relationship_type="IS_FRIENDS_WITH", natural_language="b"
+            source_name="ama", target_name="kofi", relationship_type="FRIEND_OF", natural_language="b"
         )
         merged = merge_extractions([Extraction(relationships=[first]), Extraction(relationships=[later])])
         assert len(merged.relationships) == 1

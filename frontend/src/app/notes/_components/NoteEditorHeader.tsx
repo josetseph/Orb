@@ -43,7 +43,7 @@ type NoteEditorHeaderProps = {
 };
 
 function folderOf(relPath?: string | null): string {
-  const parts = (relPath || "").replace(/\\/g, "/").split("/");
+  const parts = (relPath || "").split("/");
   parts.pop();
   return parts.join("/");
 }

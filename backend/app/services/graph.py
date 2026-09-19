@@ -45,12 +45,7 @@ from app.services.qdrant_service import QdrantService, qdrant_service
 logger = get_logger("GraphService")
 
 
-def _strip_facts_prefix(text: str) -> str:
-    """Strip the legacy 'FACTS: k=v | k=v. Prose...' prefix from stored descriptions."""
-    if not text or not text.startswith("FACTS:"):
-        return text
-    m = re.search(r"^FACTS:.*?[.]\s+(.*)", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
+_SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"
 
 
 # ---------------------------------------------------------------------------
@@ -106,33 +101,11 @@ class GraphService:
         if not _db_path.is_absolute():
             _db_path = REPO_ROOT / _db_path
         _db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_db_path(_db_path)
 
         self.db = kuzu.Database(str(_db_path))
         self.conn = kuzu.Connection(self.db)
         self._lock = threading.RLock()
         self._init_schema()
-
-    def _migrate_legacy_db_path(self, db_path: Path) -> None:
-        """Move legacy Kuzu files from data root into the dedicated kuzu folder."""
-        legacy_db_path = REPO_ROOT / "data" / "kuzu_graph"
-        if db_path == legacy_db_path or db_path.exists():
-            return
-
-        legacy_wal_path = Path(f"{legacy_db_path}.wal")
-        target_wal_path = Path(f"{db_path}.wal")
-        if not legacy_db_path.exists() and not legacy_wal_path.exists():
-            return
-
-        try:
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            if legacy_db_path.exists() and not db_path.exists():
-                legacy_db_path.rename(db_path)
-            if legacy_wal_path.exists() and not target_wal_path.exists():
-                legacy_wal_path.rename(target_wal_path)
-            logger.info(f"[Graph] Migrated Kuzu data to '{db_path}'.")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[Graph] Legacy Kuzu migration skipped: {exc}")
 
     def _init_schema(self) -> None:
         """Create all tables if they do not exist."""
@@ -239,7 +212,6 @@ class GraphService:
     def find_name_variants(self, base_name: str, limit: int = 5) -> list[dict]:
         """Return name variants for a node using regexp case-insensitive prefix matching."""
         base_lower = base_name.lower().strip()
-        _SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"  # pylint: disable=invalid-name
         query = """
         MATCH (n:Node)
         WHERE n.kind IN ['indexable', 'note']
@@ -278,7 +250,6 @@ class GraphService:
         )
         if not normalized:
             return {}
-        _SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"  # pylint: disable=invalid-name
         query = """
         UNWIND $base_names AS base
         MATCH (n:Node)
@@ -506,7 +477,7 @@ class GraphService:
             relationship_natural_language = []
 
         row["name"] = (content or {}).get("name", "")
-        row["description"] = _strip_facts_prefix((content or {}).get("description", ""))
+        row["description"] = (content or {}).get("description", "")
         row["facts"] = (content or {}).get("facts", [])
         row["potential_questions"] = (content or {}).get("potential_questions", [])
         row["isolated_contexts"] = (content or {}).get("isolated_contexts", [])
@@ -1103,14 +1074,14 @@ class GraphService:
             "node_id": nid,
             "name": c.get("name") or row.get("name") or "",
             "node_type": row.get("node_type") or "unknown",
-            "description": _strip_facts_prefix(c.get("description") or ""),
+            "description": c.get("description") or "",
             "isolated_contexts": c.get("isolated_contexts") or [],
             "facts": c.get("facts") or [],
             "domain": c.get("domain"),
             "status": c.get("status"),
             "community_id": row.get("community_id"),
             "community_name": row.get("community_name"),
-            "summary": _strip_facts_prefix(c.get("description") or ""),
+            "summary": c.get("description") or "",
             "themes": c.get("themes") or [],
             "member_count": c.get("member_count") or 0,
             "connections": [
