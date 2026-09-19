@@ -6,37 +6,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-_SCORE_LABELS = {
-    "very high": 9.0,
-    "high": 8.0,
-    "medium": 6.0,
-    "moderate": 6.0,
-    "low": 4.0,
-    "very low": 2.0,
-}
-
-
-def _normalize_score(value: Any, default: float) -> float:
-    """Coerce LLM score noise (None, labels, 0–1 floats) onto the 1–10 scale."""
-    if value is None:
-        return default
-    if isinstance(value, str):
-        key = value.strip().lower()
-        if key in _SCORE_LABELS:
-            return _SCORE_LABELS[key]
-        try:
-            value = float(key)
-        except ValueError:
-            return default
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return default
-    if 0.0 <= score <= 1.0:
-        score *= 10.0
-    return max(1.0, min(10.0, score))
-
-
 class Node(BaseModel):
     """Single uniform node — LLM sets ``type`` freely (e.g. person, song, event)."""
 
@@ -80,13 +49,7 @@ class ExtractedRelationship(BaseModel):
     source_name: str = ""
     target_name: str = ""
     relationship_type: str = "relates_to"
-    # All three scores on the 1–10 scale.
-    # edge_weight = (strength × 0.5) + (confidence × 0.3) + (relevance × 0.2)
-    strength: float = 5.0
-    confidence: float = 7.0
-    relevance: float = 5.0
     natural_language: str = ""
-    context: str = ""
 
     @model_validator(mode="before")
     @classmethod
@@ -103,18 +66,11 @@ class ExtractedRelationship(BaseModel):
             out["natural_language"] = out["description"]
         return out
 
-    @field_validator("strength", "confidence", "relevance", mode="before")
-    @classmethod
-    def normalize_scores(cls, v: Any, info) -> float:
-        defaults = {"confidence": 7.0, "strength": 5.0, "relevance": 5.0}
-        return _normalize_score(v, defaults.get(info.field_name, 5.0))
-
     @field_validator(
         "source_name",
         "target_name",
         "relationship_type",
         "natural_language",
-        "context",
         mode="before",
     )
     @classmethod
@@ -137,7 +93,6 @@ class Extraction(BaseModel):
 
     nodes: list[Node] = Field(default_factory=list)
     relationships: list[ExtractedRelationship] = Field(default_factory=list)
-    sentiment: str = "Neutral"
     title: str | None = None
 
     @model_validator(mode="before")
@@ -203,11 +158,6 @@ class Extraction(BaseModel):
                 for item in v
             ]
         return v
-
-    @field_validator("sentiment", mode="before")
-    @classmethod
-    def handle_sentiment_none(cls, v: Any) -> Any:
-        return v if v else "Neutral"
 
 
 class NoteInput(BaseModel):

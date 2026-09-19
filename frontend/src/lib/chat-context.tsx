@@ -27,28 +27,14 @@ interface ChatContextValue {
   loadingStage: string | null;
   loadingModel: string | null;
   sendMessage: (text: string, kb: string) => void;
-  loadConversations: (kb: string) => Promise<void>;
+  loadConversations: (kb: string) => Promise<ChatConversation[]>;
   selectConversation: (conversationId: string, kb: string) => Promise<void>;
   startNewConversation: () => void;
   deleteActiveConversation: (kb: string) => Promise<void>;
   initializeForKb: (kb: string) => Promise<void>;
 }
 
-const ChatContext = createContext<ChatContextValue>({
-  messages: [],
-  conversations: [],
-  activeConversationId: null,
-  isLoading: false,
-  isLoadingConversations: false,
-  loadingStage: null,
-  loadingModel: null,
-  sendMessage: () => {},
-  loadConversations: async () => {},
-  selectConversation: async () => {},
-  startNewConversation: () => {},
-  deleteActiveConversation: async () => {},
-  initializeForKb: async () => {},
-});
+const ChatContext = createContext<ChatContextValue | null>(null);
 
 const POLL_INTERVAL_MS = 1000;
 const POLL_MAX_ATTEMPTS = 600; // ~10 minutes
@@ -101,8 +87,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     try {
       const rows = await api.listChatConversations(kb);
       setConversations(rows);
+      return rows;
     } catch {
       setConversations([]);
+      return [];
     } finally {
       setIsLoadingConversations(false);
     }
@@ -158,27 +146,14 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     ],
   );
 
-  const initializeForKb = useCallback(async (kb: string) => {
-    setIsLoadingConversations(true);
-    try {
-      const rows = await api.listChatConversations(kb);
-      setConversations(rows);
-      if (rows.length > 0) {
-        const rowsMessages = await api.getChatMessages(rows[0].id);
-        setActiveConversationId(rows[0].id);
-        setMessages(rowsMessages.map(toMessage));
-      } else {
-        setActiveConversationId(null);
-        setMessages([]);
-      }
-    } catch {
-      setConversations([]);
-      setActiveConversationId(null);
-      setMessages([]);
-    } finally {
-      setIsLoadingConversations(false);
-    }
-  }, []);
+  const initializeForKb = useCallback(
+    async (kb: string) => {
+      const rows = await loadConversations(kb);
+      if (rows.length > 0) await selectConversation(rows[0].id, kb);
+      else startNewConversation();
+    },
+    [loadConversations, selectConversation, startNewConversation],
+  );
 
   const sendMessage = useCallback(
     (text: string, kb: string) => {
@@ -199,10 +174,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       setLoadingStage("Starting chat request");
       setLoadingModel(null);
 
-      const requestId =
-        typeof crypto !== "undefined" && "randomUUID" in crypto
-          ? crypto.randomUUID()
-          : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      const requestId = crypto.randomUUID();
       let interval: number | null = null;
       let conversationId = activeConversationIdRef.current;
       let attempts = 0;
@@ -357,5 +329,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 }
 
 export function useChat() {
-  return useContext(ChatContext);
+  const ctx = useContext(ChatContext);
+  if (!ctx) throw new Error("useChat must be used inside <ChatProvider>");
+  return ctx;
 }

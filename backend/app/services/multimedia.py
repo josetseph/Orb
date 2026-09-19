@@ -152,9 +152,7 @@ class MultimediaService:
 
     def _download_temp_file(self, path_or_url: str) -> str:
         """Resolve vault/local/remote attachments to a local file path."""
-        import tempfile
-
-        import requests
+        import httpx
 
         if os.path.isfile(path_or_url):
             return path_or_url
@@ -170,12 +168,12 @@ class MultimediaService:
         self._assert_public_http_url(path_or_url)
         logger.info(f"Downloading remote file: {path_or_url}...")
         suffix = "." + path_or_url.split(".")[-1] if "." in path_or_url else ".tmp"
-        with requests.get(path_or_url, timeout=300, stream=True) as response:
+        with httpx.stream("GET", path_or_url, timeout=300, follow_redirects=True) as response:
             response.raise_for_status()
             written = 0
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
                 try:
-                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    for chunk in response.iter_bytes(chunk_size=1024 * 1024):
                         written += len(chunk)
                         if written > self._MAX_REMOTE_DOWNLOAD_BYTES:
                             raise ValueError(
@@ -244,17 +242,6 @@ class MultimediaService:
                 local_path
             ):
                 os.remove(local_path)
-
-    def process_video(self, video_path: str) -> str:
-        """Process a video with Qwen3-ASR audio transcription and Marlin visual analysis."""
-        transcript = self.transcribe_video_audio(video_path)
-        visual = self.describe_video_visual(video_path)
-        parts = []
-        if transcript:
-            parts.append(f"### Spoken Content\n{transcript}")
-        if visual:
-            parts.append(visual)
-        return "\n\n".join(parts) if parts else "(Video processing produced no output)"
 
     def transcribe_video_audio(self, video_path: str) -> str:
         """Transcribe a video's audio track without running visual analysis."""

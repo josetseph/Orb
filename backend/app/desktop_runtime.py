@@ -56,7 +56,7 @@ def _env(*names: str) -> str | None:
 
 
 def _port(name: str, default: int) -> int:
-    return int(_env(f"ORB_{name}_PORT", f"LIVEOS_{name}_PORT") or default)
+    return int(_env(f"ORB_{name}_PORT") or default)
 
 
 PORTS = {
@@ -911,7 +911,7 @@ def start_multimodal_prep(models_dir: Path, data_dir: Path) -> None:
             sys.executable,
             "-c",
             "from app.services.multimodal_services import ensure_multimodal_services; "
-            "import json; print(json.dumps(ensure_multimodal_services(install_deps=True, start_marlin=True)))",
+            "import json; print(json.dumps(ensure_multimodal_services(install_deps=True)))",
         ],
         cwd=BACKEND_DIR,
         env={"ORB_MODELS_DIR": str(models_dir), "PYTHONPATH": str(BACKEND_DIR)},
@@ -975,7 +975,6 @@ def main() -> int:
 
     # Desktop defaults the shell used to pass in; env still overrides.
     for key, value in {
-        "AI_SETUP_MODE": "none",
         "LLM_PROVIDER": "local",
         "EMBEDDING_PROVIDER": "local",
         # GGUF context / generation (one model loaded at a time). No default

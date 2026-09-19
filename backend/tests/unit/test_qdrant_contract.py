@@ -12,11 +12,19 @@ from qdrant_client.models import FieldCondition, Filter
 from app.services.qdrant_service import QdrantService
 
 
+@pytest.fixture(autouse=True)
+def _vector_dims(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "EMBEDDING_DIMENSIONS", 768)
+
+
 def _make_service() -> QdrantService:
     """Return a QdrantService with a mocked client, bypassing __init__ I/O."""
     svc = QdrantService.__new__(QdrantService)
-    svc._enabled = True
-    svc.client = MagicMock()
+    svc._client = MagicMock()
+    svc._retry_at = float("inf")  # never try to reconnect in tests
+    svc._col_cores = "kb_node_cores"
     return svc
 
 
@@ -112,7 +120,7 @@ class TestUpsertNodeCorePayload:
 
     def test_disabled_service_does_not_call_client(self):
         svc = _make_service()
-        svc._enabled = False
+        svc._client = None
         svc.upsert_node_core(
             node_id="n1",
             name="Alice",
@@ -120,11 +128,10 @@ class TestUpsertNodeCorePayload:
             description="",
             description_vector=[0.1] * 768,
         )
-        svc.client.upsert.assert_not_called()
 
     def test_null_client_does_not_raise(self):
         svc = _make_service()
-        svc.client = None
+        svc._client = None
         # Should return early without error
         svc.upsert_node_core(
             node_id="n1",
@@ -193,11 +200,10 @@ class TestSearchNodeCoresFilter:
 
     def test_disabled_service_returns_empty_list(self):
         svc = _make_service()
-        svc._enabled = False
+        svc._client = None
         result = svc.search_node_cores(
             query_vector=[0.1] * 768,
             limit=5,
             min_score=0.5,
         )
         assert result == []
-        svc.client.query_points.assert_not_called()

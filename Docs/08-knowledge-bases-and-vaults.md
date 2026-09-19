@@ -10,7 +10,7 @@
 
 - The definition of a KB: id, display name, slug, vault path, Kuzu file path, Qdrant collection names, Meilisearch index name, Firefly group mapping (`knowledge_bases` table + `KBRegistry` cache).
 - Construction and caching of per-KB service objects (`KBContext`): `QdrantService`, `MeilisearchService`, lazily `GraphService`, `RetrievalService`, `IngestionWorkflow`, `ChatWorkflow`.
-- The default KB bootstrap (`id == "default"`), including the migration of the legacy JSON registry (`data/kb_registry.json`) and the healing of mis-stored Kuzu directory paths.
+- The default KB bootstrap (`id == "default"`) and the healing of mis-stored Kuzu directory paths.
 - Vault provisioning (`ensure_vault`), full vault wipe (`clear_vault_contents`), and the rule for which vault folders Orb may `rmtree`.
 - Vault ↔ SQLite reconciliation (`vault_sync.sync_vault_notes`) and folder/attachment/media listings used by the notes sidebar.
 - External edit detection (`vault_watcher`): a watchdog observer per vault that marks notes stale but never ingests.
@@ -28,7 +28,6 @@
 | Path | Purpose | Key exports |
 |---|---|---|
 | `backend/app/services/kb_registry.py` | KB metadata store (SQLite `knowledge_bases`), `KBContext` bundle, in-memory cache, create/rename/delete/cleanup, Kuzu path normalisation | `KBContext`, `KBRegistry`, `kb_registry` (singleton), `DEFAULT_KB_ID`, `normalize_kuzu_path`, `_kuzu_db_file`, `_default_kb`, `_connect` |
-| `backend/app/models/kb.py` | SQLAlchemy ORM mirror of `knowledge_bases` (used only by `init_db().create_all`; the registry uses raw `sqlite3`) | `KnowledgeBase` (+ `meili_index` synonym for `typesense_collection`) |
 | `backend/app/api/deps.py` | FastAPI dependency resolving `?kb=` to a `KBContext` | `get_kb` |
 | `backend/app/api/kb.py` | KB management routes: list/create/empty/delete-non-default/delete/rename | `router`, `CreateKBInput`, `RenameKBInput`, `_purge_kb_sql_notes` |
 | `backend/app/services/vault.py` | Vault filesystem primitives: `ensure_vault`, `clear_vault_contents`, self-write suppression registry, title sanitising, attachment save, wikilink regex | `ensure_vault`, `clear_vault_contents`, `mark_self_write`, `is_recent_self_write`, `sanitize_title`, `unique_md_path`, `read_note_file`, `write_note_file`, `delete_note_file`, `save_attachment`, `extract_wikilinks`, `title_from_filename`, `WIKILINK_RE` |
@@ -96,7 +95,7 @@ Key consequences:
 
 **`graph` property.** Lazily opens Kuzu: `normalize_kuzu_path(_kuzu_path)`, `mkdir -p` the parent, then `GraphService(db_path=path, qdrant=self.qdrant)`. Raises `RuntimeError("No Kuzu path configured for KB …")` if the path is empty. Rationale in code: *"notes/finance must work even if Kuzu path was misconfigured"* — creating the context must never fail because Kuzu cannot open, so only graph/ingest/chat/graph-API routes touch `.graph`.
 
-**`_ensure_lazy()`** builds, in order and only once: `RetrievalService(graph, qdrant, meili)`, `IngestionWorkflow(graph, qdrant, meili)`, `ChatWorkflow(retrieval=retrieval_service)`. All three are built together on the first call of any of `get_retrieval_service()`, `get_ingestion_workflow()`, `get_chat_workflow()`. Accessing `graph` inside this opens Kuzu, so the first ingest or chat request on a KB pays the Kuzu open + schema init cost.
+**`_ensure_lazy()`** builds, in order and only once: `RetrievalService(graph, qdrant, meili)`, `IngestionWorkflow(graph, qdrant, meili)`, `ChatWorkflow(retrieval=retrieval_service)`. All three are built together on the first call of `get_ingestion_workflow()` or `get_chat_workflow()`. Accessing `graph` inside this opens Kuzu, so the first ingest or chat request on a KB pays the Kuzu open + schema init cost.
 
 There is **no `close()` on `KBContext`**; `delete_kb` looks for `ctx.close` or `ctx.graph.close` via `getattr` (see §7.3) — note that `getattr(ctx, "graph")` *opens* Kuzu if it was never opened, only to close it again.
 
@@ -106,7 +105,7 @@ There is **no `close()` on `KBContext`**; `delete_kb` looks for `ctx.close` or `
 
 The registry does not use SQLAlchemy. `_connect()` opens `sqlite3.connect(DATA_DIR/orb.db)` (after `ensure_data_layout()`), sets `row_factory = sqlite3.Row`, and runs `CREATE TABLE IF NOT EXISTS knowledge_bases (...)` plus `_ensure_firefly_columns` (`ALTER TABLE … ADD COLUMN firefly_group_id INTEGER` / `firefly_group_title TEXT` when missing). Every registry write opens and closes its own connection.
 
-Table (identical between the raw DDL and `models/kb.py:KnowledgeBase`):
+Table (raw DDL in `_connect()`; there is no ORM model):
 
 | Column | Type | Meaning |
 |---|---|---|
@@ -137,7 +136,7 @@ In-memory state (guarded by `self._lock = threading.RLock()`):
 
 `_default_kb()`:
 
-- `vault = resolve_default_vault_path()` (from `paths.json.default_vault_path`, else `ORB_DEFAULT_VAULT`/`LIVEOS_DEFAULT_VAULT`). If unset, falls back to `DATA_DIR/vaults/default`.
+- `vault = resolve_default_vault_path()` (from `paths.json.default_vault_path`, else `ORB_DEFAULT_VAULT`). If unset, falls back to `DATA_DIR/vaults/default`.
 - `ensure_vault(vault_str)` (creates dir + `attachments/`).
 - Returns `KBContext(kb_id="default", name="default", qdrant=qdrant_service, meili=meilisearch_service, vault_path=…, _graph=graph_service, _kuzu_path=settings.KUZU_DB_PATH)`. `settings.KUZU_DB_PATH` is forced to `DATA_DIR/kuzu/kuzu_graph` at the bottom of `core/config.py`.
 
@@ -147,9 +146,8 @@ Consequence: once the default row exists, **the DB row's `vault_path` wins over 
 
 ### 5.3 `_load()` — startup migration and healing
 
-1. **Legacy JSON migration**: if `<repo>/data/kb_registry.json` exists (`_LEGACY_REGISTRY = REPO_ROOT / "data" / "kb_registry.json"` — note: repo-relative, not `DATA_DIR`), each `knowledge_bases[]` entry is `INSERT OR IGNORE`d. Missing `vault_path` → `DATA_DIR/vaults/<slug>` (+ `ensure_vault`); `kuzu_path` is **always** rewritten to `_kuzu_db_file(DATA_DIR, slug)`; missing collection names default to `<slug>_node_cores` etc. and `<slug>_nodes`. The file is then renamed to `kb_registry.json.migrated`.
-2. **Row load**: `SELECT * FROM knowledge_bases`. For each row, `normalize_kuzu_path(kuzu_path)` is applied and persisted with an `UPDATE` if it changed (heals the "create_kb mkdir'd a directory" bug, see 5.5). Non-default rows → `_build_context` into `_cache` (errors logged, row still kept in `_metadata`). The default row → a `KBContext` built with the singletons but with `vault_path` and `kuzu_path` from the row.
-3. Any exception in step 2 is swallowed with a warning (`Failed to load from SQLite`), after which `__init__` falls back to `_default_kb()`.
+1. **Row load**: `SELECT * FROM knowledge_bases`. For each row, `normalize_kuzu_path(kuzu_path)` is applied and persisted with an `UPDATE` if it changed (heals the "create_kb mkdir'd a directory" bug, see 5.5). Non-default rows → `_build_context` into `_cache` (errors logged, row still kept in `_metadata`). The default row → a `KBContext` built with the singletons but with `vault_path` and `kuzu_path` from the row.
+2. Any exception in step 1 is swallowed with a warning (`Failed to load from SQLite`), after which `__init__` falls back to `_default_kb()`.
 
 ### 5.4 Slug rules and sanitisation
 
@@ -289,7 +287,7 @@ def get_kb(kb: str = Query(default="default", description="Knowledge base name o
 
 - Declared as `kb: KBContext = Depends(get_kb)` on notes, vault, files, chat, graph, admin, finance, notes-graph and `kb/empty` routes. Missing param → default KB. Unknown value → **404** before the handler runs.
 - Matching is by **name (case-insensitive) or slug**; `id` UUIDs are *not* accepted here (they are accepted by `DELETE`/`PATCH /api/v1/kb/{kb_id}` path params and by `/vault-files/{kb_id}/…`, which tries `get_kb(id)` first and then `get_kb_by_name`).
-- Because a request that omits `?kb=` silently hits `default`, every frontend call goes through `withKb(kb, …)`/`kbQuery(kb)` in `frontend/src/lib/api.ts`, and pages wait for `useKB().isHydrated` before fetching (otherwise the first render would fetch the default KB and then flicker to the stored one).
+- Because a request that omits `?kb=` silently hits `default`, every frontend call goes through `withKb(kb, …)`/`kbQuery(kb)` in `frontend/src/lib/api.ts`, and `useKB()` already holds the stored KB on the first render.
 - `frontend/src/lib/kb-context.tsx`: `localStorage["orb_current_kb"]` = `{"slug","name"}` JSON (legacy keys `lifeos_current_kb`/`liveos_current_kb` and a bare-string format are migrated on read). `currentKB` is the slug. Nothing validates that the stored slug still exists; a deleted KB yields 404s until the user picks another KB.
 - Background tasks capture the `KBContext` object at request time (`kb.get_ingestion_workflow().process_note`), so ingestion continues on the right KB even if the user switches KBs in the UI. The ingestion workflow re-resolves `kb_registry.get_kb(note.kb_id)` when persisting the enriched body.
 
@@ -390,9 +388,9 @@ Blocking work moved off the event loop (rationale comments in code): `GET /api/v
 
 | Key | Source | Default | Effect here |
 |---|---|---|---|
-| `ORB_DATA_DIR` / `LIVEOS_DATA_DIR` / `DATA_DIR` | env (`desktop_runtime.py` injects `ORB_DATA_DIR`) | `paths.json.data_dir`, else `<repo>/data` | Root for `orb.db`, `vaults/`, `kuzu/`; registry uses `resolve_data_dir()` at call time (not the cached `settings.DATA_DIR`) |
-| `paths.json.default_vault_path` / `ORB_DEFAULT_VAULT` / `LIVEOS_DEFAULT_VAULT` | paths.json first, then env | none → `DATA_DIR/vaults/default` | Default KB vault on first boot only (row wins afterwards) |
-| `ORB_PATHS_FILE` / `LIVEOS_PATHS_FILE` | env | `<AppSupport>/Orb/paths.json` | where `default_vault_path` is read from |
+| `ORB_DATA_DIR` / `DATA_DIR` | env (`desktop_runtime.py` injects `ORB_DATA_DIR`) | `paths.json.data_dir`, else `<repo>/data` | Root for `orb.db`, `vaults/`, `kuzu/`; registry uses `resolve_data_dir()` at call time (not the cached `settings.DATA_DIR`) |
+| `paths.json.default_vault_path` / `ORB_DEFAULT_VAULT` | paths.json first, then env | none → `DATA_DIR/vaults/default` | Default KB vault on first boot only (row wins afterwards) |
+| `ORB_PATHS_FILE` | env | `<AppSupport>/Orb/paths.json` | where `default_vault_path` is read from |
 | `settings.KUZU_DB_PATH` | forced in `core/config.py` to `DATA_DIR/kuzu/kuzu_graph` (env value ignored) | — | default KB Kuzu file; `sync_settings_paths` re-derives it after Setup |
 | `QDRANT_COLLECTION_NODE_CORES` / `…_RELATIONSHIPS` / `…_ISOLATED_CONTEXTS` | env/.env | `node_cores`, `node_relationships`, `node_isolated_contexts` | default KB collection names (baked into the default row at first boot) |
 | `MEILI_INDEX_NAME` | env/.env | `orb_nodes` | default KB Meili index name (baked into row) |
@@ -443,7 +441,6 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 | Kuzu file locked by another process (second Orb instance) | `KBContext.graph` raises on first access → graph/ingest/chat routes 500; notes still work. |
 | `delete_kb` on a KB whose context was never opened | `getattr(ctx, "graph")` opens Kuzu just to close it; if opening fails the exception is swallowed and the file is deleted anyway. |
 | Watcher sees Orb's own delete before the row is gone | The route unlinks the file (thread) *before* deleting the row; a fast watcher may set `processing_stage = "External delete detected…"` on a row that is deleted a few ms later. Harmless. |
-| Legacy `data/kb_registry.json` present | migrated once and renamed `.json.migrated`; migration failures are logged and the file is left in place (retry next boot). |
 
 ## 16. Gotchas
 
@@ -465,7 +462,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 
 ## 17. Extension points
 
-- **Add a per-KB store (e.g. a new index):** add a column in both the raw DDL in `_connect()` (plus an `_ensure_*_columns` ALTER for existing DBs) and `models/kb.py`; derive its name from `slug` in `create_kb` and in the JSON-migration defaults; construct it in `_build_context` and `_default_kb`; tear it down in `_cleanup_stores` (guarded to `DATA_DIR` if it is a path) and in `kb/empty`; add it to `_save_row` only if it must be mutable.
+- **Add a per-KB store (e.g. a new index):** add a column in the raw DDL in `_connect()` (plus an `_ensure_*_columns` ALTER for existing DBs); derive its name from `slug` in `create_kb`; construct it in `_build_context` and `_default_kb`; tear it down in `_cleanup_stores` (guarded to `DATA_DIR` if it is a path) and in `kb/empty`; add it to `_save_row` only if it must be mutable.
 - **Make a route KB-aware:** add `kb: KBContext = Depends(get_kb)`, filter SQL by `kb.kb_id`, use `kb.vault_path`; on the frontend pass `kb` through `withKb`/`kbQuery`.
 - **Change slug rules:** only affects *new* KBs; never re-slug existing rows (paths and collections would orphan). If you must, write a migration that renames vault dir, Kuzu dir, Qdrant collections (copy) and Meili index (copy) and updates the row atomically.
 - **Support renaming vaults / moving a KB's vault:** implement as `set_vault_path` + physical move + no row changes (rows store vault-relative `rel_path`, so moving the whole folder keeps them valid).
@@ -474,10 +471,10 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 
 ## 18. History / rationale
 
-- `d37abd6` (2026-05-18) *Add multi-knowledge-base (KB) support* — introduced `KBRegistry`/`KBContext`, `?kb=` via `get_kb`, per-KB Kuzu path / Qdrant collections / Typesense collection, `kb_id` on notes (originally an Alembic migration `d4f891a2b5c3_add_kb_id_to_notes.py`; Alembic has since been removed and `init_db().create_all` is the only schema mechanism). The registry was originally JSON (`data/kb_registry.json`) — hence the one-time migration in `_load`.
+- `d37abd6` (2026-05-18) *Add multi-knowledge-base (KB) support* — introduced `KBRegistry`/`KBContext`, `?kb=` via `get_kb`, per-KB Kuzu path / Qdrant collections / Typesense collection, `kb_id` on notes (originally an Alembic migration `d4f891a2b5c3_add_kb_id_to_notes.py`; Alembic has since been removed and `init_db().create_all` is the only schema mechanism). The registry was originally JSON (`data/kb_registry.json`); the one-time import in `_load` was removed on 2026-09-19.
 - `28ea18e` (2026-05-20) service/graph layout refactor.
 - `3f21e08` (2026-08-02) *Ship LifeOS as a Docker-free desktop app with in-app data cleanup* — vault-backed notes (`vault.py`, `vault_sync.py`, `vault_watcher.py`, `wikilinks.py`), SQLite registry, `kb/empty` and `delete-non-default`, Meilisearch replacing Typesense (column name kept).
-- `6162be2` / `fbcafe7` (2026-08-02/03) rename to Orb; `orb.db`, `orb_nodes`, `orb_current_kb`, legacy `LIVEOS_*` env aliases and `LifeOS`/`LiveOS` App Support fallbacks retained.
+- `6162be2` / `fbcafe7` (2026-08-02/03) rename to Orb; `orb.db`, `orb_nodes`, `orb_current_kb`; the `LIVEOS_*` env aliases and `LifeOS`/`LiveOS` App Support fallbacks added then were dropped on 2026-09-19.
 - `f8f527f` (2026-08-06) security/data-loss audit: slug sanitisation, vault/Kuzu deletion contained to `DATA_DIR`, `adoptable()` on-disk check in `sync_vault_notes`, shared watcher engine, Kuzu/vault work moved to threads, watcher no longer touching ingestion state beyond stale marking.
 - The Kuzu "directory vs file" healing (`normalize_kuzu_path`) exists because an earlier `create_kb` created `…/kuzu/<slug>` as a directory, which Kuzu rejects; the code comments in `_kuzu_db_file`, `get_kb` and `_load` all reference this.
 
@@ -485,7 +482,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 
 A KB can pin its own chat/ingestion LLM, and can have the finance section switched off. Summary of the contract so other docs stay consistent:
 
-- **Columns** on `knowledge_bases` (raw DDL in `_connect()` + `_ensure_optional_columns` ALTERs, mirrored in `models/kb.py`): `llm_provider TEXT`, `llm_model TEXT`, `llm_ingestion_model TEXT`, `llm_base_url TEXT`, all nullable; `NULL` = inherit system `Settings`. `_save_row` upserts them. `llm_model` holds either a catalog id or a GGUF path ref (`MODELS_DIR`-relative where possible, so a pin survives moving the models directory); `llm_base_url` is only meaningful for `provider = "openai_compat"` and is stored normalised. Embed / rerank / multimodal are deliberately **not** per-KB (comment: *"embed dims are shared across every KB's Qdrant collections"*).
+- **Columns** on `knowledge_bases` (raw DDL in `_connect()` + `_ensure_optional_columns` ALTERs): `llm_provider TEXT`, `llm_model TEXT`, `llm_ingestion_model TEXT`, `llm_base_url TEXT`, all nullable; `NULL` = inherit system `Settings`. `_save_row` upserts them. `llm_model` holds either a catalog id or a GGUF path ref (`MODELS_DIR`-relative where possible, so a pin survives moving the models directory); `llm_base_url` is only meaningful for `provider = "openai_compat"` and is stored normalised. Embed / rerank / multimodal are deliberately **not** per-KB (comment: *"embed dims are shared across every KB's Qdrant collections"*).
 - **`KBContext`** gains `llm_provider`, `llm_model`, `llm_ingestion_model`, `llm_base_url`, a cached `_llm` (+ `_llm_built_for` key), `has_llm_override`, the `llm` property (global `llm_service` when no override, else `build_kb_llm_service(provider, model, ingestion_model, base_url)` → `LLMService(prov, chat_model=…, ingestion_model=…, ingestion_provider=prov, base_url=…)`), and `apply_llm_override(...)` which also drops the cached `retrieval_service` / `ingestion_workflow` / `chat_workflow` so `_ensure_lazy()` rebuilds them with the new `llm=`. The cache key is `(provider, model, ingestion_model, base_url, credentials.version)` — including the credential version means editing an API key rebuilds every pinned client without a restart.
 - **Registry API**: `LLM_PROVIDERS = ("local","openai","gemini","anthropic","huggingface")` (`ollama`/`lm_studio` are coerced to `local`); `set_llm_config(kb_id, provider=, model=, ingestion_model=)` validates the provider, persists, and calls `apply_llm_override` on the cached context (works for `default` too, creating the row if needed); `effective_llm(kb_id)` / module-level `effective_llm_config(meta)` resolve overrides over `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, per-provider `*_MODEL`) and return `{provider, model, ingestion_model, inherited}`.
 - **Routes** (`api/kb.py`): `GET /api/v1/kb` rows now carry `effective_llm`; `GET /api/v1/kb/{kb_id}/llm` → `{kb_id, override:{provider,model,ingestion_model}, effective:{…}, providers:[…], local_models:[{id,label,size_gb}]}` (only downloaded GGUFs are offered); `PATCH /api/v1/kb/{kb_id}/llm` body `KBLLMInput {provider?, model?, ingestion_model?}` where `""`/`inherit`/`system`/`default` clear a field; validation: unknown provider → 400, cloud provider without API key (`ai_gate.provider_is_configured`) → 400, local model id not a known chat option or not downloaded → 400; after saving, the route constructs `ctx.llm` once and **rolls the override back** (clears all three) if construction raises, returning 400 `Could not initialise that model`. Unknown KB → 404. `kb_id` is the UUID/`default` (path param), not the slug.

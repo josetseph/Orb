@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import sqlite3
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from app.core.config import REPO_ROOT, settings
+from app.core.config import settings
 from app.core.log import get_logger
 from app.core.paths import ensure_data_layout, resolve_data_dir, resolve_default_vault_path
 from app.services.graph import GraphService, graph_service
@@ -26,7 +25,6 @@ from app.workflows.ingestion import IngestionWorkflow
 logger = get_logger("KBRegistry")
 
 DEFAULT_KB_ID = "default"
-_LEGACY_REGISTRY = REPO_ROOT / "data" / "kb_registry.json"
 
 # Providers a KB may pin. Embed / rerank / multimodal are deliberately not
 # per-KB: embed dims are shared across every KB's Qdrant collections.
@@ -254,10 +252,6 @@ class KBContext:
         if self.chat_workflow is None:
             self.chat_workflow = ChatWorkflow(retrieval=self.retrieval_service, llm=llm)
 
-    def get_retrieval_service(self):
-        self._ensure_lazy()
-        return self.retrieval_service
-
     def get_ingestion_workflow(self):
         self._ensure_lazy()
         return self.ingestion_workflow
@@ -399,53 +393,6 @@ class KBRegistry:
                 conn.close()
 
     def _load(self) -> None:
-        # Migrate legacy JSON once
-        if _LEGACY_REGISTRY.exists():
-            try:
-                data = json.loads(_LEGACY_REGISTRY.read_text(encoding="utf-8"))
-                conn = _connect()
-                for entry in data.get("knowledge_bases", []):
-                    if "vault_path" not in entry:
-                        entry["vault_path"] = str(
-                            resolve_data_dir() / "vaults" / entry.get("slug", entry["id"])
-                        )
-                        ensure_vault(entry["vault_path"])
-                    # Fix kuzu under DATA_DIR — must be a file path, not a directory
-                    slug = entry.get("slug", entry["id"])
-                    entry["kuzu_path"] = str(
-                        _kuzu_db_file(resolve_data_dir(), slug)
-                    )
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO knowledge_bases
-                        (id, name, slug, vault_path, kuzu_path, qdrant_col_cores,
-                         qdrant_col_rels, qdrant_col_contexts, typesense_collection, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            entry["id"],
-                            entry["name"],
-                            entry.get("slug", entry["id"]),
-                            entry["vault_path"],
-                            entry["kuzu_path"],
-                            entry.get("qdrant_col_cores", f"{slug}_node_cores"),
-                            entry.get("qdrant_col_rels", f"{slug}_node_relationships"),
-                            entry.get(
-                                "qdrant_col_contexts", f"{slug}_node_isolated_contexts"
-                            ),
-                            entry.get("typesense_collection", f"{slug}_nodes"),
-                            entry.get("created_at"),
-                        ),
-                    )
-                conn.commit()
-                conn.close()
-                _LEGACY_REGISTRY.rename(
-                    _LEGACY_REGISTRY.with_suffix(".json.migrated")
-                )
-                logger.info("[KBRegistry] Migrated kb_registry.json → SQLite")
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.warning(f"[KBRegistry] JSON migrate failed: {exc}")
-
         try:
             conn = _connect()
             rows = conn.execute("SELECT * FROM knowledge_bases").fetchall()
@@ -807,20 +754,6 @@ class KBRegistry:
                 meta.get("name"),
             )
             return dict(meta)
-
-    def finance_enabled(self, kb_id: str) -> bool:
-        with self._lock:
-            meta = self._metadata.get(kb_id)
-        return True if meta is None else finance_enabled_for(meta)
-
-    def effective_llm(self, kb_id: str) -> dict | None:
-        with self._lock:
-            meta = self._metadata.get(kb_id)
-        if meta is None:
-            if kb_id != DEFAULT_KB_ID:
-                return None
-            meta = {}
-        return effective_llm_config(meta)
 
     def set_vault_path(self, kb_id: str, vault_path: str) -> KBContext | None:
         """Point a KB at a different notes folder (creates folder if needed)."""

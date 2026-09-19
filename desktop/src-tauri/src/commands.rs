@@ -24,7 +24,6 @@ pub struct SetupPayload {
     data_dir: String,
     models_dir: String,
     default_vault_path: Option<String>,
-    ai_setup_mode: Option<String>,
 }
 
 fn absolute(label: &str, raw: &str) -> Result<String, String> {
@@ -53,16 +52,7 @@ pub fn save_setup(app: AppHandle, webview: Webview, payload: SetupPayload) -> Re
         Some(v) if !v.is_empty() => Some(absolute("default_vault_path", v)?),
         _ => None,
     };
-    let mode = payload
-        .ai_setup_mode
-        .unwrap_or_else(|| "none".into())
-        .to_lowercase();
-    if !["none", "local", "cloud"].contains(&mode.as_str()) {
-        return Err("ai_setup_mode must be none, local, or cloud".into());
-    }
-
-    let mut paths =
-        json!({ "data_dir": data_dir, "models_dir": models_dir, "ai_setup_mode": mode });
+    let mut paths = json!({ "data_dir": data_dir, "models_dir": models_dir });
     if let Some(v) = &vault {
         paths["default_vault_path"] = json!(v);
     }
@@ -81,15 +71,6 @@ pub fn save_setup(app: AppHandle, webview: Webview, payload: SetupPayload) -> Re
     let tmp = file.with_extension("json.tmp");
     fs::write(&tmp, serde_json::to_string_pretty(&paths).unwrap()).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
-
-    // The API reads its AI mode from runtime_config.json in the data dir.
-    let rc_path = Path::new(&data_dir).join("runtime_config.json");
-    let mut rc: serde_json::Value = fs::read_to_string(&rc_path)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| json!({}));
-    rc["ai_setup_mode"] = json!(mode);
-    let _ = fs::write(&rc_path, serde_json::to_string_pretty(&rc).unwrap());
 
     runtime::start(app);
     Ok(())

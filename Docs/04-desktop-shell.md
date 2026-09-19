@@ -40,8 +40,7 @@ backend/app/desktop_runtime.py   the process the shell spawns
 1. `main.rs` → `runtime::boot`. The window is created hidden on the bundled page.
 2. If `paths.json` is missing or unreadable, the window is shown: the page calls
    `app_state`, sees `first_run`, and renders the setup form. `save_setup` validates
-   absolute paths, writes `paths.json` atomically, writes `ai_setup_mode` into
-   `DATA_DIR/runtime_config.json`, then falls through to step 3.
+   absolute paths, writes `paths.json` atomically, then falls through to step 3.
 3. `runtime::start` spawns `python -m app.desktop_runtime` (own process group,
    stdout/stderr → `DATA_DIR/logs/backend.log`) and a watcher thread.
 4. The runtime frees its ports, fixes sidecar addresses in the environment, starts a
@@ -63,7 +62,7 @@ leaves nothing behind.
 
 - **Ports**: `ORB_{API,FIREFLY,QDRANT,MEILI}_PORT`, defaults 17401 / 17412 / 17433 / 17470.
 - **Paths**: `ORB_DATA_DIR` / `ORB_MODELS_DIR` / `paths.json` via `app.core.paths`.
-- **Env defaults** (overridable): `AI_SETUP_MODE=none`, `LLM_PROVIDER=local`,
+- **Env defaults** (overridable): `LLM_PROVIDER=local`,
   `EMBEDDING_PROVIDER=local`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`.
 - **Sidecars**: Qdrant and Meilisearch binaries are downloaded on first run into
   `DATA_DIR/bin/<platform>/` (optional `ORB_SHA256_<ASSET>` pins). The Meili master

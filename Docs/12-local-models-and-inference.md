@@ -14,7 +14,7 @@ The local-inference layer **owns**:
 - Downloading GGUF files from Hugging Face into `MODELS_DIR/gguf/` and HF snapshot repos (Florence-2, Whisper, Marlin) into `MODELS_DIR/<local-name>/`, including NAS-safe staging on a local SSD and integrity checks.
 - `MODELS_DIR/manifest.json`: the persisted model *selection* (chat/embed/reranker ids, embedding dims, resolved file paths) plus per-file download records and the last runtime descriptor.
 - Loading and unloading models **in the FastAPI process** via `llama-cpp-python` (`Llama(...)`) and torch/`transformers`, with a hard rule that at most one heavy model is resident at a time (chat ↔ embed ↔ reranker ↔ Florence ↔ Whisper ↔ Marlin).
-- Chat generation over the local GGUF exposed through an OpenAI-client-shaped shim (`LocalOpenAICompat` / `AsyncLocalOpenAICompat`) so `LLMService` can treat "local" like any other provider.
+- Chat generation over the local GGUF exposed through an OpenAI-client-shaped shim (`LocalOpenAICompat`) so `LLMService` can treat "local" like any other provider.
 - Embedding (`LocalLlamaEmbeddings`, `EmbeddingService`) and reranking (`LocalGgufReranker`, `RerankerService`) primitives consumed by ingestion and retrieval.
 - Keeping `settings.EMBEDDING_DIMENSIONS` and **every** KB's Qdrant collections sized to the selected embed model (`sync_embedding_infrastructure`).
 - Idle unloading (default 5 minutes) and accelerator cache release.
@@ -36,7 +36,7 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | Path | Purpose | Key exports |
 |---|---|---|
 | `backend/app/services/model_catalog.py` | Static `ModelOption` catalog, RAM/accelerator probing, budget filtering and recommendation. Deliberately avoids importing `settings`/`local_models` at module level so it can run early. | `ModelOption`, `CHAT_MODELS`, `EMBED_MODELS`, `RERANK_MODELS`, `ALL_MODELS`, `get_option`, `total_ram_gb`, `detect_accel_backend`, `hardware_profile`, `pick_embed_for_budget`, `pick_rerank_for_budget`, `chat_options_for_budget`, `recommend_chat`, `recommend_stack` |
-| `backend/app/services/local_models.py` | GGUF download + manifest + in-process llama-cpp runtime (chat/embed), GGUF reranker, residency manager, backend detection, OpenAI-compat shim. | `CHAT_MODEL_ID`/`EMBED_MODEL_ID`/`RERANK_MODEL_ID`, `load_manifest`/`save_manifest`/`models_manifest_path`, `download_file`, `ensure_gguf`, `save_selection`, `sync_embedding_infrastructure`, `resolve_selected_hf_paths`, `ensure_chat_and_embed_models`, `gguf_paths_if_present`, `reranker_gguf_path`, `detect_llama_backend`, `release_accelerator_memory`, `model_idle_seconds`, `RepetitionLoopError`, `LocalOpenAICompat`, `AsyncLocalOpenAICompat`, `LocalLlamaEmbeddings`, `LocalLlamaRuntime` + singleton `local_llama_runtime`, `LocalGgufReranker` + singleton `local_gguf_reranker` |
+| `backend/app/services/local_models.py` | GGUF download + manifest + in-process llama-cpp runtime (chat/embed), GGUF reranker, residency manager, backend detection, OpenAI-compat shim. | `CHAT_MODEL_ID`/`EMBED_MODEL_ID`/`RERANK_MODEL_ID`, `load_manifest`/`save_manifest`/`models_manifest_path`, `download_file`, `ensure_gguf`, `save_selection`, `sync_embedding_infrastructure`, `resolve_selected_hf_paths`, `ensure_chat_and_embed_models`, `gguf_paths_if_present`, `reranker_gguf_path`, `detect_llama_backend`, `release_accelerator_memory`, `model_idle_seconds`, `RepetitionLoopError`, `LocalOpenAICompat`, `LocalLlamaEmbeddings`, `LocalLlamaRuntime` + singleton `local_llama_runtime`, `LocalGgufReranker` + singleton `local_gguf_reranker` |
 | `backend/app/services/embedding.py` | Thin provider-agnostic façade over `LocalLlamaEmbeddings`; adds the Qwen3 query instruction prefix. | `EmbeddingService`, singleton `embedding_service` |
 | `backend/app/services/reranker.py` | Async façade over `local_gguf_reranker` (runs it in a thread, normalises result dicts, never raises). | `RerankerService`, singleton `reranker_service` |
 | `backend/app/services/multimodal_models.py` | HF snapshot paths under `MODELS_DIR`, readiness check, `snapshot_download` with NAS staging. | `multimodal_model_path`, `is_hf_snapshot_ready`, `ensure_hf_snapshot`, `ensure_multimodal_models` |
@@ -47,13 +47,13 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/app/api_desktop.py` (setup section) | HTTP surface: `/api/v1/setup/status`, `/model-catalog`, `/download-models`, `/select-chat-model`, `/start-local-llm`, `/start-multimodal-services`, `/multimodal-status`, `/paths`. | route handlers |
 **Moving `MODELS_DIR`.** `manifest.json` stores absolute `chat_path` / `embed_path` / `reranker_path`. When the models directory moves (external drive → local disk), those point at files that are no longer there, and the user is told a model "is not downloaded" while it sits in the new directory under the same name. `selected_gguf(path)` resolves a selection: the recorded path when it exists, else the same **basename** under the current `resolve_models_dir()/gguf` (logged when it happens), else `None`. `gguf_paths_if_present` and `reranker_gguf_path` both go through it, so a move degrades to a log line rather than a false "missing model".
 
-| `backend/app/services/ai_gate.py` | `ai_is_configured()` reports ready when `gguf_paths_if_present()` is truthy (or a cloud key / `LLM_BASE_URL` exists); `AI_SETUP_MODE` is not read. | `ai_is_configured`, `require_ai` (details in [13](13-llm-providers-and-prompting.md)) |
+| `backend/app/services/ai_gate.py` | `ai_is_configured()` reports ready when `gguf_paths_if_present()` is truthy (or a cloud key / `LLM_BASE_URL` exists). | `ai_is_configured`, `require_ai` (details in [13](13-llm-providers-and-prompting.md)) |
 | `backend/app/main.py` | Startup hook calls `sync_embedding_infrastructure()` after applying runtime-config overrides. | `startup_event` |
 | `backend/app/workflows/ingestion.py` | Consumes the model-load clock for per-note `[Timing]` lines; passes a per-KB `llm` into the agent (see §13.2). Older revisions unloaded all models after a batch drained — that block has been removed. | — |
 | `backend/requirements.txt` | `llama-cpp-python>=0.3.0`, `huggingface_hub>=0.34.0,<1.0`, `av` (video probing). | — |
 | `backend/requirements-multimodal.txt` | torch / `transformers>=5.7.0` / accelerate / einops / safetensors / librosa / pydub / timm / qwen-vl-utils / av — installed on demand, mirrors `_MULTIMODAL_PIP`. | — |
 | `desktop/binaries/README.md` | Operator notes on the in-process LLM and env overrides (Qdrant/Meili binaries are unrelated to this doc). | — |
-| `backend/app/desktop_runtime.py` | Sets defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER` (`os.environ.setdefault`) and `ORB_MODELS_DIR` before running uvicorn. | — |
+| `backend/app/desktop_runtime.py` | Sets defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER` (`os.environ.setdefault`) and `ORB_MODELS_DIR` before running uvicorn. | — |
 | `frontend/src/app/setup/page.tsx` | Setup page: consumes `/setup/status`, `/setup/model-catalog`, `/setup/download-models`, `/setup/multimodal-status`, `/setup/paths`. | — |
 
 ## 3. Architecture and flow
@@ -113,8 +113,8 @@ sequenceDiagram
   participant MMM as multimodal_models.py
   FE->>API: GET /api/v1/setup/status
   API->>LM: gguf_paths_if_present()
-  API-->>FE: {ai_setup_mode, local_models_ready, multimodal_ready, ...}
-  FE->>API: POST /api/v1/setup/paths {data_dir, models_dir, default_vault_path, ai_setup_mode:"local"}
+  API-->>FE: {ai_configured, local_models_ready, multimodal_ready, ...}
+  FE->>API: POST /api/v1/setup/paths {data_dir, models_dir, default_vault_path}
   FE->>API: GET /api/v1/setup/model-catalog
   API->>MC: recommend_stack(None)
   MC->>LM: load_manifest() (selected_chat)
@@ -214,7 +214,7 @@ The env-default `CHAT_MODEL_ID` / `EMBED_MODEL_ID` / `RERANK_MODEL_ID` constants
 | Function | Behaviour |
 |---|---|
 | `total_ram_gb()` | `ORB_RAM_GB` env override (float) wins. Else macOS `sysctl -n hw.memsize`; Windows `wmic ComputerSystem get TotalPhysicalMemory` (last integer in output); Linux `/proc/meminfo MemTotal`. Any failure → **8.0 GB** conservative fallback. |
-| `detect_accel_backend()` | Lightweight duplicate of `local_models.detect_llama_backend` that avoids importing `settings`. Honors `ORB_LLAMA_BACKEND` (`cpu|metal|cuda|vulkan`, else auto) and `ORB_LLAMA_N_GPU_LAYERS`. Auto: darwin → `metal` (-1 layers); `nvidia-smi` on PATH → `cuda` (-1); else `cpu` (0). Returns `{backend, n_gpu_layers, reason}`. **Difference from `detect_llama_backend`:** only reads the `ORB_` names (no `LIVEOS_` aliases) and has no `install_hint`. |
+| `detect_accel_backend()` | Lightweight duplicate of `local_models.detect_llama_backend` that avoids importing `settings`. Honors `ORB_LLAMA_BACKEND` (`cpu|metal|cuda|vulkan`, else auto) and `ORB_LLAMA_N_GPU_LAYERS`. Auto: darwin → `metal` (-1 layers); `nvidia-smi` on PATH → `cuda` (-1); else `cpu` (0). Returns `{backend, n_gpu_layers, reason}`. **Difference from `detect_llama_backend`:** no `install_hint`. |
 | `hardware_profile()` | `usable_model_gb = max(4.0, ram*0.88)` on metal/cuda, else `max(3.0, ram*0.75)`. Returns `{ram_gb, usable_model_gb, platform, machine, accel}`. |
 
 ### 4.4 Selection logic
@@ -252,7 +252,7 @@ Embed and reranker tiers are **not user-selectable**; they are derived from tota
 
 ## 5. `MODELS_DIR` layout and `manifest.json`
 
-`MODELS_DIR` is resolved by `app.core.paths.resolve_models_dir()`: `ORB_MODELS_DIR` / `LIVEOS_MODELS_DIR` / `MODELS_DIR` env → `paths.json["models_dir"]` → `backend/models` (dev fallback). `desktop_runtime.py` always sets `ORB_MODELS_DIR`.
+`MODELS_DIR` is resolved by `app.core.paths.resolve_models_dir()`: `ORB_MODELS_DIR` / `MODELS_DIR` env → `paths.json["models_dir"]` → `backend/models` (dev fallback). `desktop_runtime.py` always sets `ORB_MODELS_DIR`.
 
 ```
 MODELS_DIR/
@@ -267,7 +267,7 @@ MODELS_DIR/
 └── marlin-2b/                          # settings.MODEL_MARLIN_LOCAL — lunahr/Marlin-2B-ungated
 ```
 
-Staging directory (only used when `MODELS_DIR` `looks_like_network_volume()` or `ORB_FORCE_DOWNLOAD_STAGING` is set): `local_download_staging_dir()` → `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` (+ `LIVEOS_` aliases) → macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%\Orb\model-downloads`, Linux `~/.cache/orb/model-downloads`. GGUFs stage as `<staging>/<file>.partial` → `<staging>/<file>` → `MODELS_DIR/gguf/<file>`; HF snapshots stage in a `tempfile.mkdtemp(prefix="<label>-")` under the staging root and are copied file-by-file.
+Staging directory (only used when `MODELS_DIR` `looks_like_network_volume()` or `ORB_FORCE_DOWNLOAD_STAGING` is set): `local_download_staging_dir()` → `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` → macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%\Orb\model-downloads`, Linux `~/.cache/orb/model-downloads`. GGUFs stage as `<staging>/<file>.partial` → `<staging>/<file>` → `MODELS_DIR/gguf/<file>`; HF snapshots stage in a `tempfile.mkdtemp(prefix="<label>-")` under the staging root and are copied file-by-file.
 
 ### 5.1 `manifest.json` schema
 
@@ -311,7 +311,7 @@ How the fields are consumed:
 | `recommend_stack()` | `selection.chat_id` → `selected_chat`. |
 | `save_selection()` | preserves existing `*_path` keys when rewriting `selection`. |
 
-**Persistence of selection**: `POST /setup/select-chat-model` and `POST /setup/download-models` both go through `save_selection()`, which (a) rewrites `manifest.selection` with ids + dims, (b) immediately calls `sync_embedding_infrastructure(dims, embed_id)` (Qdrant resize), and (c) logs a warning telling the user to re-ingest if `embed_id` or dims changed. `ensure_chat_and_embed_models` then adds the resolved `*_path` keys after the downloads. There is no `chat_path` until a download has been performed, so "selected but not downloaded" is representable and is exactly what `needs_model_download` in `/setup/status` reports.
+**Persistence of selection**: `POST /setup/select-chat-model` and `POST /setup/download-models` both go through `save_selection()`, which (a) rewrites `manifest.selection` with ids + dims, (b) immediately calls `sync_embedding_infrastructure(dims, embed_id)` (Qdrant resize), and (c) logs a warning telling the user to re-ingest if `embed_id` or dims changed. `ensure_chat_and_embed_models` then adds the resolved `*_path` keys after the downloads. There is no `chat_path` until a download has been performed, so "selected but not downloaded" is representable (`/setup/status.local_models_ready` is false while `manifest.selection` names a chat model).
 
 ## 6. Download flow
 
@@ -367,16 +367,16 @@ How the fields are consumed:
 
 | Method & path | Body / query | Calls | Response (key fields) | Notes |
 |---|---|---|---|---|
-| `GET /api/v1/setup/status` | — | `gguf_paths_if_present`, `is_hf_snapshot_ready×3`, `ai_is_configured`, `kb_registry.get_kb_by_name("default")` | `data_dir, models_dir, paths_json, default_vault_path, active_vault_path, ai_setup_mode, ai_configured, local_models_ready, multimodal_ready (all 3), needs_model_download (mode=="local" and not ready), database_backend, llm_provider` | cheap; polled by the UI after saves |
+| `GET /api/v1/setup/status` | — | `gguf_paths_if_present`, `is_hf_snapshot_ready×3`, `ai_is_configured`, `kb_registry.get_kb_by_name("default")` | `data_dir, models_dir, paths_json, default_vault_path, active_vault_path, ai_configured, local_models_ready, multimodal_ready (all 3), database_backend, llm_provider` | cheap; polled by the UI after saves |
 | `GET /api/v1/setup/model-catalog` | `?chat_id=` | `recommend_stack(chat_id)` | see §4.5 | |
 | `POST /api/v1/setup/download-models` | `{include_multimodal: bool=true, chat_id?: str, multimodal_only: bool=false}` | `ensure_chat_and_embed_models` (unless `multimodal_only`), then `ensure_multimodal_models(include_marlin=True)` when `include_multimodal or multimodal_only` | `status:"ok", chat, embed, reranker (str paths, "" if multimodal_only and none present), multimodal:{florence,whisper,marlin: path}, multimodal_services:{started:false, deferred:true, mode:"in_process", hint}, multimodal_error, progress[-40:], warning` | GGUF failure → **500** `"GGUF download failed: …"`; multimodal failure is swallowed into `multimodal_error`/`warning` with 200. Does not pip-install torch. |
 | `POST /api/v1/setup/select-chat-model` | `{chat_id: str}` (same model as above) | `resolve_selected_hf_paths`, `save_selection` | `status:"ok", selection:{chat_id, embed_id, reranker_id, embedding_dims}, infrastructure:{embedding_dims, embed_id, synced_kbs[], errors[]}` | 400 if `chat_id` missing. Resizes Qdrant immediately. Not used by the current UI. |
 | `POST /api/v1/setup/start-local-llm` | `{chat_id?}` | `ensure_chat_and_embed_models(None, chat_id)`, `local_llama_runtime.load(chat, embed)`, `local_gguf_reranker.ensure_loaded()`, `llm_service.provider="local"; llm_service.init_clients()`, `embedding_service.reconfigure()` | on success the dict from `LocalLlamaRuntime.load` + `reranker`, `reranker_loaded`, `reranker_error?`; on `RuntimeError` → 200 `{started:false, loaded:false, reason, accel}` | Downloads if missing (so can take minutes). Non-`RuntimeError` exceptions become 500. Not used by the current UI. |
-| `POST /api/v1/setup/start-multimodal-services` | `?install_deps=true` | `ensure_multimodal_services(install_deps, start_marlin=True)` in a thread | see §12.5 | May run `pip install` inside the API interpreter. Exceptions → 200 `{started:false, error}`. |
+| `POST /api/v1/setup/start-multimodal-services` | `?install_deps=true` | `ensure_multimodal_services(install_deps)` in a thread | see §12.5 | May run `pip install` inside the API interpreter. Exceptions → 200 `{started:false, error}`. |
 | `GET /api/v1/setup/multimodal-status` | — | `is_hf_snapshot_ready×3`, `services_ready()` | `mode:"in_process", models:{florence,whisper,marlin: bool}, services:{mode, local_models, marlin, deps_ok, deps_error, runtime:{device, models_ready, loaded}}` | `services_ready` imports `multimodal_runtime` which resolves the torch device lazily — it does **not** load models. |
-| `POST /api/v1/setup/paths` | `{data_dir, models_dir, default_vault_path?, ai_setup_mode?}` | `save_paths_file`, `sync_settings_paths`, `reconfigure_logging`, `ensure_vault`, `kb_registry.set_vault_path`, `runtime_config.save/apply_to_settings` | `status, data_dir, models_dir, default_vault_path, ai_setup_mode` | Changing `models_dir` takes effect immediately for all `resolve_models_dir()` callers (cache cleared) — but already-resident models are not unloaded. |
+| `POST /api/v1/setup/paths` | `{data_dir, models_dir, default_vault_path?}` | `save_paths_file`, `sync_settings_paths`, `reconfigure_logging`, `ensure_vault`, `kb_registry.set_vault_path` | `status, data_dir, models_dir, default_vault_path, ai_setup_mode` | Changing `models_dir` takes effect immediately for all `resolve_models_dir()` callers (cache cleared) — but already-resident models are not unloaded. |
 
-Frontend wrappers (`frontend/src/lib/api.ts`): `getSetupStatus()`, `getModelCatalog(chatId?)`, `saveSetupPaths(data)`, `downloadModels(includeMultimodal, chatId?, {multimodalOnly})` (uses a raw axios call with a long timeout against `${API_BASE_URL}/setup/download-models`), `selectChatModel(chatId)`, `getMultimodalStatus()`. Full route docs live in [07-api-reference.md](07-api-reference.md).
+Frontend wrappers (`frontend/src/lib/api.ts`): `getSetupStatus()`, `getModelCatalog(chatId?)`, `saveSetupPaths(data)`, `downloadModels(includeMultimodal, chatId?, {multimodalOnly})` (sent without a timeout), `selectChatModel(chatId)`, `getMultimodalStatus()`. Full route docs live in [07-api-reference.md](07-api-reference.md).
 
 ## 7. GGUF runtime (`llama-cpp-python`)
 
@@ -386,7 +386,7 @@ Frontend wrappers (`frontend/src/lib/api.ts`): `getSetupStatus()`, `getModelCata
 
 | Input | Result `{backend, n_gpu_layers, reason, install_hint}` |
 |---|---|
-| `ORB_LLAMA_BACKEND` ∈ `cpu|metal|cuda|vulkan` (or `LIVEOS_LLAMA_BACKEND`) | forced; `n_gpu_layers = 0` for cpu else `-1` |
+| `ORB_LLAMA_BACKEND` ∈ `cpu|metal|cuda|vulkan` | forced; `n_gpu_layers = 0` for cpu else `-1` |
 | `sys.platform == "darwin"` | `metal`, `-1` ("macOS <machine>: prefer Metal") — no check that the wheel was actually built with Metal |
 | linux/win32 and `nvidia-smi` on PATH | `cuda`, `-1` |
 | otherwise | `cpu`, `0` |
@@ -441,7 +441,7 @@ Public API summary:
 | `unload_if_idle(limit=None)` | yes | unload when `now - _last_used >= limit` (limit ≤ 0 disables) |
 | `create_chat_completion(messages, temperature=0.2, max_tokens=None, model=None)` | inside | see §8 |
 | `embed(text)`, `embed_batch(texts)` | yes | see §9 |
-| `make_chat_clients()` | — | `(LocalOpenAICompat, AsyncLocalOpenAICompat, LocalOpenAICompat)` = `(chat_client, async_chat_client, extraction_client)` |
+| `make_chat_client()` | — | a `LocalOpenAICompat` (the `chat_client` slot of `LLMService._build_clients`) |
 
 Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon thread `orb-model-idle` that every 30 s calls `unload_if_idle(limit)` on both the runtime and `local_gguf_reranker`, where `limit = model_idle_seconds()` (`ORB_MODEL_IDLE_SECONDS`, default 300; `0` disables idle unload but the thread keeps looping). The multimodal runtime has **no** idle unloader — Florence/Whisper/Marlin stay resident until evicted by a GGUF load (or an explicit `unload`). The old "unload everything once the ingest batch drains" block in `workflows/ingestion.py` has been removed in the current tree — models now stay resident after a note and rely on the idle watcher / eviction.
 
@@ -449,7 +449,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 ### 7.4 OpenAI-compat shim
 
-`LocalOpenAICompat(runtime, model_id=None)` exposes `.chat.completions.create(**kwargs)` and `.models.list()`. `create` reads `messages`, `temperature` (default 0.2), `max_tokens` **or** `max_completion_tokens`, `model`; **`response_format`, `extra_body`, `stop`, `top_p`, `stream`, etc. are accepted and ignored** ("llama.cpp JSON mode is prompt-driven for our extraction path"). It returns a `SimpleNamespace` shaped like an OpenAI `ChatCompletion` (`.choices[0].message.content`, `.choices[0].finish_reason`, `.model`, `.usage`, `.id="local-chat"`). `AsyncLocalOpenAICompat` wraps the same call in `asyncio.to_thread`. Default `model_id` is `settings.LLM_MODEL or "local-chat"`; the model string is echoed back and does **not** select a file — the resident chat GGUF is always used.
+`LocalOpenAICompat(runtime, model_id=None)` exposes `.chat.completions.create(**kwargs)` and `.models.list()`. `create` reads `messages`, `temperature` (default 0.2), `max_tokens` **or** `max_completion_tokens`, `model`; **`response_format`, `stop`, `top_p`, `stream`, etc. are accepted and ignored** ("llama.cpp JSON mode is prompt-driven for our extraction path"). It returns a `SimpleNamespace` shaped like an OpenAI `ChatCompletion` (`.choices[0].message.content`, `.choices[0].finish_reason`, `.model`, `.usage`, `.id="local-chat"`). Async callers (`LLMService.generate`, `ingestion_generate_with_meta`) wrap the call in `asyncio.to_thread` themselves. Default `model_id` is `settings.LLM_MODEL or "local-chat"`; the model string is echoed back and does **not** select a file — the resident chat GGUF is always used.
 
 ## 8. Chat generation and the repetition-loop guard
 
@@ -479,7 +479,7 @@ Prompt budgeting: before every generation the runtime estimates the prompt size 
 - `embed(text)` → `ensure_embed_loaded()` → under lock `self._embed.create_embedding(input=text)`; accepts both the OpenAI-shaped `{"data":[{"embedding":[...]}]}` and the legacy `{"embedding": [...]}` return forms; raises `RuntimeError("Unexpected embedding response…")` otherwise.
 - `embed_batch(texts)` (added in `8de5cda`, 2026-08-07): one `create_embedding(input=texts)` call for the whole list — one residency check, one lock acquisition, one llama call. **Fail-closed rule:** if `len(data) != len(texts)` it raises `RuntimeError("Unexpected batch embedding response … expected N vectors, got M")` rather than returning a shorter list, because "a length mismatch would silently mis-pair vectors with texts downstream". Empty input returns `[]` without loading anything.
 - Vectors are returned exactly as llama.cpp produces them. llama-cpp-python normalises pooled embeddings to unit length by default when `embedding=True`; Orb performs **no additional normalisation, truncation (Matryoshka) or dtype conversion**. Batch size is whatever the caller passes (ingestion batches per note / per NL-context group; see [10](10-ingestion-pipeline.md)); there is no internal chunking, so a batch whose total tokens exceed `ORB_EMBED_N_CTX` (8192) fails inside llama.cpp.
-- Dimension is a property of the GGUF (1024 / 2560 / 4096 for the three Qwen3 tiers). `LocalLlamaRuntime.load` probes it once by embedding the literal string `"dimension probe"`; `EmbeddingService.get_dimension()` probes with `"test"`.
+- Dimension is a property of the GGUF (1024 / 2560 / 4096 for the three Qwen3 tiers). `LocalLlamaRuntime.load` probes it once by embedding the literal string `"dimension probe"`.
 
 ### 9.2 `EmbeddingService` (`embedding.py`)
 
@@ -487,7 +487,6 @@ Prompt budgeting: before every generation the runtime estimates the prompt size 
 embedding_service = EmbeddingService()     # constructed at import; binds LocalLlamaEmbeddings(local_llama_runtime)
 embedding_service.embed_query(text, custom_instruction=None) -> list[float]
 embedding_service.embed_documents(texts) -> list[list[float]]
-embedding_service.get_dimension() -> int
 embedding_service.reconfigure()            # re-read settings.EMBEDDING_MODEL, rebind
 ```
 
@@ -499,7 +498,7 @@ embedding_service.reconfigure()            # re-read settings.EMBEDDING_MODEL, r
   Instruct: Given a question, retrieve relevant context.\nQuery: <text>
   ```
 
-  `custom_instruction` lets retrieval substitute a task-specific instruction; `settings.USE_DYNAMIC_EMBEDDING_INSTRUCTION` (default True) exists in config for that purpose but no current caller passes `custom_instruction` — `retrieval.py` calls `embedding_service.embed_query(enriched_query)` with the default instruction.
+  `custom_instruction` lets retrieval substitute a task-specific instruction, but no current caller passes it — `retrieval.py` calls `embedding_service.embed_query(enriched_query)` with the default instruction.
 - `embed_documents` never prefixes. Ingestion (`workflows/ingestion.py`) and community summaries (`graph.py`) call it directly.
 
 ### 9.3 `sync_embedding_infrastructure(*, dims=None, embed_id=None) -> dict`
@@ -628,7 +627,7 @@ Transient exception: `LocalLlamaRuntime.load()` (setup only) goes Chat → Embed
 ### 11.1 Locks and threads
 
 - `LocalLlamaRuntime._lock` and `LocalGgufReranker._lock` are `threading.RLock`s; `MultimodalRuntime._lock` is an `RLock` too. **They are separate locks**, and cross-evictions call the *other* object's `unload()` (which takes that object's lock) from inside the caller's lock. Lock order is therefore not fixed (runtime→reranker in one path, reranker→runtime in another). A deadlock would require a chat call and a rerank call to reach their eviction step simultaneously; in practice this is avoided because the event loop serialises most calls and each lock is held only briefly during eviction, but it is a latent hazard — do not introduce blocking waits inside these unload paths.
-- All llama.cpp and torch calls are synchronous; async callers must offload them: `AsyncLocalOpenAICompat` → `asyncio.to_thread`; `RerankerService` → `asyncio.to_thread`; `LLMService.generate/ingestion_generate/iterative_step` → `asyncio.to_thread`; `/setup/*` → `asyncio.to_thread`. `EmbeddingService.embed_*` is **synchronous** and is called directly from ingestion coroutines (blocking the event loop for the duration of the embed batch — ingestion runs with `INGESTION_PIPELINE_CONCURRENCY=1`). The sync `chat_client` used by `extract_structured` / `reason` / `generate_title` also blocks unless the caller offloads.
+- All llama.cpp and torch calls are synchronous; async callers must offload them: `RerankerService` → `asyncio.to_thread`; `LLMService.generate/ingestion_generate/iterative_step` → `asyncio.to_thread`; `/setup/*` → `asyncio.to_thread`. `EmbeddingService.embed_*` is **synchronous** and is called directly from ingestion coroutines (blocking the event loop for the duration of the embed batch — ingestion runs with `INGESTION_PIPELINE_CONCURRENCY=1`). The sync `chat_client` used by `LLMService._chat` (`reason`, `generate_title`, `analyze_query`, …) also blocks unless the caller offloads.
 - Generation holds `_lock` for the whole streaming loop, so a concurrent embed request waits for the chat to finish and then swaps models. Two concurrent chat requests serialise.
 - The idle watcher thread only ever calls `unload_if_idle` (takes the lock, checks age). Because `_touch()` happens at the *end* of a generation (after the stream), a long generation can be older than the idle limit at the time it finishes; the next 30 s tick then unloads it if no new request arrived.
 - **No post-ingest unload any more.** Commit `f8f527f` first moved a blanket `unload()` of chat/embed/reranker/multimodal from per-note to "once the batch drains"; the current working tree removes it entirely (comment in `workflows/ingestion.py`: "Models stay resident after a note: the idle watcher … unloads them, and loading any other model evicts them anyway. Unloading here made every single-note ingest re-read multi-GB GGUFs"). The multimodal node still explicitly unloads Florence / Whisper / Marlin at the end of each phase (`multimedia_service.unload_local_models("florence"|"whisper")`, `unload_marlin()`) so the chat GGUF that follows does not have to evict them.
@@ -643,7 +642,7 @@ The base install (`requirements.txt`) does **not** include torch/transformers. `
 
 `ensure_multimodal_python_deps(install=False)`: if not importable and `install=True`, runs `sys.executable -m pip install --upgrade <_MULTIMODAL_PIP>` **inside the running API interpreter's environment** (blocking, can take many minutes; no progress reporting), then re-checks. Returns `{ok, installed, error}`.
 
-`ensure_multimodal_services(install_deps=False, start_marlin=True)` (the `start_marlin` arg is ignored — API compat): requires Florence **and** Whisper snapshots (else `{started:false, error:"Download Florence + Whisper in Setup first", models, paths}`), then deps (else `{started:false, error, models, deps}`), else `{started:true, mode:"in_process", already_running:false, models, deps, services: services_ready(), message}`. Nothing is loaded into memory by this call.
+`ensure_multimodal_services(install_deps=False)`: requires Florence **and** Whisper snapshots (else `{started:false, error:"Download Florence + Whisper in Setup first", models, paths}`), then deps (else `{started:false, error, models, deps}`), else `{started:true, mode:"in_process", already_running:false, models, deps, services: services_ready(), message}`. Nothing is loaded into memory by this call.
 
 `services_ready()` → `{"mode":"in_process", "local_models": deps_ok and florence_ready, "marlin": deps_ok and marlin_ready, "deps_ok", "deps_error", "runtime": multimodal_runtime.status()}` (`local_models` is the legacy key name for the old Florence/Whisper sidecar).
 
@@ -716,19 +715,9 @@ Throughput levers (all env, see §14): `ORB_LLAMA_N_GPU_LAYERS` (−1 = all laye
 
 These live in `local_models.py` and are covered by `backend/tests/unit/test_local_runtime_budget.py` and `test_model_load_clock.py`.
 
-**Three chat runtimes, one at a time.** `model_formats.detect_format` decides the layout and `chat_runtimes` serves the two that are not GGUF:
+**One chat runtime: GGUF via llama-cpp-python.** MLX and Hugging Face safetensors chat backends were removed (2026-09-19): the catalog is GGUF-only, so the only way to reach them was to place a converted folder by hand. `model_formats.py` is now 57 lines — shard detection, the GGUF magic check, `loadable_path(folder → first shard)` and `name_warnings`. `LocalLlamaRuntime.resolve_chat_gguf` is the single resolver and `create_chat_completion` always answers from the resident GGUF.
 
-| Layout | Runtime | Where |
-|---|---|---|
-| GGUF | `llama-cpp-python` (`LocalLlamaRuntime`) | everywhere |
-| MLX (`weights.npz`, or a `quantization` block) | `mlx_lm` (`MlxChatRuntime`) | Apple Silicon |
-| Hugging Face safetensors | `transformers` (`TransformersChatRuntime`) | wherever torch runs |
-
-`LocalLlamaRuntime.resolve_chat_model()` returns `(path, format)` and `create_chat_completion` dispatches on it, returning the same response shape either way — `llm.py` and the OpenAI-compatible shim never learn which backend answered. Exclusive residency is symmetric: loading a GGUF unloads the MLX/transformers runtimes, and loading either of those unloads the GGUF chat/embed models, the reranker and the multimodal stack. The idle watcher frees all of them.
-
-Both non-GGUF runtimes reuse the GGUF budgeting rules: the prompt is rendered with the model's own chat template (falling back to a plain `Role: content` transcript when there is none), and `max_tokens` is sized from `context − prompt − 32`, raising `PromptTooLongError` below 256 remaining rather than truncating.
-
-**Not every model folder is a chat model.** Orb's own media models live in `MODELS_DIR`, so discovery skips the Florence, Whisper and Marlin directories outright. Beyond that, `chat_capability_problem` rejects a folder whose architecture belongs to a media family — `ForConditionalGeneration` alone is too permissive, since Marlin (`MarlinForConditionalGeneration`) and Whisper both use it while T5 is a legitimate chat model. Labels prefer the folder name over `config.json`'s `model_type`, because a Marlin checkout reports `qwen3_5`.
+**Not every GGUF is a chat model.** Discovery skips Orb's own media snapshots and anything that is not a GGUF. Role detection for GGUFs is described below (`pooling_type` marks embedders; rerankers are only warned about via `name_warnings`).
 
 **Any GGUF on disk is selectable.** The curated catalog (`model_catalog.py`) recommends *downloads*; it no longer gates *selection*.
 
@@ -738,7 +727,7 @@ Both non-GGUF runtimes reuse the GGUF budgeting rules: the prompt is rendered wi
 - **Model refs** are stored `MODELS_DIR`-relative where possible (`gguf/My-Model.gguf`), so a KB's pin survives moving the models directory to a faster disk; files outside it use an absolute path. `LocalLlamaRuntime.resolve_chat_gguf` accepts a catalog id, a relative ref, or an absolute path, and **raises** rather than silently falling back to the Setup selection when a named model cannot be satisfied — a KB pinned to a deleted model must fail loudly, not answer with a different one.
 - **Context clamping.** `_clamp_ctx_to_model` lowers `n_ctx` to the model's trained window when it is smaller than the configured value; with arbitrary GGUFs the 16k default can exceed what a model supports.
 
-**No default output cap.** `_default_chat_max_tokens()` now returns `None` unless `ORB_LLAMA_MAX_TOKENS` / `LIVEOS_LLAMA_MAX_TOKENS` is set to a positive integer (garbage or `0` → `None`). Rationale (docstring): "a fixed cap silently truncates long extractions, so the runtime sizes `max_tokens` per call from `n_ctx - prompt_tokens` instead." `desktop_runtime.py` sets no default for this variable (it only inherits an explicit one). Consequently the `n_ctx` floor in `_chat_kwargs` (`max_tokens + ORB_LLAMA_PROMPT_RESERVE`) is applied only when a cap is set; by default `n_ctx = ORB_LLAMA_N_CTX = 16384` exactly.
+**No default output cap.** `_default_chat_max_tokens()` returns `None` unless `ORB_LLAMA_MAX_TOKENS` is set to a positive integer (garbage or `0` → `None`). Rationale (docstring): "a fixed cap silently truncates long extractions, so the runtime sizes `max_tokens` per call from `n_ctx - prompt_tokens` instead." `desktop_runtime.py` sets no default for this variable (it only inherits an explicit one). Consequently the `n_ctx` floor in `_chat_kwargs` (`max_tokens + ORB_LLAMA_PROMPT_RESERVE`) is applied only when a cap is set; by default `n_ctx = ORB_LLAMA_N_CTX = 16384` exactly.
 
 **Token counting.** `LocalLlamaRuntime.count_tokens(text)`: uses `tokenize(text.encode(), add_bos=False, special=True)` of whichever GGUF is resident (chat or embed); with nothing resident falls back to `len(text)//4 + 1`. It **never triggers a model load** ("chunk sizing must not trigger a disk read"). `LLMService.ingestion_count_tokens` delegates here for the local provider.
 
@@ -757,17 +746,17 @@ Both non-GGUF runtimes reuse the GGUF budgeting rules: the prompt is rendered wi
 
 `create_chat_completion` calls `ensure_chat_loaded(self.resolve_chat_gguf(model))`; a path different from the resident one triggers a swap (`Switching chat GGUF …`). This is the mechanism behind per-KB model pinning (`kb_registry.effective_llm_config`, doc 13): a KB pinned to `gemma4-12b-q4` and another using the default E4B will swap the resident GGUF on every alternation. `model_catalog.chat_model_downloaded(opt)` / `downloaded_chat_models()` expose the same on-disk check to the KB API (`GET /api/v1/kb/{id}/llm.local_models`), and `recommend_stack` rows now carry `"downloaded": bool`.
 
-**Model-load clock.** `ModelLoadClock` (singleton `model_load_clock`) is a thread-safe accumulator of seconds and counts per `kind` (`chat`, `embed`, `rerank`, `florence`, `whisper`, `marlin`). Every `_construct_llama` site and every HF `from_pretrained` site records into it (`[ModelLoad] chat loaded in 41.3s`). `snapshot()` returns `{"seconds": {...}, "counts": {...}}`; `diff(before, after)` → `{"total_seconds", "seconds", "counts"}` restricted to kinds that grew; `describe(delta)` → `"chat×1,rerank×2"` or `"none"`. Consumers: `app/services/timing.py` (`load_snapshot`, `load_delta`, `describe_loads`, `log_stage_timing(logger, kind, total, before, **extra)`) used by `ChatWorkflow.chat/retrieve_for_query` (`[Timing] chat total=… model_load=… inference=… loads=… docs=N`), `FireflyService.answer_finance_question` (`finance_chat`), and `IngestionWorkflow._log_timing` (`[Timing] ingest note_id=… total= model_load= inference= loads= | multimedia=… extraction=… storage=… indexing=… chunks=N`). Purpose (docstring): "a slow disk and a slow model look identical in a bare stage timer."
+**Model-load clock.** `ModelLoadClock` (singleton `model_load_clock`) is a thread-safe accumulator of seconds and counts per `kind` (`chat`, `embed`, `rerank`, `florence`, `whisper`, `marlin`). Every `_construct_llama` site and every HF `from_pretrained` site records into it (`[ModelLoad] chat loaded in 41.3s`). `snapshot()` returns `{"seconds": {...}, "counts": {...}}`; `diff(before, after)` → `{"total_seconds", "seconds", "counts"}` restricted to kinds that grew; `describe(delta)` → `"chat×1,rerank×2"` or `"none"`. Consumers: `ChatWorkflow.chat/retrieve_for_query`, `IngestionWorkflow._log_timing` and `FireflyService.answer_finance_question`, which call `model_load_clock.snapshot()` / `ModelLoadClock.diff` / `ModelLoadClock.describe` directly (`[Timing] chat total=… model_load=… inference=… loads=… docs=N`), `FireflyService.answer_finance_question` (`finance_chat`), and `IngestionWorkflow._log_timing` (`[Timing] ingest note_id=… total= model_load= inference= loads= | multimedia=… extraction=… storage=… indexing=… chunks=N`). Purpose (docstring): "a slow disk and a slow model look identical in a bare stage timer."
 
 ## 14. Configuration and environment variables
 
-Every variable below is read through `_env_first(ORB_name, LIVEOS_name)` unless marked ORB-only; `LIVEOS_*` are legacy aliases from before the 2026-08-02 rename. Settings-object fields (from `.env`) are listed separately.
+Every variable below is read with `os.environ.get("ORB_…")` at call time (the pre-rename `LIVEOS_*` aliases were removed). Settings-object fields (from `.env`) are listed separately.
 
 | Variable | Default | Read by | Effect |
 |---|---|---|---|
-| `ORB_MODELS_DIR` / `LIVEOS_MODELS_DIR` / `MODELS_DIR` | `paths.json.models_dir` → `backend/models` | `paths.resolve_models_dir` | root of GGUFs, HF snapshots, manifest |
-| `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` (+`LIVEOS_`) | OS cache dir (`~/Library/Caches/Orb/model-downloads` …) | `paths.local_download_staging_dir` | where NAS-bound downloads are staged |
-| `ORB_FORCE_DOWNLOAD_STAGING` (ORB-only) | unset | `download_file` | force staging even on local disks (GGUFs only) |
+| `ORB_MODELS_DIR` / `MODELS_DIR` | `paths.json.models_dir` → `backend/models` | `paths.resolve_models_dir` | root of GGUFs, HF snapshots, manifest |
+| `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` | OS cache dir (`~/Library/Caches/Orb/model-downloads` …) | `paths.local_download_staging_dir` | where NAS-bound downloads are staged |
+| `ORB_FORCE_DOWNLOAD_STAGING` | unset | `download_file` | force staging even on local disks (GGUFs only) |
 | `ORB_CHAT_GGUF` / `ORB_EMBED_GGUF` / `ORB_RERANK_GGUF` (ORB-only) | catalog defaults (E4B / embed-0.6B-Q8 / rerank-0.6B) | module constants `*_MODEL_ID` | fallback `org/repo/file` when catalog lookup fails or manifest has no selection |
 | `ORB_LLAMA_BACKEND` | `auto` | `detect_llama_backend`, `model_catalog.detect_accel_backend` (ORB-only there) | `metal|cuda|vulkan|cpu` |
 | `ORB_LLAMA_N_GPU_LAYERS` | `-1` (GPU) / `0` (cpu) | same | layers offloaded; `-1` = all |
@@ -798,15 +787,13 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `MODEL_FLORENCE_HF/LOCAL`, `MODEL_WHISPER_HF/LOCAL`, `MODEL_MARLIN_HF/LOCAL` | see §6.2 | repo ids and folder names |
 | `FLORENCE_MAX_IMAGE_PIXELS` | `1500000` | downscale threshold |
 | `LLM_MODEL` | `local-chat` | placeholder meaning "Setup selection"; set to the chat catalog id after a download |
-| `AI_SETUP_MODE` | `none` | Persisted for the first-run setup page only; readiness is derived from GGUFs on disk, a cloud key, or `LLM_BASE_URL` |
 | `MULTIMEDIA_CONCURRENCY` | `1` | semaphore around the multimodal node |
-| `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | `True` | declared; not consulted by current code |
 
 ## 15. Interfaces with other subsystems
 
 | Direction | Contract |
 |---|---|
-| `LLMService` → runtime | `local_llama_runtime.make_chat_clients()` returns OpenAI-shaped shims; `LLMService` calls `chat.completions.create(model=…, messages=…, temperature=…, max_tokens?, response_format?, extra_body?)`; `model` is passed through `resolve_chat_gguf` (per-KB pinning). Only `.choices[0].message.content` and `.choices[0].finish_reason` are consumed. `LLMService.ingestion_count_tokens` / `ingestion_context_tokens` read `count_tokens` / `_default_chat_n_ctx`. |
+| `LLMService` → runtime | `local_llama_runtime.make_chat_client()` returns an OpenAI-shaped shim; `LLMService._chat` calls `chat.completions.create(model=…, messages=…, temperature?, max_tokens?)`; `model` is passed through `resolve_chat_gguf` (per-KB pinning). Only `.choices[0].message.content` and `.choices[0].finish_reason` are consumed. `LLMService.ingestion_count_tokens` / `ingestion_context_tokens` read `count_tokens` / `_default_chat_n_ctx`. |
 | Ingestion / graph → `EmbeddingService` | `embed_documents(list[str]) -> list[list[float]]` (same order, same length or exception). Vectors must be `EMBEDDING_DIMENSIONS` long or `QdrantService._prepare_vector` raises. |
 | Retrieval → `EmbeddingService.embed_query` | single vector with the Qwen3 instruction prefix when `is_qwen3`. |
 | Retrieval → `RerankerService.rerank` | async; returns `[]` on any failure; items carry `index`, `relevance_score`, `score`, `document`. |
@@ -815,7 +802,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `main.startup_event` → `sync_embedding_infrastructure()` | after `runtime_config` overrides are applied; failures logged, never fatal. |
 | `ai_gate.provider_is_configured("local")` → `gguf_paths_if_present()` | "local AI is available" ⇔ chat+embed paths from the manifest exist. |
 | `kb_registry` / `api/kb.py` → `model_catalog.downloaded_chat_models`, `chat_model_downloaded`, `get_option` | only downloaded chat GGUFs may be pinned per KB. |
-| `desktop_runtime.py` → env | sets `ORB_MODELS_DIR` and defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. |
+| `desktop_runtime.py` → env | sets `ORB_MODELS_DIR` and defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. |
 
 ## 16. Invariants, constraints and locked decisions
 
@@ -860,7 +847,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 - **`EmbeddingService.is_qwen3` is computed at construction and in `reconfigure()` only.** Startup `sync_embedding_infrastructure` updates `settings.EMBEDDING_MODEL` *after* the service was constructed with `local-embed`, and nothing calls `reconfigure()` on the normal desktop path — so query-instruction prefixing may be off until `/setup/start-local-llm` is invoked. Retrieval still works (vectors are comparable either way, slightly lower quality). Treat this as a discrepancy worth fixing rather than a design.
 - `LocalLlamaRuntime.status()` exists but no endpoint exposes it; `/setup/status` reports *files on disk*, not what is resident.
 - `/setup/start-local-llm` ends with the **reranker** resident, not chat.
-- Two independent backend detectors exist (`local_models.detect_llama_backend` honours `LIVEOS_` aliases; `model_catalog.detect_accel_backend` does not).
+- Two independent backend detectors exist (`local_models.detect_llama_backend` and `model_catalog.detect_accel_backend`); keep them in step.
 - `hf_path` is a property → absent from API JSON; the UI never sees repo/file combined.
 - `_min_expected_gguf_bytes` matches by `hf_file` *or* `hf_path`; renaming a catalog file breaks integrity checks for already-downloaded files (they will be re-downloaded under the new name).
 - `recommend_stack` returns the **full** chat list with `fits_budget` flags; do not filter it server-side, the UI relies on seeing tight options.

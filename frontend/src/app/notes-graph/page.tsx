@@ -23,8 +23,11 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { cn, youtubeEmbedUrl, vimeoEmbedUrl } from "@/lib/utils";
-import { GraphModeSwitch } from "@/components/graph3d";
+import { cn, loadJson, saveJson, youtubeEmbedUrl, vimeoEmbedUrl } from "@/lib/utils";
+import { urlTransformAllowing } from "@/lib/markdown-entities";
+import { folderOf } from "@/app/notes/_lib/wikilinks";
+import { GraphModeSwitch } from "@/components/graph3d/GraphModeSwitch";
+import { BlobMediaPlayer } from "@/components/blob-media-player";
 import type { Note, NotesGraphPayload } from "@/lib/types";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 
@@ -103,20 +106,7 @@ function controlsKey(kb: string) {
 }
 
 function loadControls(kb: string): Controls {
-  try {
-    const raw = localStorage.getItem(controlsKey(kb));
-    if (!raw) return { ...DEFAULT_CONTROLS };
-    return { ...DEFAULT_CONTROLS, ...JSON.parse(raw) };
-  } catch {
-    return { ...DEFAULT_CONTROLS };
-  }
-}
-
-function folderOf(relPath?: string | null): string {
-  if (!relPath) return "";
-  const parts = relPath.replace(/\\/g, "/").split("/");
-  parts.pop();
-  return parts.join("/");
+  return { ...DEFAULT_CONTROLS, ...loadJson<Partial<Controls>>(controlsKey(kb), {}) };
 }
 
 /** Turn [[wikilinks]] into markdown links for the preview renderer. */
@@ -133,15 +123,10 @@ function prepPreviewMarkdown(content: string): string {
     );
 }
 
-function previewUrlTransform(url: string): string {
-  if (url.startsWith("wikilink:")) return url;
-  if (url.startsWith("/vault-files/") || url.startsWith("attachments/")) {
-    return url;
-  }
-  return /^(https?|mailto):/i.test(url) || !url.includes(":") ? url : "";
-}
+const previewUrlTransform = urlTransformAllowing("wikilink:", "/vault-files/", "attachments/");
 
 const PREVIEW_PROSE = "prose-orb text-[13.5px]";
+const PREVIEW_EMBED = "my-3 aspect-video w-full rounded-md bg-bg-deep";
 
 function toForceGraphData(payload: NotesGraphPayload): GraphData {
   const nodes: GraphNode[] = (payload.nodes || []).map((n) => ({
@@ -151,7 +136,7 @@ function toForceGraphData(payload: NotesGraphPayload): GraphData {
     group: n.type === "missing" ? "Missing" : "Note",
     uuid: n.type === "missing" ? undefined : n.id,
     rel_path: n.rel_path,
-    folder: folderOf(n.rel_path),
+    folder: folderOf(n.rel_path ?? ""),
   }));
   const idSet = new Set(nodes.map((n) => n.id));
   const links: GraphLink[] = (payload.edges || [])
@@ -206,7 +191,7 @@ export default function NotesGraphPage() {
   const [nodeDetails, setNodeDetails] = useState<Note | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
-  const [controls, setControls] = useState<Controls>(DEFAULT_CONTROLS);
+  const [controls, setControls] = useState<Controls>(() => loadControls(currentKB));
   const [groupDraft, setGroupDraft] = useState("");
   const graphRef = useRef<ForceGraphMethods | undefined>(undefined);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -238,52 +223,46 @@ export default function NotesGraphPage() {
     userNavigatedRef.current = true;
   }, []);
 
-  // Tracks which KB the current `controls` state belongs to, so the save
-  // effect can't write the previous KB's controls under the new KB's key
-  // during the render where currentKB changed but setControls hasn't landed.
-  const controlsLoadedKbRef = useRef<string | null>(null);
-
-  useEffect(() => {
+  // Swap controls in the same render currentKB changes, so the save effect
+  // never writes the previous KB's controls under the new KB's key.
+  const [loadedKb, setLoadedKb] = useState(currentKB);
+  if (loadedKb !== currentKB) {
+    setLoadedKb(currentKB);
     setControls(loadControls(currentKB));
-    controlsLoadedKbRef.current = currentKB;
-  }, [currentKB]);
+    setLoading(true);
+  }
 
   useEffect(() => {
-    if (controlsLoadedKbRef.current !== currentKB) return;
-    try {
-      localStorage.setItem(controlsKey(currentKB), JSON.stringify(controls));
-    } catch {
-      /* ignore */
-    }
+    saveJson(controlsKey(currentKB), controls);
   }, [controls, currentKB]);
 
   const patch = useCallback(<K extends keyof Controls>(key: K, value: Controls[K]) => {
     setControls((c) => ({ ...c, [key]: value }));
   }, []);
 
-  const loadGraph = useCallback(async () => {
+  // Callers flip `loading` on themselves (KB switch above, rebuild below).
+  const loadGraph = useCallback(() => {
     const gen = ++loadGenRef.current;
     // Cancel the previous in-flight load (KB switch / rapid reloads) so the
     // backend stops building a payload nobody will render.
     loadAbortRef.current?.abort();
     const controller = new AbortController();
     loadAbortRef.current = controller;
-    setLoading(true);
     hasFittedRef.current = false;
     userNavigatedRef.current = false;
-    try {
-      const payload = await api.getNotesGraph(currentKB, {
-        signal: controller.signal,
+    return api
+      .getNotesGraph(currentKB, { signal: controller.signal })
+      .then((payload) => {
+        if (gen === loadGenRef.current) setRaw(toForceGraphData(payload));
+      })
+      .catch((error) => {
+        if (gen !== loadGenRef.current) return;
+        console.error("Failed to fetch notes graph", error);
+        setRaw({ nodes: [], links: [] });
+      })
+      .finally(() => {
+        if (gen === loadGenRef.current) setLoading(false);
       });
-      if (gen !== loadGenRef.current) return;
-      setRaw(toForceGraphData(payload));
-    } catch (error) {
-      if (gen !== loadGenRef.current) return;
-      console.error("Failed to fetch notes graph", error);
-      setRaw({ nodes: [], links: [] });
-    } finally {
-      if (gen === loadGenRef.current) setLoading(false);
-    }
   }, [currentKB]);
 
   useEffect(() => {
@@ -489,6 +468,7 @@ export default function NotesGraphPage() {
     try {
       setRebuilding(true);
       await api.rebuildNotesGraph(currentKB);
+      setLoading(true);
       await loadGraph();
     } catch (error) {
       console.error("Failed to rebuild notes graph", error);
@@ -685,18 +665,8 @@ export default function NotesGraphPage() {
                                   </span>
                                 );
                               }
-                              const yt = href ? youtubeEmbedUrl(href) : null;
-                              const vimeo = href ? vimeoEmbedUrl(href) : null;
-                              if (yt || vimeo) {
-                                return (
-                                  <iframe
-                                    src={yt || vimeo || ""}
-                                    title={String(children || "Video")}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                    allowFullScreen
-                                    className="my-3 aspect-video w-full rounded-md bg-bg-deep"
-                                  />
-                                );
+                              if (href && (youtubeEmbedUrl(href) || vimeoEmbedUrl(href))) {
+                                return <BlobMediaPlayer url={href} kind="video" className={PREVIEW_EMBED} />;
                               }
                               return (
                                 <a href={href} target="_blank" rel="noreferrer">
@@ -706,18 +676,8 @@ export default function NotesGraphPage() {
                             },
                             img: ({ src, alt }) => {
                               const href = typeof src === "string" ? src : "";
-                              const yt = href ? youtubeEmbedUrl(href) : null;
-                              const vimeo = href ? vimeoEmbedUrl(href) : null;
-                              if (yt || vimeo) {
-                                return (
-                                  <iframe
-                                    src={yt || vimeo || ""}
-                                    title={alt || "Video"}
-                                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                                    allowFullScreen
-                                    className="my-3 aspect-video w-full rounded-md bg-bg-deep"
-                                  />
-                                );
+                              if (href && (youtubeEmbedUrl(href) || vimeoEmbedUrl(href))) {
+                                return <BlobMediaPlayer url={href} kind="video" className={PREVIEW_EMBED} />;
                               }
                               return (
                                 <img

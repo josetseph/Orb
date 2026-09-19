@@ -13,7 +13,7 @@ import type {
   FinanceTransaction,
   FinanceWorkspace,
 } from "@/lib/types";
-import { errMessage } from "../utils";
+import { errMessage } from "@/lib/utils";
 
 export type FormSeeders = {
   setTxForm: React.Dispatch<
@@ -183,7 +183,10 @@ export function useFinanceWorkspace(
     }
   }, [currentKB, formSeedersRef]);
 
+  // loading/error are already reset here (initial state / the KB block
+  // above); every other setState in refresh runs after an await.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- only async setState reaches here
     refresh();
   }, [refresh]);
 

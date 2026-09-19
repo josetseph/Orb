@@ -1,26 +1,23 @@
 import { useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { useKB } from "@/lib/kb-context";
-import {
-  AccountsTab,
-  BudgetsTab,
-  CategoriesTab,
-  FinanceDisabled,
-  FinanceHeader,
-  FinanceNotReady,
-  FinanceTabs,
-  FinanceWorkspaceBar,
-  OverviewTab,
-  RecurringTab,
-  ReportsTab,
-  RulesTab,
-  SearchTab,
-  TransactionsTab,
-  useFinanceMutations,
-  useFinanceWorkspace,
-  type FormSeeders,
-  type TabId,
-} from "@/components/finance";
+import { FinanceDisabled } from "@/components/finance/FinanceDisabled";
+import { FinanceHeader } from "@/components/finance/FinanceHeader";
+import { FinanceNotReady } from "@/components/finance/FinanceNotReady";
+import { FinanceTabs } from "@/components/finance/FinanceTabs";
+import { FinanceWorkspaceBar } from "@/components/finance/FinanceWorkspaceBar";
+import { AccountsTab } from "@/components/finance/tabs/AccountsTab";
+import { BudgetsTab } from "@/components/finance/tabs/BudgetsTab";
+import { CategoriesTab } from "@/components/finance/tabs/CategoriesTab";
+import { OverviewTab } from "@/components/finance/tabs/OverviewTab";
+import { RecurringTab } from "@/components/finance/tabs/RecurringTab";
+import { ReportsTab } from "@/components/finance/tabs/ReportsTab";
+import { RulesTab } from "@/components/finance/tabs/RulesTab";
+import { SearchTab } from "@/components/finance/tabs/SearchTab";
+import { TransactionsTab } from "@/components/finance/tabs/TransactionsTab";
+import { useFinanceMutations } from "@/components/finance/hooks/useFinanceMutations";
+import { useFinanceWorkspace, type FormSeeders } from "@/components/finance/hooks/useFinanceWorkspace";
+import type { TabId } from "@/components/finance/utils";
 
 export default function FinancePage() {
   const { currentKB, currentKBName } = useKB();

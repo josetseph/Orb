@@ -30,33 +30,12 @@ router = APIRouter()
 
 
 def _parse_date_str(s: str) -> datetime:
-    """Parse a date string, trying ISO format first then dateparser.
-
-    Always returns a timezone-aware datetime. Falls back to ``datetime.now(UTC)``
-    when every parse attempt fails so callers never receive a bare None.
-    """
-    from dateutil import parser as dateutil_parser
-
+    """ISO-8601 → aware datetime (UTC when no offset); ``now(UTC)`` when unparseable."""
     try:
-        dt = dateutil_parser.isoparse(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-    try:
-        import dateparser
-
-        dt = dateparser.parse(s)
-        if dt:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-    return datetime.now(timezone.utc)
+        dt = datetime.fromisoformat(s)
+    except ValueError:
+        return datetime.now(timezone.utc)
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
 def _note_response(note: Note, kb: KBContext) -> dict:

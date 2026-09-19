@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { FIELD_INPUT } from "./utils";
 
 export function SuggestInput({
   value,
@@ -29,7 +28,7 @@ export function SuggestInput({
           // Delay so click on suggestion registers.
           window.setTimeout(() => setOpen(false), 120);
         }}
-        className={FIELD_INPUT}
+        className="input"
         placeholder={placeholder}
         autoComplete="off"
       />

@@ -16,9 +16,8 @@ moving their models directory (e.g. off a slow external disk).
 
 from __future__ import annotations
 
+import functools
 import os
-import re
-import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -26,11 +25,9 @@ from app.core.log import get_logger
 from app.core.paths import resolve_models_dir
 from app.services.gguf_metadata import GgufInfo, try_read_gguf_metadata
 from app.services import model_formats
+from app.services.model_formats import is_shard_continuation
 
 logger = get_logger("ModelDiscovery")
-
-# "Model-00001-of-00003.gguf" — llama.cpp loads the rest from the first shard.
-_SHARD_RE = re.compile(r"^(?P<stem>.+)-(?P<index>\d{5})-of-(?P<total>\d{5})\.gguf$", re.I)
 
 # A real GGUF header alone is larger than this; anything smaller is a stub,
 # a partial download, or a macOS AppleDouble sidecar.
@@ -47,7 +44,7 @@ _MAX_SCAN_DEPTH = 4
 
 @dataclass(frozen=True)
 class LocalModel:
-    """A local model found on disk, in any supported layout."""
+    """A local GGUF found on disk."""
 
     ref: str  # what a KB stores (relative to MODELS_DIR when possible)
     path: str
@@ -56,11 +53,6 @@ class LocalModel:
     size_gb: float
     context_length: int | None
     shards: int
-    # "gguf" | "mlx" | "transformers"
-    format: str = "gguf"
-    #: False when this machine cannot run the layout (reason below).
-    runnable: bool = True
-    unsupported_reason: str | None = None
     # Non-blocking advisories, e.g. a file that looks like a reranker.
     warnings: tuple[str, ...] = ()
 
@@ -70,14 +62,8 @@ class LocalModel:
         return data
 
 
-def is_shard_continuation(path: Path) -> bool:
-    """True for shards 2..N — only the first shard is openable / listed."""
-    match = _SHARD_RE.match(path.name)
-    return bool(match) and int(match.group("index")) > 1
-
-
 def shard_count(path: Path) -> int:
-    match = _SHARD_RE.match(path.name)
+    match = model_formats.SHARD_RE.match(path.name)
     return int(match.group("total")) if match else 1
 
 
@@ -122,10 +108,7 @@ def chat_warnings(info: GgufInfo) -> list[str]:
     metadata, so name text is the only available hint — hence a warning rather
     than a block.
     """
-    warnings: list[str] = []
-    haystack = f"{info.name} {info.path.name}".lower()
-    if "rerank" in haystack:
-        warnings.append("Looks like a reranker model; it will answer, but poorly.")
+    warnings = model_formats.name_warnings(info.name, info.path.name)
     if not info.has_chat_template:
         warnings.append(
             "No chat template in the file — llama.cpp will fall back to a generic "
@@ -152,13 +135,11 @@ def describe_local_model(
     )
 
 
-def scan_dir_for_models(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path]:
-    """Every candidate model under ``root``: GGUF files and model folders.
+def scan_dir_for_gguf(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Path]:
+    """Every loadable GGUF under ``root``.
 
     Walks with pruning rather than ``rglob`` so a virtualenv or cache directory
-    under MODELS_DIR is never descended into. A folder holding ``config.json``
-    is a candidate in its own right (MLX / Hugging Face layouts) and is not
-    descended into further.
+    under MODELS_DIR is never descended into.
     """
     if not root.is_dir():
         return []
@@ -167,11 +148,6 @@ def scan_dir_for_models(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Pa
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         current = Path(dirpath)
         depth = len(current.parts) - root_depth
-        # A model folder is a leaf: never walk into its shards or subfolders.
-        if "config.json" in filenames and current != root:
-            found.append(current)
-            dirnames[:] = []
-            continue
         # Prune in place — os.walk honours mutation of ``dirnames``.
         if depth >= max_depth:
             dirnames[:] = []
@@ -189,135 +165,41 @@ def scan_dir_for_models(root: Path, max_depth: int = _MAX_SCAN_DEPTH) -> list[Pa
     return sorted(found)
 
 
-# Back-compat alias for callers that only wanted GGUFs.
-scan_dir_for_gguf = scan_dir_for_models
+@functools.lru_cache(maxsize=256)
+def _read(path_str: str, _mtime_ns: int, _size: int) -> GgufInfo | None:
+    """Header read cached by (path, mtime, size) so rescans are free."""
+    return try_read_gguf_metadata(Path(path_str))
 
 
-class _MetadataCache:
-    """Caches header reads keyed by (path, mtime, size) so rescans are free."""
-
-    def __init__(self) -> None:
-        self._lock = threading.Lock()
-        self._entries: dict[str, tuple[float, int, GgufInfo | None]] = {}
-
-    def get(self, path: Path) -> GgufInfo | None:
-        try:
-            stat = path.stat()
-        except OSError:
-            return None
-        key = str(path)
-        with self._lock:
-            cached = self._entries.get(key)
-            if cached and cached[0] == stat.st_mtime and cached[1] == stat.st_size:
-                return cached[2]
-        info = try_read_gguf_metadata(path)
-        with self._lock:
-            self._entries[key] = (stat.st_mtime, stat.st_size, info)
-        return info
-
-    def clear(self) -> None:
-        with self._lock:
-            self._entries.clear()
-
-
-_cache = _MetadataCache()
-
-
-def clear_cache() -> None:
-    _cache.clear()
-
-
-def _is_orb_support_model(path: Path) -> bool:
-    """True for the media models Orb downloads for itself."""
+def _cached_metadata(path: Path) -> GgufInfo | None:
     try:
-        from app.services.multimodal_models import multimodal_model_path
-
-        resolved = path.resolve()
-        return any(
-            multimodal_model_path(kind).resolve() == resolved
-            for kind in ("asr", "marlin")
-        )
-    except Exception:  # pylint: disable=broad-exception-caught
-        return False
+        stat = path.stat()
+    except OSError:
+        return None
+    return _read(str(path), stat.st_mtime_ns, stat.st_size)
 
 
-def discover_chat_models(
-    models_dir: Path | None = None, *, include_unrunnable: bool = True
-) -> list[LocalModel]:
-    """Every local chat model under MODELS_DIR, in any layout, sorted by name.
+clear_cache = _read.cache_clear
 
-    Embedding models are excluded outright — a GGUF embedder is identified by
-    ``pooling_type`` and an HF one by its architecture, and neither can chat.
-    Layouts this machine cannot run are listed with ``runnable=False`` and a
-    reason instead of being hidden, so "where did my model go?" never happens.
+
+def discover_chat_models(models_dir: Path | None = None) -> list[LocalModel]:
+    """Every local chat GGUF under MODELS_DIR, sorted by name.
+
+    Embedding models are excluded outright — the header's ``pooling_type``
+    identifies them, and they cannot chat.
     """
     root = (models_dir or resolve_models_dir()).resolve()
     models: list[LocalModel] = []
-    for path in scan_dir_for_models(root):
-        if path.is_file():
-            # GGUF: the header carries pooling_type and the context window.
-            info = _cache.get(path)
-            if info is None:
-                continue
-            if info.is_embedding_model:
-                logger.debug("Skipping embedding model %s", path.name)
-                continue
-            models.append(describe_local_model(info, root))
+    for path in scan_dir_for_gguf(root):
+        info = _cached_metadata(path)
+        if info is None:
             continue
-
-        if _is_orb_support_model(path):
-            # Qwen3-ASR and Marlin live in MODELS_DIR by design; they
-            # are Orb's own media models, never chat options.
+        if info.is_embedding_model:
+            logger.debug("Skipping embedding model %s", path.name)
             continue
-        described = model_formats.describe(path)
-        if described is None:
-            continue
-        if not described.chat_capable:
-            # Speech models and encoders live in MODELS_DIR too; listing
-            # them as "blocked chat models" is noise, not information.
-            logger.debug("Skipping non-chat model %s", path.name)
-            continue
-        if not include_unrunnable and not described.runnable:
-            continue
-        models.append(
-            LocalModel(
-                ref=model_ref_for(path, root),
-                path=str(path),
-                label=described.name,
-                architecture=described.format.value,
-                size_gb=described.size_gb,
-                context_length=None,
-                shards=1,
-                format=described.format.value,
-                runnable=described.runnable,
-                unsupported_reason=described.unsupported_reason,
-                warnings=described.warnings,
-            )
-        )
+        models.append(describe_local_model(info, root))
     models.sort(key=lambda m: m.label.lower())
     return models
-
-
-def inspect_any_chat_model(path: Path) -> tuple[object | None, str | None]:
-    """Validate any supported layout for chat. Returns ``(info, error)``.
-
-    GGUF keeps its header-based checks; other layouts go through
-    ``model_formats``, which reports why an MLX or Hugging Face folder cannot
-    run here rather than failing later inside a loader.
-    """
-    if not path.exists():
-        return None, f"No such file: {path}"
-    if path.is_file():
-        return inspect_chat_model(path)
-    described = model_formats.describe(path)
-    if described is None:
-        return None, (
-            f"{path.name} does not look like a model folder — expected a .gguf "
-            "file, or config.json beside weights."
-        )
-    if not described.runnable:
-        return described, described.unsupported_reason
-    return described, None
 
 
 def inspect_chat_model(path: Path) -> tuple[GgufInfo | None, str | None]:

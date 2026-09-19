@@ -51,7 +51,7 @@ flowchart TB
 | Meilisearch | `DATA_DIR/bin/<platform>/meilisearch` (v1.49.0) | 17470 | runtime (background thread) | `GET /health` | `logs/meilisearch.log` |
 | Firefly III | portable PHP 8.5 `artisan serve` in `DATA_DIR/firefly/app` | 17412 | runtime (background thread) | `GET /` | `logs/firefly.log` |
 
-Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `ORB_FIREFLY_PORT`, `ORB_QDRANT_PORT`, `ORB_MEILI_PORT` (legacy `LIVEOS_*` names accepted). Port 3700 is only the Vite dev server. The 174xx block was chosen to avoid colliding with typical 8000/3000/6333/7700 developer stacks.
+Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `ORB_FIREFLY_PORT`, `ORB_QDRANT_PORT`, `ORB_MEILI_PORT`. Port 3700 is only the Vite dev server. The 174xx block was chosen to avoid colliding with typical 8000/3000/6333/7700 developer stacks.
 
 Boot order in `desktop_runtime.py`: free stale listeners on the port block → start uvicorn immediately → in a background thread, Qdrant + Meilisearch (download binaries first if missing) → Firefly install/migrate/boot → multimodal readiness check. Progress is written to `DATA_DIR/boot-status.json`, exposed by `/api/v1/admin/maintenance-status` and shown in the UI's status indicator; `QdrantService` / `MeilisearchService` reconnect on use once their sidecar is listening. Details: [04-desktop-shell.md](04-desktop-shell.md).
 
@@ -67,10 +67,10 @@ flowchart LR
   PJ --> SUP[desktop_runtime.py / app.core.paths]
   SUP -->|env: ORB_DATA_DIR, ORB_MODELS_DIR, ORB_PATHS_FILE,<br/>QDRANT_*, MEILI_*, FIREFLY_*, ORB_LLAMA_*| API[backend Settings]
   ENV[.env in backend/] --> API
-  RC[DATA_DIR/runtime_config.json<br/>provider/model/ingestion_model/base_url/ai_setup_mode] -->|startup + PATCH /settings| API
+  RC[DATA_DIR/runtime_config.json<br/>provider/model/ingestion_model/base_url] -->|startup + PATCH /settings| API
 ```
 
-Precedence for paths: environment variable (`ORB_DATA_DIR` / `LIVEOS_DATA_DIR` / `DATA_DIR`) → `paths.json` → repo fallback (`<repo>/data`, `backend/models`). `paths.json` is deliberately tiny (`data_dir`, `models_dir`, optional `default_vault_path`, `ai_setup_mode`) and is written atomically. `runtime_config.json` only ever holds the five mutable keys in `runtime_config.MUTABLE_KEYS`; API keys stay in `.env`. Full tables: [21-configuration-reference.md](21-configuration-reference.md).
+Precedence for paths: environment variable (`ORB_DATA_DIR` / `DATA_DIR`) → `paths.json` → repo fallback (`<repo>/data`, `backend/models`). `paths.json` is deliberately tiny (`data_dir`, `models_dir`, optional `default_vault_path`) and is written atomically. `runtime_config.json` only ever holds the four mutable keys in `runtime_config.MUTABLE_KEYS`; API keys stay in `.env`. Full tables: [21-configuration-reference.md](21-configuration-reference.md).
 
 ---
 
@@ -133,7 +133,7 @@ sequenceDiagram
   participant UI as Notes UI
   participant API as api/notes.py
   participant V as vault / note_files
-  participant AG as LangGraph ingestion_agent
+  participant AG as ingestion_agent
   participant MM as multimedia + multimodal_runtime
   participant LLM as LLMService (ingestion client)
   participant IW as IngestionWorkflow
@@ -151,10 +151,10 @@ sequenceDiagram
   AG->>LLM: extraction node — nodes + relationships (Extraction schema, JSON-repair tolerant)
   AG->>IW: storage node — resolve entities by exact normalised name (Qdrant node_cores → Kuzu fallback), merge, write; prior data is never deleted on re-ingest
   IW->>QD: upsert cores / relationships / isolated contexts (embeddings via in-process GGUF)
-  IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(edge_weight, mention_count, ingested_at)
+  IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(mention_count, ingested_at)
   IW->>ME: add documents (name, type, contexts, rel text)
   AG->>AG: summarization node — mark processed, stage = done
-  IW->>TR: note finished → idle timer (120 s) → community recompute ("Leiden" = sklearn agglomerative) + 3D layout, temporal digests — both feature-flagged, off by default
+  IW->>TR: note finished → idle timer (120 s) → community recompute ("Leiden" = greedy cosine merge) + 3D layout, temporal digests — both feature-flagged, off by default
 ```
 
 Concurrency: `INGESTION_PIPELINE_CONCURRENCY` (default 1) makes full-note ingestion FIFO; `MULTIMEDIA_CONCURRENCY` (default 1) serialises heavy model jobs within a note; graph/Qdrant writes are batched and offloaded with `asyncio.to_thread`. Stage strings are written to `notes.processing_stage` and polled by the UI through `GET /notes/{id}/status`. Details: [10-ingestion-pipeline.md](10-ingestion-pipeline.md), [11-multimedia-enrichment.md](11-multimedia-enrichment.md).
@@ -204,7 +204,7 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 | Video understanding | transformers (Qwen3.5 backbone) Marlin-2B | `lunahr/Marlin-2B-ungated` | `multimodal_runtime.py` |
 | Cloud alternatives | OpenAI / Gemini / Anthropic / HuggingFace / any OpenAI-compatible `LLM_BASE_URL` | – | `llm.py` |
 
-Three independent provider axes: chat (`LLM_PROVIDER` + `CHAT_MODEL`), ingestion (`INGESTION_PROVIDER` + `INGESTION_MODEL`, defaulting to chat), embeddings (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `AI_SETUP_MODE` is persisted but no longer gates anything — `ai_gate` derives readiness from what is actually configured. Historically (`none | local | cloud`) gates chat/ingest in the UI and API (`ai_gate.ai_is_configured`). In the current working tree a KB can additionally **pin its own chat/ingestion provider and model** (`knowledge_bases.llm_provider/llm_model/llm_ingestion_model`, `GET/PATCH /api/v1/kb/{id}/llm`); embeddings and reranking stay system-wide because Qdrant vector dimensions are shared. A KB can also have finance switched off entirely (`knowledge_bases.finance_enabled`, `PATCH /api/v1/kb/{id}/finance`), which gates every `/api/v1/finance` route and the finance chat path without deleting the KB's Firefly administration. Long notes are split for extraction by `workflows/extraction_chunking.py` so the JSON output never overflows the context window. Chat GGUF defaults that are locked by experience on Metal: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`; see [26](26-decisions-and-constraints.md).
+Three independent provider axes: chat (`LLM_PROVIDER` + `CHAT_MODEL`), ingestion (`INGESTION_PROVIDER` + `INGESTION_MODEL`, defaulting to chat), embeddings (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `ai_gate` derives readiness from what is actually configured (GGUFs on disk, a provider key, an endpoint URL); there is no stored "AI mode".
 
 Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructure` runs at startup, and a mismatch **mid-ingest raises** rather than silently recreating collections.
 
@@ -213,7 +213,7 @@ Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructu
 ## 9. Frontend ↔ backend contract
 
 - The UI is a Vite + React SPA (react-router), dark-only, with `KBProvider` and `ChatProvider` at the root, served by the API at `/` from `FRONTEND_DIR` (default `frontend/dist`).
-- All calls go through `frontend/src/lib/api.ts` (axios) against same-origin `/api/v1`; in dev the Vite server on 3700 proxies `/api/v1`, `/vault-files` and `/health` to 17401. There is no separate UI server or proxy body limit: uploads go straight to FastAPI.
+- All calls go through `frontend/src/lib/api.ts` (a `fetch` wrapper) against same-origin `/api/v1`; in dev the Vite server on 3700 proxies `/api/v1`, `/vault-files` and `/health` to 17401. There is no separate UI server or proxy body limit: uploads go straight to FastAPI.
 - Long-running work is **polled**, not streamed: chat (`/chat/status/{request_id}`), note ingestion (`/notes/{id}/status`), model downloads and multimodal readiness (`/setup/*`), maintenance (`/admin/maintenance-status`).
 - Response shapes are hand-typed in `frontend/src/lib/types.ts`; there is no OpenAPI codegen.
 - Vault media URLs are `/vault-files/<kb>/<rel_path>`; the editor rewrites them for display and the backend enforces `safe_vault_join` on the way back.
@@ -235,8 +235,8 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 8. **Finance requests are scoped to the KB's Firefly administration.** No list endpoint may return rows from another administration.
 9. **Trace IDs.** Every request gets `X-Request-Id` (incoming or generated) via a ContextVar; log lines from the same request can be correlated.
 10. **Community detection is idle-triggered and optional.** New ingestions pre-empt a running recompute; do not call it synchronously from a request. It is disabled unless `COMMUNITY_DETECTION_ENABLED=true`.
-11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`.
-12. **Legacy aliases are accepted, never emitted.** `LIVEOS_*` env names, `lifeos_current_kb` and the `typesense_collection` column name exist only to read old installs.
+11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`.
+12. **Legacy names are read, never emitted.** `lifeos_current_kb` (browser storage) and the `typesense_collection` column name exist only to read old installs; the `LIVEOS_*` env aliases were removed.
 
 ---
 

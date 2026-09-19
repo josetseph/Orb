@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { isAxiosError } from "axios";
 import { CheckCircle2, CircleDashed, Clock, Cpu, Eye, Loader2, AudioLines, RotateCw } from "lucide-react";
 import { api } from "@/lib/api";
 import { getDesktopBridge } from "@/lib/desktop";
@@ -63,14 +62,11 @@ function buildStatus(payload: Payload | null): StatusView {
       busy: false,
     };
   }
-  const last = payload.ingestion?.last_completed_at;
   return {
     tone: "idle",
     label: "Ready",
     meta: "idle",
-    detail: last
-      ? `Last ingest finished ${new Date(last).toLocaleString()}.`
-      : "No ingestion or community jobs running.",
+    detail: "No ingestion or community jobs running.",
     busy: false,
   };
 }
@@ -116,7 +112,7 @@ function useMaintenanceStatus(kb: string) {
         schedule(isActive(data));
       } catch (err) {
         if (cancelled) return;
-        setFailed(isAxiosError(err) && err.response ? "error" : "offline");
+        setFailed((err as { response?: unknown } | null)?.response ? "error" : "offline");
         // Retry sooner while down so a restart shows up without a wait.
         timer = window.setTimeout(poll, 5000);
       }

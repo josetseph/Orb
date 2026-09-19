@@ -8,6 +8,7 @@ import {
 } from "react";
 import { api, isRequestCancelled } from "@/lib/api";
 import { notifyIfUnfocused } from "@/lib/desktop";
+import { useDebounced } from "@/lib/utils";
 import type { Note } from "@/lib/types";
 import { isActiveProcessingNote } from "../_lib/processing-status";
 import type { ProcessedFilter, VaultFileEntry } from "../_lib/types";
@@ -21,7 +22,6 @@ export type VaultListing = {
 
 type UseNotesListArgs = {
   currentKB: string;
-  isHydrated: boolean;
   syncSelectedNoteFromList: (data: Note[]) => void;
   setIngestingNoteIds: Dispatch<SetStateAction<Set<string>>>;
   onVaultListing: (listing: VaultListing) => void;
@@ -30,7 +30,6 @@ type UseNotesListArgs = {
 
 export function useNotesList({
   currentKB,
-  isHydrated,
   syncSelectedNoteFromList,
   setIngestingNoteIds,
   onVaultListing,
@@ -41,7 +40,6 @@ export function useNotesList({
   const [processedFilter, setProcessedFilter] =
     useState<ProcessedFilter>("all");
   const [isLoading, setIsLoading] = useState(true);
-  const searchTimeoutRef = useRef<NodeJS.Timeout | undefined>(undefined);
   const fetchNotesRequestRef = useRef(0);
   const fetchAbortRef = useRef<AbortController | null>(null);
 
@@ -129,41 +127,29 @@ export function useNotesList({
     ],
   );
 
-  // Fetch notes once KB context is hydrated from localStorage, and re-fetch on KB switch
+  // Fetch notes on mount and re-fetch on KB switch. isLoading is already true
+  // here (initial state / the KB block above); every other setState in
+  // fetchNotes runs after an await.
   useEffect(() => {
-    if (!isHydrated) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- only async setState reaches here
     void fetchNotes(undefined, processedFilter);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentKB, isHydrated]);
+  }, [currentKB]);
 
-  // Debounced search and filter — skip until localStorage is hydrated so we
-  // never fetch with the pre-hydration default KB slug. Skips its first run:
-  // the KB-hydration effect above already fetched, so running here too would
-  // double the initial notes fetch.
+  // Search (debounced while typing) and filter. Skips its first run: the KB
+  // effect above already fetched, so running here too would double the
+  // initial notes fetch.
+  const debouncedSearch = useDebounced(searchQuery, 300);
   const searchEffectRanRef = useRef(false);
   useEffect(() => {
-    if (!isHydrated) return;
     if (!searchEffectRanRef.current) {
       searchEffectRanRef.current = true;
       return;
     }
-
-    if (searchTimeoutRef.current) {
-      clearTimeout(searchTimeoutRef.current);
-    }
-
-    searchTimeoutRef.current = setTimeout(() => {
-      fetchNotes(searchQuery, processedFilter);
-    }, 300);
-
-    return () => {
-      if (searchTimeoutRef.current) {
-        clearTimeout(searchTimeoutRef.current);
-      }
-    };
+    void fetchNotes(debouncedSearch, processedFilter);
     // fetchNotes reads currentKB; KB changes are handled by the dedicated effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery, processedFilter, isHydrated]);
+  }, [debouncedSearch, processedFilter]);
 
   return {
     notes,

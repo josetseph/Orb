@@ -28,27 +28,6 @@ os.environ.setdefault("FPS_MAX_FRAMES", "240")
 os.environ.setdefault("FPS_MIN_FRAMES", "4")
 
 
-def _resolve_torch_device() -> str:
-    from app.core.inference_device import resolve_torch_device
-
-    return resolve_torch_device()
-
-
-def _resolve_torch_dtype(device: str):
-    from app.core.inference_device import resolve_torch_dtype
-
-    return resolve_torch_dtype(device)
-
-
-def _prepare_qwen35(device: str) -> None:
-    try:
-        from app.core.inference_device import prepare_qwen3_5_inference
-
-        prepare_qwen3_5_inference(device)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.debug("Qwen3.5 prepare skipped: %s", exc)
-
-
 class MultimodalRuntime:
     """Lazy Qwen3-ASR / Marlin loaded inside the API process."""
 
@@ -65,7 +44,9 @@ class MultimodalRuntime:
     @property
     def device(self) -> str:
         if self._device is None:
-            self._device = _resolve_torch_device()
+            from app.core.inference_device import resolve_torch_device
+
+            self._device = resolve_torch_device()
         return self._device
 
     def status(self) -> dict[str, Any]:
@@ -465,8 +446,13 @@ class MultimodalRuntime:
         self._unload_except("marlin")
         self._patch_video_decoder()
         device = self.device
-        dtype = _resolve_torch_dtype(device)
-        _prepare_qwen35(device)
+        from app.core.inference_device import prepare_qwen3_5_inference, resolve_torch_dtype
+
+        dtype = resolve_torch_dtype(device)
+        try:
+            prepare_qwen3_5_inference(device)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Qwen3.5 prepare skipped: %s", exc)
         model_path = str(path)
         logger.info("Loading Marlin from %s on %s (%s)", model_path, device, dtype)
         started = time.perf_counter()

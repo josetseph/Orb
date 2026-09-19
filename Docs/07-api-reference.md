@@ -43,7 +43,7 @@ There is **no authentication or authorization** on any route. The API binds to l
 | `backend/app/schemas/note.py` | `CreateNoteInput`, `MoveNoteInput`, `MoveVaultFileInput`, `DeleteVaultFileInput`, `BatchDeleteNotesInput`, `MkdirInput` | wire schemas |
 | `backend/app/schemas/extraction.py` | `NoteInput` (wire, used by `/ingest`) plus pipeline-internal `Node`, `ExtractedRelationship`, `Extraction` | LLM extraction schemas |
 | `backend/app/schemas/__init__.py` | Re-exports the above | — |
-| `frontend/src/lib/api.ts` | The only frontend HTTP client (axios); one method per backend call | `api`, `isRequestCancelled`, `RequestOpts` |
+| `frontend/src/lib/api.ts` | The only frontend HTTP client (a small `fetch` wrapper); one method per backend call | `api`, `isRequestCancelled`, `RequestOpts` |
 | `frontend/src/lib/types.ts` | TypeScript shapes the frontend expects from responses | `Note`, `NoteStatus`, `ChatStatus`, `KnowledgeBase`, `Finance*`, `NotesGraphPayload`, `SetupStatus` |
 | `frontend/src/lib/desktop.ts` | Tauri bridge helpers (pickers, `restartBackend`, `notifyIfUnfocused`); `revealInFolder` calls `POST /api/v1/desktop/reveal` | `getDesktopBridge`, `revealInFolder` |
 | `frontend/vite.config.ts` | Dev-only proxy of `/api/v1`, `/vault-files`, `/health` to `API_PROXY_TARGET` (default `http://127.0.0.1:17401`) | `server.proxy` |
@@ -66,7 +66,7 @@ There is **no authentication or authorization** on any route. The API binds to l
 | `/vault-files/{kb_id}/{path}` | Static vault attachment serving (`api_desktop.serve_vault_file`) | Same origin; Vite dev proxy |
 | `/` and `/health` | Liveness | `/health` same origin / Vite proxy; `/` is shadowed by the UI mount when `frontend/dist` exists |
 
-`settings.API_V1_STR = "/api/v1"` exists in `backend/app/core/config.py` but **no router reads it** — paths are hard-coded strings. Changing the constant does nothing.
+There is no shared prefix constant — every route spells out its full `/api/v1/...` path.
 
 ### 3.3 `?kb=` resolution (`api/deps.py:get_kb`)
 
@@ -80,7 +80,7 @@ Notes:
 - `get_kb` accepts a **name or slug**, never the UUID `id`. The KB management routes `DELETE /api/v1/kb/{kb_id}` and `PATCH /api/v1/kb/{kb_id}` take the **UUID** path parameter instead. `/vault-files/{kb_id}/…` accepts UUID **or** name/slug.
 - The frontend omits `kb` entirely for the default KB (`withKb`/`kbQuery` in `api.ts`) and sends `?kb=<name>` otherwise.
 - Routes that do not take `get_kb`: `GET /`, `GET /health`, `GET|PATCH /api/v1/settings`, `GET /api/v1/chat/status/{request_id}`, `GET /api/v1/chat/conversations/{id}/export`, `GET|POST /api/v1/kb`, `POST /api/v1/kb/delete-non-default`, `DELETE|PATCH /api/v1/kb/{kb_id}`, all `/api/v1/setup/*`, `/vault-files/*`.
-- A `KBContext` exposes `kb_id`, `name`, `vault_path`, `qdrant`, `meili`, lazily-opened `graph` (Kuzu — raises `RuntimeError` if no Kuzu path), and `get_ingestion_workflow()` / `get_chat_workflow()` / `get_retrieval_service()` which construct per-KB workflow instances on first use.
+- A `KBContext` exposes `kb_id`, `name`, `vault_path`, `qdrant`, `meili`, lazily-opened `graph` (Kuzu — raises `RuntimeError` if no Kuzu path), and `get_ingestion_workflow()` / `get_chat_workflow()` which construct per-KB workflow instances on first use.
 
 ### 3.4 `X-Request-Id` / trace id
 
@@ -100,7 +100,7 @@ Notes:
 
 ### 3.7 AI gate
 
-`services/ai_gate.ai_is_configured()` returns `True` when anything is actually reachable — chat+embed GGUFs on disk (`gguf_paths_if_present()`), any cloud provider key in the credential store, or a non-empty `LLM_BASE_URL`. `AI_SETUP_MODE` is not consulted; set. `require_ai()` raises the 503 above. Routes gated: `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest` (unless `skip_ingestion`), `POST /api/v1/admin/reingest-all`, `POST /api/v1/notes/reingest-vault`. Routes that silently degrade instead of erroring: `GET /api/v1/graph/entities/search` (returns `[]`), `POST /api/v1/graph/entities/note-subgraph` (returns nodes but no edges).
+`services/ai_gate.ai_is_configured()` returns `True` when anything is actually reachable — chat+embed GGUFs on disk (`gguf_paths_if_present()`), any cloud provider key in the credential store, or a non-empty `LLM_BASE_URL`. `require_ai()` raises the 503 above. Routes gated: `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest` (unless `skip_ingestion`), `POST /api/v1/admin/reingest-all`, `POST /api/v1/notes/reingest-vault`. Routes that silently degrade instead of erroring: `GET /api/v1/graph/entities/search` (returns `[]`), `POST /api/v1/graph/entities/note-subgraph` (returns nodes but no edges).
 
 ### 3.8 Background work and polling patterns
 
@@ -123,7 +123,7 @@ There is **no streaming (SSE/WebSocket)** anywhere. "Streaming" chat in the UI i
 
 ### 3.10 Startup / shutdown side effects
 
-`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`), `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing), `start_vault_watchers()` (best-effort). `shutdown_event`: `stop_vault_watchers()`.
+`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `ingestion_model`, `base_url`), `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing), `start_vault_watchers()` (best-effort). `shutdown_event`: `stop_vault_watchers()`.
 
 ---
 
@@ -254,34 +254,18 @@ All under `/api/v1/finance/…`, all take `kb`. See [Finance routes](#finance-ro
 | GET | `/api/v1/finance/workspace` | Firefly readiness + KB administration info | [#](#finance-workspace) |
 | POST | `/api/v1/finance/workspace` | Set primary currency (creates administration) | [#](#finance-workspace) |
 | POST | `/api/v1/finance/reset-administration` | Destroy KB's Firefly user group + ledger | [#](#finance-workspace) |
-| POST | `/api/v1/finance/open` | Ensure administration, return Firefly URL | [#](#finance-workspace) |
 | GET / POST | `/api/v1/finance/accounts` | List / create accounts | [#](#finance-accounts) |
 | GET / POST | `/api/v1/finance/transactions` | List recent (≤40) / create | [#](#finance-transactions) |
 | DELETE | `/api/v1/finance/transactions/{transaction_id}` | Delete transaction group | [#](#finance-transactions) |
 | GET / POST | `/api/v1/finance/budgets` | List (with `days`) / create | [#](#finance-budgets) |
 | GET / POST | `/api/v1/finance/categories` | List / create | [#](#finance-categories) |
 | DELETE | `/api/v1/finance/categories/{category_id}` | Delete | [#](#finance-categories) |
-| GET / POST | `/api/v1/finance/bills` | List / create | [#](#finance-bills) |
-| DELETE | `/api/v1/finance/bills/{bill_id}` | Delete | [#](#finance-bills) |
-| GET / POST | `/api/v1/finance/piggy-banks` | List / create | [#](#finance-piggy-banks) |
-| DELETE | `/api/v1/finance/piggy-banks/{piggy_id}` | Delete | [#](#finance-piggy-banks) |
-| GET / POST | `/api/v1/finance/tags` | List / create | [#](#finance-tags) |
-| DELETE | `/api/v1/finance/tags/{tag_id}` | Delete | [#](#finance-tags) |
 | GET / POST | `/api/v1/finance/recurrences` | List / create | [#](#finance-recurrences) |
 | DELETE | `/api/v1/finance/recurrences/{recurrence_id}` | Delete | [#](#finance-recurrences) |
 | GET / POST | `/api/v1/finance/rule-groups` | List / create | [#](#finance-rule-groups-and-rules) |
 | DELETE | `/api/v1/finance/rule-groups/{rule_group_id}` | Delete | [#](#finance-rule-groups-and-rules) |
 | GET / POST | `/api/v1/finance/rules` | List / create | [#](#finance-rule-groups-and-rules) |
 | DELETE | `/api/v1/finance/rules/{rule_id}` | Delete | [#](#finance-rule-groups-and-rules) |
-| GET / POST | `/api/v1/finance/webhooks` | List / create | [#](#finance-webhooks) |
-| DELETE | `/api/v1/finance/webhooks/{webhook_id}` | Delete | [#](#finance-webhooks) |
-| GET / POST | `/api/v1/finance/object-groups` | List / create (via seed bill) | [#](#finance-object-groups) |
-| PUT / DELETE | `/api/v1/finance/object-groups/{group_id}` | Rename / delete | [#](#finance-object-groups) |
-| GET / POST | `/api/v1/finance/exchange-rates` | List / create | [#](#finance-exchange-rates) |
-| DELETE | `/api/v1/finance/exchange-rates/{rate_id}` | Delete | [#](#finance-exchange-rates) |
-| GET / POST | `/api/v1/finance/attachments` | List / create (multipart) | [#](#finance-attachments) |
-| GET | `/api/v1/finance/attachments/{attachment_id}/download` | Download bytes | [#](#finance-attachments) |
-| DELETE | `/api/v1/finance/attachments/{attachment_id}` | Delete | [#](#finance-attachments) |
 | GET | `/api/v1/finance/search` | Search transactions/accounts | [#](#finance-search-summary-report) |
 | GET | `/api/v1/finance/summary` | Totals + chart + recent txs | [#](#finance-search-summary-report) |
 | GET | `/api/v1/finance/report` | Date-range report with charts | [#](#finance-search-summary-report) |
@@ -369,17 +353,15 @@ No params. Calls `gguf_paths_if_present()` (`services/local_models.py`), `is_hf_
   "paths_json": "/…/Application Support/Orb/paths.json",
   "default_vault_path": "/…/vault",      
   "active_vault_path": "/…/vault",       
-  "ai_setup_mode": "local",
   "ai_configured": true,
   "local_models_ready": true,
   "multimodal_ready": false,
-  "needs_model_download": false,
   "database_backend": "sqlite",
   "llm_provider": "local"
 }
 ```
 
-`default_vault_path` comes from `paths.json`/env (`""` if unset); `active_vault_path` is what the default KB row actually points at. `ai_setup_mode` is `ai_gate.derived_setup_mode()` — an observation of what is configured, not a stored choice; `needs_model_download = (derived mode == "local") and not local_models_ready`. `multimodal_ready` requires all three snapshots.
+`default_vault_path` comes from `paths.json`/env (`""` if unset); `active_vault_path` is what the default KB row actually points at. `ai_configured` is `ai_gate.ai_is_configured()`, derived from what is actually set up (GGUFs on disk, a provider key, or an endpoint URL). `multimodal_ready` requires all three snapshots.
 
 #### GET /api/v1/setup/model-catalog
 
@@ -421,7 +403,7 @@ Response:
 }
 ```
 
-Blocking: the request lasts as long as the downloads (minutes to hours). The frontend disables the axios timeout for this call. Not idempotent-safe to run concurrently (two overlapping calls download the same files; `_atomic_place` protects the final move).
+Blocking: the request lasts as long as the downloads (minutes to hours). The frontend sends this call without a timeout. Not idempotent-safe to run concurrently (two overlapping calls download the same files; `_atomic_place` protects the final move).
 
 #### POST /api/v1/setup/select-chat-model
 
@@ -437,7 +419,7 @@ Changing the embed model invalidates existing vectors (logged warning: re-ingest
 
 #### POST /api/v1/setup/start-multimodal-services
 
-Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…, start_marlin=True)` in a thread. Despite the name, **no processes are started**: it checks Florence+Whisper snapshots exist (else returns `{"started": false, "mode": "in_process", "error": "Download Florence + Whisper in Setup first", "models": {...}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
+Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks Florence+Whisper snapshots exist (else returns `{"started": false, "mode": "in_process", "error": "Download Florence + Whisper in Setup first", "models": {...}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
 
 ```json
 {"started": true, "mode": "in_process", "already_running": false,
@@ -477,16 +459,15 @@ On `RuntimeError` from load: **200** `{"started": false, "loaded": false, "reaso
 
 #### POST /api/v1/setup/paths
 
-Body (`PathsInput`): `data_dir: str` (required), `models_dir: str` (required), `default_vault_path: str | null`, `ai_setup_mode: str | null`.
+Body (`PathsInput`): `data_dir: str` (required), `models_dir: str` (required), `default_vault_path: str | null`.
 
 Side effects, in order:
-1. `save_paths_file(...)` — writes `paths.json` (location: `ORB_PATHS_FILE` env, else `<App Support>/Orb/paths.json`), resolving paths to absolute; omitted `default_vault_path`/`ai_setup_mode` keep existing values.
+1. `save_paths_file(...)` — writes `paths.json` (location: `ORB_PATHS_FILE` env, else `<App Support>/Orb/paths.json`), resolving paths to absolute; an omitted `default_vault_path` keeps the existing value.
 2. `sync_settings_paths(settings)` — updates `settings.DATA_DIR/MODELS_DIR/MODELS_PATH/KUZU_DB_PATH` in-process and creates the data layout (`kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`). **SQLite/Qdrant engines created at import are not retargeted — a restart is required for a new `data_dir` to take full effect.**
 3. `reconfigure_logging()`.
 4. If `default_vault_path`: `ensure_vault()` (mkdir + `attachments/`) and `kb_registry.set_vault_path("default", path)` (updates the registry row and cached context).
-5. If `ai_setup_mode`: sets `settings.AI_SETUP_MODE`, merges into `runtime_config.json`, re-applies overrides.
 
-Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default_vault_path": "<abs or ''>", "ai_setup_mode": "<mode>"}`.
+Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default_vault_path": "<abs or ''>"}`.
 
 ---
 
@@ -586,7 +567,7 @@ Path `kb_id` = UUID. Body (`RenameKBInput`): `name: str`. **400** if blank or if
 
 `content` is read from `<vault_path>/<rel_path>` via `note_files.note_body` (falls back to the legacy `notes.content` column if the file is missing/empty) and has `attachments/attachments/` URL doubling normalised. The SQLite `content` column is always kept empty by `persist_note_body`.
 
-Date parsing (`_parse_date_str`): ISO 8601 via `dateutil.isoparse` first, then `dateparser` for natural language; naive datetimes get UTC; total failure → `now(UTC)` (never an error).
+Date parsing (`_parse_date_str`): `datetime.fromisoformat` (ISO 8601, `Z` and offsets accepted); naive datetimes get UTC; a non-ISO string → `now(UTC)` (never an error).
 
 #### POST /api/v1/notes
 
@@ -655,7 +636,7 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 `require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, commits, then `BackgroundTasks.add_task(kb.get_ingestion_workflow().process_note, NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
 
-`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → LangGraph ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion` → if no ingestion is active, **unload** the local LLM, reranker and multimodal models.
+`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion` → if no ingestion is active, **unload** the local LLM, reranker and multimodal models.
 
 #### POST /api/v1/ingest
 
@@ -770,7 +751,7 @@ Body optional (`CreateConversationInput`): `title: str | null` (default `"New Ch
 
 #### DELETE /api/v1/chat/conversations/{conversation_id}
 
-Soft delete (`deleted_at = now`) scoped to the KB. **404** if no row updated. Response `{"status": "deleted", "conversation_id": "…"}`. Messages are retained; `hard_delete_conversation` exists in the store but no route calls it.
+Soft delete (`deleted_at = now`) scoped to the KB. **404** if no row updated. Response `{"status": "deleted", "conversation_id": "…"}`. Messages are retained.
 
 #### GET /api/v1/chat/conversations/{conversation_id}/export
 
@@ -898,7 +879,7 @@ Runs `rebuild_kb_note_links` and returns `{"notes": N, "links": M}`.
 ```json
 {"community_detection": {"running": false, "pending_nodes": 0, "needed": false, "timer_armed": false, "idle_seconds": 120},
  "temporal_digests": {"running": false},
- "ingestion": {"active": 0, "last_completed_at": "2026-09-02T10:00:00" | null},
+ "ingestion": {"active": 0},
  "healthy": true}
 ```
 
@@ -929,8 +910,8 @@ No body. Immediately `UPDATE notes SET processed=0, failed=0 WHERE kb_id=…` an
 All Finance routes proxy to the embedded Firefly III instance through `services/firefly_service.firefly_service`. Shared behaviour:
 
 - **Scoping:** every call goes through `FireflyService._run_scoped(kb, cb)`: acquires the **global** `_scope_lock` (all finance requests across all KBs are serialised), resolves or creates the KB's Firefly *administration* (user group titled `Orb: <kb name>`; group id cached in `knowledge_bases.firefly_group_id`; creation and switching run PHP scripts via `_run_php`, ~1 s Laravel bootstrap, skipped when the group is unchanged), sets `_active_group_id`, and stamps `user_group_id=<group>` on every Firefly REST request. List routes additionally filter rows by ids that a PHP helper reports for that group (`_ids_for_group`), because several Firefly endpoints are still user-wide.
-- **Errors:** mutating routes wrap the service call in `try/except` and map through `_finance_error`: `ValueError` → **400** (validation), `RuntimeError` (including `FireflyHTTPError`, which carries Firefly's status and message) → **502**, anything else → **500**. **`GET` list routes and `summary`/`open`/`workspace GET` have no wrapper**: a Firefly failure there is an unhandled exception → plain 500. `get_workspace` and `status` catch internally and return `ready: false`.
-- **Bodies:** typed Pydantic models for workspace/accounts/transactions/budgets/categories/bills/piggy-banks/tags/recurrences (422 on shape errors); **plain `dict`** for rule-groups, rules, webhooks, object-groups, exchange-rates (missing keys become defaults and fail with 400 from the service, or pass silently).
+- **Errors:** mutating routes wrap the service call in `try/except` and map through `_finance_error`: `ValueError` → **400** (validation), `RuntimeError` (including `FireflyHTTPError`, which carries Firefly's status and message) → **502**, anything else → **500**. **`GET` list routes and `summary`/`workspace GET` have no wrapper**: a Firefly failure there is an unhandled exception → plain 500. `get_workspace` and `status` catch internally and return `ready: false`.
+- **Bodies:** typed Pydantic models for workspace/accounts/transactions/budgets/categories/recurrences (422 on shape errors); **plain `dict`** for rule-groups and rules (missing keys become defaults and fail with 400 from the service, or pass silently).
 - Dates: `YYYY-MM-DD` strings are accepted; when a datetime is required the service appends `T12:00:00+00:00`.
 
 #### Finance: workspace
@@ -948,8 +929,6 @@ Not ready: `{"exists": false, "ready": false, "status": "…", "detail": "…", 
 `POST /api/v1/finance/workspace` body (`CreateWorkspaceInput`): `currency: str = "USD"` (exactly 3 chars). → `set_primary_currency`: enables/creates the currency, `POST /currencies/{code}/primary`, verifies, returns the same ready-workspace shape. 400 on bad code / 502 on Firefly errors.
 
 `POST /api/v1/finance/reset-administration` → `destroy_kb_administration(kb)`: runs the PHP destroy script for the group, detaches the mapping in the registry, clears the cached `groupId` in the Firefly runtime file if it matched. Response `{"status": "reset", "kb_id": "…", "result": {"destroyed": true, "group_id": 3} | {"destroyed": false, "reason": "no_group"}, "message": "Finance data for this knowledge base was cleared. …"}`.
-
-`POST /api/v1/finance/open` → `prepare_open`: ensures the administration exists/is active and returns `{"url": "<firefly base>", "kb_id", "kb_name", "firefly_group_id", "administration_title"}` for the UI to open Firefly's own web app. Not called by the frontend.
 
 #### Finance: accounts
 
@@ -985,18 +964,6 @@ Not ready: `{"exists": false, "ready": false, "status": "…", "detail": "…", 
 
 `GET /api/v1/finance/categories` → `[{"id", "name", "notes"}]`. `POST` body (`CreateCategoryInput`): `name` (1–255), `notes`. `DELETE /api/v1/finance/categories/{category_id}` → `{"ok": true}`.
 
-#### Finance: bills
-
-`GET /api/v1/finance/bills` (30-day window) → `[{"id", "name", "amount_min", "amount_max", "currency", "repeat_freq", "next_expected_match", "active", "paid", "notes"}]`. `POST` body (`CreateBillInput`): `name`, `amount` (> 0), `repeat_freq = "monthly"` (`weekly|monthly|quarterly|half-year|yearly`), `date`, `currency`. `DELETE /api/v1/finance/bills/{bill_id}`. Not used by the frontend.
-
-#### Finance: piggy banks
-
-`GET /api/v1/finance/piggy-banks` → `[{"id", "name", "current_amount", "target_amount", "percentage", "currency", "start_date", "target_date", "notes", "active"}]`. `POST` body (`CreatePiggyInput`): `name`, `account_id`, `target_amount` (> 0), `current_amount = 0.0`, `start_date` (default today), `target_date`. `DELETE /api/v1/finance/piggy-banks/{piggy_id}`. Not used by the frontend.
-
-#### Finance: tags
-
-`GET /api/v1/finance/tags` → `[{"id", "tag", "date", "description"}]`. `POST` body (`CreateTagInput`): `tag` (1–255), `description`. `DELETE /api/v1/finance/tags/{tag_id}`. Not used by the frontend.
-
 #### Finance: recurrences
 
 `GET /api/v1/finance/recurrences` → `[{"id", "title", "type", "description", "amount", "currency", "first_date", "repeat_until", "active", "repetition_type", "repetition_moment", "source_name", "destination_name"}]`. `POST` body (`CreateRecurrenceInput`): `title`, `amount` (> 0), `type = "withdrawal"`, `source_id`, `destination_id`, `description`, `first_date` (default tomorrow), `repeat_freq = "monthly"` (`daily|weekly|monthly|yearly`; the repetition `moment` is derived: weekday number, day of month, or the date). `DELETE /api/v1/finance/recurrences/{recurrence_id}`.
@@ -1006,22 +973,6 @@ Not ready: `{"exists": false, "ready": false, "status": "…", "detail": "…", 
 `GET /api/v1/finance/rule-groups` → `[{"id", "title", "description", "order", "active"}]`. `POST` body (dict): `title` (required → 400), `description`. `DELETE /api/v1/finance/rule-groups/{rule_group_id}`.
 
 `GET /api/v1/finance/rules` → `[{"id", "title", "description", "rule_group_id", "trigger", "active", "strict", "triggers": [{"type","value"}], "actions": [{"type","value"}]}]`. `POST` body (dict): `title`, `rule_group_id`, `trigger_type = "description_contains"`, `trigger_value` (required), `action_type = "add_tag"`, `action_value` (required), `trigger = "store-journal"`, `description`. Creates a single-trigger, single-action strict rule. `DELETE /api/v1/finance/rules/{rule_id}`.
-
-#### Finance: webhooks
-
-`GET /api/v1/finance/webhooks` → `[{"id", "title", "url", "active", "triggers": [], "responses": [], "deliveries": []}]`. `POST` body (dict): `title`, `url` (**must start with `https://`** → 400), `trigger = "STORE_TRANSACTION"`, `response = "TRANSACTIONS"`, `delivery = "JSON"`, `active = true`. `DELETE /api/v1/finance/webhooks/{webhook_id}`. Not used by the frontend.
-
-#### Finance: object groups
-
-`GET /api/v1/finance/object-groups` → `[{"id", "title", "order"}]`. `POST` body (dict): `title`. Firefly has no create endpoint for object groups, so the service creates an inactive seed bill carrying `object_group_title`, lists groups to find the match, deletes the seed bill, and returns the group (502 if not listed back). `PUT /api/v1/finance/object-groups/{group_id}` body `{title}`. `DELETE /api/v1/finance/object-groups/{group_id}`. Not used by the frontend.
-
-#### Finance: exchange rates
-
-`GET /api/v1/finance/exchange-rates` → `[{"id", "date", "rate", "from", "to"}]` (not group-filtered). `POST` body (dict): `date` (default today), `from`, `to` (3-letter), `rate` (> 0). If Firefly returns an empty body, re-lists to find the row, else returns a synthetic row with `"id": ""`. `DELETE /api/v1/finance/exchange-rates/{rate_id}`. Not used by the frontend.
-
-#### Finance: attachments
-
-`GET /api/v1/finance/attachments` → `[{"id", "filename", "title", "notes", "attachable_type", "attachable_id", "size", "mime", "download_url"}]`. `POST /api/v1/finance/attachments` is **multipart/form-data**: `filename` (required), `attachable_type` (`Account|Budget|Bill|TransactionJournal|PiggyBank|Tag`), `attachable_id` (required), `title`, `notes`, `file` (optional upload; if present its bytes are uploaded via Firefly's `/attachments/{id}/upload`). `GET /api/v1/finance/attachments/{attachment_id}/download` streams `application/octet-stream` with `Content-Disposition: attachment; filename="…"`. `DELETE /api/v1/finance/attachments/{attachment_id}`. Not used by the frontend.
 
 #### Finance: search, summary, report
 
@@ -1059,7 +1010,7 @@ Totals only consider the most recent 100 transaction groups.
 | `TemporalDigestInput` (`api/admin.py`) | `period: str\|None` |
 | `CreateKBInput` / `RenameKBInput` (`api/kb.py`) | `name: str`, `vault_path: str\|None` / `name: str` |
 | `ScanTextInput` (`api/graph.py`) | `text: str` |
-| `PathsInput` (`api_desktop.py`) | `data_dir: str`, `models_dir: str`, `default_vault_path: str\|None`, `ai_setup_mode: str\|None` |
+| `PathsInput` (`api_desktop.py`) | `data_dir: str`, `models_dir: str`, `default_vault_path: str\|None` |
 | `DownloadModelsInput` | `include_multimodal: bool = True`, `chat_id: str\|None`, `multimodal_only: bool = False` |
 | `CreateWorkspaceInput` | `currency: str = "USD"` (len 3) |
 | `CreateAccountInput` | `name (1–255)`, `account_type = "asset"`, `opening_balance = 0.0`, `currency` |
@@ -1101,7 +1052,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 | `getMaintenanceStatus` / `rebuildCommunities` / `buildTemporalDigests` / `resetIngestionData` / `reingestAll` | admin | `buildTemporalDigests` sends `{period: null}` when unset |
 | Finance: workspace (get/create/reset), accounts (list/create), transactions (list/create/delete), summary, report, budgets (list/create), categories (list/create/delete), recurrences (list/create/delete), rule-groups (list/create/delete), rules (list/create/delete), search | finance routes | |
 
-**Backend routes with no frontend caller:** `GET /`, `GET /health` (infrastructure), `POST /api/v1/chat` (sync), `POST /api/v1/chat/conversations`, `POST /api/v1/ingest`, `DELETE /api/v1/files/{key}`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services`, `POST /api/v1/finance/open`, and all Finance routes for bills, piggy-banks, tags, webhooks, object-groups, exchange-rates, attachments. The frontend also loads `/vault-files/…` URLs directly (media tags and `fetchMediaObjectUrl` in `frontend/src/lib/utils.ts`).
+**Backend routes with no frontend caller:** `GET /`, `GET /health` (infrastructure), `POST /api/v1/chat` (sync), `POST /api/v1/chat/conversations`, `POST /api/v1/ingest`, `DELETE /api/v1/files/{key}`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services`. The frontend also loads `/vault-files/…` URLs directly (media tags and `fetchMediaObjectUrl` in `frontend/src/lib/utils.ts`).
 
 **Frontend calls with no backend route:** none.
 
@@ -1111,7 +1062,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 
 ## 9. Invariants, constraints, and locked decisions
 
-- **Paths are literal.** No `APIRouter(prefix=…)`; `settings.API_V1_STR` is unused. Add new routes with the full `/api/v1/...` string.
+- **Paths are literal.** No `APIRouter(prefix=…)`; Add new routes with the full `/api/v1/...` string.
 - **Desktop router registers first.** Literal desktop paths win over parameterised domain routes.
 - **`?kb=` is name-or-slug; `/kb/{kb_id}` is UUID.** Never pass a UUID as `?kb=`.
 - **Notes bodies live on disk.** Every note-returning route reads the vault file; `notes.content` stays empty. Do not write bodies to SQLite.
@@ -1160,7 +1111,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 12. `POST /vault/move` may return a different `to` than requested (uniquified); clients must use the returned value.
 13. `/vault-files/{kb}/…` serves any regular file in the vault, notes included, with no auth.
 14. `DELETE /api/v1/files/{key}` always returns 200 even when nothing was deleted.
-15. `POST /api/v1/kb` returns **201**; `DELETE /api/v1/kb/{id}` returns **204** with no body — axios callers must not expect JSON.
+15. `POST /api/v1/kb` returns **201**; `DELETE /api/v1/kb/{id}` returns **204** with no body — callers must not expect JSON.
 16. `download-models`, `start-local-llm`, `start-multimodal-services` are long blocking requests; `start-multimodal-services` can `pip install` into the running interpreter.
 17. Finance list routes are unwrapped: Firefly errors there produce plain-text 500s, not the `{"detail": …}` envelope.
 19. `list_transactions`' limit (40) and `summary`'s 100-group window are hard-coded; totals are approximate for busy ledgers.
@@ -1191,7 +1142,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 
 ## 14. Per-KB overrides: LLM and finance
 
-A per-knowledge-base LLM override lives in `backend/app/api/kb.py`, `backend/app/services/kb_registry.py` (`LLM_PROVIDERS`, `effective_llm_config`, `set_llm_config`, `KBContext.llm`, `KBContext.has_llm_override`) and `backend/app/models/kb.py` (columns `llm_provider`, `llm_model`, `llm_ingestion_model`, all nullable; NULL = inherit `Settings`). Scope is chat + ingestion only; embeddings, reranking and multimodal stay system-wide because Qdrant vector dimensions are shared across KBs.
+A per-knowledge-base LLM override lives in `backend/app/api/kb.py`, `backend/app/services/kb_registry.py` (`LLM_PROVIDERS`, `effective_llm_config`, `set_llm_config`, `KBContext.llm`, `KBContext.has_llm_override`; columns `llm_provider`, `llm_model`, `llm_ingestion_model` on `knowledge_bases`, all nullable; NULL = inherit `Settings`). Scope is chat + ingestion only; embeddings, reranking and multimodal stay system-wide because Qdrant vector dimensions are shared across KBs.
 
 ### 14.1 `GET /api/v1/kb` (changed)
 
@@ -1270,7 +1221,7 @@ Key material is **write-only** across this API: nothing here ever returns a key.
 
 Response: same shape as `GET …/llm`.
 
-Side effects: subsequent chat and ingestion for this KB use `KBContext.llm` (a per-KB `LLMService`); `ai_gate.require_ai(kb)` treats a KB with a pinned provider as usable whenever that provider is configured, regardless of the global `AI_SETUP_MODE`. Local pins swap the resident chat GGUF via `local_models.resolve_chat_gguf` / `ensure_chat_loaded(chat_gguf)`.
+Side effects: subsequent chat and ingestion for this KB use `KBContext.llm` (a per-KB `LLMService`); `ai_gate.require_ai(kb)` treats a KB with a pinned provider as usable whenever that provider is configured, regardless of the global provider. Local pins swap the resident chat GGUF via `local_models.resolve_chat_gguf` / `ensure_chat_loaded(chat_gguf)`.
 
 Frontend: `api.getKBLLM(kbId)`, `api.updateKBLLM(kbId, body)`, types `EffectiveLLM`, `KBLLMConfig` (`frontend/src/lib/types.ts`). Editing happens on `frontend/src/app/models/page.tsx` (the single Models page); `/kb` shows a read-only `KBModelSummary` chip. See [20](20-frontend-chat-graph-and-pages.md) and [13](13-llm-providers-and-prompting.md).
 

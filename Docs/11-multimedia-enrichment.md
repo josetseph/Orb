@@ -33,7 +33,7 @@
 | `backend/app/services/multimodal_models.py` | `multimodal_model_path(kind)`, `is_hf_snapshot_ready(path)`, `ensure_multimodal_models` (download) | — |
 | `backend/app/api/files.py` | `POST /api/v1/upload` (ffmpeg transcode of webm/ogg/opus → m4a), `DELETE /api/v1/files/{key}` | `router`, `_transcode_to_m4a` |
 | `backend/app/services/local_storage.py` | `store_upload` → `/vault-files/{kb_id}/{rel}` URL; `vault_rel_from_url`; `remove_upload` | — |
-| `backend/app/core/config.py` | `PDF_VISUAL_*`, `FLORENCE_MAX_IMAGE_PIXELS`, `MODEL_FLORENCE/WHISPER/MARLIN_{HF,LOCAL}`, `MULTIMEDIA_CONCURRENCY`, `AI_SETUP_MODE`, `OPENAI_*`, `GEMINI_*` | `settings` |
+| `backend/app/core/config.py` | `PDF_VISUAL_*`, `FLORENCE_MAX_IMAGE_PIXELS`, `MODEL_FLORENCE/WHISPER/MARLIN_{HF,LOCAL}`, `MULTIMEDIA_CONCURRENCY`, `OPENAI_*`, `GEMINI_*` | `settings` |
 | `frontend/src/components/segmented-note-content.tsx` | Renders `[Image: …]`, `[PDF Extraction (…)]:`, `[Audio Transcript (…)]:`, `[Video Transcript (…)]:` segments | — |
 | `backend/requirements.txt` | `PyMuPDF==1.26.7`, `python-docx==1.1.2`, `openpyxl==3.1.5`, `av`, `pydub`, `transformers`, `torch` | — |
 

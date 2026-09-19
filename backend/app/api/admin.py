@@ -127,12 +127,6 @@ async def reset_ingestion_data(
     }
 
 
-@router.post("/api/v1/admin/prune-contexts")
-async def prune_contexts(kb: KBContext = Depends(get_kb)):
-    """Rebuild entity contexts that hold an entire note (see prune_whole_note_contexts)."""
-    return await kb.get_ingestion_workflow().prune_whole_note_contexts()
-
-
 @router.post("/api/v1/admin/reingest-all")
 async def reingest_all(
     background_tasks: BackgroundTasks,

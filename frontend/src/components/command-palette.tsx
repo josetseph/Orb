@@ -124,10 +124,11 @@ export function CommandPalette() {
   }, [query, notes, kbs, currentKB, close, navigate, setCurrentKB]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
-
-  useEffect(() => {
+  const [prevFlat, setPrevFlat] = useState(flat);
+  if (prevFlat !== flat) {
+    setPrevFlat(flat);
     setCursor(0);
-  }, [query, notes.length]);
+  }
 
   useEffect(() => {
     if (open) inputRef.current?.focus();

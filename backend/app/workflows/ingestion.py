@@ -8,8 +8,6 @@ import time
 import uuid
 from collections import defaultdict
 
-from tenacity import retry, stop_after_attempt, wait_exponential
-
 from app.core.config import settings
 from app.core.log import get_logger
 from app.schemas.extraction import Extraction, NoteInput
@@ -21,9 +19,10 @@ from app.services.ingestion_tracker import (
 )
 from app.services import ingestion_checkpoint as checkpoint
 from app.services.llm import llm_service
+from app.services.local_models import ModelLoadClock, model_load_clock
 from app.services.qdrant_service import QdrantService, qdrant_service
 from app.services.meilisearch_service import MeilisearchService, meilisearch_service
-from app.workflows.agents.ingestion_agent import ingestion_agent
+from app.workflows.agents.ingestion_agent import run_ingestion_agent
 from app.workflows.extraction_chunking import sentences_about
 
 logger = get_logger("IngestionPipeline")
@@ -88,20 +87,6 @@ def clean_rel_type(rel_type: str, source_name: str, target_name: str) -> str:
     return "_".join(cleaned)
 
 
-class EntityLockManager:  # pylint: disable=too-few-public-methods
-    """
-    Manages per-entity locks to prevent race conditions during summary updates.
-    Ensures that multiple notes updating the same entity wait for each other.
-    """
-
-    def __init__(self):
-        self._locks = defaultdict(asyncio.Lock)
-
-    def get_lock(self, label: str, name: str):
-        """Return the asyncio lock for a given (label, name) entity pair."""
-        return self._locks[(label, name.lower().strip())]
-
-
 class IngestionWorkflow:
     """Orchestrates full ingestion: multimedia → LLM extraction → graph → embeddings → communities."""
 
@@ -127,7 +112,7 @@ class IngestionWorkflow:
         self._process_semaphore = asyncio.Semaphore(
             settings.INGESTION_PIPELINE_CONCURRENCY
         )
-        self._entity_locks = EntityLockManager()
+        self._entity_locks = defaultdict(asyncio.Lock)
         self._community_run_state_lock = threading.Lock()
         self._community_run_seq = 0
         self._community_run_active_seq = 0
@@ -192,7 +177,6 @@ class IngestionWorkflow:
                 f"{'='*70}"
             )
 
-            # Trigger the LangGraph Agent
             initial_state = {
                 "input": note_input,
                 "content": "",
@@ -203,14 +187,13 @@ class IngestionWorkflow:
                 "workflow": self,  # KB-specific instance so agent nodes write to the right stores
             }
 
-            # Use ainvoke because the graph contains async nodes (multimodal_node)
             t_start = time.perf_counter()
-            load_before = self._load_snapshot()
+            load_before = model_load_clock.snapshot()
             try:
                 saved = checkpoint.activate(self.kb_id, note_id)
                 if saved:
                     logger.info(f"[Ingestion] resuming note_id={note_id}: {saved} model call(s) replay from disk")
-                final_state = await ingestion_agent.ainvoke(initial_state)
+                final_state = await run_ingestion_agent(initial_state)
                 checkpoint.clear(self.kb_id, note_id)
                 t_end = time.perf_counter()
                 self._log_timing(note_id, t_end - t_start, load_before, final_state)
@@ -234,8 +217,7 @@ class IngestionWorkflow:
                         logger.debug(f"  [Extraction] node: '{n.name}' type='{n.type}'")
                     for r in getattr(extraction, "relationships", []):
                         logger.debug(
-                            f"  [Extraction] rel: '{r.source_name}' --[{r.relationship_type}]--> '{r.target_name}' "
-                            f"(strength={r.strength}, confidence={r.confidence}, relevance={r.relevance})"
+                            f"  [Extraction] rel: '{r.source_name}' --[{r.relationship_type}]--> '{r.target_name}'"
                         )
 
                 # Mark as processed in SQLite metadata
@@ -272,26 +254,11 @@ class IngestionWorkflow:
                 # made every single-note ingest re-read multi-GB GGUFs.
 
     @staticmethod
-    def _load_snapshot() -> dict:
-        try:
-            from app.services.local_models import model_load_clock
-
-            return model_load_clock.snapshot()
-        except Exception:  # pylint: disable=broad-exception-caught
-            return {}
-
-    @staticmethod
     def _log_timing(note_id: str, total: float, load_before: dict, final_state: dict) -> None:
         """One line per note: wall time split into model loads vs. everything else,
         plus per-stage seconds — so a slow disk and a slow model stop looking alike."""
-        try:
-            from app.services.local_models import ModelLoadClock, model_load_clock
-
-            delta = model_load_clock.diff(load_before, model_load_clock.snapshot())
-            loads = ModelLoadClock.describe(delta)
-        except Exception:  # pylint: disable=broad-exception-caught
-            delta, loads = {"total_seconds": 0.0}, "none"
-        load = float(delta.get("total_seconds") or 0.0)
+        delta = ModelLoadClock.diff(load_before, model_load_clock.snapshot())
+        load = delta["total_seconds"]
         stages = final_state.get("timings") or {}
         stage_text = " ".join(
             f"{k}={float(v):.1f}"
@@ -306,7 +273,7 @@ class IngestionWorkflow:
             total,
             load,
             max(0.0, total - load),
-            loads,
+            ModelLoadClock.describe(delta),
             stage_text,
             f" chunks={int(chunks)}" if chunks else "",
         )
@@ -338,9 +305,6 @@ class IngestionWorkflow:
             note_id, "", processing_stage=stage, processing_model=model
         )
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _persist_note_body(self, note_id: str, content: str):
         """Persist enriched note body to the vault ``.md`` (source of truth)."""
         from sqlalchemy import select
@@ -371,11 +335,8 @@ class IngestionWorkflow:
                 await session.commit()
             except Exception as e:
                 logger.error(f"Error updating note content: {e}")
-                raise e  # Re-raise for tenacity
+                raise
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _update_note_title(self, note_id: str, title: str):
         """Update the note title in SQLite metadata."""
         await self._update_note_fields(
@@ -384,9 +345,6 @@ class IngestionWorkflow:
             title=title,
         )
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _mark_note_processed(self, note_id: str):
         """Set processed=True in SQLite metadata to prevent re-runs."""
         await self._update_note_fields(
@@ -398,9 +356,6 @@ class IngestionWorkflow:
             processing_model=None,
         )
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _mark_note_failed(self, note_id: str, reason: str | None = None):
         """Set failed=True in SQLite; the stage carries why, so the UI can say."""
         await self._update_note_fields(
@@ -658,9 +613,7 @@ class IngestionWorkflow:
             # Diagnostics counters for end-of-note summary log.
             _rel_total = len(extraction.relationships)
             _rel_written = 0
-            _rel_skip_no_name = 0
-            _rel_skip_no_source = 0
-            _rel_skip_no_target = 0
+            _rel_skipped = 0
             for rel in extraction.relationships:
                 try:
                     # Validate required fields
@@ -669,7 +622,7 @@ class IngestionWorkflow:
                             f"[Relationship] Skipping - missing source or target name: "
                             f"{rel.source_name} -> {rel.target_name}"
                         )
-                        _rel_skip_no_name += 1
+                        _rel_skipped += 1
                         continue
 
                     # Default to "relates_to" if no relationship type provided
@@ -721,20 +674,19 @@ class IngestionWorkflow:
                             f"  [Ontology] Relationship skipped — source '{source_name_normalized}' "
                             f"not found in name_to_id or Qdrant"
                         )
-                        _rel_skip_no_source += 1
+                        _rel_skipped += 1
                         continue
                     if not tgt_node_id:
                         logger.warning(
                             f"  [Ontology] Relationship skipped — target '{target_name_normalized}' "
                             f"not found in name_to_id or Qdrant"
                         )
-                        _rel_skip_no_target += 1
+                        _rel_skipped += 1
                         continue
 
                     logger.debug(
                         f"  [Ontology] Creating rel: '{source_name_normalized}' "
                         f"--[{rel_type}]--> '{target_name_normalized}' "
-                        f"(strength={rel.strength}, confidence={rel.confidence}, relevance={rel.relevance}) "
                         f"NL: '{(rel.natural_language or '')}'"
                     )
 
@@ -745,9 +697,6 @@ class IngestionWorkflow:
                         target_name=target_name_normalized,
                         target_label=target_label,
                         relationship_type=rel_type,
-                        confidence=rel.confidence,
-                        strength=rel.strength,
-                        relevance=rel.relevance,
                         natural_language=(rel.natural_language or "").replace("_", " "),
                         note_id=note_id,
                         source_id=src_node_id,
@@ -819,16 +768,9 @@ class IngestionWorkflow:
                     f"  [Ontology] Qdrant rels written: {len(_qdrant_rel_pending)}"
                 )
 
-            # Emit a compact per-note relationship summary for observability.
-            _rel_skip_total = (
-                _rel_skip_no_name + _rel_skip_no_source + _rel_skip_no_target
-            )
             logger.info(
                 f"[Relationship] note_id={note_id} total={_rel_total} "
-                f"written={_rel_written} skipped={_rel_skip_total} "
-                f"(no_name={_rel_skip_no_name} "
-                f"no_source={_rel_skip_no_source} "
-                f"no_target={_rel_skip_no_target})"
+                f"written={_rel_written} skipped={_rel_skipped}"
             )
 
         return title
@@ -851,14 +793,14 @@ class IngestionWorkflow:
                 """,
                 {"note_id": note_id},
             )
-            node_ids = [row["node_id"] for row in rows if row.get("node_id")]
-            if node_ids:
-                _, queue_size = await _tracker.queue_nodes_for_community_recompute(
-                    node_ids, kb_id=self.kb_id
+            touched = sum(1 for row in rows if row.get("node_id"))
+            if touched:
+                queue_size = await _tracker.queue_nodes_for_community_recompute(
+                    touched, kb_id=self.kb_id
                 )
                 logger.info(
-                    f"[Community] Queued {len(node_ids)} node IDs for Leiden recompute "
-                    f"(queue size: {queue_size}) — IDs: {node_ids}{'...' if len(node_ids) > 10 else ''}"
+                    f"[Community] {touched} node(s) touched — Leiden recompute pending "
+                    f"(queue size: {queue_size})"
                 )
 
         # ── Temporal digests (debounced) ──────────────────────────────────────
@@ -943,7 +885,6 @@ class IngestionWorkflow:
             async def _run_summary(name, new_contexts, ntype):
                 async with _sem:
                     nid = await self._update_node_summary(
-                        "Indexable",
                         name,
                         new_contexts,
                         node_type=ntype,
@@ -999,50 +940,8 @@ class IngestionWorkflow:
         await asyncio.to_thread(_write)
         logger.info(f"[Neighborhood] '{name}' re-indexed from {len(contexts)} remaining context(s)")
 
-    async def prune_whole_note_contexts(self, min_chars: int = 1500) -> dict:
-        """Replace whole-note contexts with the sentences about each entity.
-
-        Before ``sentences_about`` an entity the model had not described got
-        the entire note as its context. A real context is a paragraph, so
-        anything past ``min_chars`` is one of those; each is rebuilt from the
-        text it holds (which *is* the note), then the node's contexts,
-        merged vector and search document are rewritten.
-        """
-        oversized = await asyncio.to_thread(self._qdrant.scroll_oversized_contexts, min_chars)
-        by_node: dict[str, list[str]] = {}
-        for item in oversized:
-            if item.get("node_id"):
-                by_node.setdefault(item["node_id"], []).append(item["content"])
-        logger.info(
-            f"[Prune] {len(oversized)} whole-note context(s) across {len(by_node)} node(s)"
-        )
-        repaired, emptied = 0, 0
-        for node_id, blobs in by_node.items():
-            core = await asyncio.to_thread(self._qdrant.get_node_content_by_id, node_id) or {}
-            name = (core.get("name") or "").strip()
-            if not name:
-                continue
-            kept = [c for c in core.get("isolated_contexts", []) if c and len(c) <= min_chars]
-            rebuilt = [t for t in (sentences_about(name, blob) for blob in blobs) if t]
-            contexts = list(dict.fromkeys(kept + rebuilt))
-            await asyncio.to_thread(self._qdrant.delete_node_contexts, node_id)
-            if contexts:
-                await self._update_node_summary(
-                    "Indexable", name, contexts, node_type=core.get("type") or ""
-                )
-                repaired += 1
-            else:
-                emptied += 1
-                # Nothing left to say; the merged vector and search doc must not
-                # keep describing it with the note it no longer holds.
-                await self._reindex_node(node_id)
-                logger.warning(f"[Prune] '{name}' never appears in its own note text; contexts dropped")
-        logger.info(f"[Prune] done — {repaired} node(s) rebuilt, {emptied} left without contexts")
-        return {"oversized": len(oversized), "nodes": len(by_node), "rebuilt": repaired, "emptied": emptied}
-
     async def _update_node_summary(  # pylint: disable=too-many-locals,too-many-statements,too-many-arguments,too-many-positional-arguments
         self,
-        label: str,
         name: str,
         new_contexts: list[str],
         node_type: str = "",
@@ -1057,11 +956,10 @@ class IngestionWorkflow:
         structural nodes + relationships in the graph.
 
         Args:
-            label: Node label (Entity, Concept, Task, etc.)
             name: Node identifier
             new_contexts: Contexts extracted for this node in the current ingestion run
         """
-        async with self._entity_locks.get_lock(label, name):
+        async with self._entity_locks[name.lower().strip()]:
             # 1. Resolve node_id. Qdrant is the primary lookup, but if it misses
             # while Kuzu already has a structural node with this name, reuse that
             # existing graph ID to avoid minting duplicate same-name nodes.
@@ -1351,28 +1249,6 @@ class IngestionWorkflow:
         if normalized.startswith("community "):
             return True
 
-        banned_phrases = (
-            "isolated conceptual node cluster",
-            "isolated conceptual cluster",
-            "isolated conceptual fragment",
-            "isolated conceptual echo",
-            "isolated conceptual echoes",
-            "isolated conceptual anomaly",
-            "isolated conceptual collection",
-            "isolated conceptual core",
-            "isolated node community",
-            "isolated node cluster",
-            "isolated core node cluster",
-            "isolated single node community",
-            "isolated concept",
-            "potential anomaly",
-            "initial state",
-            "provisional",
-            "minimal connection",
-        )
-        if any(phrase in normalized for phrase in banned_phrases):
-            return True
-
         # Names made only of generic words are not user-friendly.
         generic_tokens = {
             "isolated",
@@ -1389,6 +1265,12 @@ class IngestionWorkflow:
             "anomaly",
             "pair",
             "transient",
+            "single",
+            "concept",
+            "initial",
+            "state",
+            "provisional",
+            "connection",
             # Additional filler words the LLM uses for empty/thin clusters:
             "temporal",
             "reflection",
@@ -1674,7 +1556,6 @@ class IngestionWorkflow:
                 to be grouped together. No need to pre-specify cluster count.
                 """
                 import numpy as np
-                from sklearn.cluster import AgglomerativeClustering
 
                 if not item_ids:
                     return []
@@ -1690,18 +1571,24 @@ class IngestionWorkflow:
                 norms[norms == 0] = 1.0
                 arr /= norms
 
-                clustering = AgglomerativeClustering(
-                    n_clusters=None,
-                    distance_threshold=distance_threshold,
-                    metric="cosine",
-                    linkage="average",
-                )
-                labels = clustering.fit_predict(arr)
-
-                clusters: dict[int, list[str]] = {}
-                for item_id, label in zip(item_ids, labels):
-                    clusters.setdefault(int(label), []).append(item_id)
-                return list(clusters.values())
+                # Greedy merge: each item joins the first cluster whose centroid is
+                # within the threshold, else starts its own.
+                # ponytail: O(n·k) single pass, not average-linkage; swap back to
+                # agglomerative clustering if L2 cluster quality visibly drops.
+                centroids: list[np.ndarray] = []
+                clusters: list[list[str]] = []
+                for item_id, vec in zip(item_ids, arr):
+                    if centroids:
+                        cents = np.stack(centroids)
+                        cents /= np.linalg.norm(cents, axis=1, keepdims=True)
+                        best = int(np.argmax(cents @ vec))
+                        if 1.0 - float(cents[best] @ vec) <= distance_threshold:
+                            clusters[best].append(item_id)
+                            centroids[best] = centroids[best] + vec
+                            continue
+                    centroids.append(vec.copy())
+                    clusters.append([item_id])
+                return clusters
 
             def _commit_community(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
                 community_level: int,
@@ -2338,10 +2225,7 @@ class IngestionWorkflow:
                 "idle_seconds": tracker.get("community_idle_seconds"),
             },
             "temporal_digests": {"running": self._temporal_digest_running},
-            "ingestion": {
-                "active": int(tracker.get("active_ingestions") or 0),
-                "last_completed_at": tracker.get("last_ingestion_at"),
-            },
+            "ingestion": {"active": int(tracker.get("active_ingestions") or 0)},
             "healthy": True,
         }
 

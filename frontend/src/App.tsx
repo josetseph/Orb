@@ -5,7 +5,6 @@ import { CommandPalette } from "@/components/command-palette";
 import { AiLimitedBanner } from "@/components/ai-limited-banner";
 import { KBProvider } from "@/lib/kb-context";
 import { ChatProvider } from "@/lib/chat-context";
-import { SuppressThreeWarnings } from "@/components/suppress-three-warnings";
 
 // Each page is its own chunk; the graph pages pull in three.js.
 const page = (load: () => Promise<{ default: React.ComponentType }>) => {
@@ -21,7 +20,6 @@ export default function App() {
   return (
     <KBProvider>
       <ChatProvider>
-        <SuppressThreeWarnings />
         <div className="flex h-screen w-full overflow-hidden">
           <Sidebar />
           <main className="relative flex min-w-0 flex-1">

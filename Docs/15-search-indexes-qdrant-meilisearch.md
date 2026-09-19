@@ -22,7 +22,7 @@
 |---|---|---|
 | `backend/app/services/qdrant_service.py` | `QdrantService`: client, collection bootstrap, dims guard, upserts, scrolls, searches, deletes | `QdrantService`, `qdrant_service` (default-KB singleton) |
 | `backend/app/services/meilisearch_service.py` | `MeilisearchService`: client, index bootstrap/settings, add/update/delete/search | `MeilisearchService`, `meilisearch_service`, `_SEARCHABLE`, `_FILTERABLE` |
-| `backend/app/services/embedding.py` | `EmbeddingService`: provider validation, Qwen3 query instruction, `embed_query`/`embed_documents`/`get_dimension` | `EmbeddingService`, `embedding_service` |
+| `backend/app/services/embedding.py` | `EmbeddingService`: provider validation, Qwen3 query instruction, `embed_query`/`embed_documents` | `EmbeddingService`, `embedding_service` |
 | `backend/app/services/local_models.py` | `LocalLlamaEmbeddings`, `sync_embedding_infrastructure`, `save_selection`, manifest `embedding_dims`, dimension probe after load | `sync_embedding_infrastructure`, `load_manifest`, `LocalLlamaEmbeddings` |
 | `backend/app/services/kb_registry.py` | Per-KB collection/index names, `QdrantService`/`MeilisearchService` construction, deletion cleanup | `KBRegistry.create_kb`, `_build_context`, `_cleanup_stores` |
 | `backend/app/core/config.py` | `QDRANT_*`, `MEILI_*`, `EMBEDDING_*`, `VECTOR_*` | `settings` |
@@ -33,7 +33,7 @@
 | `backend/app/services/retrieval.py` | Qdrant/Meili **reads** (`search_all_collections`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `search_nodes`) | — |
 | `backend/app/desktop_runtime.py` | Downloads and spawns the binaries, chooses ports 17433/17470, generates/persists the Meili master key, sets env before the API imports `Settings` | `resolve_meili_master_key`, `boot_sidecars` |
 | `backend/tests/unit/test_qdrant_contract.py` | Pins `upsert_node_core` payload shape and `search_node_cores` filter construction | — |
-| `backend/tests/unit/test_meili_contract.py` | Pins that `update_node_community`/`index_node` documents always carry `node_id` (+`name`) and that errors are logged not raised | — |
+| `backend/tests/unit/test_meili_contract.py` | Pins that `index_node` documents always carry `node_id` (+`name`) and that errors are logged not raised | — |
 | `backend/requirements.txt` | `qdrant-client==1.17.1`, `meilisearch==0.34.1` | — |
 
 ## 3. Architecture / flow
@@ -87,7 +87,7 @@ Write ordering contract inside a note ingest: **Kuzu structural node → Qdrant 
 
 `is_available()` performs a live `client.get_collections()` round-trip every call (no caching); every public method calls it first, so each store operation costs one extra HTTP request.
 
-Desktop values are injected by `desktop_runtime.py`: `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT=<PORTS.qdrant>` (default **17433**, overridable via `ORB_QDRANT_PORT`/`LIVEOS_QDRANT_PORT`), and the binary is started with `QDRANT__STORAGE__STORAGE_PATH=DATA_DIR/qdrant`, `QDRANT__SERVICE__HTTP_PORT`. `QDRANT_API_KEY` is `None` by default ("Only needed for Qdrant Cloud").
+Desktop values are injected by `desktop_runtime.py`: `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT=<PORTS.qdrant>` (default **17433**, overridable via `ORB_QDRANT_PORT`), and the binary is started with `QDRANT__STORAGE__STORAGE_PATH=DATA_DIR/qdrant`, `QDRANT__SERVICE__HTTP_PORT`. `QDRANT_API_KEY` is `None` by default ("Only needed for Qdrant Cloud").
 
 ### 4.2 Per-KB collection naming
 
@@ -183,7 +183,7 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 
 | Function | Signature | Behaviour | Callers |
 |---|---|---|---|
-| `search_all_collections` | `(query_vector, limit, min_score, contexts_filter: Filter|None=None, period_key_filter: str|None=None, day_only=False) -> list[{collection, score, payload}]` | `query_points(collection, query=vector, limit, score_threshold=min_score, query_filter, with_payload=True)` per collection, run concurrently in a `ThreadPoolExecutor(max_workers=len(targets))`, results flattened in `collections` order. Filters: `contexts_filter` applies to the contexts collection only; `period_key_filter` becomes `Filter(must=[period_key == value])` on **cores** only; `day_only=True` restricts targets to the contexts collection. Per-collection errors → DEBUG + `[]`. | `RetrievalService` vector phase |
+| `search_all_collections` | `(query_vector, limit, min_score, contexts_filter: Filter|None=None, period_key_filter: str|None=None, day_only=False) -> list[{collection, score, payload}]` | `query_points(collection, query=vector, limit, score_threshold=min_score, query_filter, with_payload=True)` per collection, run sequentially (a `ponytail:` comment marks the thread-pool upgrade path), results flattened in `collections` order. Filters: `contexts_filter` applies to the contexts collection only; `period_key_filter` becomes `Filter(must=[period_key == value])` on **cores** only; `day_only=True` restricts targets to the contexts collection. Per-collection errors → DEBUG + `[]`. | `RetrievalService` vector phase |
 | `search_node_cores` | `(query_vector, limit, min_score, node_type=None, community_level=None) -> list[{score, payload}]` | cores only; optional `must` filters on `type` and `community_level` (both → two conditions) | none in current retrieval (kept; pinned by contract tests) |
 | `find_node_id_by_name` | `(name) -> str|None` | `scroll(cores, filter name == name.lower().strip(), limit=1, with_vectors=False)` → payload `node_id` | `GraphService.resolve_node_id`, `_update_node_summary` |
 | `find_node_ids_by_names` | `(names) -> dict[str, str|None]` | one `MatchAny(any=normalized)` scroll paged by 500; first hit per name wins; stops early when all resolved | `_write_ontology` (nodes and relationship endpoints), `GraphService.get_linked_evidence` |
@@ -255,7 +255,6 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 | `get_node` | `(node_id) -> dict|None` | `index.get_document(node_id)`; normalises the SDK `Document` object to a dict (`vars(doc)` minus private attrs, then `dict(doc)`, then attribute pick of the six known fields); any error → `None` | — | `_update_node_summary`, `update_nodes_community`, `api/graph.py` content fallback |
 | `search_nodes` | `(query, limit=20) -> list[{score, payload}]` | `index.search(query, {"limit": limit})`; **no filter, no highlighting, no attributesToRetrieve**; `score = float(total - idx)` — a synthetic rank-based score (top hit = N, last = 1), **not** Meilisearch's `_rankingScore` | — | retrieval `_search_meili_by_keyword(query, 100)` fanned out over the query plus extracted keywords/concepts; `api/graph.py` autocomplete (`limit*2`), scan-text (`2` per candidate) |
 | `index_node` | `(node_id, name, node_type, isolated_contexts_text="", relationship_natural_language="", community_level=None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
-| `update_node_community` | `(node_id, relationship_natural_language="", name="") -> None` | wrapper over the batch method | | none currently |
 | `update_nodes_community` | `(rows: list[{node_id, relationship_natural_language?, name?}]) -> None` | for each row `get_node` (or `{node_id}`), overlay non-empty fields, one `add_documents(docs)` | `wait_for_task(…, 30000)` | `rebuild_leiden_communities` end-of-run refresh |
 | `delete_node` | `(node_id) -> None` | `index.delete_document(node_id)`; 404/"not found" silently ignored | `wait_for_task(…, 5000)` | `api/notes.py`, community/digest rebuilds |
 | `reset_all` | `() -> None` | `delete_index(uid)` (+wait 10 s) then `_ensure_collection()` | 10000 | admin reset, KB empty |
@@ -267,7 +266,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 
 - Backend setting `MEILI_MASTER_KEY` (default `"orb-dev-key"`, also `.env.example`).
 - Desktop (`desktop_runtime.py: resolve_meili_master_key(data_dir)`): precedence env `MEILI_MASTER_KEY` → `DATA_DIR/meili_master_key` file → generate. Generation rule: if `DATA_DIR/meilisearch/` does not exist or is empty (fresh install) → `secrets.token_urlsafe(32)`; otherwise (existing Meili data) → `"orb-dev-key"` for compatibility with data written before keys were randomised. The chosen key is persisted to `DATA_DIR/meili_master_key` (mode `0600`) and passed both as `--master-key` to the `meilisearch` binary (`--db-path DATA_DIR/meilisearch --http-addr 127.0.0.1:<port>`) and as env `MEILI_MASTER_KEY` (+ `MEILI_HOST`, `MEILI_PORT`) to uvicorn.
-- Ports: `PORTS.meilisearch` = `ORB_MEILI_PORT` / `LIVEOS_MEILI_PORT` / **17470**. Health check `GET /health`.
+- Ports: `PORTS.meilisearch` = `ORB_MEILI_PORT` / **17470**. Health check `GET /health`.
 - Consequence: a developer running the backend by hand against a desktop-started Meilisearch must read the key from `DATA_DIR/meili_master_key`; `orb-dev-key` only works for a hand-started Meilisearch or pre-randomisation installs.
 
 ### 5.7 Legacy `TYPESENSE_*` names
@@ -286,14 +285,13 @@ class EmbeddingService:
     def reconfigure() -> None
     def embed_query(text, custom_instruction=None) -> list[float]
     def embed_documents(texts) -> list[list[float]]
-    def get_dimension() -> int
 embedding_service = EmbeddingService()          # module singleton
 ```
 
-- **Provider validation at construction:** `EMBEDDING_PROVIDER` `"ollama"`/`"lm_studio"` → WARNING "deprecated; using in-process local" and coerced to local; anything other than `local`/`auto`/`""` → `ValueError("Unsupported EMBEDDING_PROVIDER… Orb uses in-process GGUF embeddings only")` at import time (the backend will not start). `.env.example` still shows `EMBEDDING_PROVIDER=openai` as an option in a comment block — that value is rejected by this code. `EMBEDDING_BASE_URL` / `EMBEDDING_API_KEY` are defined in `Settings` but unused.
-- **Instruction handling:** `embed_query` prefixes the text with `custom_instruction or query_instruction` **only when `is_qwen3`**; `embed_documents` never adds a prefix. This asymmetry is deliberate for Qwen3-Embedding ("query gets 'Instruct: …\nQuery: ' prefix, documents do not"). `settings.USE_DYNAMIC_EMBEDDING_INSTRUCTION` (default True) exists but is **read nowhere**; retrieval calls `embed_query(enriched_query)` without `custom_instruction`.
+- **Provider validation at construction:** `EMBEDDING_PROVIDER` `"ollama"`/`"lm_studio"` → WARNING "deprecated; using in-process local" and coerced to local; anything other than `local`/`auto`/`""` → `ValueError("Unsupported EMBEDDING_PROVIDER… Orb uses in-process GGUF embeddings only")` at import time (the backend will not start). `.env.example` still shows `EMBEDDING_PROVIDER=openai` as an option in a comment block — that value is rejected by this code.
+- **Instruction handling:** `embed_query` prefixes the text with `custom_instruction or query_instruction` **only when `is_qwen3`**; `embed_documents` never adds a prefix. This asymmetry is deliberate for Qwen3-Embedding ("query gets 'Instruct: …\nQuery: ' prefix, documents do not"). retrieval calls `embed_query(enriched_query)` without `custom_instruction`.
 - **No caching** of vectors in this class. (Retrieval caches *query analysis*, not embeddings; ingestion de-duplicates texts before embedding.) Batching is the caller's job: `embed_documents` maps to `LocalLlamaRuntime.embed_batch`.
-- `reconfigure()` re-binds after a model download/selection (`is_qwen3` recomputed); `get_dimension()` embeds the literal `"test"` and returns `len` — a real model load if not resident.
+- `reconfigure()` re-binds after a model download/selection (`is_qwen3` recomputed).
 - `LocalLlamaEmbeddings` (`local_models.py`) is a thin LangChain-style shim: `embed_query → runtime.embed(text)`, `embed_documents → runtime.embed_batch(texts)`; the runtime enforces "one heavy GGUF resident at a time" ([12](12-local-models-and-inference.md)).
 
 ## 7. Embedding-dimension synchronisation & the fail-closed rule
@@ -356,24 +354,22 @@ Neither store has a notion of KB besides the name prefix; nothing prevents two K
 
 | Key | Default | Effect |
 |---|---|---|
-| `QDRANT_HOST` / `QDRANT_PORT` | `127.0.0.1` / `6333` | client endpoint; desktop injects port **17433** (`ORB_QDRANT_PORT`, legacy `LIVEOS_QDRANT_PORT`) |
+| `QDRANT_HOST` / `QDRANT_PORT` | `127.0.0.1` / `6333` | client endpoint; desktop injects port **17433** (`ORB_QDRANT_PORT`) |
 | `QDRANT_API_KEY` | `None` | passed to `QdrantClient`; only for Qdrant Cloud |
 | `QDRANT_COLLECTION_NODE_CORES` / `_NODE_RELATIONSHIPS` / `_NODE_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | default-KB collection names (persisted into the registry row on first run; changing env later does not rename) |
 | `EMBEDDING_DIMENSIONS` | `1024` | vector size for new collections and the `_prepare_vector` guard; **overwritten at runtime** by the models manifest / probe / `sync_embedding_infrastructure` |
 | `EMBEDDING_PROVIDER` | `local` | must be `local`/`auto`/empty (or deprecated `ollama`/`lm_studio`); anything else aborts startup |
 | `EMBEDDING_MODEL` | `local-embed` | display/`is_qwen3` detection (`"qwen3"` substring → instruction prefix); set to the catalog id by `sync_embedding_infrastructure` |
-| `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` | — | unused |
-| `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | `True` | unused |
 | `VECTOR_SIMILARITY_THRESHOLD` | `0.50` | `min_score` when the reranker is off |
 | `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `min_score` when `RERANKER_ENABLED` |
-| `MEILI_HOST` / `MEILI_PORT` | `127.0.0.1` / `7700` | client URL; desktop injects port **17470** (`ORB_MEILI_PORT`, `LIVEOS_MEILI_PORT`) |
+| `MEILI_HOST` / `MEILI_PORT` | `127.0.0.1` / `7700` | client URL; desktop injects port **17470** (`ORB_MEILI_PORT`) |
 | `MEILI_MASTER_KEY` | `orb-dev-key` | API key; desktop supplies the persisted/random key |
 | `MEILI_INDEX_NAME` | `orb_nodes` | default-KB index uid |
 | `RERANKER_ENABLED` | see [16](16-retrieval-and-chat.md) | selects which vector threshold applies |
 
 **Upsert batching.** `_upsert_batched(collection, points)` chunks every multi-point upsert at `_UPSERT_BATCH_SIZE` (default 128, `ORB_QDRANT_UPSERT_BATCH`). A point carrying a 2560-dim vector is roughly 27 KB as REST JSON, so a few hundred exceed Qdrant's request-size limit and the **entire** call is rejected with `400 (Bad Request)` — losing every point in it, not just the overflow. A note yielding 713 new entities failed exactly that way, and because the stubs are what keep Kuzu and Qdrant IDs aligned, the next pass logged `missing in Qdrant node_cores but present in Kuzu` for each one. `upsert_node_cores`, `upsert_node_relationships` and `upsert_node_items` all route through it; failures name the batch and how many points were written before it (`batch 3 of 6 (128 of 713 points)`), and `_last_upsert_error` carries the reason up so `ingestion` can report what Qdrant actually said instead of guessing at causes.
 
-None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_model, base_url, ai_setup_mode`), so they cannot be changed through `runtime_config.json`; only env/`.env`/desktop-injected env and the models manifest (for dims) apply.
+None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_model, base_url`), so they cannot be changed through `runtime_config.json`; only env/`.env`/desktop-injected env and the models manifest (for dims) apply.
 
 ## 10. Interfaces with other subsystems
 
@@ -398,11 +394,10 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 - `search_node_cores`: `query_filter` is `None` with no filters; a single `FieldCondition(key="type")` or `key="community_level"`; both combined in `must`; disabled → `[]` and no `query_points` call.
 
 `backend/tests/unit/test_meili_contract.py`:
-- `update_node_community` always emits a document containing `node_id` even when `get_node` returns `None`; with `name` supplied both `node_id` and `name` are present.
 - Errors from `add_documents` are logged (`logger.debug`) and **not raised**.
 - `index_node` documents carry `node_id` and `name`.
 
-`backend/tests/unit/conftest.py` fixtures `mock_qdrant_service` (`find_node_id_by_name→None`, `upsert_node` AsyncMock, `search_node_cores→[]`) and `mock_meili_service` / alias `mock_typesense_service` (`is_available→True`, `index_node`, `update_node_community`, `delete_node`). Note `upsert_node` does not exist on the real service — the fixture is stale.
+`backend/tests/unit/conftest.py` fixtures `mock_qdrant_service` (`find_node_id_by_name→None`, `upsert_node` AsyncMock, `search_node_cores→[]`) and `mock_meili_service` / alias `mock_typesense_service` (`is_available→True`, `index_node`, `delete_node`). Note `upsert_node` does not exist on the real service — the fixture is stale.
 
 ## 12. Invariants & locked decisions
 
@@ -484,5 +479,5 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 | Typesense → **Meilisearch** (`meilisearch_service.py`; `# typesense==2.0.0 # replaced by Meilisearch` in requirements) | mid-2026 | Kept attribute/column names for compatibility; `TYPESENSE_*` aliases were added in `Settings._apply_typesense_aliases` (since removed with the Tauri migration); conftest gained `mock_meili_service` with the old fixture aliased. |
 | `f8f527f` | 2026-08-06 | Audit fixes: **fail-closed Qdrant** (`_prepare_vector` raises; no mid-ingest `ensure_vector_size`), KB slug sanitisation (collection names cannot escape), blocking store work moved to threads. |
 | `b84ca73` | 2026-08-06 | Batched Meili community updates (`update_nodes_community`) — one task wait instead of one per node. |
-| `8de5cda` | 2026-08-07 | Batched embeds/upserts (`upsert_node_cores`, `upsert_node_relationships`, `find_node_ids_by_names` paging), concurrent per-collection Qdrant search (`ThreadPoolExecutor`), concurrent Meili term fan-out in retrieval. |
+| `8de5cda` | 2026-08-07 | Batched embeds/upserts (`upsert_node_cores`, `upsert_node_relationships`, `find_node_ids_by_names` paging), per-collection Qdrant search (made sequential again 2026-09-19), concurrent Meili term fan-out in retrieval. |
 | Desktop random Meili master key (`resolveMeiliMasterKey`) | 2026-08 | Fresh installs get a random key persisted under `DATA_DIR`; existing data keeps `orb-dev-key`. |

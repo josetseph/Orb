@@ -9,7 +9,6 @@ import { AccountList } from "../AccountList";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
 import { TransactionList } from "../TransactionList";
-import { FIELD_INPUT } from "../utils";
 
 export function SearchTab({
   searchForm,
@@ -39,7 +38,7 @@ export function SearchTab({
             required
             value={searchForm.query}
             onChange={(e) => setSearchForm((p) => ({ ...p, query: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="coffee OR amount>20"
           />
         </Field>
@@ -52,7 +51,7 @@ export function SearchTab({
                 kind: e.target.value as "transactions" | "accounts",
               }))
             }
-            className={FIELD_INPUT}
+            className="input"
           >
             <option value="transactions">Transactions</option>
             <option value="accounts">Accounts</option>

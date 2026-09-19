@@ -3,7 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import type { FinanceAccount, FinanceRecurrence, FinanceWorkspace } from "@/lib/types";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { DELETE_BTN, EMPTY_ROW, FIELD_INPUT, LIST_ROW, money } from "../utils";
+import { DELETE_BTN, EMPTY_ROW, LIST_ROW, money } from "../utils";
 
 type RecurrenceForm = {
   title: string;
@@ -53,7 +53,7 @@ export function RecurringTab({
             required
             value={recurrenceForm.title}
             onChange={(e) => setRecurrenceForm((p) => ({ ...p, title: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="Monthly rent"
           />
         </Field>
@@ -62,7 +62,7 @@ export function RecurringTab({
             <select
               value={recurrenceForm.type}
               onChange={(e) => setRecurrenceForm((p) => ({ ...p, type: e.target.value }))}
-              className={FIELD_INPUT}
+              className="input"
             >
               <option value="withdrawal">Expense</option>
               <option value="deposit">Income</option>
@@ -79,7 +79,7 @@ export function RecurringTab({
               onChange={(e) =>
                 setRecurrenceForm((p) => ({ ...p, amount: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
         </div>
@@ -90,7 +90,7 @@ export function RecurringTab({
             onChange={(e) =>
               setRecurrenceForm((p) => ({ ...p, source_id: e.target.value }))
             }
-            className={FIELD_INPUT}
+            className="input"
           >
             <option value="">Select source</option>
             {(recurrenceForm.type === "deposit" ? revenueAccounts : assetAccounts).map(
@@ -109,7 +109,7 @@ export function RecurringTab({
             onChange={(e) =>
               setRecurrenceForm((p) => ({ ...p, destination_id: e.target.value }))
             }
-            className={FIELD_INPUT}
+            className="input"
           >
             <option value="">Select destination</option>
             {(recurrenceForm.type === "withdrawal"
@@ -132,7 +132,7 @@ export function RecurringTab({
               onChange={(e) =>
                 setRecurrenceForm((p) => ({ ...p, first_date: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
           <Field label="Frequency">
@@ -141,7 +141,7 @@ export function RecurringTab({
               onChange={(e) =>
                 setRecurrenceForm((p) => ({ ...p, repeat_freq: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
             >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>

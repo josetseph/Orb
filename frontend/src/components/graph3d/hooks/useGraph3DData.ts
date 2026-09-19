@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { api } from "@/lib/api";
 
-export function useGraph3DData(currentKB: string, isHydrated: boolean) {
+export function useGraph3DData(currentKB: string) {
   const [graphData, setGraphData] = useState<{
     nodes: object[];
     links: object[];
@@ -47,12 +47,10 @@ export function useGraph3DData(currentKB: string, isHydrated: boolean) {
 
   // Fetch and adapt data: nodes need `id` field, edges become `links`
   useEffect(() => {
-    if (!isHydrated) return;
     let cancelled = false;
     const controller = new AbortController();
     hasFittedRef.current = false;
     userNavigatedRef.current = false;
-    setLoading(true);
     api
       .getGraph3DFull(currentKB, { signal: controller.signal })
       .then(({ nodes, edges }) => {
@@ -90,7 +88,7 @@ export function useGraph3DData(currentKB: string, isHydrated: boolean) {
       cancelled = true;
       controller.abort();
     };
-  }, [currentKB, isHydrated]);
+  }, [currentKB]);
 
   return {
     graphData,

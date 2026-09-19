@@ -6,7 +6,7 @@ import {
 } from "react";
 import { api } from "@/lib/api";
 import type { Note } from "@/lib/types";
-import { getApiErrorDetail } from "../_lib/api-error";
+import { errMessage, loadJson, saveJson } from "@/lib/utils";
 import { rewriteVaultPathsInContent } from "../_lib/rewrite-vault-urls";
 import { lastNoteStorageKey } from "../_lib/storage-keys";
 import type {
@@ -33,13 +33,7 @@ function expandedKey(kb: string) {
 }
 
 function readExpandedFolders(kb: string): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = localStorage.getItem(expandedKey(kb));
-    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
-  } catch {
-    return new Set();
-  }
+  return new Set(loadJson<string[]>(expandedKey(kb), []));
 }
 
 export function useVaultTree({
@@ -67,11 +61,7 @@ export function useVaultTree({
     setSelectedFolder("");
   }
   useEffect(() => {
-    try {
-      localStorage.setItem(expandedKey(currentKB), JSON.stringify([...expandedFolders]));
-    } catch {
-      /* a lost preference is not worth an error */
-    }
+    saveJson(expandedKey(currentKB), [...expandedFolders]);
   }, [expandedFolders, currentKB]);
   const [dragNoteId, setDragNoteId] = useState<string | null>(null);
   const [dragFileRel, setDragFileRel] = useState<string | null>(null);
@@ -125,7 +115,7 @@ export function useVaultTree({
         }
       } catch (error) {
         console.error("Error moving note:", error);
-        alert(getApiErrorDetail(error) || "Failed to move note.");
+        alert(errMessage(error, "Failed to move note."));
       }
     },
     [
@@ -152,7 +142,7 @@ export function useVaultTree({
         await fetchNotes(searchQuery, processedFilter);
       } catch (error) {
         console.error("Error moving file:", error);
-        alert(getApiErrorDetail(error) || "Failed to move file.");
+        alert(errMessage(error, "Failed to move file."));
       }
     },
     [
@@ -176,7 +166,7 @@ export function useVaultTree({
         await fetchNotes(searchQuery, processedFilter);
       } catch (error) {
         console.error("Error moving folder:", error);
-        alert(getApiErrorDetail(error) || "Failed to move folder.");
+        alert(errMessage(error, "Failed to move folder."));
       }
     },
     [currentKB, fetchNotes, searchQuery, processedFilter, selectedNote, refreshSelectedNote],
@@ -194,7 +184,7 @@ export function useVaultTree({
         return true;
       } catch (error) {
         console.error("Error deleting folder:", error);
-        alert(getApiErrorDetail(error) || "Failed to delete folder.");
+        alert(errMessage(error, "Failed to delete folder."));
         return false;
       }
     },
@@ -273,7 +263,7 @@ export function useVaultTree({
       await fetchNotes(searchQuery, processedFilter);
     } catch (error) {
       console.error("Error renaming file:", error);
-      alert(getApiErrorDetail(error) || "Failed to rename file.");
+      alert(errMessage(error, "Failed to rename file."));
     }
   }, [
     renameDialog,
@@ -316,7 +306,7 @@ export function useVaultTree({
       await fetchNotes(searchQuery, processedFilter);
     } catch (err) {
       console.error(err);
-      alert(getApiErrorDetail(err) || "Failed to create folder");
+      alert(errMessage(err, "Failed to create folder"));
     }
   }, [folderDialog, currentKB, fetchNotes, searchQuery, processedFilter]);
 
@@ -376,7 +366,7 @@ export function useVaultTree({
         return result;
       } catch (error) {
         console.error("Error deleting vault file:", error);
-        alert(getApiErrorDetail(error) || "Failed to delete file.");
+        alert(errMessage(error, "Failed to delete file."));
         return null;
       }
     },
@@ -428,7 +418,6 @@ export function useVaultTree({
 
 /** Restore last-opened note and listen for bfcache / visibility. */
 export function useNoteRestoreEffects({
-  isHydrated,
   currentKB,
   searchQuery,
   processedFilter,
@@ -437,7 +426,6 @@ export function useNoteRestoreEffects({
   refreshSelectedNote,
   fetchNotes,
 }: {
-  isHydrated: boolean;
   currentKB: string;
   searchQuery: string;
   processedFilter: ProcessedFilter;
@@ -447,8 +435,6 @@ export function useNoteRestoreEffects({
   fetchNotes: (search?: string, filter?: ProcessedFilter) => Promise<void>;
 }) {
   useEffect(() => {
-    if (!isHydrated) return;
-
     const params = new URLSearchParams(window.location.search);
     const noteParam = params.get("note");
     if (noteParam) {
@@ -502,5 +488,5 @@ export function useNoteRestoreEffects({
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isHydrated, currentKB, openNoteById, refreshSelectedNote]);
+  }, [currentKB, openNoteById, refreshSelectedNote]);
 }

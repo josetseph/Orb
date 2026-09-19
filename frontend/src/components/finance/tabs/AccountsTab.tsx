@@ -4,7 +4,6 @@ import type { FinanceAccount, FinanceWorkspace } from "@/lib/types";
 import { AccountList } from "../AccountList";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { FIELD_INPUT } from "../utils";
 
 export function AccountsTab({
   accounts,
@@ -37,7 +36,7 @@ export function AccountsTab({
             required
             value={accountForm.name}
             onChange={(e) => setAccountForm((p) => ({ ...p, name: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="Checking"
           />
         </Field>
@@ -47,7 +46,7 @@ export function AccountsTab({
             onChange={(e) =>
               setAccountForm((p) => ({ ...p, account_type: e.target.value }))
             }
-            className={FIELD_INPUT}
+            className="input"
           >
             <option value="asset">Asset</option>
             <option value="expense">Expense</option>
@@ -66,7 +65,7 @@ export function AccountsTab({
               onChange={(e) =>
                 setAccountForm((p) => ({ ...p, opening_balance: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
               placeholder="0.00"
             />
           </Field>

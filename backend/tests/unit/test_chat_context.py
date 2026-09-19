@@ -18,7 +18,7 @@ class TestRewriteFollowUpQuery:
 
     def test_returns_latest_when_empty_query(self, svc):
         history = [{"role": "user", "content": "Tell me about Fido."}]
-        assert svc.rewrite_follow_up_query(history, "   ") == "   "
+        assert svc.rewrite_follow_up_query(history, "   ") == ""
 
     def test_uses_llm_rewrite_when_history_present(self, svc):
         history = [

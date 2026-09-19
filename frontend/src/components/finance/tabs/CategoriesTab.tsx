@@ -4,7 +4,6 @@ import type { FinanceCategory } from "@/lib/types";
 import { DeletableList } from "../DeletableList";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { FIELD_INPUT } from "../utils";
 
 export function CategoriesTab({
   categories,
@@ -35,7 +34,7 @@ export function CategoriesTab({
             required
             value={categoryForm.name}
             onChange={(e) => setCategoryForm((p) => ({ ...p, name: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="Groceries"
           />
         </Field>
@@ -43,7 +42,7 @@ export function CategoriesTab({
           <input
             value={categoryForm.notes}
             onChange={(e) => setCategoryForm((p) => ({ ...p, notes: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
           />
         </Field>
         <button

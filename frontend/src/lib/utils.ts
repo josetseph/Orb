@@ -1,8 +1,47 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { useEffect, useState } from "react";
 
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
+export { clsx as cn } from "clsx";
+
+/** Read a JSON value from localStorage; `fallback` on missing/invalid/blocked. */
+export function loadJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** Write a JSON value to localStorage; silently drops on quota/privacy errors. */
+export function saveJson(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* a lost preference is not worth an error */
+  }
+}
+
+/** `value`, but only updated once it has held still for `ms`. */
+export function useDebounced<T>(value: T, ms: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return debounced;
+}
+
+/** FastAPI `detail` from an API error (string or validation list), else the Error message, else `fallback`. */
+export function errMessage(err: unknown, fallback: string): string {
+  const detail = (err as { response?: { data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) {
+    return detail
+      .map((d) => (typeof d === "object" && d && "msg" in d ? String((d as { msg: string }).msg) : String(d)))
+      .join("; ");
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
 }
 
 /**

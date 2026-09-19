@@ -1,4 +1,3 @@
-import { useRef } from "react";
 import { FolderPlus, Loader2, Plus, Search, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Note } from "@/lib/types";
@@ -104,7 +103,6 @@ export function NotesSidebar({
     processedFilter === "ingesting" ? notes.filter(isActiveProcessingNote) : notes;
   const needsOn = processedFilter === "needs";
   const needsCount = notes.filter((n) => !n.processed).length;
-  const treeScrollRef = useRef<HTMLDivElement>(null);
 
   return (
     <div className="flex w-[288px] shrink-0 flex-col border-r border-n-900">
@@ -167,7 +165,7 @@ export function NotesSidebar({
         onBatchDelete={onBatchDelete}
       />
 
-      <div ref={treeScrollRef} className="flex-1 overflow-y-auto px-1.5 pb-2">
+      <div className="flex-1 overflow-y-auto px-1.5 pb-2">
         {isLoading && notes.length === 0 && vaultFolders.length === 0 ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-5 w-5 animate-spin text-n-500" />
@@ -177,7 +175,6 @@ export function NotesSidebar({
         ) : (
           <VaultFolderTree
             notes={visibleNotes}
-            scrollRef={treeScrollRef}
             vaultFolders={vaultFolders}
             vaultName={vaultName}
             mediaFiles={mediaFiles}

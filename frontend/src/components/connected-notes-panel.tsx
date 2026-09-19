@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, useDebounced } from "@/lib/utils";
 import type { NotesGraphPayload } from "@/lib/types";
 
 type GraphMode = "note" | "nodes";
@@ -57,19 +57,24 @@ export function ConnectedNotesPanel({
   const [data, setData] = useState<NotesGraphPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [nodes, setNodes] = useState<SimNode[]>([]);
   const [layoutNonce, setLayoutNonce] = useState(0);
-  const [prevParams, setPrevParams] = useState({ mode, noteId, kb });
   const rafRef = useRef<number | null>(null);
   const w = 320;
   const h = 420;
 
-  if (prevParams.mode !== mode || prevParams.noteId !== noteId || prevParams.kb !== kb) {
-    setPrevParams({ mode, noteId, kb });
+  // "nodes" mode derives from the note text — debounced while typing.
+  const debouncedContent = useDebounced(noteContent, 500);
+  const [prevParams, setPrevParams] = useState({ mode, noteId, kb, debouncedContent });
+  if (
+    prevParams.mode !== mode ||
+    prevParams.noteId !== noteId ||
+    prevParams.kb !== kb ||
+    (mode === "nodes" && prevParams.debouncedContent !== debouncedContent)
+  ) {
+    setPrevParams({ mode, noteId, kb, debouncedContent });
     setLoading(true);
     setError(null);
     setData(null);
-    setNodes([]);
   }
 
   // "note" mode keys on the note id only — depending on noteContent here
@@ -78,8 +83,6 @@ export function ConnectedNotesPanel({
     if (mode !== "note") return;
     let cancelled = false;
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
     api
       .getNoteNeighbors(noteId, kb, { signal: controller.signal })
       .then((payload) => {
@@ -99,64 +102,60 @@ export function ConnectedNotesPanel({
     };
   }, [mode, noteId, kb]);
 
-  // "nodes" mode derives from the note text — debounced while typing.
   useEffect(() => {
     if (mode !== "nodes") return;
     let cancelled = false;
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    const timer = setTimeout(() => {
-      api
-        .getNoteEntitySubgraph(noteContent, kb, { signal: controller.signal })
-        .then((payload) => {
-          if (cancelled) return;
-          setData(payload);
-          setLayoutNonce((n) => n + 1);
-        })
-        .catch(() => {
-          if (!cancelled) setError("Could not load graph.");
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false);
-        });
-    }, 500);
+    api
+      .getNoteEntitySubgraph(debouncedContent, kb, { signal: controller.signal })
+      .then((payload) => {
+        if (cancelled) return;
+        setData(payload);
+        setLayoutNonce((n) => n + 1);
+      })
+      .catch(() => {
+        if (!cancelled) setError("Could not load graph.");
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
       controller.abort();
-      clearTimeout(timer);
     };
-  }, [mode, noteContent, kb]);
+  }, [mode, debouncedContent, kb]);
 
-  useEffect(() => {
-    if (!data || data.nodes.length === 0) {
-      setNodes([]);
-      return;
-    }
+  // Seeded starting layout; the simulation below moves nodes from here.
+  const initialNodes = useMemo<SimNode[]>(() => {
+    if (!data || data.nodes.length === 0) return [];
     const n = data.nodes.length || 1;
     const cx = w / 2;
     const cy = h / 2;
     const rand = seededRandom(hashSeed(`${noteId}:${mode}:${layoutNonce}`));
     const angleOffset = rand() * Math.PI * 2;
     const r = Math.min(110, 28 + n * 10);
-    setNodes(
-      data.nodes.map((node, i) => {
-        const angle = angleOffset + (2 * Math.PI * i) / n + (rand() - 0.5) * 0.9;
-        const radius = r * (0.55 + rand() * 0.7);
-        return {
-          ...node,
-          x: cx + radius * Math.cos(angle) + (rand() - 0.5) * 40,
-          y: cy + radius * Math.sin(angle) + (rand() - 0.5) * 40,
-          vx: (rand() - 0.5) * 2,
-          vy: (rand() - 0.5) * 2,
-        };
-      }),
-    );
-  }, [data, noteId, mode, layoutNonce]);
+    return data.nodes.map((node, i) => {
+      const angle = angleOffset + (2 * Math.PI * i) / n + (rand() - 0.5) * 0.9;
+      const radius = r * (0.55 + rand() * 0.7);
+      return {
+        ...node,
+        x: cx + radius * Math.cos(angle) + (rand() - 0.5) * 40,
+        y: cy + radius * Math.sin(angle) + (rand() - 0.5) * 40,
+        vx: (rand() - 0.5) * 2,
+        vy: (rand() - 0.5) * 2,
+      };
+    });
+  }, [data, noteId, mode, layoutNonce, w, h]);
+  const [nodes, setNodes] = useState(initialNodes);
+  const [prevInitialNodes, setPrevInitialNodes] = useState(initialNodes);
+  if (prevInitialNodes !== initialNodes) {
+    setPrevInitialNodes(initialNodes);
+    setNodes(initialNodes);
+  }
 
   useEffect(() => {
-    if (!data || nodes.length === 0) return;
-    let currentNodes = nodes;
+    if (!data || initialNodes.length === 0) return;
+    let currentNodes = initialNodes;
     const edges = data.edges;
     let alive = true;
     let frames = 0;
@@ -223,7 +222,7 @@ export function ConnectedNotesPanel({
       alive = false;
       if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, [data, layoutNonce, w, h, nodes.length]);
+  }, [data, initialNodes, w, h]);
 
   const byId = useMemo(() => {
     const m = new Map<string, SimNode>();

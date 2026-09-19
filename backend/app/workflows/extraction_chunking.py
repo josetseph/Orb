@@ -176,15 +176,12 @@ def merge_extractions(parts: list[Extraction]) -> Extraction:
     contexts: dict[str, list[str]] = {}
     rels: dict[tuple[str, str, str], ExtractedRelationship] = {}
     title: str | None = None
-    sentiment: str | None = None
 
     for part in parts:
         if part is None:
             continue
         if not title and (part.title or "").strip():
             title = part.title.strip()
-        if not sentiment and part.sentiment:
-            sentiment = part.sentiment
         for node in part.nodes:
             key = _norm(node.name)
             if not key:
@@ -207,8 +204,7 @@ def merge_extractions(parts: list[Extraction]) -> Extraction:
             )
             if not key[0] or not key[1]:
                 continue
-            if key not in rels or rel.confidence > rels[key].confidence:
-                rels[key] = rel
+            rels.setdefault(key, rel)
 
     for key, node in nodes.items():
         node.isolated_context = " ".join(contexts[key])
@@ -216,6 +212,5 @@ def merge_extractions(parts: list[Extraction]) -> Extraction:
     return Extraction(
         nodes=list(nodes.values()),
         relationships=list(rels.values()),
-        sentiment=sentiment or "Neutral",
         title=title,
     )

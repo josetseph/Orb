@@ -21,5 +21,3 @@ pyannote.audio>=4.0
 # Qwen3-ASR on the Apple GPU (see qwen-vs-whisper-report.md). CTranslate2 and
 # PyTorch have no Metal path; MLX transcribes at 5.6x realtime using ~6% CPU.
 mlx-qwen3-asr>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'
-# Chat with MLX-format models (mlx-community and anything converted by mlx_lm).
-mlx-lm>=0.20; sys_platform == 'darwin' and platform_machine == 'arm64'

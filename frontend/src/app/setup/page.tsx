@@ -195,7 +195,7 @@ export default function SetupPage() {
           </button>
           {status && (
             <span className="text-[11px] text-n-500">
-              Backend: {status.database_backend} · AI: {status.ai_setup_mode || "none"} · models:{" "}
+              Backend: {status.database_backend} · models:{" "}
               {status.local_models_ready ? "ready" : "missing"} · configured: {status.ai_configured ? "yes" : "no"}
             </span>
           )}

@@ -4,15 +4,8 @@ import {
   ViewPlugin,
   type DecorationSet,
   type ViewUpdate,
-  keymap,
 } from "@codemirror/view";
-import {
-  autocompletion,
-  completionKeymap,
-  type CompletionContext,
-  type CompletionResult,
-} from "@codemirror/autocomplete";
-import { Prec } from "@codemirror/state";
+import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
 import { api } from "@/lib/api";
 import { visibleLineChunks } from "./visibleLineChunks";
 import { wikilinkQueryAt } from "./wikilinkExtension";
@@ -202,16 +195,4 @@ export function entityCompletionSource(kb: string) {
       filter: false,
     };
   };
-}
-
-export function entityAutocomplete(kb: string) {
-  return [
-    autocompletion({
-      override: [entityCompletionSource(kb)],
-      closeOnBlur: true,
-      activateOnTyping: true,
-      maxRenderedOptions: 8,
-    }),
-    Prec.highest(keymap.of(completionKeymap)),
-  ];
 }

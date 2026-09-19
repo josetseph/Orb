@@ -22,7 +22,7 @@
 **Explicitly not owned here**
 
 - Firefly III itself (a Laravel/PHP app, version `v6.6.6`, unmodified release tarball). Orb never patches its source; it drives it through the REST API and a handful of `php -r` scripts that boot Laravel and touch Eloquent models directly.
-- Port allocation (`desktop_runtime.py` `PORTS["firefly"]` = 17412, env `ORB_FIREFLY_PORT` / legacy `LIVEOS_FIREFLY_PORT`) — see [Desktop shell and runtime §4](04-desktop-shell.md#4-the-runtime-desktop_runtimepy).
+- Port allocation (`desktop_runtime.py` `PORTS["firefly"]` = 17412, env `ORB_FIREFLY_PORT`) — see [Desktop shell and runtime §4](04-desktop-shell.md#4-the-runtime-desktop_runtimepy).
 - Generic `?kb=` resolution (`backend/app/api/deps.py:get_kb`) — see [API reference](07-api-reference.md).
 - The KB lifecycle routes in `backend/app/api/kb.py` that *call into* this service (empty/delete/rename) — documented in §15 as interfaces.
 
@@ -34,7 +34,6 @@ There are **no unit tests** for the finance subsystem (`backend/tests/unit` has 
 |---|---|---|
 | `backend/app/services/firefly_service.py` | Firefly proxy + per-KB administration model + finance chat | `FireflyService`, `FireflyHTTPError`, module singleton `firefly_service`, helpers `_as_float`, `_iso_today`, `_php_escape` |
 | `backend/app/api_desktop.py` | Finance routes (`/api/v1/finance/**`), input models, `_finance_error` | `CreateWorkspaceInput`, `CreateAccountInput`, `CreateTransactionInput`, `CreateBudgetInput`, `CreateCategoryInput`, `CreateBillInput`, `CreatePiggyInput`, `CreateTagInput`, `CreateRecurrenceInput` |
-| `backend/app/models/kb.py` | SQLAlchemy mirror of `knowledge_bases` incl. `firefly_group_id: Integer NULL`, `firefly_group_title: Text NULL` | `KnowledgeBase` |
 | `backend/app/services/kb_registry.py` | Creates/migrates the two Firefly columns (`_ensure_firefly_columns`), persists mapping | `KBRegistry.set_firefly_group`, `detach_firefly_group`, `get_metadata`, `_save_row` |
 | `backend/app/core/config.py` | Settings keys | `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`, `FIREFLY_API_TOKEN` |
 | `backend/app/api/chat.py` | Finance-aware chat branch | `_answer_chat_query` calls `looks_like_finance_query` / `answer_finance_question` |
@@ -45,7 +44,7 @@ There are **no unit tests** for the finance subsystem (`backend/tests/unit` has 
 | `frontend/src/components/finance/hooks/useFinanceWorkspace.ts` | Loads workspace + all lists per KB, derived account groups, form seeding | `useFinanceWorkspace`, `FinanceWorkspaceState`, `FormSeeders` |
 | `frontend/src/components/finance/hooks/useFinanceMutations.ts` | All form state and every create/delete/search/report/reset action | `useFinanceMutations`, `FinanceMutationsState` |
 | `frontend/src/components/finance/tabs/*.tsx` | `OverviewTab`, `AccountsTab`, `TransactionsTab`, `BudgetsTab`, `CategoriesTab`, `RecurringTab`, `RulesTab`, `SearchTab`, `ReportsTab` | — |
-| `frontend/src/components/finance/*.tsx`, `utils.ts`, `index.ts` | Shared UI: `FinanceHeader`, `FinanceNotReady`, `FinanceWorkspaceBar`, `FinanceTabs`, `Panel`, `Field`, `MetricCard`, `SuggestInput`, `DeletableList`, `AccountList`, `TransactionList`, `BasicSummaryList`, `ChartList`; helpers `money`, `todayIso`, `tomorrowIso`, `monthStartIso`, `errMessage`, `FIELD_INPUT`, `TabId` | barrel `index.ts` |
+| `frontend/src/components/finance/*.tsx`, `utils.ts` | Shared UI: `FinanceHeader`, `FinanceNotReady`, `FinanceWorkspaceBar`, `FinanceTabs`, `Panel`, `Field`, `MetricCard`, `SuggestInput`, `DeletableList`, `AccountList`, `TransactionList`, `BasicSummaryList`, `ChartList`; helpers `money`, `todayIso`, `tomorrowIso`, `monthStartIso`, `TabId` (`errMessage` lives in `lib/utils.ts`) | imported by path from `app/finance/page.tsx` |
 | `frontend/src/lib/api.ts` (Finance section) | Typed client wrappers for every route the UI uses | `getFinanceWorkspace`, `createFinanceWorkspace`, `resetFinanceAdministration`, `listFinanceAccounts`, `createFinanceAccount`, `listFinanceTransactions`, `createFinanceTransaction`, `deleteFinanceTransaction`, `getFinanceSummary`, `getFinanceReport`, `listFinanceBudgets`, `createFinanceBudget`, `listFinanceCategories`, `createFinanceCategory`, `deleteFinanceCategory`, `listFinanceRecurrences`, `createFinanceRecurrence`, `deleteFinanceRecurrence`, `listFinanceRuleGroups`, `createFinanceRuleGroup`, `deleteFinanceRuleGroup`, `listFinanceRules`, `createFinanceRule`, `deleteFinanceRule`, `searchFinance` |
 | `frontend/src/lib/types.ts` | `FinanceAccount`, `FinanceTransaction`, `FinanceBudget`, `FinanceCategory`, `FinanceRecurrence`, `FinanceRuleGroup`, `FinanceRule`, `FinanceSearchResult`, `FinanceWorkspace`, `FinanceSummary`, `FinanceReport` | — |
 | `frontend/src/components/sidebar.tsx` | Nav entry `{ name: "Finance", href: "/finance", icon: Wallet }` | — |
@@ -57,7 +56,7 @@ Orb's stated product goal is a *local-first personal knowledge system* in which 
 Evidence in git for *why a full Firefly instance* rather than home-grown tables:
 
 - Before commit `fbcafe7` (2026-08-03, "Align codebase with Orb desktop product and drop legacy Docker-era paths") the backend still carried `backend/app/models/finance.py` with three SQLAlchemy tables — `finance_workspaces (kb_id, currency)`, `finance_accounts (id, kb_id, name, account_type, opening_balance, archived)`, `finance_transactions (id, kb_id, date, description, amount, account_id, transfer_account_id, category)`. Its docstring already read "Legacy native finance models kept only for migration/compatibility checks." That native ledger was deleted in `fbcafe7`; nothing in the current tree references those tables.
-- The Firefly proxy arrived complete in `3f21e08` (2026-08-02, "Ship LifeOS as a Docker-free desktop app…"). Its method inventory has **not changed since** (a diff of `def` names between `3f21e08` and HEAD is empty); later commits only hardened it. The design decision was therefore: replace a thin native ledger with the *whole* Firefly feature set (budgets, bills, piggy banks, rules, recurrences, webhooks, attachments, reports, search grammar, multi-currency) and accept the cost of shipping a PHP runtime.
+- The Firefly proxy arrived complete in `3f21e08` (2026-08-02, "Ship LifeOS as a Docker-free desktop app…"). Its method inventory stayed unchanged until 2026-09-19, when the resources the UI never used (bills, piggy banks, tags, webhooks, object groups, exchange rates, attachments, `open`) were removed. The design decision was therefore: replace a thin native ledger with the *whole* Firefly feature set (budgets, bills, piggy banks, rules, recurrences, webhooks, attachments, reports, search grammar, multi-currency) and accept the cost of shipping a PHP runtime.
 - Firefly is a mature double-entry ledger with a large REST API and a JSON:API-ish response format; Orb's proxy normalises that into flat rows so the UI and the chat LLM see simple JSON.
 - Firefly III's "administrations" (Eloquent `UserGroup` model + `user_group_id` column on every ledger table) provide a first-class tenancy boundary inside one database and one user. Orb maps **one administration per KB** and relies on that for isolation rather than running one Firefly per vault (which would need N PHP servers and N ports).
 
@@ -194,7 +193,7 @@ Points worth stating explicitly:
 
 ### 5.3 The "never leak across vaults" invariant
 
-`backend/app/models/kb.py` carries the comment `# Per-KB Firefly III administration (user_group_id) — never leak across vaults`, and the transaction-creation error text says "Create accounts under this vault — they are not shared across vaults." The invariant is enforced by **four stacked mechanisms**, because no single Firefly feature is sufficient:
+The transaction-creation error text says "Create accounts under this vault — they are not shared across vaults." The invariant is enforced by **four stacked mechanisms**, because no single Firefly feature is sufficient:
 
 1. **Active administration switch** (`users.user_group_id`) before any request for a different KB — makes Firefly create new rows under the right `user_group_id` and makes group-aware endpoints return that group's data.
 2. **`user_group_id=<gid>` query parameter** stamped on every request by `_request` (`params.setdefault("user_group_id", active)` — explicit params win). Several Firefly v6 endpoints accept it; the rest ignore it silently.
@@ -398,22 +397,13 @@ Conventions for this section: every method takes `kb: KBContext` first and runs 
 
 `create_budget(kb, *, name, amount=None, currency_code=None)` → `POST /api/v1/budgets` with `{name, active: true}`; if `amount > 0`: `auto_budget_type: "reset"`, `auto_budget_amount: "x.xx"`, `auto_budget_period: "monthly"`, `auto_budget_currency_code` if given. Then, best-effort, `POST /api/v1/budgets/{id}/limits` with `{budget_id, start: <1st of month>, end: today, amount, [currency_code]}`; a `RuntimeError` there is logged (`Could not create budget limit for …`) because the auto-budget may already have created one. Returns the normalised budget (from the first response, so `spent` is 0 and `currency` is `None`).
 
-### 9.5 Categories, bills, piggy banks, tags (simple collections)
+### 9.5 Categories
 
 | Method | Firefly call | Body / params | Validation |
 |---|---|---|---|
 | `list_categories` | `GET /categories` via `_list_scoped_resources("Category")` | `limit=100` | — |
 | `create_category(name, notes)` | `POST /categories` | `{name, [notes]}` | non-blank name |
 | `delete_category(id)` | `DELETE /categories/{id}` | — | non-blank id |
-| `list_bills` | `GET /bills` (`"Bill"`) | `limit=100, start=today-30, end=today` (the window drives `paid`/`next_expected_match`) | — |
-| `create_bill(name, amount, repeat_freq="monthly", date_value, currency_code)` | `POST /bills` | `{name, amount_min: amt, amount_max: amt, date: <datetime>, repeat_freq, active: true, skip: 0, [currency_code]}` | name; `amount > 0`; freq ∈ {weekly, monthly, quarterly, half-year, yearly} |
-| `delete_bill(id)` | `DELETE /bills/{id}` | | |
-| `list_piggy_banks` | `GET /piggy-banks` (`"PiggyBank"`) | `limit=100` | |
-| `create_piggy_bank(name, account_id, target_amount, current_amount=0.0, start_date, target_date)` | `POST /piggy-banks` | `{name, target_amount, start_date: <or today>, accounts: [{account_id, id, current_amount: max(cur,0)}], account_id, [target_date]}` — both the v6 `accounts[]` form and the legacy top-level `account_id` are sent | name; account_id; `target_amount > 0` |
-| `delete_piggy_bank(id)` | `DELETE /piggy-banks/{id}` | | |
-| `list_tags` | `GET /tags` (`"Tag"`) | `limit=100` | |
-| `create_tag(tag, description)` | `POST /tags` | `{tag, [description]}` | non-blank tag |
-| `delete_tag(id)` | `DELETE /tags/{id}` | | |
 
 ### 9.6 Recurrences
 
@@ -434,26 +424,7 @@ Conventions for this section: every method takes `kb: KBContext` first and runs 
 - `create_rule(kb, *, title, rule_group_id, trigger_type="description_contains", trigger_value="", action_type="add_tag", action_value="", trigger="store-journal", description=None)` → `POST /rules` with `{title, rule_group_id, trigger: "store-journal", active: true, strict: true, stop_processing: false, triggers: [{type, value, active: true}], actions: [{type, value, active: true}], [description]}`. Exactly one trigger and one action; `strict: true` means all triggers must match. Trigger/action type strings are Firefly's (`description_contains`, `set_category`, `add_tag`, …) and are passed through unvalidated — an unknown type yields a Firefly 422 → 502. The **frontend** sends `action_type: "set_category"` (its form default), overriding the service default `add_tag`.
 - `delete_rule(id)` → `DELETE /rules/{id}`.
 
-### 9.8 Webhooks
-
-`list_webhooks` → `GET /webhooks` (`"Webhook"`). `create_webhook(title, url, trigger="STORE_TRANSACTION", response="TRANSACTIONS", delivery="JSON", active=True)` → `POST /webhooks` sending **both** plural (`triggers: [..]`, `responses`, `deliveries`) and singular (`trigger`, `response`, `delivery`) keys because older Firefly builds validated the singular form. Validation: title; `url.startswith("https://")` (Firefly itself refuses non-HTTPS webhook URLs). `delete_webhook(id)`. With `QUEUE_CONNECTION=sync` webhook deliveries run inline during the triggering request. Not used by the frontend.
-
-### 9.9 Object groups
-
-`list_object_groups` → `GET /object-groups` (`"ObjectGroup"`). `create_object_group(title)` — Firefly has **no `POST /object-groups`**; groups come into existence when a bill/piggy bank references `object_group_title`. The service therefore: `POST /bills` with `{name: "<title> (group seed)", amount_min/max: "0.01", date: now, repeat_freq: "yearly", active: false, skip: 0, object_group_title: title}` → `GET /object-groups?limit=100` → find the row with matching `attributes.title` → `DELETE /bills/{seed}` (warning on failure) → return the group or `RuntimeError("Created group seed for '…' but group was not listed back")`. Note Firefly deletes object groups that become empty, so a group created this way may vanish as soon as the seed bill is deleted unless something else references it; the method returns the (possibly already-gone) row. `update_object_group(id, title)` → `PUT /object-groups/{id}` `{title}`; `delete_object_group(id)`.
-
-### 9.10 Exchange rates
-
-`list_exchange_rates` → `GET /exchange-rates?limit=100`, **not** group-filtered (rates are user-wide). `create_exchange_rate(date_value, from_code, to_code, rate)`: 3-letter codes, `rate > 0`, `date_value` default today; body `{date, from, to, rate: "<up to 8 dp, trailing zeros trimmed>", rates: {to: rate}}` (both the v6.1 shape and the newer `rates` map). If Firefly answers with an empty body, re-list and find a row with the same from/to and a `date` starting with `date_value`; else return a synthetic `{"id": "", date, rate, from, to}`. `delete_exchange_rate(id)`.
-
-### 9.11 Attachments
-
-- `list_attachments` → `GET /attachments?limit=100`, not group-filtered.
-- `create_attachment(filename, attachable_type, attachable_id, title, notes, file_bytes)`: `attachable_type ∈ {Account, Budget, Bill, TransactionJournal, PiggyBank, Tag}`; `POST /attachments` `{filename, attachable_type, attachable_id, [title], [notes]}` creates the metadata row; then, if `file_bytes is not None`, `POST /attachments/{id}/upload` with `content=file_bytes` and `Content-Type: application/octet-stream` (Firefly stores under `storage/upload`, encrypted). The route derives `filename` from the form field or the uploaded file's name.
-- `download_attachment(id) -> (bytes, filename)`: `GET /attachments/{id}` for metadata (filename), then a **raw** `client.request("GET", "/attachments/{id}/download")` (bypasses `_request`, so no `user_group_id` param and errors become plain `RuntimeError("Firefly download failed (…)")`). The route streams it as `application/octet-stream` with `Content-Disposition: attachment; filename="…"` (filename is not header-escaped).
-- `delete_attachment(id)`.
-
-### 9.12 Search, summary, report
+### 9.8 Search, summary, report
 
 `search(kb, *, query, kind="transactions")`:
 - `kind == "accounts"`: `GET /search/accounts?query=&field=all&limit=50`, filtered by `_account_ids_for_group`, `_normalize_account` each → `{"kind": "accounts", "query", "results": [...]}`.
@@ -477,7 +448,7 @@ Conventions for this section: every method takes `kb: KBContext` first and runs 
 
 ## 10. `_normalize_*` helpers (Firefly JSON:API → Orb `Finance*` shapes)
 
-All normalisers take one JSON:API resource `{"id", "type", "attributes": {...}}` and return a flat dict; `id` is always stringified; missing names get an `"Untitled …"` placeholder; booleans default to `True` for `active` (except webhooks, `False`) and `strict`.
+All normalisers take one JSON:API resource `{"id", "type", "attributes": {...}}` and return a flat dict; `id` is always stringified; missing names get an `"Untitled …"` placeholder; booleans default to `True` for `active` and `strict`.
 
 | Helper | Output keys (source attribute) | TS type |
 |---|---|---|
@@ -485,9 +456,6 @@ All normalisers take one JSON:API resource `{"id", "type", "attributes": {...}}`
 | `_normalize_transaction_group` (returns a **list**) | per split idx: `id: "<group>:<idx>"`; `group_id`; `user_group` (`user_group` or `user_group_id`); `date` (split or group); `description`; `amount` (float); `type`; `account_id` (`source_id` else `destination_id` — so for deposits it is the *revenue* account, not the asset account); `account_name` (`source_name` else `destination_name`); `counterparty_name` (`destination_name` for withdrawals, else `source_name`); `category` (`category_name`); `currency_code`; `journal_id` (`transaction_journal_id` else group id) | `FinanceTransaction` |
 | `_normalize_budget` | `id`; `name`; `active`; `spent` (abs Σ `spent[].sum`); `currency` (`spent[0].currency_code` or `None`); `auto_budget_amount`; `auto_budget_period`; `notes` | `FinanceBudget` |
 | `_normalize_category` | `id`; `name`; `notes` | `FinanceCategory` |
-| `_normalize_bill` | `id`; `name`; `amount_min`; `amount_max`; `currency` (`currency_code`); `repeat_freq`; `next_expected_match`; `active`; `paid` (default False); `notes` | — (no TS type; route only) |
-| `_normalize_piggy` | `id`; `name`; `current_amount`; `target_amount`; `percentage`; `currency`; `start_date`; `target_date`; `notes`; `active` | — |
-| `_normalize_tag` | `id`; `tag` (`tag` → `name` → `"tag"`); `date`; `description` | — |
 | `_normalize_recurrence` | `id`; `title`; `type` (group or first transaction); `description`; `amount` (first transaction); `currency` (first tx `currency_code`); `first_date`; `repeat_until`; `active`; `repetition_type` / `repetition_moment` (first repetition); `source_name` / `destination_name` (first tx) | `FinanceRecurrence` |
 | `_normalize_rule_group` | `id`; `title`; `description`; `order`; `active` | `FinanceRuleGroup` |
 | `_normalize_rule` | `id`; `title`; `description`; `rule_group_id` (str); `trigger`; `active`; `strict`; `triggers: [{type, value}]`; `actions: [{type, value}]` | `FinanceRule` |
@@ -526,9 +494,8 @@ return await kb.get_chat_workflow().chat(...)
 Full per-route documentation (params, bodies, response shapes, status codes) is in [API reference → Finance routes](07-api-reference.md#finance-routes-api_desktoppy); this section records only what the route layer adds on top of the service.
 
 - **KB resolution:** every route depends on `get_kb` (`backend/app/api/deps.py`): `?kb=<name or slug>`, default `default`, 404 if unknown. The `KBContext` is passed straight into the service; the service uses `kb.kb_id` (registry key) and `kb.name` (title).
-- **Input models** (Pydantic, 422 on violation): `CreateWorkspaceInput(currency: str = "USD", 3 chars)`, `CreateAccountInput(name 1–255, account_type="asset", opening_balance=0.0, currency?)`, `CreateTransactionInput(description 1–1000, amount>0, account_id ≥1 char, type="withdrawal", date?, counterparty_name?, transfer_account_id?, category?, budget_id?, currency?)`, `CreateBudgetInput(name, amount?>0, currency?)`, `CreateCategoryInput(name, notes?)`, `CreateBillInput(name, amount>0, repeat_freq="monthly", date?, currency?)`, `CreatePiggyInput(name, account_id, target_amount>0, current_amount=0.0, start_date?, target_date?)`, `CreateTagInput(tag, description?)`, `CreateRecurrenceInput(title, amount>0, type="withdrawal", source_id, destination_id, description?, first_date?, repeat_freq="monthly")`. Rule-groups, rules, webhooks, object-groups and exchange-rates take a bare `dict` body and pull keys with `.get()`; wrong types coerce via `str()`/`float()` inside the route (a non-numeric `rate` raises `ValueError` → 400).
-- **`_finance_error(exc)`**: `ValueError` → 400, `RuntimeError` (incl. `FireflyHTTPError`) → 502, else 500 — all with `detail: str(exc)`. Applied by every POST/PUT/DELETE route plus `GET /finance/search` and `GET /finance/report`. **Not** applied to `GET workspace/accounts/transactions/budgets/categories/bills/piggy-banks/tags/recurrences/rule-groups/rules/webhooks/object-groups/exchange-rates/attachments/summary` or `POST /finance/open` — those propagate as unhandled exceptions (plain-text 500). `GET /finance/workspace` is safe because the service catches internally.
-- Attachments `POST` is `multipart/form-data` (`Form(...)`/`File(...)`), the only non-JSON finance route; `file.read()` loads the whole upload into memory.
+- **Input models** (Pydantic, 422 on violation): `CreateWorkspaceInput(currency: str = "USD", 3 chars)`, `CreateAccountInput(name 1–255, account_type="asset", opening_balance=0.0, currency?)`, `CreateTransactionInput(description 1–1000, amount>0, account_id ≥1 char, type="withdrawal", date?, counterparty_name?, transfer_account_id?, category?, budget_id?, currency?)`, `CreateBudgetInput(name, amount?>0, currency?)`, `CreateCategoryInput(name, notes?)`, `CreateRecurrenceInput(title, amount>0, type="withdrawal", source_id, destination_id, description?, first_date?, repeat_freq="monthly")`. Rule-groups and rules take a bare `dict` body and pull keys with `.get()`; wrong types coerce via `str()`/`float()` inside the route (a non-numeric `rate` raises `ValueError` → 400).
+- **`_finance_error(exc)`**: `ValueError` → 400, `RuntimeError` (incl. `FireflyHTTPError`) → 502, else 500 — all with `detail: str(exc)`. Applied by every POST/PUT/DELETE route plus `GET /finance/search` and `GET /finance/report`. **Not** applied to `GET workspace/accounts/transactions/budgets/categories/recurrences/rule-groups/rules/summary` — those propagate as unhandled exceptions (plain-text 500). `GET /finance/workspace` is safe because the service catches internally.
 - All finance routes are `async def` and await the service; the service's own `to_thread` calls keep PHP off the loop, but the global lock means concurrent finance requests queue inside the process.
 
 ## 13. Frontend finance workspace
@@ -571,7 +538,7 @@ Every action follows the same pattern: `setBusy(true); setError(null); try { awa
 | `loadReport(e?)` | `getFinanceReport(kb, start, end)` | `GET /finance/report?start=&end=` | result → `ws.setReport`; no refresh |
 | `resetAdministration()` | `resetFinanceAdministration(kb)` | `POST /finance/reset-administration` | two `window.confirm` dialogs first; then refresh (which re-creates an empty administration immediately via `GET /finance/workspace`) |
 
-Not wired in the UI (backend-only): bills, piggy banks, tags, webhooks, object groups, exchange rates, attachments, `GET /finance/transactions?account_id=`, `POST /finance/open`. `api.ts` has no wrappers for them either.
+Not wired in the UI (backend-only): `GET /finance/transactions?account_id=`.
 
 ### 13.4 Tabs (`components/finance/tabs/*`)
 
@@ -593,12 +560,12 @@ Not wired in the UI (backend-only): bills, piggy banks, tags, webhooks, object g
 - `FinanceNotReady`: described in §8; props `workspace, statusTone, currency, onCurrencyChange, onSubmit, onRefresh, busy`.
 - `FinanceTabs`: nine buttons in the order Overview, Accounts, Transactions, Budgets, Categories, Recurring, Rules, Search, Reports.
 - `Panel(title, icon?)`, `Field(label)`, `MetricCard(icon,label,value,currency)`, `DeletableList(rows{id,title,subtitle?}, empty, busy, onDelete)`, `AccountList(accounts, currency?, empty)` (uses `currency || account.currency`), `TransactionList(rows, currency?, onDelete?, busy?)` (colour: deposit emerald, withdrawal rose, transfer sky; amount uses `tx.currency_code || currency`; date via `toLocaleDateString`), `BasicSummaryList(basic)` (label = `title || monetary_value || key`; amount = `value_parsed ?? value ?? primitive`), `ChartList(data)` (accepts a list or `{data: [...]}`; label = `label || key || name || Series n`; value = `y ?? value ?? Σ entries[].y`), `SuggestInput(value, onChange, suggestions, placeholder)` (case-insensitive contains filter, max 8, closes 120 ms after blur so a click registers).
-- `utils.ts`: `FIELD_INPUT` Tailwind class string; `TabId` union; `money(value, currency?)` → `"12.34 USD"`; `todayIso()` / `tomorrowIso()` use `toISOString().slice(0,10)` (**UTC** date), while `monthStartIso()` uses local `getFullYear/getMonth` — near midnight the default transaction date and the report start can disagree by a day; `errMessage(err, fallback)`.
-- All finance client calls go through `api.ts`'s axios `http` helper with `withKb(kb, params)` (GET) or `kbQuery(kb)` (POST/DELETE) appending `?kb=`; base URL `VITE_API_URL ?? "/api/v1"`, same origin as the API (which serves the UI).
+- `utils.ts`: `TabId` union; `money(value, currency?)` → `"12.34 USD"`; `todayIso()` / `tomorrowIso()` use `toISOString().slice(0,10)` (**UTC** date), while `monthStartIso()` uses local `getFullYear/getMonth` — near midnight the default transaction date and the report start can disagree by a day; `errMessage(err, fallback)`.
+- All finance client calls go through `api.ts`'s `http` helper (a `fetch` wrapper) with `withKb(kb, params)` (GET) or `kbQuery(kb)` (POST/DELETE) appending `?kb=`; base URL `VITE_API_URL ?? "/api/v1"`, same origin as the API (which serves the UI).
 
 ### 13.6 Link-out to Firefly's own UI
 
-There is **no** link-out in the current frontend: nothing renders `workspace.firefly_url`, and `POST /finance/open` has no client wrapper. The backend keeps `firefly_url` in every workspace payload and `prepare_open` ready for it. If added, the link must be opened after `prepare_open` (so the active administration matches the KB) and would open in the system browser (the Tauri window's navigation guard sends foreign URLs and `window.open` to the system browser); the user would log in with `runtime.json`'s `email`/`password`. Other places in the UI that mention Firefly are copy only: the Settings page's "Clear finance data" (calls the same reset route) and "Empty this knowledge base" buttons, the KB page's delete confirmations, and the sidebar entry `Finance → /finance`.
+There is **no** link-out in the current frontend: nothing renders `workspace.firefly_url`, and the old `POST /finance/open` route was removed. If added back, the link must be opened after the administration is ensured active (the Firefly web UI shows whichever administration is current for the user).
 
 ## 14. Configuration keys and on-disk layout
 
@@ -610,13 +577,13 @@ There is **no** link-out in the current frontend: nothing renders `workspace.fir
 | `FIREFLY_RUNTIME_FILE` | `None` | `desktop_runtime.py` → `<DATA_DIR>/firefly/runtime.json` | Source of `apiToken`, `userId`, `groupId`; its parent directory fixes `php/php` and `app/` locations for PHP scripts. |
 | `FIREFLY_API_TOKEN` | `None` | never by the runtime | Overrides `runtime.apiToken` when set (dev/external Firefly). |
 
-There are no `ORB_`/`LIVEOS_` aliases for these three; they are read only through `settings`.
+There are no `ORB_` aliases for these three; they are read only through `settings`.
 
 ### 14.2 Runtime-side knobs (`desktop_runtime.py`)
 
 | Env | Default | Effect |
 |---|---|---|
-| `ORB_FIREFLY_PORT` (legacy `LIVEOS_FIREFLY_PORT`) | `17412` | `PORTS["firefly"]`; changes `APP_URL`, `artisan serve --port`, and `FIREFLY_BASE_URL`. |
+| `ORB_FIREFLY_PORT` | `17412` | `PORTS["firefly"]`; changes `APP_URL`, `artisan serve --port`, and `FIREFLY_BASE_URL`. |
 | `ORB_FIREFLY_VERSION` | `v6.6.6` | Release tag to download / seed marker to expect. Changing it triggers the stash-swap upgrade on next boot. |
 | `ORB_PHP_BIN_VERSION` | `1.2.0` | NativePHP `php-bin` tag; forms `PHP_RUNTIME_ID = nativephp:<ver>:php-8.5`. |
 | `ORB_FIREFLY_BOOTSTRAP_PASSWORD` | — | Not a user knob: set by the runtime only for the user-bootstrap `php -r` child. |
@@ -722,11 +689,11 @@ Logging: backend logger name `FireflyService` (warnings for enrichment failures,
 
 ## 19. Extension points
 
-- **Add a UI for an existing backend resource (bills, piggy banks, tags, webhooks, object groups, exchange rates, attachments):** add TS types in `frontend/src/lib/types.ts`, client methods in `frontend/src/lib/api.ts` (follow `listFinanceCategories`/`createFinanceCategory`/`deleteFinanceCategory`), state + `loadOptional` entry in `useFinanceWorkspace.refresh`, form + actions in `useFinanceMutations`, a tab component under `components/finance/tabs/`, an entry in `FinanceTabs.TABS`, `TabId` in `utils.ts`, the export in `index.ts`, and the render branch in `page.tsx`.
+- **Add a UI for a Firefly resource the backend no longer proxies (bills, piggy banks, tags, webhooks, object groups, exchange rates, attachments):** restore the route + service method from git history (removed 2026-09-19), then add TS types in `frontend/src/lib/types.ts`, client methods in `frontend/src/lib/api.ts` (follow `listFinanceCategories`/`createFinanceCategory`/`deleteFinanceCategory`), state + `loadOptional` entry in `useFinanceWorkspace.refresh`, form + actions in `useFinanceMutations`, a tab component under `components/finance/tabs/`, an entry in `FinanceTabs.TABS`, `TabId` in `utils.ts`, the export in `index.ts`, and the render branch in `page.tsx`.
 - **Add a new Firefly resource to the backend:** (1) if it has a `user_group_id` column, add the Eloquent model name to the `allowed` set in `_php_model_ids_for_group_script` **and** to the model list in `_php_destroy_group_script`; (2) write `_normalize_<x>`; (3) implement `list_<x>` via `_list_scoped_resources(group_id, model=…, path=…, normalize=…)`, and `create_<x>`/`delete_<x>` as closures passed to `_run_scoped`; (4) add routes in `api_desktop.py` with a Pydantic body and `_finance_error` wrapping (wrap the GET too); (5) document in 07.
 - **Add a currency to the create fallback:** extend `_CURRENCY_META` (only matters when Firefly's seed lacks the code).
 - **Change the group naming scheme:** `_group_title_for_kb` and `sync_kb_group_title` must change together; existing groups are found by title, so also migrate titles or ids.
-- **Expose "open in Firefly":** call `POST /finance/open`, then `window.open(url)` (the Tauri shell opens it externally); consider surfacing `runtime.json` credentials in Settings.
+- **Expose "open in Firefly":** re-add a route that ensures the administration is active and returns the base URL, then `window.open(url)` (the Tauri shell opens it externally); consider surfacing `runtime.json` credentials in Settings.
 - **Reduce PHP spawns:** cache `_ids_for_group` results per (model, gid) and invalidate on create/delete of that model under the same lock; or pass `user_group_id` and verify Firefly honours it per endpoint before dropping the allow-list.
 - **Upgrade Firefly:** bump `ORB_FIREFLY_VERSION`/`FIREFLY_VERSION`, re-run `ORB_REBUILD_FIREFLY=1 python3 desktop/build.py prepare` for the bundled seed, then verify every PHP script's model/class names and the `user_group_id` column still exist, and re-check endpoints that gained/lost `user_group_id` support.
 

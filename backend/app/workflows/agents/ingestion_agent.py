@@ -1,4 +1,4 @@
-"""LangGraph ingestion agent: multimodal → extraction → storage → indexing."""
+"""Ingestion agent: multimodal → extraction → storage → indexing."""
 
 # pylint: disable=import-outside-toplevel,protected-access
 import asyncio
@@ -6,8 +6,6 @@ import re
 import uuid
 from datetime import datetime
 from typing import Any, List, Optional, TypedDict
-
-from langgraph.graph import END, StateGraph
 
 from app.core.config import settings
 from app.core.log import get_logger
@@ -1326,33 +1324,10 @@ async def summarization_node(state: IngestionState):
     }
 
 
-def should_route_after_extraction(state: IngestionState):
-    """Route the graph after extraction: 'end' on error, 'store' otherwise."""
-    if state.get("errors"):
-        return "end"
-    return "store"
-
-
-# 3. Build Graph
-workflow = StateGraph(IngestionState)
-
-# Add Nodes
-workflow.add_node("multimodal", multimodal_node)
-workflow.add_node("extraction", extraction_node)
-workflow.add_node("storage", storage_node)
-workflow.add_node("summarization", summarization_node)
-
-# Define Edges
-workflow.set_entry_point("multimodal")
-workflow.add_edge("multimodal", "extraction")
-workflow.add_conditional_edges(
-    "extraction",
-    should_route_after_extraction,
-    {"store": "storage", "end": END},
-)
-
-workflow.add_edge("storage", "summarization")
-workflow.add_edge("summarization", END)
-
-# Compile
-ingestion_agent = workflow.compile()
+async def run_ingestion_agent(state: IngestionState) -> IngestionState:
+    """Run the four stages in order, stopping at the first that reports an error."""
+    for node in (multimodal_node, extraction_node, storage_node, summarization_node):
+        state.update(await node(state))
+        if state.get("errors"):
+            break
+    return state

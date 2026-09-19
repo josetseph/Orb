@@ -1,5 +1,7 @@
 /** Shapes returned by GET /api/v1/models — everything the Models page renders. */
 
+import type { EffectiveLLM, KBLLMConfig } from "@/lib/types";
+
 export interface HardwareProfile {
   ram_gb: number;
   usable_model_gb: number;
@@ -18,11 +20,6 @@ export interface InstalledModel {
   size_gb: number;
   context_length: number | null;
   shards: number;
-  /** "gguf" | "mlx" | "transformers" */
-  format: string;
-  /** False when this machine cannot run the layout. */
-  runnable: boolean;
-  unsupported_reason: string | null;
   warnings: string[];
 }
 
@@ -38,27 +35,9 @@ export interface DownloadableModel {
   recommended: boolean;
 }
 
-export interface ModelChoice {
-  provider: string;
-  model: string | null;
-  ingestion_model: string | null;
-  base_url?: string | null;
-  inherited?: boolean;
-}
-
 export interface ModelsPageState {
-  global: ModelChoice & { mode: "local" | "cloud"; configured: boolean };
-  kb: {
-    id: string;
-    name: string;
-    override: {
-      provider: string | null;
-      model: string | null;
-      ingestion_model: string | null;
-      base_url: string | null;
-    };
-    effective: ModelChoice;
-  } | null;
+  global: EffectiveLLM & { mode: "local" | "cloud"; configured: boolean };
+  kb: (Pick<KBLLMConfig, "override" | "effective"> & { id: string; name: string }) | null;
   local: {
     models_dir: string;
     installed: InstalledModel[];
@@ -89,7 +68,6 @@ export interface InspectedModel {
   ref: string;
   path: string;
   name: string;
-  format: string;
   size_gb: number;
   warnings: string[];
 }

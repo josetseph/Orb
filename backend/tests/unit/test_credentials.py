@@ -4,6 +4,8 @@ The load-bearing property is that key material never leaves the process: the
 API reports whether a provider is configured, never the key.
 """
 
+import sys
+
 import pytest
 
 from app.core import config
@@ -14,6 +16,14 @@ from app.services.credentials import (
     CredentialStore,
     normalize_provider,
 )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_keychain(monkeypatch):
+    """Never read or write the developer's real keychain from tests."""
+    from tests.unit.test_credentials_keyring import _fake_keyring
+
+    monkeypatch.setitem(sys.modules, "keyring", _fake_keyring({}))
 
 
 @pytest.fixture()
@@ -116,24 +126,6 @@ class TestStatus:
         assert store.status()["anthropic"]["configured"] is False
 
 
-class TestRequireApiKey:
-    def test_error_points_at_settings_not_dotenv(self, store, monkeypatch):
-        import app.services.credentials as mod
-
-        monkeypatch.setattr(mod, "credentials", store)
-        with pytest.raises(ValueError) as exc:
-            mod.require_api_key("openai")
-        assert "Settings" in str(exc.value)
-        assert ".env" not in str(exc.value)
-
-    def test_returns_key_when_present(self, store, monkeypatch):
-        import app.services.credentials as mod
-
-        monkeypatch.setattr(mod, "credentials", store)
-        store.set("openai", "sk-ok")
-        assert mod.require_api_key("openai") == "sk-ok"
-
-
 class TestEndpointIdentity:
     """OpenAI-compatible endpoints are keyed by URL, so no naming step is needed."""
 
@@ -178,11 +170,6 @@ class TestEndpointIdentity:
         store.set(endpoint_credential_id("https://openrouter.ai/api/v1"), "secret-or-key")
         assert store.endpoints() == ["https://openrouter.ai/api/v1"]
         assert "secret-or-key" not in repr(store.endpoints())
-        assert store.has_endpoint("https://openrouter.ai/api/v1/") is True
-        assert store.has_endpoint("https://other.test/v1") is False
-
-    def test_malformed_endpoint_lookup_is_false_not_an_error(self, store):
-        assert store.has_endpoint("notaurl") is False
 
     def test_endpoint_keys_do_not_collide_with_provider_names(self, store):
         from app.services.credentials import endpoint_credential_id

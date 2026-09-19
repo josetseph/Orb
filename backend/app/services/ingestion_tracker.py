@@ -2,7 +2,6 @@
 
 import asyncio
 import threading
-from datetime import datetime
 from typing import Callable
 
 from app.core.log import get_logger
@@ -22,8 +21,8 @@ class IngestionTrackerService:
     """
 
     def __init__(self):
-        self.last_ingestion_times: dict[str, datetime] = {}
-        self._pending_node_ids: dict[str, set[str]] = {}
+        # Nodes touched since the last recompute — a UI counter only; Leiden rebuilds everything.
+        self._pending_counts: dict[str, int] = {}
         self._community_recompute_running: dict[str, bool] = {}
         # Set when a run is interrupted mid-way so the next trigger doesn't skip
         # "No pending nodes" even though communities are only partially built.
@@ -37,24 +36,6 @@ class IngestionTrackerService:
         # Threading event used to signal a running temporal digest build to stop.
         self.cancel_temporal: threading.Event = threading.Event()
 
-    @property
-    def last_ingestion_time(self) -> datetime | None:
-        """Compatibility property for default KB last ingestion time."""
-        return self.last_ingestion_times.get("default")
-
-    @last_ingestion_time.setter
-    def last_ingestion_time(self, val: datetime | None) -> None:
-        if val is not None:
-            self.last_ingestion_times["default"] = val
-        else:
-            self.last_ingestion_times.pop("default", None)
-
-    def mark_ingestion_complete(self, kb_id: str = "default"):
-        """Record the completion time of the latest ingestion."""
-        now = datetime.now()
-        self.last_ingestion_times[kb_id] = now
-        logger.info(f"[IngestionTracker][{kb_id}] Ingestion completed at {now}")
-
     def has_active_ingestions(self, kb_id: str | None = None) -> bool:
         """Thread-safe enough read helper for worker threads."""
         if kb_id is not None:
@@ -64,10 +45,9 @@ class IngestionTrackerService:
     def get_status_snapshot(self, kb_id: str = "default") -> dict:
         """Lightweight status for the global sidebar indicator."""
         active = self._active_ingestion_counts.get(kb_id, 0)
-        pending = len(self._pending_node_ids.get(kb_id, set()))
+        pending = self._pending_counts.get(kb_id, 0)
         running = self._community_recompute_running.get(kb_id, False)
         needed = self._recompute_needed.get(kb_id, False)
-        last_time = self.last_ingestion_times.get(kb_id)
         task = self._debounce_tasks.get(kb_id)
         return {
             "active_ingestions": active,
@@ -75,7 +55,6 @@ class IngestionTrackerService:
             "community_recompute_running": running,
             "community_recompute_needed": needed,
             "community_idle_seconds": COMMUNITY_IDLE_SECONDS,
-            "last_ingestion_at": last_time.isoformat() if last_time else None,
             "community_timer_armed": bool(task and not task.done()),
         }
 
@@ -138,19 +117,17 @@ class IngestionTrackerService:
             )
 
     async def queue_nodes_for_community_recompute(
-        self, node_ids: list[str], kb_id: str = "default"
-    ) -> tuple[list[str], int]:
+        self, node_count: int, kb_id: str = "default"
+    ) -> int:
         """
-        Queue node IDs for the next idle-triggered recompute.
+        Mark a recompute as needed after an ingestion touched ``node_count`` nodes.
         If a recompute is already running, signal it to cancel so ingestion takes priority.
-        Always returns an empty batch (caller uses schedule_recompute instead).
+        Returns the running count of touched nodes (shown in the UI).
         """
-        normalized_ids = {node_id for node_id in node_ids if node_id}
         async with self._lock:
-            pending = self._pending_node_ids.setdefault(kb_id, set())
-            pending.update(normalized_ids)
+            queue_size = self._pending_counts.get(kb_id, 0) + node_count
+            self._pending_counts[kb_id] = queue_size
             self._recompute_needed[kb_id] = True
-            queue_size = len(pending)
             if self._community_recompute_running.get(kb_id, False):
                 logger.info(
                     f"[IngestionTracker][{kb_id}] Ingestion arrived while recompute is running — "
@@ -158,10 +135,10 @@ class IngestionTrackerService:
                 )
                 self.cancel_recompute.set()
         logger.info(
-            f"[IngestionTracker][{kb_id}] Queued {len(normalized_ids)} nodes "
+            f"[IngestionTracker][{kb_id}] Queued {node_count} nodes "
             f"(total pending: {queue_size})"
         )
-        return [], queue_size
+        return queue_size
 
     def schedule_recompute(self, callback: Callable, kb_id: str = "default") -> None:
         """Debounce: cancel any existing timer and start a fresh COMMUNITY_IDLE_SECONDS countdown."""
@@ -201,16 +178,15 @@ class IngestionTrackerService:
                     f"[IngestionTracker][{kb_id}] Recompute already running; skipping debounce trigger."
                 )
                 return
-            pending = self._pending_node_ids.get(kb_id, set())
-            if not pending and not self._recompute_needed.get(kb_id, False):
+            queue_size = self._pending_counts.get(kb_id, 0)
+            if not queue_size and not self._recompute_needed.get(kb_id, False):
                 logger.info(
                     f"[IngestionTracker][{kb_id}] No pending nodes after idle wait; skipping recompute."
                 )
                 return
             self._community_recompute_running[kb_id] = True
             self._recompute_needed[kb_id] = False
-            queue_size = len(pending)
-            pending.clear()
+            self._pending_counts[kb_id] = 0
 
         # Clear any previous cancellation signal before starting the new run.
         self.cancel_recompute.clear()
@@ -253,14 +229,6 @@ class IngestionTrackerService:
         """Mark the background community-recompute pass as finished."""
         async with self._lock:
             self._community_recompute_running[kb_id] = False
-
-    async def force_similarity_detection(self):
-        """Compatibility no-op; similarity detection remains reactive."""
-        logger.info(
-            "[IngestionTracker] force_similarity_detection called — "
-            "similarity detection is now reactive per-node, no batch run needed"
-        )
-
 
 # Global singleton
 ingestion_tracker = IngestionTrackerService()

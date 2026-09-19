@@ -119,8 +119,8 @@ async def test_truncated_chunk_is_split_and_reextracted(monkeypatch):
 @pytest.mark.asyncio
 async def test_batch_image_titles_maps_tokens_and_falls_back():
     class _TitleLLM:
-        async def ingestion_generate(self, prompt, temperature=0.0):
-            return 'Sure! [{"index": 1, "title": "Company Logo"}, {"index": 2, "title": ""}, {"index": 9, "title": "x"}]'
+        async def ingestion_generate_with_meta(self, prompt, temperature=0.0):
+            return 'Sure! [{"index": 1, "title": "Company Logo"}, {"index": 2, "title": ""}, {"index": 9, "title": "x"}]', {}
 
     items = [
         {"token": "{{ORB_IMAGE_TITLE_0}}", "filename": "logo.png", "description": "a logo"},
@@ -130,7 +130,7 @@ async def test_batch_image_titles_maps_tokens_and_falls_back():
     assert titles == {"{{ORB_IMAGE_TITLE_0}}": "Company Logo"}
 
     class _BrokenLLM:
-        async def ingestion_generate(self, prompt, temperature=0.0):
+        async def ingestion_generate_with_meta(self, prompt, temperature=0.0):
             raise RuntimeError("model down")
 
     assert await agent._batch_image_titles(_BrokenLLM(), items) == {}

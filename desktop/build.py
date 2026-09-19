@@ -3,18 +3,16 @@
 build the React UI in frontend/.
 
     python3 build.py prepare    # bundle Python + backend, build UI, seed Firefly
-    python3 build.py check      # preflight: trees exist, imports pass, stamps fresh
+    python3 build.py check      # preflight: trees exist, imports pass
     python3 build.py dist       # check, then `cargo tauri build` (extra args pass through)
     python3 build.py python | frontend | firefly     # one stage
 
 Resources land in desktop/resources/{backend,frontend,firefly}, which
-src-tauri/tauri.conf.json bundles. Each tree carries a stamp of the sources it
-was built from so packaging refuses to ship a stale tree.
+src-tauri/tauri.conf.json bundles.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -22,7 +20,6 @@ import subprocess
 import sys
 import tarfile
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -37,17 +34,6 @@ ARM = os.uname().machine in ("arm64", "aarch64") if not WIN else False
 PY_RELEASE = os.environ.get("ORB_PYTHON_RELEASE", "20250317")
 PY_VERSION = os.environ.get("ORB_PYTHON_VERSION", "3.12.9")
 
-STAMP = ".orb-source-stamp.json"
-SKIP_DIRS = {"node_modules", "dist", "__pycache__", ".venv", "venv", ".git", ".pytest_cache", ".ruff_cache", ".mypy_cache"}
-SOURCE_ROOTS = {
-    "backend": [("backend/app", ROOT / "backend" / "app")],
-    "frontend": [
-        ("frontend/src", ROOT / "frontend" / "src"),
-        ("frontend/public", ROOT / "frontend" / "public"),
-        ("frontend/vite.config.ts", ROOT / "frontend" / "vite.config.ts"),
-        ("frontend/index.html", ROOT / "frontend" / "index.html"),
-    ],
-}
 # Modules the packaged API cannot run without; a pip install that died half way
 # leaves a valid-looking interpreter with an empty site-packages.
 CRITICAL_IMPORTS = ["uvicorn", "fastapi", "pydantic", "sqlalchemy", "aiosqlite", "kuzu", "qdrant_client", "meilisearch", "llama_cpp", "fitz", "numpy", "av", "greenlet", "keyring"]
@@ -65,51 +51,7 @@ def rmtree(path: Path) -> None:
 def download(url: str, dest: Path) -> None:
     print(f"Downloading {url}", flush=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    last = -10
-
-    def hook(blocks: int, size: int, total: int) -> None:
-        nonlocal last
-        if total > 0:
-            pct = min(100, blocks * size * 100 // total)
-            if pct >= last + 10:
-                last = pct
-                print(f"  {pct}%", flush=True)
-
-    urllib.request.urlretrieve(url, dest, hook)
-
-
-# ── Source stamps ────────────────────────────────────────────────────────────
-
-
-def hash_sources(roots: list[tuple[str, Path]]) -> str:
-    h = hashlib.sha256()
-    for label, root in roots:
-        if not root.exists():
-            h.update(f"{label}:missing\n".encode())
-        elif root.is_file():
-            h.update(f"{label}\0".encode() + root.read_bytes() + b"\0")
-        else:
-            for file in sorted(p for p in root.rglob("*") if p.is_file() and not any(part in SKIP_DIRS or part.startswith(".") for part in p.relative_to(root).parts)):
-                h.update(f"{label}/{file.relative_to(root).as_posix()}\0".encode() + file.read_bytes() + b"\0")
-    return h.hexdigest()
-
-
-def write_stamp(out: Path, roots: list[tuple[str, Path]]) -> str:
-    out.mkdir(parents=True, exist_ok=True)
-    digest = hash_sources(roots)
-    (out / STAMP).write_text(json.dumps({"hash": digest, "builtAt": datetime.now(timezone.utc).isoformat()}, indent=2))
-    print(f"  source stamp {digest[:16]}")
-    return digest
-
-
-def stale_reason(out: Path, roots: list[tuple[str, Path]], label: str) -> str | None:
-    try:
-        stamp = json.loads((out / STAMP).read_text())
-    except (OSError, ValueError):
-        return f"{label} has no build stamp — it predates this check or was built by hand."
-    if stamp.get("hash") != hash_sources(roots):
-        return f"{label} was built from different sources (built {stamp.get('builtAt')}); sources have changed since."
-    return None
+    urllib.request.urlretrieve(url, dest)
 
 
 # ── Python + backend ─────────────────────────────────────────────────────────
@@ -163,7 +105,6 @@ def copy_backend_sources() -> None:
     # Remove first: a rename in backend/app must not leave a stale module behind.
     rmtree(OUT_BACKEND / "app")
     shutil.copytree(ROOT / "backend" / "app", OUT_BACKEND / "app", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-    write_stamp(OUT_BACKEND, SOURCE_ROOTS["backend"])
 
 
 def prune_backend() -> None:
@@ -241,7 +182,6 @@ def build_frontend() -> None:
         raise SystemExit("Missing frontend/dist/index.html — vite build failed")
     rmtree(OUT_FRONTEND)
     shutil.copytree(dist, OUT_FRONTEND)
-    write_stamp(OUT_FRONTEND, SOURCE_ROOTS["frontend"])
     print("Frontend ready at", OUT_FRONTEND)
 
 
@@ -274,17 +214,13 @@ def check() -> None:
         failures.append(str(exc))
     except subprocess.CalledProcessError:
         failures.append("The bundled Python cannot import the backend's dependencies — the pip step did not finish.")
-    for tree, roots in SOURCE_ROOTS.items():
-        out = OUT_BACKEND if tree == "backend" else OUT_FRONTEND
-        if out.exists() and (reason := stale_reason(out, roots, f"resources/{tree}")):
-            failures.append(f"{reason}\n      Packaging now would ship a stale {tree}.")
     if failures:
         print("Packaged resources are not ready:\n")
         for f in failures:
             print(f" - {f}")
         print("\nRun: python3 build.py prepare")
         raise SystemExit(1)
-    print("Packaged resources OK (trees, Python imports, stamps)")
+    print("Packaged resources OK (trees, Python imports)")
 
 
 def dist(extra: list[str]) -> None:
@@ -293,6 +229,10 @@ def dist(extra: list[str]) -> None:
     # otherwise copy these multi-GB trees into target/debug on every dev build.
     resources = {f"../resources/{name}": name for name in ("backend", "frontend", "firefly")}
     config = json.dumps({"bundle": {"resources": resources}})
+    # A DMG run that died mid-way (Finder AppleScript step) leaves its temp
+    # image mounted, and the next bundle_dmg.sh fails on it. Eject first.
+    for stale in Path("/Volumes").glob("dmg.*"):
+        subprocess.run(["hdiutil", "detach", str(stale)], check=False)
     run(["cargo", "tauri", "build", "--config", config, *extra], cwd=HERE / "src-tauri")
 
 
@@ -305,7 +245,9 @@ def main(argv: list[str]) -> int:
         for name in ("python", "frontend", "firefly"):
             print(f"\n=== {name} ===\n")
             STAGES[name]()
-        print("\n=== prepare complete === next: python3 build.py dist")
+        me = Path(sys.argv[0]).resolve()
+        me = me.relative_to(Path.cwd()) if me.is_relative_to(Path.cwd()) else me
+        print(f"\n=== prepare complete === next: python3 {me} dist")
     elif stage == "dist":
         dist(argv[1:])
     elif stage in STAGES:

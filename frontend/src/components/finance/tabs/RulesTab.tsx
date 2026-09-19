@@ -4,7 +4,7 @@ import type { FinanceRule, FinanceRuleGroup } from "@/lib/types";
 import { DeletableList } from "../DeletableList";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { DELETE_BTN, EMPTY_ROW, FIELD_INPUT, LIST_ROW } from "../utils";
+import { DELETE_BTN, EMPTY_ROW, LIST_ROW } from "../utils";
 
 type RuleGroupForm = { title: string; description: string };
 type RuleForm = {
@@ -56,7 +56,7 @@ export function RulesTab({
               required
               value={ruleGroupForm.title}
               onChange={(e) => setRuleGroupForm((p) => ({ ...p, title: e.target.value }))}
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
           <Field label="Description">
@@ -65,7 +65,7 @@ export function RulesTab({
               onChange={(e) =>
                 setRuleGroupForm((p) => ({ ...p, description: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
           <button
@@ -88,7 +88,7 @@ export function RulesTab({
               required
               value={ruleForm.title}
               onChange={(e) => setRuleForm((p) => ({ ...p, title: e.target.value }))}
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
           <Field label="Rule group">
@@ -98,7 +98,7 @@ export function RulesTab({
               onChange={(e) =>
                 setRuleForm((p) => ({ ...p, rule_group_id: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
             >
               <option value="">Select group</option>
               {ruleGroups.map((g) => (
@@ -116,7 +116,7 @@ export function RulesTab({
                 onChange={(e) =>
                   setRuleForm((p) => ({ ...p, trigger_value: e.target.value }))
                 }
-                className={FIELD_INPUT}
+                className="input"
                 placeholder="UBER"
               />
             </Field>
@@ -127,7 +127,7 @@ export function RulesTab({
                 onChange={(e) =>
                   setRuleForm((p) => ({ ...p, action_value: e.target.value }))
                 }
-                className={FIELD_INPUT}
+                className="input"
                 placeholder="Transport"
               />
             </Field>

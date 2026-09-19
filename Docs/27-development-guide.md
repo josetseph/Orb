@@ -115,13 +115,13 @@ Release builds are produced by CI on `desktop-v*` tags. See [05](05-packaging-bu
 | Lint backend | `cd backend && .venv/bin/python -m pylint app` |
 | Lint frontend | `cd frontend && npm run lint` |
 | Type-check frontend | `cd frontend && npx tsc --noEmit` |
-| Full Leiden rebuild | `cd backend && .venv/bin/python scripts/run_community_detection.py` or `POST /api/v1/admin/rebuild-communities` |
+| Full Leiden rebuild | `POST /api/v1/admin/rebuild-communities` (or the Rebuild button on the Storage page) |
 | Tail logs | `tail -f "$DATA_DIR/logs/backend.log" "$DATA_DIR/logs/ingestion.log"` |
 | Reset a dev profile | quit Orb, delete `<repo>/data` (or the chosen DATA_DIR) and `paths.json` |
 
-Unit tests need no live services: `tests/unit/conftest.py` stubs Kuzu, Qdrant, Meilisearch and the LLM, but the test modules still import the real service modules, so the venv must have `requirements.txt` installed (`instructor`, `qdrant_client`, `kuzu`, …). There is no CI test job; run tests locally before committing.
+Unit tests need no live services: `tests/unit/conftest.py` stubs Kuzu, Qdrant, Meilisearch and the LLM, but the test modules still import the real service modules, so the venv must have `requirements.txt` installed (`qdrant_client`, `kuzu`, `openai`, …) plus `pytest` and `pytest-asyncio`. There is no CI test job; run tests locally before committing.
 
-State observed on 2026-09-02: the repo's `backend/.venv` contained only a partial install (FastAPI, Pydantic, SQLAlchemy), so collection failed with `ModuleNotFoundError: instructor` / `qdrant_client`. Independently of the venv, `tests/unit/test_relationships.py` imports `app.schemas.relationships`, a module that no longer exists in the tree, so that file will error at collection until it is updated or removed. See [24](24-testing.md).
+State on 2026-09-19: the full suite is green (455 passed, 0 failed) when run against an interpreter that has `requirements.txt` installed — the bundled runtime under `desktop/resources/backend/python` plus `pytest`/`pytest-asyncio` works, as does a fresh `uv venv`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder first, otherwise `graph.py` opens the real Kuzu file, which the running app holds locked.
 
 ---
 
@@ -154,18 +154,17 @@ Because the bootstrap file is shared, a dev session can silently pick up your re
 ### Frontend (TypeScript / React)
 
 - Vite + react-router; pages live in `src/app/<route>/page.tsx` and are registered as lazy routes in `src/App.tsx`. Route-private code lives in `_components/`, `_hooks/`, `_lib/` next to the page.
-- All HTTP goes through `src/lib/api.ts`; add a typed method there and a type in `src/lib/types.ts` rather than calling axios from a component. Pass the current KB from `useKB()`.
-- Wait for `isHydrated` from `useKB()` before the first fetch, or you will fetch the default KB and then refetch.
+- All HTTP goes through `src/lib/api.ts`; add a typed method there and a type in `src/lib/types.ts` rather than calling `fetch` from a component. Pass the current KB from `useKB()`.
 - Long jobs are polled; reuse the existing patterns (`ChatProvider`, `useNoteIngest`) instead of inventing streams.
 - Uploads must go through `api.upload` (multipart, long timeout); every URL is relative to the API origin that serves the UI.
-- Dark theme only; Tailwind v4 utility classes; `lucide-react` icons; `framer-motion` for transitions.
+- Dark theme only; Tailwind v4 utility classes; `lucide-react` icons; CSS transitions.
 - React Compiler is enabled (`react({ compiler: true })` in `vite.config.ts`), so avoid manual `useMemo`/`useCallback` unless profiling demands it, and keep components pure.
 
 ### Desktop (Rust shell + Python runtime)
 
 - The shell (`desktop/src-tauri`) stays minimal: anything the UI needs that can be an HTTP call goes in the backend (`api_desktop.py`), not in `init.js`. New bridge members need a command in `commands.rs`, an entry in `capabilities/remote-ui.json`, the `init.js` wrapper and the `OrbDesktopBridge` type in `frontend/src/lib/desktop.ts`.
 - Ports and sidecar orchestration live in `backend/app/desktop_runtime.py` (`PORTS`, `_spawn`, `wait_http`, `status`). Add new services there with a readiness check and a `_log_path` log file; never block uvicorn start on them.
-- Every env var read by the runtime accepts an `ORB_*` name first and a `LIVEOS_*` legacy alias second via `_env`.
+- Every env var read by the runtime uses the `ORB_*` name via `_env`.
 
 ### Commits
 
@@ -196,7 +195,7 @@ Add a `ModelOption` in `services/model_catalog.py` (id, role, family, HF repo/fi
 
 First ask whether you need one: **`openai_compat` already covers every OpenAI-shaped API** (OpenRouter, Groq, Together, vLLM, LM Studio, llama-server, Ollama) — the user supplies a URL, a key and a model name, with no code change. A new provider is only warranted for a genuinely different wire protocol (as with Gemini and Anthropic).
 
-If it is: `services/llm.py` (client construction in `init_clients` **and** `_init_ingestion_clients`, model resolution), `services/credentials.py::CLOUD_PROVIDERS` (+ `_ENV_SETTING` for the contributor seed), `desktop/credentials.js::KNOWN_PROVIDERS`, `core/config.py` (model field), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
+If it is: `services/llm.py` (client construction in `_build_clients`, a `_chat` branch if the SDK is not OpenAI-shaped, model resolution), `services/credentials.py::CLOUD_PROVIDERS` (+ `_ENV_SETTING` for the contributor seed), `desktop/credentials.js::KNOWN_PROVIDERS`, `core/config.py` (model field), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
 
 ### Change the graph schema
 
@@ -233,7 +232,7 @@ Short form of [26](26-decisions-and-constraints.md):
 - Do not store note bodies in SQLite or attachments outside the vault.
 - Do not drop or recreate Qdrant collections implicitly on a dimension mismatch.
 - Do not query another KB's data from a KB-scoped route; do not let finance lists cross administrations.
-- Do not write `LIVEOS_*` / `TYPESENSE_*` names in new code.
+- Do not write `TYPESENSE_*` names in new code; the `LIVEOS_*` aliases no longer exist.
 - Do not add Docker, Postgres or a second UI server back; the API serves the UI and SQLite is the only database.
 - Do not treat `/vault-files/...` paths as temporary files.
 - Do not change `n_ctx` / `swa_full` defaults for Gemma 4 without re-testing the ordinal-loop and Metal OOM cases.

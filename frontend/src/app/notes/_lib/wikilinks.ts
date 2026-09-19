@@ -227,12 +227,3 @@ export class WikilinkResolver {
     return pickClosest(this.byName.get(base) || [], sourceDir);
   }
 }
-
-/** One-shot convenience for call sites that don't hold a resolver yet. */
-export function resolveNoteByWikilink(
-  notes: Note[],
-  target: string,
-  sourceNote?: Note | null,
-): Note | undefined {
-  return new WikilinkResolver(notes).resolve(target, sourceNote);
-}

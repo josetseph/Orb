@@ -3,7 +3,7 @@ import { Plus } from "lucide-react";
 import type { FinanceBudget, FinanceWorkspace } from "@/lib/types";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { EMPTY_ROW, FIELD_INPUT, LIST_ROW, money } from "../utils";
+import { EMPTY_ROW, LIST_ROW, money } from "../utils";
 
 export function BudgetsTab({
   budgets,
@@ -34,7 +34,7 @@ export function BudgetsTab({
             required
             value={budgetForm.name}
             onChange={(e) => setBudgetForm((p) => ({ ...p, name: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="Groceries"
           />
         </Field>
@@ -45,7 +45,7 @@ export function BudgetsTab({
             step="0.01"
             value={budgetForm.amount}
             onChange={(e) => setBudgetForm((p) => ({ ...p, amount: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="500"
           />
         </Field>

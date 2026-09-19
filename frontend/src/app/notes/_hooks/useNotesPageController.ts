@@ -9,7 +9,7 @@ import {
 } from "react";
 import { api } from "@/lib/api";
 import { useKB } from "@/lib/kb-context";
-import type { MarkdownNoteEditorHandle } from "@/components/markdown-editor";
+import type { MarkdownNoteEditorHandle } from "@/components/markdown-editor/MarkdownNoteEditor";
 import type { Note } from "@/lib/types";
 import { lastNoteStorageKey } from "../_lib/storage-keys";
 import type { VaultListing } from "./useNotesList";
@@ -28,7 +28,7 @@ import { useAttachmentJobs } from "./useAttachmentJobs";
 
 /** Composes all notes-page hooks. Keeps `page.tsx` as a thin view. */
 export function useNotesPageController() {
-  const { currentKB, currentKBName, isHydrated } = useKB();
+  const { currentKB, currentKBName } = useKB();
   const currentKBRef = useRef(currentKB);
   const editorRef = useRef<MarkdownNoteEditorHandle>(null);
   const [showConnectedPanel, setShowConnectedPanel] = useState(false);
@@ -77,7 +77,6 @@ export function useNotesPageController() {
 
   const list = useNotesList({
     currentKB,
-    isHydrated,
     syncSelectedNoteFromList: syncSelectedNoteFromListStable,
     setIngestingNoteIds: setIngestingNoteIdsStable,
     onVaultListing: onVaultListingStable,
@@ -134,7 +133,6 @@ export function useNotesPageController() {
   });
 
   useNoteRestoreEffects({
-    isHydrated,
     currentKB,
     searchQuery: list.searchQuery,
     processedFilter: list.processedFilter,

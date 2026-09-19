@@ -14,9 +14,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_opener::OpenerExt;
-use url::Url;
 
 const INIT_JS: &str = include_str!("init.js");
 const MAX_RESTARTS_PER_MINUTE: usize = 3;
@@ -45,17 +44,10 @@ pub fn app_url() -> String {
 /// `~/Library/Application Support/Orb`, `%APPDATA%\Orb`, `~/.config/Orb` — the
 /// folder the Electron shell and the Python runtime already agree on.
 pub fn app_support_root(app: &AppHandle) -> PathBuf {
-    let base = app
-        .path()
+    app.path()
         .config_dir()
-        .unwrap_or_else(|_| PathBuf::from("."));
-    for name in ["Orb", "LifeOS", "LiveOS"] {
-        let candidate = base.join(name);
-        if candidate.join("paths.json").exists() {
-            return candidate;
-        }
-    }
-    base.join("Orb")
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("Orb")
 }
 
 pub fn paths_file(app: &AppHandle) -> PathBuf {
@@ -187,12 +179,6 @@ fn spawn(app: &AppHandle) -> std::io::Result<()> {
     }
     if let Some(resources) = &lay.resources {
         cmd.env("ORB_RESOURCES_ROOT", resources);
-    }
-    if let Some(mode) = read_paths(app)
-        .get("ai_setup_mode")
-        .and_then(|v| v.as_str())
-    {
-        cmd.env("AI_SETUP_MODE", mode);
     }
     #[cfg(unix)]
     {

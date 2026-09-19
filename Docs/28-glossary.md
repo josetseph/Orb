@@ -15,16 +15,15 @@
 | **Desktop runtime** | `backend/app/desktop_runtime.py` — the one child the shell spawns; sweeps ports, runs uvicorn, downloads and boots Qdrant, Meilisearch and Firefly. | [04](04-desktop-shell.md) |
 | **Setup page** | First-run page (`desktop/shell/index.html`) that collects data dir, models dir, optional default vault and AI mode, and writes `paths.json`. | [04](04-desktop-shell.md) |
 | **boot-status.json** | `DATA_DIR/boot-status.json`, the runtime's sidecar boot progress, surfaced by `/admin/maintenance-status` and the UI status indicator (there is no splash screen). | [04](04-desktop-shell.md) |
-| **paths.json** | Bootstrap file in the OS app-support dir: `data_dir`, `models_dir`, `default_vault_path?`, `ai_setup_mode?`. | [21](21-configuration-reference.md) |
+| **paths.json** | Bootstrap file in the OS app-support dir: `data_dir`, `models_dir`, `default_vault_path?`. | [21](21-configuration-reference.md) |
 | **DATA_DIR** | Root for all mutable app data (SQLite, Kuzu, Qdrant, Meili, vaults, logs, binaries, Firefly). | [22](22-data-directory-layout.md) |
 | **MODELS_DIR** | Root for GGUF files, HF snapshots and the models manifest. | [22](22-data-directory-layout.md) |
-| **App Support root** | `~/Library/Application Support/Orb` (macOS), `%APPDATA%\Orb` (Windows), `~/.config/Orb` (Linux); LifeOS/LiveOS dirs are read as fallbacks. | [04](04-desktop-shell.md) |
+| **App Support root** | `~/Library/Application Support/Orb` (macOS), `%APPDATA%\Orb` (Windows), `~/.config/Orb` (Linux). | [04](04-desktop-shell.md) |
 | **Port block** | 17401 API (serves the UI) · 17412 Firefly · 17433 Qdrant · 17470 Meilisearch; 3700 is the Vite dev server only. | [04](04-desktop-shell.md) |
 | **Packaged layout** | Tauri resource dir (`backend/`, `frontend/`, `firefly/`) produced by `desktop/build.py prepare`. | [05](05-packaging-build-and-release.md) |
-| **build.py** | `python3 desktop/build.py prepare` (bundle Python, Vite build, Firefly seed, source stamps) and `dist` (preflight + `cargo tauri build`). | [05](05-packaging-build-and-release.md) |
+| **build.py** | `python3 desktop/build.py prepare` (bundle Python, Vite build, Firefly seed) and `dist` (preflight + `cargo tauri build`). | [05](05-packaging-build-and-release.md) |
 | **orbDesktop bridge** | `window.orbDesktop`, injected by `src-tauri/src/init.js`: `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`. | [18](18-frontend-architecture.md) |
-| **AI setup mode** | `AI_SETUP_MODE` ∈ `none | local | cloud`. Historical: the backend derives readiness from actual configuration and no longer gates on this key; `ai_gate.derived_setup_mode()` reports it for display. | [13](13-llm-providers-and-prompting.md) |
-| **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`. | [21](21-configuration-reference.md) |
+| **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `ingestion_model`, `base_url`. | [21](21-configuration-reference.md) |
 
 ## Knowledge bases, vaults, notes
 
@@ -53,13 +52,12 @@
 | Term | Meaning | Where |
 |---|---|---|
 | **Ingestion** | The pipeline that turns a note into graph nodes, edges, vectors and keyword documents. | [10](10-ingestion-pipeline.md) |
-| **Ingestion agent** | LangGraph state machine (`multimodal → extraction → storage → summarization`) in `workflows/agents/ingestion_agent.py`. | [10](10-ingestion-pipeline.md) |
+| **Ingestion agent** | Sequential `run_ingestion_agent` (`multimodal → extraction → storage → summarization`, stops on errors) in `workflows/agents/ingestion_agent.py`. | [10](10-ingestion-pipeline.md) |
 | **IngestionWorkflow** | Per-KB class holding the storage logic (dedup, merge, write to Kuzu/Qdrant/Meili, post-triggers). | [10](10-ingestion-pipeline.md) |
 | **Extraction** | Pydantic root schema of LLM output: `nodes`, `relationships`, `sentiment`, `title`. Tolerant of messy LLM shapes. | [06](06-backend-core-and-configuration.md) |
 | **Node (schema)** | Extracted entity: `name`, free-form `type`, `type_reasoning`, `isolated_context`. | [06](06-backend-core-and-configuration.md) |
 | **Isolated context** | The note-local snippet that justifies an entity; embedded into the `node_isolated_contexts` collection. | [15](15-search-indexes-qdrant-meilisearch.md) |
 | **Core** | An entity's consolidated description/summary across notes; embedded into `node_cores`. | [15](15-search-indexes-qdrant-meilisearch.md) |
-| **edge_weight** | `strength × 0.5 + confidence × 0.3 + relevance × 0.2` on a 1–10 scale. | [14](14-graph-storage-kuzu.md) |
 | **Joint Approach** | The ingestion design (Apr 2026) that extracts nodes and relationships in one LLM pass and merges with existing entities; adopted for the final implementation. | [25](25-development-history.md) |
 | **Entity resolution** | Matching a newly extracted entity to an existing node by exact normalised name (Qdrant `node_cores` payload `name` is the lookup source, Kuzu the fallback). There is no embedding-similarity matching today; `SEMANTIC_REL.is_similarity` is a never-set leftover of the removed bi-temporal design. | [10](10-ingestion-pipeline.md) |
 | **Enrichment block** | Markdown appended to a note by multimedia processing (transcripts, captions, PDF text); stripped and regenerated on re-ingest. | [11](11-multimedia-enrichment.md) |
@@ -67,7 +65,7 @@
 | **Whisper** | OpenAI whisper-large-v3-turbo: audio/video transcription. | [11](11-multimedia-enrichment.md) |
 | **Marlin** | Marlin-2B (Qwen3.5 backbone) video-understanding model. | [11](11-multimedia-enrichment.md) |
 | **ingestion_tracker** | Process-global tracker of in-flight ingestions; triggers a community recompute after `COMMUNITY_IDLE_SECONDS` (120 s, a constant) of idleness, and lets a new ingestion pre-empt a running recompute. | [10](10-ingestion-pipeline.md) |
-| **Community** | Cluster of entities stored as `Node(kind='community')` with `MEMBER_OF`/`CONTAINS` edges and levels. Called "Leiden" in code, logs and UI, but implemented with scikit-learn agglomerative clustering over embeddings; off by default (`COMMUNITY_DETECTION_ENABLED=False` in code). | [14](14-graph-storage-kuzu.md) |
+| **Community** | Cluster of entities stored as `Node(kind='community')` with `MEMBER_OF`/`CONTAINS` edges and levels. Called "Leiden" in code, logs and UI, but implemented with a greedy cosine-threshold merge over embeddings; off by default (`COMMUNITY_DETECTION_ENABLED=False` in code). | [14](14-graph-storage-kuzu.md) |
 | **Temporal digest** | Periodic (month/week/year) summary node (`Node(kind='temporal_digest')`, `period_key` in Qdrant payload) built from a period's contexts; feature-flagged by `TEMPORAL_DIGESTS_ENABLED` (off by default) and used by month-scoped retrieval. | [14](14-graph-storage-kuzu.md) |
 
 ## Graph and indexes
@@ -78,7 +76,7 @@
 | **Node.kind** | `note | indexable | community | temporal_digest` — replaces Neo4j labels after the Kuzu migration (the module docstring lists only the first three). | [14](14-graph-storage-kuzu.md) |
 | **Indexable** | A graph node that represents an extracted entity (as opposed to a note or community). | [14](14-graph-storage-kuzu.md) |
 | **REFERENCES** | Rel table: note → entity, carries `note_id`. | [14](14-graph-storage-kuzu.md) |
-| **SEMANTIC_REL** | Rel table for LLM-extracted relationships (`rel_type`, scores, `edge_weight`, temporal fields, `mention_count`, `is_similarity`). | [14](14-graph-storage-kuzu.md) |
+| **SEMANTIC_REL** | Rel table for LLM-extracted relationships (`rel_type`, temporal fields, `mention_count`; legacy score columns are schema-only). | [14](14-graph-storage-kuzu.md) |
 | **Bi-temporal (historical)** | Feb 2026 design (`033589d`) where relationships carried `valid_from/valid_to/is_active` and "evolved" over time. Removed in `da75dfc` (2026-05-28) in favour of temporal digests; `SEMANTIC_REL.created_at` and `is_similarity` remain as never-set leftover columns. | [14](14-graph-storage-kuzu.md), [25](25-development-history.md) |
 | **Symbolic ranking (historical)** | Graph-structure-based reranking introduced in `033589d` to replace a neural reranker; itself replaced by the current GGUF cross-encoder reranker. Not present in today's code. | [25](25-development-history.md) |
 | **Solar layout / spring layout** | Deterministic 3D layouts (`compute_solar_positions`, `compute_spring_layout_3d`) stored as `pos_x/y/z` so the UI does no physics. | [14](14-graph-storage-kuzu.md) |
@@ -93,7 +91,6 @@
 |---|---|---|
 | **Hybrid search** | One retrieval iteration combining entity lookup, keyword, vector and graph expansion channels. | [16](16-retrieval-and-chat.md) |
 | **Research loop / iterative loop** | `retrieve_with_iterative_loop`: up to `MAX_LOOP_ITERATIONS` (3) hybrid searches driven by generated follow-up questions. | [16](16-retrieval-and-chat.md) |
-| **Potential questions** | LLM-generated sub-questions (≤ `MAX_POTENTIAL_QUESTIONS`) that steer later iterations. | [16](16-retrieval-and-chat.md) |
 | **Reranker** | Cross-encoder GGUF (Qwen3-Reranker) scoring query/passage pairs by yes/no logits; keeps `RERANKER_TOP_K`. | [12](12-local-models-and-inference.md) |
 | **Thinking** | Model reasoning text separated from the answer and stored on `chat_messages.thinking`. | [16](16-retrieval-and-chat.md) |
 | **request_id** | Client- or server-generated id for an async chat job, polled at `/chat/status/{request_id}`. | [16](16-retrieval-and-chat.md) |
@@ -137,7 +134,7 @@
 
 | Identifier | Status |
 |---|---|
-| `LIVEOS_*` env vars, `LifeOS`/`LiveOS` app-support dirs | Accepted as fallbacks; never write them |
+| `LIVEOS_*` env vars, `LifeOS`/`LiveOS` app-support dirs | Removed 2026-09-19; only `ORB_*` / `Orb` exist |
 | `typesense_collection` column | Column name kept for existing DBs; holds the Meilisearch index name (`meili_index` synonym). The `TYPESENSE_*` env aliases are gone. |
 | `notes.content` column | Deprecated fallback; body lives in vault |
 | `/files/*` rewrite to RustFS, `STORAGE_BACKEND` | Container-era S3 storage; desktop uses vault files |

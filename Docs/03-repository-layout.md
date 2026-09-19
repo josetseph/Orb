@@ -103,9 +103,8 @@ backend/
 │   ├── workflows/
 │   │   ├── ingestion.py        IngestionWorkflow — extraction, graph persistence, embedding, indexing
 │   │   ├── chat.py             ChatWorkflow — research loop + attribution
-│   │   └── agents/ingestion_agent.py   LangGraph state machine driving IngestionWorkflow
+│   │   └── agents/ingestion_agent.py   sequential ingestion agent driving IngestionWorkflow
 │   └── utils/graph_layout.py   deterministic 3D layouts (solar + Fruchterman–Reingold)
-├── scripts/run_community_detection.py   CLI: full Leiden rebuild
 ├── tests/
 │   ├── unit/                   pytest contract tests (conftest stubs Kuzu / Qdrant / Meili / LLM)
 ├── requirements.txt            base deps (FastAPI, SQLAlchemy, kuzu, qdrant, meilisearch, llama-cpp-python, …)
@@ -150,12 +149,12 @@ frontend/
     ├── components/
     │   ├── sidebar.tsx, command-palette.tsx, settings-shell.tsx, ai-limited-banner.tsx, system-status-indicator.tsx
     │   ├── connected-notes-panel.tsx, entity-detail-panel.tsx, segmented-note-content.tsx
-    │   ├── blob-media-player.tsx, shader-background.tsx, suppress-three-warnings.tsx
+    │   ├── blob-media-player.tsx, shader-background.tsx
     │   ├── markdown-editor/   MarkdownNoteEditor + CodeMirror extensions (wikilink, entity, media embed, …)
     │   ├── graph3d/           Graph3DCanvas, HUD, NodeDetailModal, GraphSearchOverlay, hooks, nodeColors
     │   └── finance/           tabs/, hooks/ (useFinanceWorkspace, useFinanceMutations), lists, panels
     └── lib/
-        ├── api.ts             axios client — every backend call
+        ├── api.ts             fetch client — every backend call
         ├── types.ts           shared TS types (Note, ChatStatus, KnowledgeBase, Finance*, SetupStatus, …)
         ├── kb-context.tsx     current KB (localStorage `orb_current_kb`)
         ├── chat-context.tsx   chat state + polling across routes
@@ -171,7 +170,7 @@ frontend/
 
 ```
 desktop/
-├── build.py              packaging pipeline: bundle Python + backend, build UI, seed Firefly, source stamps, preflight, cargo tauri build
+├── build.py              packaging pipeline: bundle Python + backend, build UI, seed Firefly, preflight, cargo tauri build
 ├── shell/index.html      first-run setup page (data dir, models dir, vault, AI mode → paths.json)
 ├── src-tauri/
 │   ├── tauri.conf.json   identifier com.orb.app, version, no static windows, withGlobalTauri
@@ -185,7 +184,7 @@ desktop/
 │       └── init.js       injected into every page: window.orbDesktop bridge + single-window guard
 ├── build/entitlements.mac.plist, build/icon.png
 ├── assets/logo.png
-├── README.md, PACKAGING.md, TAURI-PLAN.md
+├── README.md, PACKAGING.md
 └── resources/            GIT-IGNORED build.py output (backend/, frontend/, firefly/)
 ```
 

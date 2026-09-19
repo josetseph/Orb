@@ -211,8 +211,6 @@ export function useNoteSelection({ currentKB, setNotes }: UseNoteSelectionArgs) 
   };
 }
 
-export type NoteSelectionApi = ReturnType<typeof useNoteSelection>;
-
 type UseNoteSelectHandlerArgs = {
   currentKB: string;
   selectedNote: Note | null;

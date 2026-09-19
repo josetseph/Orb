@@ -107,32 +107,6 @@ class ChatStore:
             await session.commit()
             return result.rowcount > 0
 
-    async def hard_delete_conversation(
-        self, conversation_id: str, kb_id: str | None = None
-    ) -> bool:
-        async with AsyncSessionLocal() as session:
-            if kb_id is not None:
-                owned = await session.execute(
-                    select(ChatConversation.id).where(
-                        ChatConversation.id == conversation_id,
-                        ChatConversation.kb_id == kb_id,
-                    )
-                )
-                if owned.scalar_one_or_none() is None:
-                    return False
-            await session.execute(
-                delete(ChatMessage).where(
-                    ChatMessage.conversation_id == conversation_id
-                )
-            )
-            result = await session.execute(
-                delete(ChatConversation).where(
-                    ChatConversation.id == conversation_id
-                )
-            )
-            await session.commit()
-            return result.rowcount > 0
-
     async def list_messages(
         self, conversation_id: str, kb_id: str | None = None
     ) -> list[dict]:

@@ -6,7 +6,6 @@ import { BasicSummaryList } from "../BasicSummaryList";
 import { ChartList } from "../ChartList";
 import { Field } from "../Field";
 import { Panel } from "../Panel";
-import { FIELD_INPUT } from "../utils";
 
 export function ReportsTab({
   report,
@@ -38,7 +37,7 @@ export function ReportsTab({
             type="date"
             value={reportStart}
             onChange={(e) => setReportStart(e.target.value)}
-            className={FIELD_INPUT}
+            className="input"
           />
         </Field>
         <Field label="End">
@@ -46,7 +45,7 @@ export function ReportsTab({
             type="date"
             value={reportEnd}
             onChange={(e) => setReportEnd(e.target.value)}
-            className={FIELD_INPUT}
+            className="input"
           />
         </Field>
         <button

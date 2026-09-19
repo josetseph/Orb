@@ -1,6 +1,6 @@
 # Ingestion Pipeline
 
-**What this covers.** The end-to-end path a note takes from "saved in a vault" to "queryable knowledge": how ingestion is triggered and queued, the LangGraph agent that orchestrates it (`multimodal → extraction → storage → summarization`), the LLM extraction prompt and JSON normalisation, entity resolution against the existing graph, relationship scoring, and exactly what gets written to Kuzu, Qdrant, Meilisearch and SQLite at each step. It also covers re-ingest cleanup, the `ingestion_tracker` idle timer that drives community (Leiden-style) recomputation and temporal digests, every config key the pipeline reads, and the failure semantics of each stage. Multimedia attachment handling (Florence/Whisper/Marlin) is only summarised here; see the sibling doc for the details.
+**What this covers.** The end-to-end path a note takes from "saved in a vault" to "queryable knowledge": how ingestion is triggered and queued, the ingestion agent that runs it (`multimodal → extraction → storage → summarization`), the LLM extraction prompt and JSON normalisation, entity resolution against the existing graph, and exactly what gets written to Kuzu, Qdrant, Meilisearch and SQLite at each step. It also covers re-ingest cleanup, the `ingestion_tracker` idle timer that drives community (Leiden-style) recomputation and temporal digests, every config key the pipeline reads, and the failure semantics of each stage. Multimedia attachment handling (Florence/Whisper/Marlin) is only summarised here; see the sibling doc for the details.
 
 **Related docs:** [Multimedia enrichment](11-multimedia-enrichment.md) · [Notes, wikilinks & vault files](09-notes-wikilinks-and-vault-files.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Local models & inference](12-local-models-and-inference.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [API reference](07-api-reference.md) · [Configuration reference](21-configuration-reference.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -11,7 +11,7 @@
 **Owns**
 
 - The `IngestionWorkflow` class (`backend/app/workflows/ingestion.py`) — one instance per Knowledge Base, created lazily by `KBContext.get_ingestion_workflow()` in `backend/app/services/kb_registry.py` with that KB's `GraphService`, `QdrantService` and `MeilisearchService`.
-- The LangGraph agent (`backend/app/workflows/agents/ingestion_agent.py`): state schema, four nodes, routing, the extraction prompt, chunked extraction of long notes (`backend/app/workflows/extraction_chunking.py`), JSON clean-up, batched image titling and garbage-name recovery.
+- The ingestion agent (`backend/app/workflows/agents/ingestion_agent.py`): state dict, four sequential steps, the extraction prompt, chunked extraction of long notes (`backend/app/workflows/extraction_chunking.py`), JSON clean-up, batched image titling and garbage-name recovery.
 - Entity/relationship persistence (`_write_ontology`), context accumulation and indexing (`_update_neighborhoods` / `_update_node_summary`), note status bookkeeping in SQLite, and the enriched-body write-back to the vault `.md`.
 - Post-ingestion maintenance: community recomputation (`rebuild_leiden_communities`), temporal digests (`build_temporal_digests`), `get_maintenance_status()`, and the process-wide `IngestionTrackerService` (`backend/app/services/ingestion_tracker.py`) that debounces them.
 - The `Extraction` / `Node` / `ExtractedRelationship` / `NoteInput` pydantic schemas (`backend/app/schemas/extraction.py`).
@@ -28,17 +28,17 @@
 
 | Path | Purpose | Key exports |
 |---|---|---|
-| `backend/app/workflows/ingestion.py` | Orchestrator: `process_note`, SQLite status writes, `_write_ontology`, `_update_neighborhoods`, `_update_node_summary`, community + digest builders, maintenance status | `IngestionWorkflow`, `ingestion_workflow` (default-KB singleton), `clean_rel_type`, `EntityLockManager` |
-| `backend/app/workflows/agents/ingestion_agent.py` | LangGraph `StateGraph`: `multimodal_node`, `extraction_node`, `storage_node`, `summarization_node`; extraction prompt; enrichment-block stripping; global multimedia semaphore | `ingestion_agent` (compiled graph), `IngestionState`, `multimedia_concurrency_limit`, `_strip_prior_multimedia_enrichment`, `_ENRICHMENT_BLOCK_RE`, `should_route_after_extraction` |
+| `backend/app/workflows/ingestion.py` | Orchestrator: `process_note`, SQLite status writes, `_write_ontology`, `_update_neighborhoods`, `_update_node_summary`, community + digest builders, maintenance status | `IngestionWorkflow`, `ingestion_workflow` (default-KB singleton), `clean_rel_type` |
+| `backend/app/workflows/agents/ingestion_agent.py` | `run_ingestion_agent(state)`: `multimodal_node` → `extraction_node` → `storage_node` → `summarization_node`, stopping at the first step that reports `errors`; extraction prompt; enrichment-block stripping; global multimedia semaphore | `run_ingestion_agent`, `IngestionState`, `multimedia_concurrency_limit`, `_strip_prior_multimedia_enrichment`, `_ENRICHMENT_BLOCK_RE` |
 | `backend/app/workflows/extraction_chunking.py` | Pure, I/O-free helpers for long-note extraction: token budget per chunk, paragraph-bounded splitting, merging of per-chunk `Extraction`s | `chunk_token_budget`, `split_for_extraction`, `merge_extractions`, `MIN_SPLIT_TOKENS` (=400) |
 | `backend/app/services/ingestion_tracker.py` | Process-global counter of active ingestions; idle-timer debounce for community recompute; cooperative cancellation events | `IngestionTrackerService`, `ingestion_tracker`, `COMMUNITY_IDLE_SECONDS` (=120) |
-| `backend/app/schemas/extraction.py` | Pydantic models + tolerant validators for LLM JSON; `NoteInput` wire model | `Extraction`, `Node`, `ExtractedRelationship`, `NoteInput`, `_normalize_score`, `_SCORE_LABELS` |
+| `backend/app/schemas/extraction.py` | Pydantic models + tolerant validators for LLM JSON; `NoteInput` wire model | `Extraction`, `Node`, `ExtractedRelationship`, `NoteInput` |
 | `backend/app/services/multimedia.py` | Attachment → text (PDF/image/audio/video/docx/xlsx/csv); vault path resolution; temp-file rules | `multimedia_service` (see [11](11-multimedia-enrichment.md)) |
 | `backend/app/services/graph.py` | Kuzu writes used by ingestion: `execute_query`, `create_or_update_relationship`, `find_nodes_by_exact_names`, `find_nodes_by_name`, community/digest node builders | `GraphService`, `graph_service`, `_SCHEMA_STMTS` |
 | `backend/app/services/qdrant_service.py` | Three per-KB collections; batch upserts; name→id resolution; context append; scroll helpers | `QdrantService`, `qdrant_service` |
 | `backend/app/services/meilisearch_service.py` | One per-KB index (`primaryKey: node_id`); `index_node`, `get_node`, `update_nodes_community`, `delete_node` | `MeilisearchService`, `meilisearch_service` |
 | `backend/app/services/embedding.py` | `embed_documents` (no instruction prefix) / `embed_query` (Qwen3 instruction prefix) over the in-process GGUF | `embedding_service` |
-| `backend/app/services/llm.py` | `ingestion_generate`, `_clean_json`, `generate_title`, `reason`, `generate_text`, `get_ingestion_model`, `_init_ingestion_clients` | `llm_service` |
+| `backend/app/services/llm.py` | `ingestion_generate`, `_clean_json`, `generate_title`, `reason`, `generate_text`, `get_ingestion_model`, `init_clients` | `llm_service` |
 | `backend/app/api/notes.py` | `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest`, `GET /api/v1/notes/{id}/status`, note delete (graph orphan cleanup) | `router`, `_delete_note_impl` |
 | `backend/app/api/admin.py` | `reingest-all`, `reset-ingestion-data`, `rebuild-communities`, `build-temporal-digests`, `maintenance-status` | `router` |
 | `backend/app/api_desktop.py` | `POST /api/v1/notes/reingest-vault` | `router` |
@@ -57,7 +57,7 @@ sequenceDiagram
     participant API as api/notes.py (BackgroundTasks)
     participant WF as IngestionWorkflow.process_note (per KB)
     participant TR as ingestion_tracker (global)
-    participant AG as LangGraph ingestion_agent
+    participant AG as ingestion_agent
     participant MM as multimedia_service / multimodal_runtime
     participant LLM as llm_service.ingestion_generate
     participant EMB as embedding_service
@@ -170,12 +170,11 @@ Not triggers (common misconception): `POST /api/v1/notes` (create) and `PUT /api
 | `IngestionWorkflow._process_semaphore = asyncio.Semaphore(settings.INGESTION_PIPELINE_CONCURRENCY)` | `ingestion.py` `__init__` | **per KB** (one workflow per `KBContext`) | 1 | Max notes of one KB past "Queued" simultaneously. Different KBs do not share it (they still serialise on model locks and `GraphService._lock` of their own graph). |
 | `multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY)` | module-level in `ingestion_agent.py` | **process-global** | 1 | Only one note at a time is inside `multimodal_node`'s body across all KBs, so Florence/Whisper/Marlin are never loaded twice. Note the semaphore is held for the whole multimodal phase even when the note has no attachments (cheap). |
 | `asyncio.Semaphore(4)` in `_update_neighborhoods` | per call | per note | 4 | Up to 4 entity summaries of the same note update concurrently. |
-| `EntityLockManager` (`defaultdict(asyncio.Lock)` keyed `(label, name.lower().strip())`) | per workflow | per KB | — | Two notes touching the same entity name serialise their `_update_node_summary`. Locks are never evicted (dict grows with distinct entity names). |
+| `_entity_locks` (`defaultdict(asyncio.Lock)` keyed `name.lower().strip()`) | per workflow | per KB | — | Two notes touching the same entity name serialise their `_update_node_summary`. Locks are never evicted (dict grows with distinct entity names). |
 | `GraphService._lock` (`threading.RLock`) | per graph | per KB | — | All Kuzu statements serialised. |
 | `IngestionTrackerService._lock` (`asyncio.Lock`) | global singleton | process | — | Guards counters and the debounce task. |
 | `_community_run_state_lock` (`threading.Lock`) + `_community_run_seq/_active_seq/_running` | per workflow | per KB | — | Single-flight for `rebuild_leiden_communities`; newest request wins, older waits/cancels. |
 | `_temporal_digest_timer_lock` + `threading.Timer` | per workflow | per KB | — | Debounce for `build_temporal_digests`. |
-| `settings.INGESTION_AGENT_CONCURRENCY` | `core/config.py` | — | 2 | **Declared but unused** anywhere in `backend/app` (legacy from the HTTP-sidecar era). |
 
 Because the tracker is a **process-global singleton** while workflows are per KB, `begin_ingestion`/`end_ingestion` counts notes from all KBs together; the callback passed to `end_ingestion` is the `rebuild_leiden_communities` bound method of whichever KB's note finished last (see Gotchas).
 
@@ -189,11 +188,11 @@ async def process_note(self, note_input: NoteInput, note_id: str = None) -> dict
 - Order of operations: `tracker.begin_ingestion()` → stage `"Queued for ingestion"` → **acquire semaphore** → stage `"Starting ingestion"` → `ingestion_agent.ainvoke(initial_state)` → if `final_state["errors"]` non-empty raise `RuntimeError("Ingestion Agent Failed: …")` → `_mark_note_processed` → `_queue_leiden_recompute_if_due` → return `{"note_id", "extraction": Extraction.model_dump(), "status": "success", "processed_content": final_state["content"]}`.
 - `except Exception`: stage `"Ingestion failed"`, `_mark_note_failed` (sets `failed=True`, `processed=False`, stage `"Ingestion failed"`), re-raise.
 - `finally`: `await tracker.end_ingestion(self.rebuild_leiden_communities)`. Models are **not** unloaded here any more: the GGUF idle watcher (`ORB_MODEL_IDLE_SECONDS`, default 5 min, see [12](12-local-models-and-inference.md)) evicts them, and loading any other family evicts them anyway. (History: originally unloaded per note; commit `f8f527f` moved that to "when the batch drains"; the current working tree removes it entirely because even a single-note ingest re-read multi-GB GGUFs.)
-- Timing: `process_note` snapshots `model_load_clock` before `ainvoke` and afterwards logs one line `[Timing] ingest note_id=… total=…s model_load=…s inference=…s loads=<per-family load seconds> | extraction=… chunks=N` using `final_state["timings"]` (`_load_snapshot` / `_log_timing`). This is the only place stage timings surface; they are not persisted.
+- Timing: `process_note` snapshots `model_load_clock` before `ainvoke` and afterwards logs one line `[Timing] ingest note_id=… total=…s model_load=…s inference=…s loads=<per-family load seconds> | extraction=… chunks=N` using `final_state["timings"]` (`_log_timing`, which diffs `model_load_clock` snapshots). This is the only place stage timings surface; they are not persisted.
 - LLM access: every LLM call in the pipeline goes through `self._llm` (constructor arg `llm`, defaulting to the global `llm_service`). `KBContext._ensure_lazy()` passes the KB's pinned `LLMService` (per-KB `llm_provider` / `llm_model` / `llm_ingestion_model` overrides, see [08](08-knowledge-bases-and-vaults.md)) so a KB can extract with a different provider/model than the system default. `require_ai(kb)` in the API gates on that KB's provider.
 - `initial_state = {"input", "content": "", "extraction": None, "note_id", "created_at": None, "errors": [], "workflow": self}`. `status` and `logs` are not initialised here; `multimodal_node` uses `state.get("logs", [])` for that reason, later nodes use `state["logs"]` (safe because multimodal always runs first).
 
-## 5. The LangGraph agent
+## 5. The ingestion agent
 
 ### 5.1 State
 
@@ -261,7 +260,7 @@ The tracker is registered **before** waiting for the semaphore so the 120 s comm
    | 5 (if any images) | `"Naming images"` | `_llm.get_ingestion_model() or "LLM"` | `_batch_image_titles(_llm, pending)` — ONE chat call naming every image (`[{"index":1,"title":"…"}]`, titles must be 1 < len ≤ 80); each `{{ORB_IMAGE_TITLE_n}}` token in `content` is replaced by its title, or by the filename when the call failed / returned nothing for it. Batched deliberately: a chat-GGUF call per image inside the Florence phase evicted Florence (exclusive residency) and forced a multi-GB reload per image. |
 
 6. If `media_errors` is non-empty → `raise RuntimeError("Multimedia processing failed for: <file>: <err>; …")`. The note fails; no vault write happens (enrichment that succeeded for other attachments is discarded).
-7. If content changed (blocks appended, or prior blocks stripped and nothing re-appended) and `note_id` is set: stage `"Saving extracted attachment text"`, then `workflow._persist_note_body(note_id, content)` — loads the `Note` row, resolves its KB via `kb_registry.get_kb(note.kb_id)`, and calls `note_files.persist_note_body(note, kb, content)` (writes the vault `.md`, keeps `notes.content` empty). Wrapped in `tenacity.retry(stop_after_attempt(3), wait_exponential(min=2, max=10))`. Raises `RuntimeError` if the note has no vault.
+7. If content changed (blocks appended, or prior blocks stripped and nothing re-appended) and `note_id` is set: stage `"Saving extracted attachment text"`, then `workflow._persist_note_body(note_id, content)` — loads the `Note` row, resolves its KB via `kb_registry.get_kb(note.kb_id)`, and calls `note_files.persist_note_body(note, kb, content)` (writes the vault `.md`, keeps `notes.content` empty). Raises `RuntimeError` if the note has no vault.
 8. Returns `content.strip()` — so the extraction sees the enriched text, and `processed_content` in the return value equals the vault body modulo trailing whitespace.
 
 ### 6.3 `extraction_node`
@@ -274,13 +273,13 @@ The tracker is registered **before** waiting for the semaphore so the 120 s comm
   3. `split_for_extraction(content, budget, count)`: returns `[content]` if it fits; otherwise splits on blank lines (`\n\s*\n`) and greedily packs whole paragraphs (`_pack`, joined with `\n\n`). A paragraph that alone exceeds the budget is recursively broken lines → sentences (`(?<=[.!?])\s+`) → words → fixed-width character slices (`_split_oversized`). Never returns empty chunks; every word survives (unit-tested).
   4. Each chunk goes through `_extract_chunk(llm, chunk, count)`; with >1 chunk a log/`logs` line `[Extraction] Note is ~N tokens — extracting in K chunks of ≤B tokens` is emitted and results are combined with `merge_extractions`.
 - `_extract_chunk` (per chunk, `_MAX_EXTRACTION_ATTEMPTS = 3`, `_MAX_SPLIT_DEPTH = 3`): calls `await llm.ingestion_generate_with_meta(_build_extraction_prompt(text), temperature=0.1)` → `(raw, {"finish_reason", "truncated"})`. If `meta["truncated"]` (local/OpenAI `finish_reason == "length"`, Anthropic `max_tokens`, Gemini `MAX_TOKENS`) and `depth < 3` and the chunk is > 400 tokens, the chunk is split at `max(400, tokens//2)` and each half is extracted recursively (depth+1) and merged — **without** sleeping (tested: truncation is not a retry). If it cannot be split further the partial JSON is repaired and accepted (logged warning). Any exception (LLM error, JSON repair/validation failure) triggers the retry path: wait `30·(attempt+1)` s (30 s, 60 s), then retry; after the third failure `RuntimeError("Extraction failed after 3 attempts: …")`, which `extraction_node` converts into `{"errors": [str(e)]}` → END → note failed.
-- `ingestion_generate_with_meta` / `ingestion_generate` (`services/llm.py`) route to the **ingestion** provider client (`INGESTION_PROVIDER` or the KB/instance override, else the chat provider). For local there is **no fixed `max_tokens` cap any more**: `LocalLlamaRuntime` sizes the output to `n_ctx − prompt_tokens − safety margin` and raises when the prompt alone (nearly) fills the window ("split the input or raise ORB_LLAMA_N_CTX"). Cloud defaults: Anthropic `max_tokens=16384`; OpenAI/HF unlimited unless passed. Grammar-constrained / structured output (`ingestion_extract_structured`) is deliberately not used: small GGUFs tend to emit empty nested arrays under schema enforcement.
+- `ingestion_generate_with_meta` / `ingestion_generate` (`services/llm.py`) route to the **ingestion** provider client (`INGESTION_PROVIDER` or the KB/instance override, else the chat provider). For local there is **no fixed `max_tokens` cap any more**: `LocalLlamaRuntime` sizes the output to `n_ctx − prompt_tokens − safety margin` and raises when the prompt alone (nearly) fills the window ("split the input or raise ORB_LLAMA_N_CTX"). Cloud defaults: Anthropic gets `ANTHROPIC_MAX_OUTPUT_TOKENS`; OpenAI/HF unlimited unless passed. Grammar-constrained / structured output is deliberately not used: small GGUFs tend to emit empty nested arrays under schema enforcement.
 - JSON repair: `llm._clean_json(raw)` unwraps ```` ```json ```` fences, strips control chars `[\x00-\x08\x0b\x0c\x0e-\x1f]`, normalises curly quotes, then `json_repair.repair_json` (raw string if `json_repair` is missing). Then `Extraction.model_validate_json(cleaned)`.
 - Schema normalisation (`schemas/extraction.py`), applied by pydantic `mode="before"` validators:
   - `Extraction.normalize_keys`: `None` → empty; unwraps `{"extraction"|"data"|"result": {...}}`; Gemma-style `[nodes_list, rels_list]`; a bare list of nodes (strings become `{"name": s}`; embedded `"relationships"` inside node dicts are hoisted). `ensure_list` coerces non-lists to `[]` and string node items to `{"name": …}`. `sentiment` defaults `"Neutral"`.
   - `Node.normalize_keys`: `name` ← `trait` or `title` when missing; `isolated_context` ← `evidence_quote` or `context`; every `None` field → `""` (type → `"thing"`).
-  - `ExtractedRelationship.normalize_keys`: `source_name` ← `entity1`, `target_name` ← `entity2`, `natural_language` ← `description`; `None`/blank `relationship_type` → `"relates_to"`; `strength`/`confidence`/`relevance` via `_normalize_score` (labels `very high=9, high=8, medium|moderate=6, low=4, very low=2`; 0–1 floats ×10; clamp 1–10; unparsable → defaults **strength 5.0, confidence 7.0, relevance 5.0**).
-  - **The prompt never asks for `strength`/`confidence`/`relevance`** (its output schema lists `source_name, target_name, relationship_type, natural_language, reasoning`). Unless the model volunteers them, every relationship gets the defaults and `edge_weight = 5×0.5 + 7×0.3 + 5×0.2 = 5.6`.
+  - `ExtractedRelationship.normalize_keys`: `source_name` ← `entity1`, `target_name` ← `entity2`, `natural_language` ← `description`; `None`/blank `relationship_type` → `"relates_to"`.
+  - There are no per-relationship scores: the prompt's output schema is `source_name, target_name, relationship_type, natural_language, reasoning`, and the schema no longer carries score fields.
   - `title` (optional) and `type_reasoning` / `reasoning` are requested; the reasoning strings are only logged (`[Entity] … reasoning=…`, `[Relationship] … reasoning=…`) and never persisted.
 - `merge_extractions(parts)` (chunk merge): nodes de-duplicated by `name.lstrip("#").strip().lower()`; the first occurrence wins, later chunks may upgrade a generic `type == "thing"` and their `isolated_context` strings are appended (exact-duplicate contexts skipped) and finally joined with a single space; relationships de-duplicated on `(norm(source), norm(target), relationship_type.strip().lower())` keeping the highest `confidence`; `title` = first non-empty chunk title; `sentiment` = first non-empty. `None` parts are skipped.
 - Garbage-name handling: nodes whose `name.strip().lower()` ∈ `{"untitled","none","unknown",""}` but with an `isolated_context` are sent in one batch to a rename prompt (`_llm.ingestion_generate(temperature=0.0)`, expects a JSON array `[{"index":1,"name":"…"|null}]`; the first `[...]` in the response is parsed). Accepted names must be `2 < len ≤ 80` and not garbage. Nodes with neither name nor context are dropped silently. Rename failures are logged, never fatal.
@@ -289,7 +288,7 @@ The tracker is registered **before** waiting for the semaphore so the 120 s comm
 
 ### 6.4 `storage_node` → `_write_ontology`
 
-`storage_node` sets stage `"Writing graph and note metadata"` / `None`, computes `created_at = input.created_at or datetime.now().isoformat()`, then runs `workflow._write_ontology(note_id, content, extraction, created_at, custom_title=input.title)` in a worker thread, and finally `_update_note_title(note_id, title)` (SQLite `title` column, tenacity 3 attempts). Any exception → `{"errors": ["Storage failed: …"]}`.
+`storage_node` sets stage `"Writing graph and note metadata"` / `None`, computes `created_at = input.created_at or datetime.now().isoformat()`, then runs `workflow._write_ontology(note_id, content, extraction, created_at, custom_title=input.title)` in a worker thread, and finally `_update_note_title(note_id, title)` (SQLite `title` column). Any exception → `{"errors": ["Storage failed: …"]}`.
 
 `_write_ontology` (synchronous; returns the resolved title):
 
@@ -318,7 +317,7 @@ The tracker is registered **before** waiting for the semaphore so the 120 s comm
    `item.type` falls back to `"unknown"` when empty. `REFERENCES` is idempotent per (note, entity).
 6. Qdrant stub seeding: `upsert_node_cores([{node_id, name, node_type, description_vector: stub_embedding} for NEW nodes with an embedding])` — one batched upsert. **If it returns False the ingest aborts** (`RuntimeError("Failed to seed N Qdrant node_cores stub(s) — aborting ingest to avoid Kuzu/Qdrant ID split-brain…")`). The stub exists so that `_update_node_summary`, running minutes later, resolves the same id via `find_node_id_by_name` instead of minting another; it is overwritten by the merged-context vector in step 6b of §6.5.
 
-There is **no fuzzy/embedding-similarity entity resolution** at ingest time: matching is exact on the normalised lowercase name. `SEMANTIC_REL.is_similarity` exists in the Kuzu schema and `ingestion_tracker.force_similarity_detection()` exists as a no-op, both leftovers of the Neo4j-era "post-ingestion similarity detection" (see History). Nothing in the current backend writes `is_similarity`.
+There is **no fuzzy/embedding-similarity entity resolution** at ingest time: matching is exact on the normalised lowercase name. `SEMANTIC_REL.is_similarity` exists in the Kuzu schema, a leftover of the Neo4j-era "post-ingestion similarity detection" (see History). Nothing in the current backend writes `is_similarity`.
 
 **Step 6 — relationships** (numbered "6" in code; only if `extraction.relationships`):
 
@@ -326,8 +325,8 @@ There is **no fuzzy/embedding-similarity entity resolution** at ingest time: mat
 2. Names not present in `name_to_id` (i.e. entities from earlier notes that this extraction only references in relationships) are batch-resolved once via `qdrant.find_node_ids_by_names`.
 3. Per relationship: skip (counted) when a name is empty, when the source or target id cannot be resolved; blank type → `"relates_to"`; `clean_rel_type(rel_type, source_name, target_name)` removes any underscore-separated token of the predicate that also appears (case-insensitively, tokens > 1 char) in either entity name — `plays_corliss_archer` → `plays`; an all-entity predicate becomes `relates_to`.
 4. `graph.create_or_update_relationship(source_name, "Indexable", target_name, "Indexable", relationship_type, confidence, strength, relevance, natural_language=(nl or "").replace("_"," "), note_id, source_id, target_id)`:
-   - sanitises the type with `re.sub(r"[^A-Za-z0-9_]", "_", …)`; mints `relationship_id = uuid4()`; computes `edge_weight = round(strength*0.5 + confidence*0.3 + relevance*0.2, 4)`; `ingestion_time = datetime.utcnow().isoformat()`.
-   - looks up an existing edge with the same `(source_id, target_id, rel_type)`. **Exists → `action="reinforced"`**: `last_updated = now`, `mention_count = coalesce(mention_count,0)+1`, `confidence = max(old,new)`, and `relationship_id/strength/relevance/edge_weight` are only filled when NULL (first writer wins; `note_id` is not touched, so the edge keeps the id of the first note that stated it). **Missing → `action="created"`**: `MERGE` both endpoint nodes as `kind='indexable'` (defensive), then `CREATE (source)-[r:SEMANTIC_REL]->(target)` with `rel_type, confidence, strength, relevance, edge_weight, relationship_id, ingested_at=now, last_updated=now, mention_count=1, note_id`.
+   - sanitises the type with `re.sub(r"[^A-Za-z0-9_]", "_", …)`; mints `relationship_id = uuid4()`; `ingestion_time = datetime.utcnow().isoformat()`.
+   - looks up an existing edge with the same `(source_id, target_id, rel_type)`. **Exists → `action="reinforced"`**: `last_updated = now`, `mention_count = coalesce(mention_count,0)+1`; `relationship_id` is only filled when NULL (first writer wins; `note_id` is not touched, so the edge keeps the id of the first note that stated it). **Missing → `action="created"`**: `MERGE` both endpoint nodes as `kind='indexable'` (defensive), then `CREATE (source)-[r:SEMANTIC_REL]->(target)` with `rel_type, relationship_id, ingested_at=now, last_updated=now, mention_count=1, note_id`. The `confidence/strength/relevance/edge_weight` columns still exist in the Kuzu schema but new edges leave them NULL.
    - Returns a dict including `action`, `relationship_id`, `natural_language`. (`"evolved"` is checked by the caller but never produced by the current implementation; `"failed"` is returned only when ids are unresolvable, which the caller already prevents.)
    - Semantics: `ingested_at` = first time this (src,tgt,type) triple was seen in this KB; `last_updated` = last time any note restated it; `mention_count` = number of ingest runs that stated it — **re-ingesting the same note increments it again** (there is no per-note dedup).
 5. Every `created` result is queued for Qdrant with `nl_text = result.natural_language or rel_type.replace("_"," ")`, then all NL texts are embedded in one call and written with one `upsert_node_relationships([...])` (point id `uuid5(NAMESPACE_OID, relationship_id)`, payload `{natural_language, source_node_id, target_node_id}`). Reinforced edges are not re-written to Qdrant (their point already exists under the original `relationship_id`).
@@ -346,7 +345,7 @@ Despite the names (kept from an earlier design that generated per-node LLM summa
 - Groups nodes by `name.lstrip("#").strip().lower()`; per name keeps the first node's `type` (lower-cased, default `"thing"`) and a de-duplicated list of contexts (`node.isolated_context or new_content` — an entity with no context gets **the whole note body** as its context).
 - Runs `_update_node_summary("Indexable", name, contexts, node_type, note_created_at)` for each unique name under `asyncio.Semaphore(4)` via `asyncio.gather` (so one failure cancels nothing — `gather` without `return_exceptions` raises the first exception after all tasks finish or are cancelled by the loop; the note is then failed).
 
-`_update_node_summary(label, name, new_contexts, node_type, note_created_at)` — under `EntityLockManager.get_lock(label, name)`:
+`_update_node_summary(name, new_contexts, node_type, note_created_at)` — under `self._entity_locks[name.lower().strip()]`:
 
 | Step | Action | Store call |
 |---|---|---|
@@ -367,8 +366,8 @@ Note the asymmetry: the Qdrant `description` payload and the Meili `isolated_con
 
 | Outcome | Function | SQLite `notes` update |
 |---|---|---|
-| Agent finished with empty `errors` | `_mark_note_processed` (tenacity ×3) | `processed=True, failed=False, processing_stage="Ingestion complete", processing_model=None` |
-| Agent returned `errors`, or raised (multimedia, LangGraph internals), or `_mark_note_processed` / `_queue_leiden_recompute_if_due` raised | `_update_note_processing_status(note_id, "Ingestion failed")` then `_mark_note_failed` (tenacity ×3) | `processed=False, failed=True, processing_stage="Ingestion failed", processing_model=None` |
+| Agent finished with empty `errors` | `_mark_note_processed` | `processed=True, failed=False, processing_stage="Ingestion complete", processing_model=None` |
+| Agent returned `errors`, or raised, or `_mark_note_processed` / `_queue_leiden_recompute_if_due` raised | `_update_note_processing_status(note_id, "Ingestion failed")` then `_mark_note_failed` | `processed=False, failed=True, processing_stage="Ingestion failed", processing_model=None` |
 
 `GET /api/v1/notes/{id}/status` derives `status`: `completed` if `processed`, else `failed` if `failed`, else `processing` — so `"Saved"` notes also report `processing`; clients must read `processing_stage`.
 
@@ -417,14 +416,14 @@ Consequences for anyone reasoning about counts: `mention_count` and the number o
 | `schedule_recompute(callback)` | Debounce: cancel existing task, `loop.create_task(_debounce_recompute(callback))`. Needs a running loop (else warns). |
 | `_debounce_recompute(callback)` (async) | `await asyncio.sleep(120)`; skip if a recompute is running or nothing pending and not `_recompute_needed`; else mark running, clear pending, clear `cancel_recompute`, `await asyncio.to_thread(callback)`; afterwards `mark_community_recompute_complete()`; if the run was cancelled early (`cancel_recompute` set), set `_recompute_needed=True` and reschedule if no ingestion is active. |
 | `cancel_recompute`, `cancel_temporal` | `threading.Event`s polled by the worker-thread jobs. |
-| `has_active_ingestions()`, `mark_ingestion_complete()` (unused), `force_similarity_detection()` (compat no-op) | — |
-| `get_status_snapshot()` | `{active_ingestions, pending_community_nodes, community_recompute_running, community_recompute_needed, community_idle_seconds, last_ingestion_at, community_timer_armed}` |
+| `has_active_ingestions()` | — |
+| `get_status_snapshot()` | `{active_ingestions, pending_community_nodes, community_recompute_running, community_recompute_needed, community_idle_seconds, community_timer_armed}` |
 
-`IngestionWorkflow.get_maintenance_status()` (served by `GET /api/v1/admin/maintenance-status`) wraps that snapshot: `{"community_detection": {running, pending_nodes, needed, timer_armed, idle_seconds}, "temporal_digests": {"running"}, "ingestion": {"active", "last_completed_at"}, "healthy": true}`. `running` ORs the per-KB `_community_run_running` with the tracker flag; `last_completed_at` is always `None` in practice because `mark_ingestion_complete()` is never called.
+`IngestionWorkflow.get_maintenance_status()` (served by `GET /api/v1/admin/maintenance-status`) wraps that snapshot: `{"community_detection": {running, pending_nodes, needed, timer_armed, idle_seconds}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}`. `running` ORs the per-KB `_community_run_running` with the tracker flag. `pending_nodes` is a count kept by the tracker (the node ids themselves are not queued — the rebuild re-reads every indexable node).
 
 ### 8.3 `rebuild_leiden_communities()` (sync, worker thread; also `POST /api/v1/admin/rebuild-communities`)
 
-Historical name — the current implementation is **agglomerative clustering on embeddings** (`sklearn.cluster.AgglomerativeClustering`, cosine metric, average linkage, `n_clusters=None`), not Leiden.
+Historical name — the current implementation is a **greedy cosine-threshold merge on embeddings** (`_embedding_cluster` in `workflows/ingestion.py`: each item joins the first cluster whose centroid is within cosine distance 0.35, else starts a new one; plain numpy, single pass), not Leiden and no longer scikit-learn's agglomerative clustering.
 
 1. Single-flight hand-off: bump `_community_run_seq`; if another run is active set `cancel_recompute` and spin (0.25 s) until it releases; a request superseded by a newer one returns 0. Clear `cancel_recompute` for the claimed run, but re-set it immediately if ingestion is active.
 2. Input: `graph.get_indexable_nodes_for_communities()` (all `kind='indexable'` nodes) enriched with `isolated_contexts` from `qdrant.get_nodes_content_by_ids` (one retrieve + one bulk scroll).
@@ -482,7 +481,7 @@ Relationship tables:
 | Table | From → To | Properties | Written by |
 |---|---|---|---|
 | `REFERENCES` | note → indexable | `note_id` | `_write_ontology` (MERGE) |
-| `SEMANTIC_REL` | indexable → indexable | `rel_type, confidence, strength, relevance, edge_weight, relationship_id, ingested_at, last_updated, mention_count, note_id, is_similarity (never set), created_at (never set)` | `create_or_update_relationship` |
+| `SEMANTIC_REL` | indexable → indexable | `rel_type, relationship_id, ingested_at, last_updated, mention_count, note_id`; schema-only, never set by current writes: `confidence, strength, relevance, edge_weight, is_similarity, created_at` | `create_or_update_relationship` |
 | `CONTAINS` | community → indexable | — | `create_leiden_community` |
 | `MEMBER_OF` | indexable → community | `level` | `set_node_community_membership` |
 
@@ -494,7 +493,7 @@ Relationship tables:
 | relationships | `uuid5(NAMESPACE_OID, relationship_id)` | `natural_language` text | `natural_language, source_node_id, target_node_id, is_community_rel? (true only for membership sentences)` | `upsert_node_relationships` |
 | isolated_contexts | `uuid4` (append-only) | one context sentence/paragraph | `parent_node_id, content, note_created_at?` | `append_node_item` |
 
-Embedding instruction: documents are embedded **without** any prefix (`embed_documents`); queries get `"Instruct: Given a question, retrieve relevant context.\nQuery: "` only when the embed model name contains `qwen3` (`embed_query`). `USE_DYNAMIC_EMBEDDING_INSTRUCTION` (default True) is declared in `core/config.py` but **not referenced anywhere in `backend/app`** — a leftover; ingestion never embeds with an instruction. `QdrantService._prepare_vector` raises `ValueError` if a vector's length ≠ `EMBEDDING_DIMENSIONS` (collections are never resized mid-ingest; that belongs to `sync_embedding_infrastructure` at startup / model change).
+Embedding instruction: documents are embedded **without** any prefix (`embed_documents`); queries get `"Instruct: Given a question, retrieve relevant context.\nQuery: "` only when the embed model name contains `qwen3` (`embed_query`). Ingestion never embeds with an instruction. `QdrantService._prepare_vector` raises `ValueError` if a vector's length ≠ `EMBEDDING_DIMENSIONS` (collections are never resized mid-ingest; that belongs to `sync_embedding_infrastructure` at startup / model change).
 
 ### 10.3 Meilisearch (per-KB index, `primaryKey: node_id`; searchable `name, type, isolated_contexts, relationship_natural_language`; filterable `type, community_level`)
 
@@ -551,8 +550,7 @@ Title prompt (`llm_service.generate_title`): system `"Generate a concise, descri
 |---|---|---|---|
 | `INGESTION_PIPELINE_CONCURRENCY` | `1` | `IngestionWorkflow.__init__` | Size of the per-KB `asyncio.Semaphore` gating `process_note`. |
 | `MULTIMEDIA_CONCURRENCY` | `1` | `ingestion_agent.py` module import | Global semaphore around `multimodal_node`. Read once at import. |
-| `INGESTION_AGENT_CONCURRENCY` | `2` | — | **Unused.** |
-| `INGESTION_PROVIDER` | `None` (→ chat provider) | `LLMService._init_ingestion_clients` | Separate provider for extraction (`local`, `openai`, `gemini`, `anthropic`, `huggingface`; `ollama`/`lm_studio` map to `local`). Per-KB override wins. |
+| `INGESTION_PROVIDER` | `None` (→ chat provider) | `LLMService.init_clients` | Separate provider for extraction (`local`, `openai`, `gemini`, `anthropic`, `huggingface`; `ollama`/`lm_studio` map to `local`). Per-KB override wins. |
 | `INGESTION_MODEL` | `None` | `get_ingestion_model` | Wins over provider-specific keys (after per-instance override). |
 | `INGESTION_LLM_MODEL` | `"local-chat"` | `get_ingestion_model` (local) | Local ingestion model id; falls back to `LLM_MODEL`. |
 | `INGESTION_GEMINI_MODEL` | `None` | `get_ingestion_model` (gemini) | Falls back to `GEMINI_MODEL`. |
@@ -561,13 +559,11 @@ Title prompt (`llm_service.generate_title`): system `"Generate a concise, descri
 | `ORB_LLAMA_N_CTX` (env, via `_default_chat_n_ctx`) | see [12](12-local-models-and-inference.md) | `ingestion_context_tokens` | Local context window → chunk budget and output budget. |
 | `ORB_MODEL_IDLE_SECONDS` (env) | 300 | GGUF idle watcher | When resident models are unloaded after ingestion. |
 | `COMMUNITY_DETECTION_ENABLED` | `False` | `_queue_leiden_recompute_if_due`, `tracker.end_ingestion` | Automatic post-ingestion community rebuild. Manual endpoint ignores it. |
-| `COMMUNITY_RECOMPUTE_BATCH_SIZE` | `100` | — | **Unused.** |
 | `TEMPORAL_DIGESTS_ENABLED` | `False` | `_queue_leiden_recompute_if_due`, `build_temporal_digests` | Gates both the timer and the function (manual endpoint included). |
 | `TEMPORAL_DIGEST_PERIOD` | `"month"` | `build_temporal_digests` | `month` \| `week` \| `year`. |
 | `COMMUNITY_IDLE_SECONDS` | `120` (constant) | tracker, digest timer | Not configurable. |
 | `EMBEDDING_DIMENSIONS` | `1024` (overridden from the local manifest's `embedding_dims`) | `QdrantService._prepare_vector` | Vector length check on every upsert. |
 | `EMBEDDING_MODEL` | `"local-embed"` | `EmbeddingService` | `is_qwen3` (query instruction) derived from its basename. |
-| `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | `True` | — | **Unused** in backend. |
 | `QDRANT_COLLECTION_NODE_CORES` / `_RELATIONSHIPS` / `_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | default KB `QdrantService` | Other KBs use `{slug}_…` names from the registry. |
 | `MEILI_INDEX_NAME` | `orb_nodes` | default KB `MeilisearchService` | Other KBs `{slug}_nodes`. |
 **Extraction splits by task, not by text, once a note stops fitting.** `_extract_with_chunking` routes on one question — does the note fit the learned budget?
@@ -586,7 +582,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 
 **Chunking costs context, and a bigger budget costs less of it.** `merge_extractions` dedupes nodes by normalised name and concatenates their `isolated_context`, so entity *identity* survives a split and descriptions accumulate across chunks; relationships dedupe on `(source, target, type)` keeping the highest confidence. What cannot survive is anything needing two chunks at once: a relationship whose evidence spans a boundary is never stated by either side, and a pronoun whose antecedent was named in an earlier chunk cannot be resolved as the prompt requires. Splits fall on paragraph boundaries (`split_for_extraction`) to limit the damage. This is the real argument for the learned budget — at 4,000 tokens a 336k-character note is ~22 chunks and 21 boundaries; at 16,000 it is ~5 chunks and 4.
 
-| `LLM_PROVIDER` (via `ai_gate`) | `"local"` | `require_ai(kb)` derives readiness from GGUFs / keys / `LLM_BASE_URL`; `chat_is_local_only()` decides the cloud-vision fallback in `multimedia.describe_image` | `AI_SETUP_MODE` no longer gates either. |
+| `LLM_PROVIDER` (via `ai_gate`) | `"local"` | `require_ai(kb)` derives readiness from GGUFs / keys / `LLM_BASE_URL`; `chat_is_local_only()` decides the cloud-vision fallback in `multimedia.describe_image` | Readiness is never read from a stored mode. |
 | `PDF_VISUAL_*`, `FLORENCE_MAX_IMAGE_PIXELS`, `MODEL_*_LOCAL/HF`, `VIDEO_MAX_PIXELS`, `FPS*` | see [11](11-multimedia-enrichment.md) | multimedia | — |
 
 ## 12. Interfaces with other subsystems
@@ -602,7 +598,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 | Pipeline → `MeilisearchService` | `index_node`, `get_node`, `update_nodes_community`, `delete_node` — all swallow errors. |
 | Pipeline → multimedia | `multimedia_service.extract_text_from_pdf(url, progress_cb)`, `describe_image`, `extract_text_from_docx`, `extract_text_from_spreadsheet`, `transcribe_audio`, `transcribe_video_audio`, `describe_video_visual`, `unload_local_models(family)`, `unload_marlin()`. |
 | Pipeline → local models | `model_load_clock` snapshots (timing only). No explicit load/unload calls remain in `process_note`. |
-| Retrieval ← pipeline | Retrieval ([16](16-retrieval-and-chat.md)) depends on: lowercase `name` payloads in cores, `parent_node_id` on contexts, `is_community_rel` flag, `edge_weight`/`confidence` on `SEMANTIC_REL`, `kind` values, Meili field names. Changing any of these here breaks search silently. |
+| Retrieval ← pipeline | Retrieval ([16](16-retrieval-and-chat.md)) depends on: lowercase `name` payloads in cores, `parent_node_id` on contexts, `is_community_rel` flag, `kind` values, Meili field names. Changing any of these here breaks search silently. |
 | Frontend ← pipeline | `segmented-note-content.tsx` splits note bodies on `[Image: …]`, `[PDF Extraction (…)]:`, `[Audio Transcript (…)]:` and `[Video Transcript (…)]:`. The backend writes `[Video Audio Transcript (…)]:` / `[Video Visual Analysis (…)]:` / `[Word Extraction (…)]:` / `[Spreadsheet Extraction (…)]:`, which the frontend renders as plain text (marker mismatch; see [11](11-multimedia-enrichment.md)). |
 
 ## 13. Invariants and locked decisions
@@ -647,7 +643,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 
 1. **Re-ingest does not clean up.** Stale entities, `REFERENCES`, `SEMANTIC_REL`s and contexts persist; `mention_count` inflates. Only note deletion (orphans) and `reset-ingestion-data` remove data.
 2. **Isolated-context dedup is broken by the date suffix**: stored contexts are compared as `"{content} - {date}"` against raw new text, so re-ingesting appends duplicates whenever the note has a `created_at` (i.e. always via the HTTP triggers).
-3. **Relationship scores are defaults**: the prompt never asks for `strength/confidence/relevance`, so `edge_weight` is effectively constant (5.6). Retrieval code that ranks on `edge_weight` is ranking on noise unless the model volunteers scores.
+3. **Relationships carry no scores**: retrieval ranks edges by structure (mention counts, degree, recency), never by a per-edge weight.
 4. **Node-name normalisation differs between nodes (`lstrip("#")`) and relationship endpoints (no `#` strip)**.
 5. **Entity `type` is frozen at first sighting in Qdrant/Meili** (`_core_content.type` wins) but overwritten in Kuzu on every ingest.
 6. **No embedding-similarity entity resolution** and no `is_similarity` edges are produced today, despite the schema column and old reports mentioning "similarity detection".
@@ -670,7 +666,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 | Goal | Touch | Keep in mind |
 |---|---|---|
 | Change the extraction schema (new node/rel field) | `schemas/extraction.py` (field + `None` handling), `_build_extraction_prompt` output format, `_write_ontology` / `_update_node_summary` to persist it, `merge_extractions` to merge it, `test_extraction_schemas.py` | Validators must tolerate `None` and missing keys; anything not persisted is lost. |
-| Ask the LLM for relationship scores | Add `strength/confidence/relevance` to the prompt's relationship object; `_normalize_score` already handles labels/0–1 floats | `edge_weight` formula lives in `GraphService.create_or_update_relationship`. |
+| Ask the LLM for relationship scores | Add score fields to the prompt's relationship object and to `ExtractedRelationship`, then write them in `GraphService.create_or_update_relationship` (the Kuzu columns still exist) | Removed 2026-09-19 because no prompt ever filled them. |
 | Add a new attachment type | New handler in `MultimediaService`, classification list + `_run_phase` call in `multimodal_node` (choose the phase by which model it needs), new alternative in `_ENRICHMENT_BLOCK_RE`, frontend `MARKER_RE` | See [11](11-multimedia-enrichment.md). |
 | Add a new agent node | `ingestion_agent.py`: function returning partial state, `workflow.add_node/add_edge`; write a stage string via `_wf._update_note_processing_status`; short-circuit on `state["errors"]` | The graph is compiled at import; no per-KB variation possible. |
 | Change chunking policy | `extraction_chunking.py` constants (`_OUTPUT_TO_INPUT_RATIO`, `_DEFAULT_CHUNK_TOKENS`, `MIN_SPLIT_TOKENS`) or `ORB_EXTRACTION_CHUNK_TOKENS`; `_MAX_SPLIT_DEPTH` in the agent | Keep helpers pure; extend `test_extraction_chunking.py`. |

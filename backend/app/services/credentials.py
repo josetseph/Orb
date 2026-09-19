@@ -86,11 +86,6 @@ def request_base_url(url: str) -> str:
     return normalize_base_url(url).split("#", 1)[0]
 
 
-def endpoint_profile(url: str) -> str:
-    """The profile name carried in the fragment, or ``""``."""
-    return normalize_base_url(url).partition("#")[2]
-
-
 def endpoint_credential_id(base_url: str) -> str:
     """Credential id for an OpenAI-compatible endpoint."""
     return f"{ENDPOINT_PREFIX}{normalize_base_url(base_url)}"
@@ -232,12 +227,6 @@ class CredentialStore:
                 if is_endpoint_id(name)
             )
 
-    def has_endpoint(self, base_url: str) -> bool:
-        try:
-            return self.has(endpoint_credential_id(base_url))
-        except InvalidEndpointError:
-            return False
-
     def status(self) -> dict[str, dict]:
         """Per-provider configuration state. Never includes key material."""
         with self._lock:
@@ -265,14 +254,3 @@ credentials = CredentialStore()
 
 def get_api_key(provider: str) -> str | None:
     return credentials.get(provider)
-
-
-def require_api_key(provider: str) -> str:
-    """Return the key or raise with a message pointing at the in-app setting."""
-    key = credentials.get(provider)
-    if not key:
-        name = normalize_provider(provider)
-        raise ValueError(
-            f"No API key configured for {name}. Add it in Settings -> AI provider."
-        )
-    return key

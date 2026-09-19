@@ -8,7 +8,7 @@ import {
   type SetStateAction,
 } from "react";
 import { api } from "@/lib/api";
-import type { MarkdownNoteEditorHandle } from "@/components/markdown-editor";
+import type { MarkdownNoteEditorHandle } from "@/components/markdown-editor/MarkdownNoteEditor";
 import { revealInFolder } from "@/lib/desktop";
 import {
   encodeFileUrl,
@@ -19,7 +19,7 @@ import {
   resolveFileUrl,
 } from "@/lib/utils";
 import type { FilePreview, Note } from "@/lib/types";
-import { getApiErrorDetail } from "../_lib/api-error";
+import { errMessage } from "@/lib/utils";
 import { pickSupportedAudioMimeType } from "../_lib/media-recorder";
 import type { ProcessedFilter } from "../_lib/types";
 
@@ -154,11 +154,7 @@ export function useNoteMedia({
         await refreshVaultFiles();
       } catch (error) {
         console.error("Error uploading file:", error);
-        const detail = getApiErrorDetail(error);
-        const msg =
-          detail ||
-          (error instanceof Error ? error.message : "Failed to upload file");
-        alert(msg || "Failed to upload file");
+        alert(errMessage(error, "Failed to upload file"));
       } finally {
         setIsUploading(false);
       }

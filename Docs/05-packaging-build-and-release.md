@@ -12,13 +12,9 @@ python3 desktop/build.py prepare
    ├─ frontend  npm ci && npm run build (Vite)                    → desktop/resources/frontend/
    └─ firefly   python -m app.desktop_runtime prefetch-firefly    → desktop/resources/firefly/
 python3 desktop/build.py dist
-   ├─ check     trees exist · bundled Python imports pass · source stamps fresh
+   ├─ check     trees exist · bundled Python imports pass
    └─ cargo tauri build --config '{"bundle":{"resources":{…}}}'
 ```
-
-Each prepared tree carries `.orb-source-stamp.json`, a hash of the sources it was
-built from (`backend/app`; `frontend/src`, `public`, `vite.config.ts`, `index.html`).
-`check` refuses to package a tree whose sources have changed since it was built.
 
 Reuse rules: the Python bundle is kept when its imports still pass
 (`ORB_REBUILD_PYTHON=1` to force); the Firefly seed is kept when its version markers

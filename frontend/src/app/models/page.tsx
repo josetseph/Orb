@@ -19,7 +19,7 @@ const INTRO =
  * choices draw on.
  */
 export default function ModelsPage() {
-  const { currentKB, currentKBName, isHydrated } = useKB();
+  const { currentKB, currentKBName } = useKB();
   const [state, setState] = useState<ModelsPageState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,33 +46,34 @@ export default function ModelsPage() {
   const [newUrl, setNewUrl] = useState("");
   const [newKey, setNewKey] = useState("");
 
-  const load = useCallback(async () => {
-    try {
-      const data = await api.getModelsPage(currentKB);
-      setState(data);
-      setSysMode(data.global.mode);
-      setSysUrl(data.global.base_url ?? "");
-      if (data.global.mode === "local") setSysModel(data.global.model ?? "");
-      else setSysCloudModel(data.global.model ?? "");
+  const load = useCallback(
+    () =>
+      api
+        .getModelsPage(currentKB)
+        .then((data) => {
+          setState(data);
+          setSysMode(data.global.mode);
+          setSysUrl(data.global.base_url ?? "");
+          if (data.global.mode === "local") setSysModel(data.global.model ?? "");
+          else setSysCloudModel(data.global.model ?? "");
 
-      const ov = data.kb?.override;
-      const pinned = Boolean(ov?.provider || ov?.model || ov?.base_url);
-      setKbMode(!pinned ? "inherit" : ov?.provider === "openai_compat" ? "cloud" : "local");
-      setKbUrl(ov?.base_url ?? "");
-      if (ov?.provider === "openai_compat") setKbCloudModel(ov?.model ?? "");
-      else setKbModel(ov?.model ?? "");
-      setKbIngestModel(ov?.ingestion_model ?? "");
-      setError(null);
-    } catch {
-      setError("Could not load models. Is the backend running?");
-    } finally {
-      setLoading(false);
-    }
-  }, [currentKB]);
+          const ov = data.kb?.override;
+          const pinned = Boolean(ov?.provider || ov?.model || ov?.base_url);
+          setKbMode(!pinned ? "inherit" : ov?.provider === "openai_compat" ? "cloud" : "local");
+          setKbUrl(ov?.base_url ?? "");
+          if (ov?.provider === "openai_compat") setKbCloudModel(ov?.model ?? "");
+          else setKbModel(ov?.model ?? "");
+          setKbIngestModel(ov?.ingestion_model ?? "");
+          setError(null);
+        })
+        .catch(() => setError("Could not load models. Is the backend running?"))
+        .finally(() => setLoading(false)),
+    [currentKB],
+  );
 
   useEffect(() => {
-    if (isHydrated) void load();
-  }, [isHydrated, load]);
+    void load();
+  }, [load]);
 
   function flash(key: string) {
     setSaved(key);

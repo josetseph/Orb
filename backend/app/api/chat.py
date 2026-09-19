@@ -21,61 +21,28 @@ from app.services.kb_registry import KBContext
 logger = get_logger("API")
 router = APIRouter()
 
-class _BoundedChatStatus:
-    """Bounded, TTL-expiring store for chat job status.
-
-    Prevents memory leaks from indefinite retention of full query/result payloads.
-    """
-
-    def __init__(self, max_size: int = 200, ttl_seconds: float = 1800.0):
-        self._statuses: OrderedDict[str, dict] = OrderedDict()
-        self._timestamps: dict[str, float] = {}
-        self._max_size = max_size
-        self._ttl_seconds = ttl_seconds
-
-    def _cleanup(self, now: float) -> None:
-        expired = [
-            req_id
-            for req_id, ts in self._timestamps.items()
-            if now - ts > self._ttl_seconds
-        ]
-        for req_id in expired:
-            self._statuses.pop(req_id, None)
-            self._timestamps.pop(req_id, None)
-
-    def _evict_oldest_if_needed(self) -> None:
-        while len(self._statuses) > self._max_size:
-            oldest_id, _ = self._statuses.popitem(last=False)
-            self._timestamps.pop(oldest_id, None)
-
-    def __setitem__(self, key: str, value: dict) -> None:
-        now = time.time()
-        self._cleanup(now)
-        self._statuses[key] = value
-        self._statuses.move_to_end(key)
-        self._timestamps[key] = now
-        self._evict_oldest_if_needed()
-
-    def __getitem__(self, key: str) -> dict:
-        now = time.time()
-        self._cleanup(now)
-        return self._statuses[key]
-
-    def get(self, key: str, default: dict | None = None) -> dict:
-        now = time.time()
-        self._cleanup(now)
-        return self._statuses.get(key, default if default is not None else {})
-
-    def __contains__(self, key: str) -> bool:
-        now = time.time()
-        self._cleanup(now)
-        return key in self._statuses
-
-    def __len__(self) -> int:
-        return len(self._statuses)
+# request_id -> (stamped_at, status). Re-stamped on every write, so insertion
+# order is age order and pruning only ever pops from the front.
+_chat_status: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 
 
-_chat_status = _BoundedChatStatus()
+def _prune() -> None:
+    now = time.time()
+    while _chat_status and (
+        len(_chat_status) > 200 or now - next(iter(_chat_status.values()))[0] > 1800
+    ):
+        _chat_status.popitem(last=False)
+
+
+def _set_status(request_id: str, value: dict) -> None:
+    _chat_status[request_id] = (time.time(), value)
+    _chat_status.move_to_end(request_id)
+    _prune()
+
+
+def _get_status(request_id: str, default: dict) -> dict:
+    _prune()
+    return _chat_status[request_id][1] if request_id in _chat_status else default
 _chat_job_lock = asyncio.Lock()
 _chat_tasks: set[asyncio.Task] = set()
 
@@ -161,7 +128,7 @@ async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
     history_turns = await chat_store.get_recent_history(conversation_id)
 
     def _progress(stage: str, model: str | None = None) -> None:
-        _chat_status[request_id] = {"stage": stage, "model": model}
+        _set_status(request_id, {"stage": stage, "model": model})
 
     _progress("Starting chat request")
     try:
@@ -203,14 +170,14 @@ async def _run_chat_job(
     history_turns = [ChatTurn(**t) for t in history]
 
     def _progress(stage: str, model: str | None = None) -> None:
-        current = _chat_status.get(request_id, {})
-        _chat_status[request_id] = {
+        current = _get_status(request_id, {})
+        _set_status(request_id, {
             **current,
             "stage": stage,
             "model": model,
             "done": False,
             "conversation_id": conversation_id,
-        }
+        })
 
     _progress("Starting chat request")
     try:
@@ -228,22 +195,22 @@ async def _run_chat_job(
         result["request_id"] = request_id
         result["conversation_id"] = conversation_id
         result["assistant_message_id"] = assistant["id"]
-        _chat_status[request_id] = {
+        _set_status(request_id, {
             "stage": "Complete",
             "model": None,
             "done": True,
             "conversation_id": conversation_id,
             "result": result,
-        }
+        })
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.exception("[Chat] Async chat job failed")
-        _chat_status[request_id] = {
+        _set_status(request_id, {
             "stage": "Failed",
             "model": None,
             "done": True,
             "conversation_id": conversation_id,
             "error": str(exc) or exc.__class__.__name__,
-        }
+        })
 
 
 async def _run_chat_job_serialized(
@@ -255,14 +222,14 @@ async def _run_chat_job_serialized(
 ) -> None:
     """Run chat on the app event loop (same loop as AsyncSessionLocal)."""
     if _chat_job_lock.locked():
-        current = _chat_status.get(request_id, {})
-        _chat_status[request_id] = {
+        current = _get_status(request_id, {})
+        _set_status(request_id, {
             **current,
             "stage": "Waiting for current chat to finish",
             "model": None,
             "done": False,
             "conversation_id": conversation_id,
-        }
+        })
     async with _chat_job_lock:
         await _run_chat_job(request_id, query, kb, conversation_id, history)
 
@@ -285,12 +252,12 @@ async def start_chat(
     await chat_store.add_message(conversation_id, "user", body.query)
     await chat_store.maybe_set_title_from_first_message(conversation_id, body.query)
 
-    _chat_status[request_id] = {
+    _set_status(request_id, {
         "stage": "Queued",
         "model": None,
         "done": False,
         "conversation_id": conversation_id,
-    }
+    })
     task = asyncio.create_task(
         _run_chat_job_serialized(
             request_id,
@@ -316,7 +283,5 @@ async def get_chat_status(request_id: str):
     """Return current progress for a non-streaming chat request."""
     return {
         "request_id": request_id,
-        **_chat_status.get(
-            request_id, {"stage": "Waiting", "model": None, "done": False}
-        ),
+        **_get_status(request_id, {"stage": "Waiting", "model": None, "done": False}),
     }

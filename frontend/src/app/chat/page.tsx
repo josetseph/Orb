@@ -183,7 +183,7 @@ function AssistantMessageBody({
 }
 
 export default function ChatPage() {
-  const { currentKB, currentKBName, isHydrated } = useKB();
+  const { currentKB, currentKBName } = useKB();
   const {
     messages,
     conversations,
@@ -197,7 +197,10 @@ export default function ChatPage() {
     deleteActiveConversation,
     initializeForKb,
   } = useChat();
-  const [input, setInput] = useState("");
+  // ?q= from "Ask about this" on the graph seeds the composer.
+  const [input, setInput] = useState(
+    () => new URLSearchParams(window.location.search).get("q") ?? "",
+  );
   const [previewNote, setPreviewNote] = useState<NotePreview | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Set<string>>(new Set());
@@ -219,18 +222,15 @@ export default function ChatPage() {
   }, [messages]);
 
   useEffect(() => {
-    if (!isHydrated) return;
     void initializeForKb(currentKB);
-  }, [currentKB, initializeForKb, isHydrated]);
+  }, [currentKB, initializeForKb]);
 
-  // ?q= from "Ask about this" on the graph: a fresh thread with the question
-  // waiting in the composer, not sent until you press Enter.
+  // ?q= means a fresh thread with the question waiting in the composer, not
+  // sent until you press Enter.
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get("q");
-    if (!q) return;
+    if (!new URLSearchParams(window.location.search).get("q")) return;
     window.history.replaceState({}, "", "/chat");
     startNewConversation();
-    setInput(q);
   }, [startNewConversation]);
 
   useEffect(() => {
@@ -488,34 +488,36 @@ export default function ChatPage() {
 
       {/* Note preview */}
       {previewNote && (
-        <div className="dialog-backdrop" onClick={() => setPreviewNote(null)}>
-          <div
-            className="dialog max-h-[80vh] max-w-3xl overflow-hidden"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2.5">
-              <FileText className="h-4 w-4 text-accent-300" />
-              <div className="dialog-title flex-1 truncate">{previewNote.title}</div>
-              <button
-                type="button"
-                onClick={() => setPreviewNote(null)}
-                className="grid h-[26px] w-[26px] place-items-center rounded-[6px] text-n-400 hover:bg-n-900"
-                aria-label="Close preview"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            </div>
-            <div className="min-h-0 overflow-y-auto">
-              <SegmentedNoteContent
-                content={previewNote.content || "*Empty note*"}
-                onFileClick={handleFileClick}
-                onEntityClick={handleEntityClick}
-                kb={currentKB}
-                proseClassName="prose-orb"
-              />
-            </div>
+        <dialog
+          ref={(el) => {
+            if (el && !el.open) el.showModal();
+          }}
+          onClose={() => setPreviewNote(null)}
+          onClick={(e) => e.target === e.currentTarget && setPreviewNote(null)}
+          className="dialog max-h-[80vh] max-w-3xl overflow-hidden"
+        >
+          <div className="flex items-center gap-2.5">
+            <FileText className="h-4 w-4 text-accent-300" />
+            <div className="dialog-title flex-1 truncate">{previewNote.title}</div>
+            <button
+              type="button"
+              onClick={() => setPreviewNote(null)}
+              className="grid h-[26px] w-[26px] place-items-center rounded-[6px] text-n-400 hover:bg-n-900"
+              aria-label="Close preview"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
           </div>
-        </div>
+          <div className="min-h-0 overflow-y-auto">
+            <SegmentedNoteContent
+              content={previewNote.content || "*Empty note*"}
+              onFileClick={handleFileClick}
+              onEntityClick={handleEntityClick}
+              kb={currentKB}
+              proseClassName="prose-orb"
+            />
+          </div>
+        </dialog>
       )}
 
       {filePreview && (

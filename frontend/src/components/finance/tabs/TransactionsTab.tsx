@@ -11,7 +11,6 @@ import { Field } from "../Field";
 import { Panel } from "../Panel";
 import { SuggestInput } from "../SuggestInput";
 import { TransactionList } from "../TransactionList";
-import { FIELD_INPUT } from "../utils";
 
 type TxForm = {
   type: string;
@@ -67,7 +66,7 @@ export function TransactionsTab({
           <select
             value={txForm.type}
             onChange={(e) => setTxForm((p) => ({ ...p, type: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
           >
             <option value="withdrawal">Expense (withdrawal)</option>
             <option value="deposit">Income (deposit)</option>
@@ -79,7 +78,7 @@ export function TransactionsTab({
             required
             value={txForm.description}
             onChange={(e) => setTxForm((p) => ({ ...p, description: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
             placeholder="Groceries"
           />
         </Field>
@@ -92,7 +91,7 @@ export function TransactionsTab({
               step="0.01"
               value={txForm.amount}
               onChange={(e) => setTxForm((p) => ({ ...p, amount: e.target.value }))}
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
           <Field label="Date">
@@ -100,7 +99,7 @@ export function TransactionsTab({
               type="date"
               value={txForm.date}
               onChange={(e) => setTxForm((p) => ({ ...p, date: e.target.value }))}
-              className={FIELD_INPUT}
+              className="input"
             />
           </Field>
         </div>
@@ -109,7 +108,7 @@ export function TransactionsTab({
             required
             value={txForm.account_id}
             onChange={(e) => setTxForm((p) => ({ ...p, account_id: e.target.value }))}
-            className={FIELD_INPUT}
+            className="input"
           >
             <option value="">Select account</option>
             {(txForm.type === "transfer" || txForm.type === "withdrawal"
@@ -130,7 +129,7 @@ export function TransactionsTab({
               onChange={(e) =>
                 setTxForm((p) => ({ ...p, transfer_account_id: e.target.value }))
               }
-              className={FIELD_INPUT}
+              className="input"
             >
               <option value="">Select destination</option>
               {assetAccounts
@@ -174,7 +173,7 @@ export function TransactionsTab({
             <select
               value={txForm.budget_id}
               onChange={(e) => setTxForm((p) => ({ ...p, budget_id: e.target.value }))}
-              className={FIELD_INPUT}
+              className="input"
             >
               <option value="">No budget</option>
               {budgets.map((b) => (

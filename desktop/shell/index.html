@@ -33,12 +33,6 @@
       button.secondary { background: #222; color: #ccc; }
       button.primary { background: #b45309; color: #fff; width: 100%; margin-top: 18px; }
       button:disabled { opacity: 0.6; cursor: default; }
-      .modes { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
-      .mode { border: 1px solid #333; border-radius: 12px; padding: 12px; cursor: pointer; background: #121218; }
-      .mode.active { border-color: #d97706; background: #1c1408; }
-      .mode strong { display: block; margin-bottom: 2px; }
-      .mode span { font-size: 0.75rem; color: #888; }
-      .warn { font-size: 0.75rem; color: #fbbf24; margin-top: 8px; }
       .err { font-size: 0.75rem; color: #f87171; margin-top: 8px; }
     </style>
   </head>
@@ -49,7 +43,7 @@
         <img src="logo.png" alt="" />
         <h1>Welcome to Orb</h1>
       </div>
-      <p class="sub">Choose your notes folder, data/models locations, then pick an AI path (or skip).</p>
+      <p class="sub">Choose your notes folder and data/models locations. Pick a model in Settings after launch.</p>
       <div class="row">
         <label>Notes vault folder (markdown notes — required for Notes)</label>
         <input id="vaultPath" type="text" placeholder="e.g. OneDrive/KB or Documents/Orb Vault" />
@@ -71,24 +65,6 @@
           <button type="button" class="secondary" data-pick="modelsDir" data-pick-title="Choose models directory">Browse…</button>
         </div>
       </div>
-      <label>AI setup</label>
-      <div class="modes">
-        <div class="mode" data-mode="local">
-          <strong>Full local</strong>
-          <span>Pick a chat GGUF (Gemma 4 / Qwen 3.5 / 3.6). Qwen3 embed + reranker size to your RAM.</span>
-        </div>
-        <div class="mode" data-mode="cloud">
-          <strong>Cloud or hybrid</strong>
-          <span>Provider keys and model names in Settings after launch.</span>
-        </div>
-        <div class="mode active" data-mode="none">
-          <strong>Skip for now</strong>
-          <span>Obsidian-like notes &amp; wikilinks without AI until you configure it.</span>
-        </div>
-      </div>
-      <p class="warn" id="localWarn" style="display:none">
-        Setup downloads chat/embed/rerank GGUFs plus Qwen3-ASR and Marlin (many GB) after launch. Stay online.
-      </p>
       <p class="err" id="formError" style="display:none"></p>
       <button class="primary" id="continue">Continue</button>
     </div>
@@ -96,7 +72,6 @@
       const { invoke } = window.__TAURI__.core;
       const $ = (id) => document.getElementById(id);
       const showError = (msg) => { $("formError").textContent = msg; $("formError").style.display = "block"; };
-      let aiMode = "none";
 
       (async () => {
         const state = await invoke("app_state");
@@ -106,14 +81,6 @@
         $("setup").style.display = "block";
       })();
 
-      document.querySelectorAll(".mode").forEach((el) => {
-        el.addEventListener("click", () => {
-          document.querySelectorAll(".mode").forEach((m) => m.classList.remove("active"));
-          el.classList.add("active");
-          aiMode = el.dataset.mode;
-          $("localWarn").style.display = aiMode === "local" ? "block" : "none";
-        });
-      });
       document.querySelectorAll("[data-pick]").forEach((btn) => {
         btn.addEventListener("click", async () => {
           const input = $(btn.getAttribute("data-pick"));
@@ -135,7 +102,7 @@
         $("continue").textContent = "Starting Orb…";
         try {
           await invoke("save_setup", {
-            payload: { data_dir: dataDir, models_dir: modelsDir, default_vault_path: vault || null, ai_setup_mode: aiMode },
+            payload: { data_dir: dataDir, models_dir: modelsDir, default_vault_path: vault || null },
           });
         } catch (err) {
           $("continue").disabled = false;

@@ -1,4 +1,3 @@
-import axios from "axios";
 import type {
   InspectedModel,
   ModelsPageState,
@@ -28,7 +27,7 @@ import type {
 
 const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api/v1").replace(/\/$/, "");
 
-/** Merge optional kb into axios query params (omit for default). */
+/** Merge optional kb into query params (omit for default). */
 function withKb(
   kb: string,
   params?: Record<string, unknown>,
@@ -46,30 +45,60 @@ function kbQuery(kb: string): string {
 /** Optional per-request options (cancellation). */
 export type RequestOpts = { signal?: AbortSignal };
 
+type HttpOpts = RequestOpts & {
+  params?: Record<string, unknown>;
+  body?: unknown;
+  timeout?: number;
+  text?: boolean;
+};
+
+/**
+ * fetch with the conveniences callers rely on: query params, JSON bodies, and
+ * a thrown error carrying `response.status` / `response.data` on non-2xx.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function request(method: string, path: string, o: HttpOpts = {}): Promise<any> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(o.params ?? {})) if (v != null) qs.set(k, String(v));
+  const q = qs.toString();
+  const isForm = o.body instanceof FormData;
+  const signals = [o.signal, o.timeout ? AbortSignal.timeout(o.timeout) : undefined].filter(Boolean) as AbortSignal[];
+  const res = await fetch(`${API_BASE_URL}${path}${q ? (path.includes("?") ? "&" : "?") + q : ""}`, {
+    method,
+    headers: o.body !== undefined && !isForm ? { "Content-Type": "application/json" } : undefined,
+    body: isForm ? (o.body as FormData) : o.body !== undefined ? JSON.stringify(o.body) : undefined,
+    signal: signals.length > 1 ? AbortSignal.any(signals) : signals[0],
+  });
+  const text = await res.text();
+  let data: unknown = text;
+  if (!o.text) {
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      /* non-JSON body (proxy error page) — keep the text */
+    }
+  }
+  if (!res.ok) {
+    throw Object.assign(new Error(`${method} ${path} failed (${res.status})`), {
+      response: { status: res.status, data },
+    });
+  }
+  return data;
+}
+
 /** Thin wrappers so each method is one line instead of three. */
 const http = {
   get: (path: string, params?: Record<string, unknown>, opts?: RequestOpts) =>
-    axios
-      .get(`${API_BASE_URL}${path}`, { params, signal: opts?.signal })
-      .then((r) => r.data),
-  post: (path: string, data?: unknown, opts?: RequestOpts) =>
-    axios
-      .post(`${API_BASE_URL}${path}`, data, { signal: opts?.signal })
-      .then((r) => r.data),
-  put: (path: string, data?: unknown) =>
-    axios.put(`${API_BASE_URL}${path}`, data).then((r) => r.data),
-  patch: (path: string, data?: unknown) =>
-    axios.patch(`${API_BASE_URL}${path}`, data).then((r) => r.data),
-  del: (path: string) =>
-    axios.delete(`${API_BASE_URL}${path}`).then((r) => r.data),
+    request("GET", path, { ...opts, params }),
+  post: (path: string, data?: unknown, opts?: RequestOpts) => request("POST", path, { ...opts, body: data }),
+  put: (path: string, data?: unknown) => request("PUT", path, { body: data }),
+  patch: (path: string, data?: unknown) => request("PATCH", path, { body: data }),
+  del: (path: string) => request("DELETE", path),
 };
 
-/** True when an error is an axios/DOM cancellation (aborted request). */
+/** True when an error is a DOM cancellation (aborted request). */
 export function isRequestCancelled(error: unknown): boolean {
-  return (
-    axios.isCancel(error) ||
-    (error instanceof DOMException && error.name === "AbortError")
-  );
+  return error instanceof DOMException && error.name === "AbortError";
 }
 
 export const api = {
@@ -109,15 +138,7 @@ export const api = {
   async upload(file: File, kb = "default") {
     const formData = new FormData();
     formData.append("file", file);
-    // Desktop: hit FastAPI directly so large files aren't truncated by the
-    // Next.js rewrite proxy (default 10MB → socket hang up / 500).
-    const base = API_BASE_URL;
-    const response = await axios.post(
-      `${base}/upload${kbQuery(kb)}`,
-      formData,
-      { timeout: 10 * 60 * 1000 },
-    );
-    return response.data;
+    return request("POST", `/upload${kbQuery(kb)}`, { body: formData, timeout: 10 * 60 * 1000 });
   },
 
   // ── Notes (vault markdown + SQLite metadata) ─────────────────────────────
@@ -431,7 +452,6 @@ export const api = {
     data_dir: string;
     models_dir: string;
     default_vault_path?: string;
-    ai_setup_mode?: string;
   }) {
     return http.post("/setup/paths", data);
   },
@@ -441,18 +461,11 @@ export const api = {
     chatId?: string,
     opts?: { multimodalOnly?: boolean },
   ) {
-    // Model packs are multi-GB; do not use the default axios timeout.
-    return axios
-      .post(
-        `${API_BASE_URL}/setup/download-models`,
-        {
-          include_multimodal: includeMultimodal,
-          chat_id: chatId || undefined,
-          multimodal_only: Boolean(opts?.multimodalOnly),
-        },
-        { timeout: 0 },
-      )
-      .then((r) => r.data);
+    return http.post("/setup/download-models", {
+      include_multimodal: includeMultimodal,
+      chat_id: chatId || undefined,
+      multimodal_only: Boolean(opts?.multimodalOnly),
+    });
   },
 
   async selectChatModel(chatId: string) {
@@ -501,11 +514,10 @@ export const api = {
     if (format === "json") {
       return http.get(`/chat/conversations/${conversationId}/export`, { format });
     }
-    const response = await axios.get(
-      `${API_BASE_URL}/chat/conversations/${conversationId}/export`,
-      { params: { format }, responseType: "text" },
-    );
-    return response.data as string;
+    return request("GET", `/chat/conversations/${conversationId}/export`, {
+      params: { format },
+      text: true,
+    }) as Promise<string>;
   },
 
   // ── Finance ───────────────────────────────────────────────────────────────
@@ -753,7 +765,6 @@ export const api = {
     temporal_digests: { running: boolean };
     ingestion?: {
       active: number;
-      last_completed_at?: string | null;
     };
     /** Desktop runtime boot progress while local services start behind the API. */
     boot?: { status: string; ts?: number };

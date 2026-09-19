@@ -53,7 +53,6 @@ class TestOutputBudget:
 class TestMaxTokensEnv:
     def test_unset_means_dynamic(self, monkeypatch):
         monkeypatch.delenv("ORB_LLAMA_MAX_TOKENS", raising=False)
-        monkeypatch.delenv("LIVEOS_LLAMA_MAX_TOKENS", raising=False)
         assert lm._default_chat_max_tokens() is None
 
     def test_explicit_cap_is_honoured(self, monkeypatch):

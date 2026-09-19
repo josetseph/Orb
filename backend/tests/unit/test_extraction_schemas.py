@@ -4,7 +4,6 @@ Tests cover normalize_keys, handle_none, and the complex Extraction
 outer-wrapper normalizer. All tests are synchronous with no I/O.
 """
 
-import pytest
 
 from app.schemas.extraction import ExtractedRelationship, Extraction, Node
 
@@ -114,58 +113,6 @@ class TestExtractedRelationshipNormalizeKeys:
             }
         )
         assert rel.relationship_type == "relates_to"
-
-
-# ── ExtractedRelationship score normalisation ─────────────────────────────────
-
-
-class TestExtractedRelationshipScores:
-    def _rel(self, **kwargs):
-        base = {"source_name": "A", "target_name": "B", "relationship_type": "knows"}
-        base.update(kwargs)
-        return ExtractedRelationship.model_validate(base)
-
-    # None → defaults
-    def test_none_confidence_defaults_to_7(self):
-        rel = self._rel(confidence=None)
-        assert rel.confidence == pytest.approx(7.0)
-
-    def test_none_strength_defaults_to_5(self):
-        rel = self._rel(strength=None)
-        assert rel.strength == pytest.approx(5.0)
-
-    def test_none_relevance_defaults_to_5(self):
-        rel = self._rel(relevance=None)
-        assert rel.relevance == pytest.approx(5.0)
-
-    # String labels
-    @pytest.mark.parametrize(
-        "label, expected",
-        [
-            ("high", 8.0),
-            ("medium", 6.0),
-            ("moderate", 6.0),
-            ("low", 4.0),
-            ("very high", 9.0),
-            ("very low", 2.0),
-        ],
-    )
-    def test_string_label_normalisation(self, label, expected):
-        rel = self._rel(confidence=label)
-        assert rel.confidence == pytest.approx(expected)
-
-    # Float 0–1 scale → ×10, clamped to [1.0, 10.0]
-    def test_zero_to_one_float_scaled_up(self):
-        rel = self._rel(confidence=0.8)
-        assert rel.confidence == pytest.approx(8.0)
-
-    def test_zero_float_clamped_to_minimum(self):
-        rel = self._rel(confidence=0.0)
-        assert rel.confidence == pytest.approx(1.0)
-
-    def test_above_ten_clamped_to_maximum(self):
-        rel = self._rel(confidence=15.0)
-        assert rel.confidence == pytest.approx(10.0)
 
 
 # ── Extraction.normalize_keys ─────────────────────────────────────────────────

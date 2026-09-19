@@ -1,6 +1,6 @@
 # Development History
 
-**What this covers.** A chronological reconstruction of how Orb evolved from its first commit (2026-01-17, "Working Version 1", a Docker-composed research prototype called LifeOS) to the current Docker-free Electron desktop product (0.2.0, 2026-08-07). It is built entirely from the git history of `/Users/josetseph/Projects/Technical/personal/Orb` (70 commits on `main`): commit messages, per-commit file stats, key diffs, and the histories of `README.md`, `docker-compose*.yml`, `backend/requirements.txt`, and the deleted `.cursor/rules/architecture-decisions.mdc`. It records every architectural decision point (what was chosen, what was rejected, and the evidence at the time), the subsystems that were removed, and the legacy aliases/dead paths still visible in the code so that engineers and AI assistants do not resurrect them.
+**What this covers.** A chronological reconstruction of how Orb evolved from its first commit (2026-01-17, "Working Version 1", a Docker-composed research prototype called LifeOS) to the current Docker-free Tauri desktop product. It is built entirely from the git history of `/Users/josetseph/Projects/Technical/personal/Orb` (70 commits on `main`): commit messages, per-commit file stats, key diffs, and the histories of `README.md`, `docker-compose*.yml`, `backend/requirements.txt`, and the deleted `.cursor/rules/architecture-decisions.mdc`. It records every architectural decision point (what was chosen, what was rejected, and the evidence at the time), the subsystems that were removed, and the legacy aliases/dead paths still visible in the code so that engineers and AI assistants do not resurrect them.
 
 **Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Local models and inference](12-local-models-and-inference.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Finance (Firefly)](17-finance-firefly.md) · [Testing](24-testing.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
 
@@ -282,14 +282,14 @@ Do **not** resurrect any of these. They are listed so an assistant reading an al
 
 | Where | What you will see | Status |
 |---|---|---|
-| `backend/app/core/paths.py`, `desktop/paths.js`, `desktop/main.js`, `desktop/supervisor.js`, `desktop/ports.js` | `_env_first("ORB_X", "LIVEOS_X")` / `envFirst("ORB_X", "LIVEOS_X")`; Application Support fallbacks `…/LifeOS`, `…/LiveOS`; `LIVEOS_HF_STAGING`, `LIVEOS_DOWNLOAD_STAGING` | Intentional compatibility for pre-rename installs (D-34). Add new env vars as `ORB_*` only; never add new `LIVEOS_*`. |
+| `backend/app/core/paths.py`, `desktop/src-tauri/src/runtime.rs` | (removed 2026-09-19) the `LIVEOS_*` env aliases and the `…/LifeOS`, `…/LiveOS` Application Support fallbacks from D-34 | Dropped once no install depended on them; only `ORB_*` names and the `Orb` folder remain. |
 | `backend/app/core/config.py` | `TYPESENSE_HOST/PORT/API_KEY/COLLECTION_NAME` next to `MEILI_HOST/PORT/MASTER_KEY/INDEX_NAME`, with a validator that copies legacy `TYPESENSE_*` onto `MEILI_*` "for older installs" | Aliases only; there is no Typesense client. |
 | `backend/app/core/config.py`, `backend/app/core/database.py` | `DATABASE_BACKEND: "sqlite" (desktop default) \| "postgres" (contributor docker)`; asyncpg URL rewriting | Postgres branch is contributor-only; desktop is SQLite (D-29). `asyncpg` is still pinned for this. |
 | `backend/app/models/note.py` | `content = Column(Text, nullable=True, default="")` | Vestigial: note bodies live in the vault `.md` (D-29). Do not start writing bodies here. |
 | `backend/app/services/llm.py` | `"ollama": _local, "lm_studio": _local  # deprecated alias` and warnings when `provider in ("ollama","lm_studio")` | Aliases map to the generic OpenAI-compatible `local` provider; no Ollama-specific code path remains. |
 | `frontend/next.config.ts` | `filesProxyTarget` defaulting to `http://rustfs:9000` and the `/files/:path*` rewrite | Docker-era file proxy; desktop serves attachments via `/vault-files/:path*` → API. |
 | `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `backend/.dockerignore` | Postgres, RustFS (`legacy-s3` profile), Qdrant, Meilisearch, backend, frontend services | Header states "Contributor / optional infra stack only. End users run the Orb desktop app". Not used by packaging or CI. |
-| `backend/requirements.txt` | `asyncpg`, `boto3`, `aioboto3`, `aiobotocore`, `botocore`, `langchain-openai` | Left over from Postgres/S3 era; `bucket_storage.py` is gone. |
+| `backend/requirements.txt` | (cleaned 2026-09-19) `langchain-openai`, `langgraph`, `instructor`, `tenacity`, `python-dateutil`, `dateparser`, `requests`, `regex`, `scikit-learn` were unimported or single-use and are gone | — |
 | `Results/…` directories, `Platform Images/` | Benchmark reports from Eras 2–3, screenshots | Historical artefacts; reports still reference "LiveOS Brain". |
 
 ## 5. Version history
@@ -310,7 +310,7 @@ The working tree diverges from `02ac9d3`. This section summarises `git status` /
 
 **Deleted:** `.cursor/rules/architecture-decisions.mdc` (the locked-decisions rule quoted in section 3). Its content is preserved in [Decisions and constraints](26-decisions-and-constraints.md); whether the deletion is intentional is an open question (see below).
 
-**Per-KB LLM overrides** (`backend/app/models/kb.py` +5, `backend/app/api/kb.py` +119, `backend/app/services/kb_registry.py` +205, `ai_gate.py`, `llm.py`, `retrieval.py`, `workflows/chat.py`, `frontend/src/app/kb/page.tsx`, `frontend/src/lib/{api,types}.ts`, new `frontend/src/app/kb/_components/KBModelPanel.tsx` 274 lines, new test `backend/tests/unit/test_kb_llm_config.py`):
+**Per-KB LLM overrides** (`backend/app/api/kb.py` +119, `backend/app/services/kb_registry.py` +205, `ai_gate.py`, `llm.py`, `retrieval.py`, `workflows/chat.py`, `frontend/src/app/kb/page.tsx`, `frontend/src/lib/{api,types}.ts`, new `frontend/src/app/kb/_components/KBModelPanel.tsx` 274 lines, new test `backend/tests/unit/test_kb_llm_config.py`):
 
 - New nullable columns on `knowledge_bases`: `llm_provider`, `llm_model`, `llm_ingestion_model` — comment: "Per-KB LLM override (NULL = inherit the system Settings). Chat + ingestion only — embed/rerank/multimodal stay system-wide (embed dims are shared)". Added via `_ensure_optional_columns(conn: sqlite3.Connection)` (the no-Alembic pattern, D-36).
 - New endpoints `GET/PATCH /api/v1/kb/{kb_id}/llm` (`get_kb_llm`, `update_kb_llm`, `KBLLMInput`), returning `{kb_id, override{provider,model,ingestion_model}, effective{provider,model,ingestion_model,inherited}, providers[], local_models[{id,label,size_gb}]}`; `local_models` is limited to "Chat GGUFs already on disk — the only local models a KB can pin" (`model_catalog.chat_model_downloaded`, `downloaded_chat_models`).
@@ -321,12 +321,25 @@ The working tree diverges from `02ac9d3`. This section summarises `git status` /
 - Constants `_OUTPUT_TO_INPUT_RATIO = 2.5`, `_DEFAULT_CHUNK_TOKENS = 4000`, `MIN_SPLIT_TOKENS = 400`; functions `chunk_token_budget`, `split_for_extraction` (sentence-regex packing with `_split_oversized`), `merge_extractions`.
 - Ingestion agent gains `_build_extraction_prompt`, `_extract_chunk(llm, text, count_tokens, depth)`, `_extract_with_chunking(llm, content, logs) -> (Extraction, int)`, `_batch_image_titles`.
 
-**Model load clock / runtime budget** (`local_models.py` +195; `multimodal_runtime.py` `_record_load`; new `backend/app/services/timing.py` 62 lines with `load_snapshot`, `load_delta`, `describe_loads`, `log_stage_timing`; `workflows/ingestion.py` `_load_snapshot`, `_log_timing`; new tests `test_model_load_clock.py`, `test_local_runtime_budget.py`):
+**Model load clock / runtime budget** (`local_models.py` +195; `multimodal_runtime.py` `_record_load`; `workflows/ingestion.py` `_log_timing` (a short-lived `services/timing.py` wrapper module was folded back into direct `ModelLoadClock` calls on 2026-09-19); new tests `test_model_load_clock.py`, `test_local_runtime_budget.py`):
 
 - `class ModelLoadClock` (`record(kind, seconds)`, `snapshot()`, `diff(before, after)`, `describe(delta)`), `class PromptTooLongError(RuntimeError)`, `_default_chat_max_tokens()`, `ensure_chat_loaded`, `resolve_chat_gguf`, `count_tokens`, `_prompt_token_estimate`, `_remaining_output_budget`.
 - `desktop/supervisor.js`: the fixed `ORB_LLAMA_MAX_TOKENS` default of `"10240"` is removed; new comment: "No default output cap — the API sizes max_tokens per call from the context left after the prompt; a fixed cap truncated long extractions." The variable is only exported when set in the environment. `ORB_LLAMA_N_CTX` default `16384` is unchanged (D-27).
 
 **Minor:** `firefly_service.py` (+20/−), `api/admin.py`, `api/chat.py`, `api/notes.py`, `api_desktop.py` (1–4 line changes each, consistent with the `require_ai(kb)` / per-KB LLM plumbing).
+
+### 2026-09-19 — over-engineering sweep (uncommitted)
+
+A repo-wide audit removed about 6,500 lines and 16 dependencies without changing product behaviour:
+
+- **Dependencies dropped.** Python: `instructor`, `langgraph`, `langchain-openai`, `tenacity`, `python-dateutil`, `dateparser`, `requests`, `regex`, `scikit-learn`. npm: `axios`, `tailwind-merge`, `framer-motion`, `class-variance-authority`, `postcss`, `@tanstack/react-virtual`. Rust: `url`.
+- **LLM service** (`llm.py` 1903 → ~1070 lines): one `_chat()` fan-out; `extract_structured` and the per-provider extraction helpers, `GeminiChatWrapper`, the fallback provider and the async client twins are gone; query analysis is plain JSON behind `lru_cache`.
+- **Ingestion**: the LangGraph `StateGraph` became a sequential `run_ingestion_agent`; relationship score fields (`strength/confidence/relevance`, `sentiment`, `edge_weight`) were removed because no prompt ever filled them; community clustering is a numpy greedy merge.
+- **Local chat is GGUF-only**: `chat_runtimes.py` (MLX / transformers) deleted; `model_formats.py` 304 → 57 lines.
+- **Setup**: `AI_SETUP_MODE` removed end to end (setting, `paths.json`, Tauri env, first-run picker, frontend); readiness comes from `ai_gate` alone. `LIVEOS_*`/`LifeOS` aliases and the `kb_registry.json` migration removed.
+- **Finance**: bills, piggy banks, tags, webhooks, object groups, exchange rates, attachments and `/finance/open` routes removed (no UI ever called them).
+- **Frontend**: native `fetch` client, native `<dialog>` modals, no hydration flag, no barrels, lint at 0 warnings.
+- Tests: 455 passing, 0 failing (stale tests fixed or deleted).
 
 ## 7. Open questions and discrepancies
 
@@ -334,5 +347,4 @@ The working tree diverges from `02ac9d3`. This section summarises `git status` /
 - No commit records *why* Kuzu was chosen over Neo4j or Meilisearch over Typesense beyond "embedded"/"replaced by"; the decision log states this explicitly rather than inferring benchmarks.
 - `docker-compose.yml`, both `Dockerfile`s and `backend/.dockerignore` survive despite `fbcafe7`'s message "remove ... Docker". They are contributor-only; nothing in CI uses them.
 - `backend/app/models/note.py` still has a `content` column although note bodies are vault files (D-29). Whether it is written anywhere is a question for [Notes and vault files](09-notes-wikilinks-and-vault-files.md).
-- `backend/requirements.txt` still pins `asyncpg`, `boto3`/`aioboto3`/`aiobotocore`/`botocore` and `langchain-openai` although the S3 path is gone and Postgres is contributor-only.
 - The README pins the retrieval reranker as "symbolic" nowhere today, but D-04 → D-26 shows reranking flipped symbolic → neural → GGUF cross-encoder; docs on retrieval should describe only the current GGUF cross-encoder.

@@ -26,17 +26,16 @@ Boundary facts that matter when modifying code:
 | `backend/tests/__init__.py`, `backend/tests/unit/__init__.py` | Make `tests` a package so pytest's default (`prepend`) import mode inserts `backend/` on `sys.path`; `app.*` imports then work from any cwd. | — |
 | `backend/tests/unit/conftest.py` | Shared fixtures: autouse settings patch, `MagicMock`/`AsyncMock` service stubs, sample-data helpers. | `event_loop_policy`, `patch_settings` (autouse), `mock_llm_service`, `mock_graph_service`, `mock_meili_service`, `mock_typesense_service` (alias), `mock_qdrant_service`, `make_node()`, `make_relationship()` |
 | `backend/tests/unit/test_chat_context.py` | Follow-up query rewrite (`LLMService.rewrite_follow_up_query`). | 6 tests in `TestRewriteFollowUpQuery` |
-| `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (key aliasing, `None` handling, score normalisation, wrapper unwrapping). | 5 classes, ~33 tests |
+| `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (key aliasing, `None` handling, wrapper unwrapping). | 24 tests |
 | `backend/tests/unit/test_graph_layout.py` | Pure geometry in `app/utils/graph_layout.py`. | `TestFibonacciSphere`, `TestDeterministicJitter`, `TestComputeSolarPositions`, `TestComputeSpringLayout3d` |
-| `backend/tests/unit/test_graph_queries.py` | Cypher-shape regression guards for `GraphService.get_related_nodes` (and the since-removed `find_paths_between_nodes`). | `_get_graph_service_class()` (imports `app.services.graph` with `kuzu.Database`/`kuzu.Connection` patched), `_make_graph_service()`, `_row()` |
+| `backend/tests/unit/test_graph_queries.py` | Cypher-shape regression guards for `GraphService.get_related_nodes`. | `_get_graph_service_class()` (imports `app.services.graph` with `kuzu.Database`/`kuzu.Connection` patched), `_make_graph_service()`, `_row()` |
 | `backend/tests/unit/test_llm_json_cleaning.py` | `LLMService._clean_json` (fence stripping, control chars, smart quotes, `json_repair`). | 4 classes, 15 tests |
-| `backend/tests/unit/test_meili_contract.py` | Meilisearch document contract: `node_id` (primary key) always present in `index_node` / `update_node_community` payloads; errors logged not raised. | `_make_meili_service()` |
+| `backend/tests/unit/test_meili_contract.py` | Meilisearch document contract: `node_id` (primary key) always present in `index_node` payloads. | `_make_meili_service()` |
 | `backend/tests/unit/test_qdrant_contract.py` | Qdrant payload/filter contract for `upsert_node_core` and `search_node_cores`. | `_make_service()` |
-| `backend/tests/unit/test_relationships.py` | Relationship-type ontology helpers (`can_evolve`, `get_inverse_type`, …) from `app/schemas/relationships.py` — **module no longer exists** (deleted in `da75dfc`, 2026-05-28). | Fails at collection with `ModuleNotFoundError`. |
-| `backend/tests/unit/test_extraction_chunking.py` (untracked) | Paragraph-bounded chunking, token budget, and extraction merge in `app/workflows/extraction_chunking.py`. | `TestSplitForExtraction`, `TestChunkTokenBudget`, `TestMergeExtractions` |
-| `backend/tests/unit/test_ingestion_chunked_extraction.py` (untracked) | Chunk/truncate/retry loop and batched image titling in `ingestion_agent`; documents the duck-typed LLM protocol via `_StubLLM`. | 4 async tests |
-| `backend/tests/unit/test_kb_llm_config.py` (untracked) | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
-| `backend/tests/unit/test_local_runtime_budget.py` (untracked) | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf` |
+| `backend/tests/unit/test_extraction_chunking.py` | Paragraph-bounded chunking, token budget, and extraction merge in `app/workflows/extraction_chunking.py`. | `TestSplitForExtraction`, `TestChunkTokenBudget`, `TestMergeExtractions` |
+| `backend/tests/unit/test_ingestion_chunked_extraction.py` | Chunk/truncate/retry loop and batched image titling in `ingestion_agent`; documents the duck-typed LLM protocol via `_StubLLM`. | 4 async tests |
+| `backend/tests/unit/test_kb_llm_config.py` | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
+| `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf` |
 | `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
 | `backend/tests/unit/test_gguf_metadata.py` | GGUF header parsing against **synthesised** fixtures (`build_gguf` writes spec-conformant bytes), including the guards for corrupt/hostile headers and the `pooling_type` vs `chat_template` role distinction. | 24 tests |
 | `backend/tests/unit/test_model_discovery.py` | Disk scanning: shard grouping, AppleDouble/partial/dotfile filtering, venv + depth pruning, `MODELS_DIR`-relative refs, the metadata cache, `inspect_chat_model`. | 31 tests |
@@ -78,11 +77,11 @@ python -m pytest tests/unit -q -k "chunk"                       # by keyword
 |---|---|---|
 | `pytest` | runner | **No** |
 | `pytest-asyncio` | `@pytest.mark.asyncio` tests + the `event_loop_policy` fixture in `conftest.py` | **No** |
-| `instructor`, `json-repair`, `openai`, `google-genai`, … | imported at module level by `app/services/llm.py` (five test modules import `LLMService`) | yes |
+| `json-repair`, `openai`, `google-genai`, `anthropic` | imported by `app/services/llm.py` (several test modules import `LLMService`) | yes |
 | `qdrant-client` | `app/services/qdrant_service.py` (`test_qdrant_contract.py` also imports `qdrant_client.models` directly) | yes |
 | `kuzu` | `test_graph_queries.py` does `patch("kuzu.Database")`, which imports the real `kuzu` module before patching | yes |
 | `meilisearch` | `app/services/meilisearch_service.py` | yes |
-| `langgraph` and the rest of the ingestion stack | `app/workflows/agents/ingestion_agent.py` (`test_ingestion_chunked_extraction.py`) | yes |
+| the ingestion stack (`numpy`, `kuzu`, …) | `app/workflows/agents/ingestion_agent.py` (`test_ingestion_chunked_extraction.py`) | yes |
 | `llama-cpp-python` | `app/services/local_models.py` (`test_local_runtime_budget.py`, `test_model_load_clock.py`) — only if imported at module top; the tests never load a GGUF | yes (multimodal extras separate) |
 
 In short: the unit tests need the **full** backend environment installed, even though they never open a connection. A venv built from `requirements.txt` plus `pytest pytest-asyncio` is the minimum.
@@ -92,24 +91,14 @@ In short: the unit tests need the **full** backend environment installed, even t
 - `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "lm_studio"` for every test, so no `.env` is required. Importing `app.core.config` still evaluates `Settings()` once: it reads `backend/.env` **if present** (`env_file` in `model_config`, `extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). If you have a real `.env` in `backend/`, its values leak into the tests except for the keys individual tests monkeypatch.
 - `test_kb_llm_config.py` has its own autouse fixture that overrides `LLM_PROVIDER` to `"local"` and pins `LLM_MODEL`, `CHAT_MODEL`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL`, `GEMINI_MODEL`, `OPENAI_MODEL` — it runs after `patch_settings` and wins.
 - `normalize_base_url` lives only in `backend/app/services/credentials.py` (the UI sends the raw URL); `test_credentials.py` covers the URL corpus and `test_credentials_keyring.py` the keychain persistence with `keyring` mocked.
-- Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS` (and its legacy alias `LIVEOS_LLAMA_MAX_TOKENS`). Nothing else touches the OS environment.
+- Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder before running the suite: `app/services/graph.py` opens the configured Kuzu file at import and the running desktop app holds a lock on the real one.
 - Nothing writes to disk except `tmp_path` fixtures in `test_local_runtime_budget.py`.
 
-### 3.4 Observed state of the suite (2026-09-02)
+### 3.4 Observed state of the suite (2026-09-19)
 
-Recorded factually; this is what happens today, not what should happen.
+`pytest tests/unit -q` → **455 passed, 0 failed** against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
 
-- `backend/.venv` (Python 3.14.7) is a **partial** install: it has `fastapi 0.141.1`, `pydantic 2.13.4`, `SQLAlchemy 2.0.51`, but no `kuzu`, `qdrant_client`, `instructor`, `langgraph`, `meilisearch`, `json_repair`, and no `pytest`. `python -m pytest` therefore fails immediately with `No module named pytest`.
-- After `pip install pytest pytest-asyncio` into that venv, `python -m pytest tests/unit -q` **fails at collection with 7 errors**:
-  - `ModuleNotFoundError: No module named 'instructor'` — 5 modules (`test_chat_context.py`, `test_llm_json_cleaning.py`, `test_kb_llm_config.py`, and the two that pull in `ingestion_agent` / `graph`), all via `app/services/llm.py`.
-  - `ModuleNotFoundError: No module named 'qdrant_client'` — `test_qdrant_contract.py`.
-  - `ModuleNotFoundError: No module named 'app.schemas.relationships'` — `test_relationships.py`. This one is **independent of the venv**: the module was deleted in commit `da75dfc` (2026-05-28, "Add temporal digest features and admin APIs") and the test was never removed.
-- With a complete environment, static reading of the current sources shows these additional failures are expected (see §5 for the reasoning per test):
-  - `test_graph_queries.py`: 3 of 6 tests — `get_related_nodes()` no longer accepts `min_confidence`, and `find_paths_between_nodes()` no longer exists (both removed in `fbcafe7`, 2026-08-03).
-  - `test_chat_context.py::test_returns_latest_when_empty_query`: asserts the whitespace-only query `"   "` is returned verbatim, but `rewrite_follow_up_query` now strips first and returns `""`.
-- Everything else (extraction schemas, graph layout, JSON cleaning, Meili/Qdrant contracts, and the five new modules) is consistent with the current code as far as static inspection can tell.
-
-Nothing runs these tests automatically: the only GitHub workflow builds installers (§6.4, §12).
+Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing_helpers.py` and `test_chat_runtimes.py` were deleted with the code they covered; `test_graph_queries.py` lost the three tests for `min_confidence` / `find_paths_between_nodes` (APIs removed in `fbcafe7`); `test_qdrant_*.py` and `test_meili_contract.py` now set the backing `_client` attribute instead of the read-only lazy `client` property; `test_model_formats.py` shrank to the GGUF cases; `test_credentials.py` fakes `keyring` (it used to write into the developer's real keychain); the image-title stub speaks `ingestion_generate_with_meta`; the whitespace-query assertion in `test_chat_context.py` matches the stripping behaviour.
 
 ## 4. `conftest.py` — fixtures and what they stub
 
@@ -121,7 +110,7 @@ Nothing runs these tests automatically: the only GitHub workflow builds installe
 | `patch_settings` | function, **autouse** | — | `monkeypatch.setattr(config.settings, "LLM_PROVIDER", "lm_studio", raising=False)`. Prevents any provider branch in `LLMService` from selecting a cloud client and removes the need for a `.env`. `"lm_studio"` is a legacy provider name from the Feb–Mar 2026 LM Studio era; the current default in `config.py` is `"local"`. | Every test (autouse); overridden by `test_kb_llm_config.py` |
 | `mock_llm_service` | function | `MagicMock` with `AsyncMock` methods `select_relevant_relationships → []`, `select_relevant_docs_with_reasoning → {"selected": [], "reasoning": ""}`, `generate_node_enrichment_async → {description,title,facts,questions}` | Stands in for `LLMService` in Joint-Approach-era retrieval tests. **None of these three methods exist on `LLMService` today** (removed with the Final Implementation refactor `68494b7` and the desktop cleanup `fbcafe7`). | No |
 | `mock_graph_service` | function | `MagicMock` with `get_related_nodes → []`, `find_paths_between_nodes → []`, `resolve_node_id → None`, `execute_query → []` | Stands in for `GraphService`. `find_paths_between_nodes` no longer exists. | No |
-| `mock_meili_service` | function | `MagicMock` with `is_available → True`, `index_node`, `update_node_community`, `delete_node` | Stands in for `MeilisearchService`; method names are still accurate. | No |
+| `mock_meili_service` | function | `MagicMock` with `is_available → True`, `index_node`, `delete_node` | Stands in for `MeilisearchService`; method names are still accurate. | No |
 | `mock_typesense_service` | function | alias returning `mock_meili_service` | Backward-compat alias from the Typesense era ("Kuzu/Typesense migration", `68494b7`, 2026-05-07). | No |
 | `mock_qdrant_service` | function | `MagicMock` with `find_node_id_by_name → None`, `upsert_node` (`AsyncMock → True`), `search_node_cores → []` | Stands in for `QdrantService`. The real write method is the **sync** `upsert_node_core`; `upsert_node` does not exist. | No |
 | `make_node(name, kind="indexable", node_id=None)` | helper | `{"id", "name", "kind", "description"}` dict | Sample node row shaped like a Kuzu `Node` (`kind` ∈ indexable/note/community). | No |
@@ -139,19 +128,19 @@ Nine tracked modules plus five untracked (uncommitted as of 2026-09-02) modules.
 
 | Module | Target | Tests | Status |
 |---|---|---|---|
-| `test_chat_context.py` | `LLMService.rewrite_follow_up_query` | 6 | 5 pass, 1 stale assertion |
-| `test_extraction_schemas.py` | `app/schemas/extraction.py` validators | ~33 | pass |
+| `test_chat_context.py` | `LLMService.rewrite_follow_up_query` | 6 | pass |
+| `test_extraction_schemas.py` | `app/schemas/extraction.py` validators | 24 | pass |
 | `test_graph_layout.py` | `app/utils/graph_layout.py` | 19 | pass |
-| `test_graph_queries.py` | `GraphService.get_related_nodes` / `find_paths_between_nodes` | 6 | 3 fail (API removed) |
-| `test_llm_json_cleaning.py` | `LLMService._clean_json` | 15 | pass (needs `json_repair`) |
-| `test_meili_contract.py` | `MeilisearchService.index_node` / `update_node_community` | 4 | pass |
-| `test_qdrant_contract.py` | `QdrantService.upsert_node_core` / `search_node_cores` | 13 | pass if `_col_cores` resolves (see below) |
-| `test_relationships.py` | `app/schemas/relationships.py` | 31 | **ImportError** — module deleted |
-| `test_extraction_chunking.py` (untracked) | `app/workflows/extraction_chunking.py` | 14 | pass |
-| `test_ingestion_chunked_extraction.py` (untracked) | `ingestion_agent._extract_with_chunking`, `_batch_image_titles` | 4 (async) | pass |
-| `test_kb_llm_config.py` (untracked) | `kb_registry.effective_llm_config`, `LLMService.get_chat_model/get_ingestion_model` | 10 | pass |
-| `test_local_runtime_budget.py` (untracked) | `LocalLlamaRuntime` budgeting / GGUF resolution | 13 | pass |
-| `test_model_load_clock.py` (untracked) | `ModelLoadClock` | 4 | pass |
+| `test_graph_queries.py` | `GraphService.get_related_nodes` | 3 | pass |
+| `test_llm_json_cleaning.py` | `LLMService._clean_json` | 16 | pass |
+| `test_meili_contract.py` | `MeilisearchService.index_node` | 1 | pass |
+| `test_qdrant_contract.py` | `QdrantService.upsert_node_core` / `search_node_cores` | 13 | pass |
+| `test_extraction_chunking.py` | `app/workflows/extraction_chunking.py` | 15 | pass |
+| `test_ingestion_chunked_extraction.py` | `ingestion_agent._extract_with_chunking`, `_batch_image_titles` | 4 (async) | pass |
+| `test_kb_llm_config.py` | `kb_registry.effective_llm_config`, `LLMService.get_chat_model/get_ingestion_model` | 18 | pass |
+| `test_local_runtime_budget.py` | `LocalLlamaRuntime` budgeting / GGUF resolution | 14 | pass |
+| `test_model_load_clock.py` | `ModelLoadClock` | 4 | pass |
+| (30 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments, extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime, vision routing, … | 300+ | pass |
 
 ### 5.1 `test_chat_context.py` — follow-up query rewriting
 
@@ -178,7 +167,6 @@ Pins the pre-validators in `app/schemas/extraction.py` that absorb the many shap
 | `Node.handle_none` (`field_validator("*")`) | `None` → `""` for every field except `type` → `"thing"`. |
 | `ExtractedRelationship.normalize_keys` | `entity1`→`source_name`, `entity2`→`target_name`, `description`→`natural_language`. |
 | `ExtractedRelationship.handle_none_strings` | `None`/blank `relationship_type` → `"relates_to"`; other string fields `None` → `""`. |
-| `ExtractedRelationship.normalize_scores` via `_normalize_score` | Defaults: confidence 7.0, strength 5.0, relevance 5.0. Labels: very high 9, high 8, medium/moderate 6, low 4, very low 2. Floats in `[0,1]` are ×10. Everything clamped to `[1.0, 10.0]` (`0.0 → 1.0`, `15 → 10`). Numeric strings are parsed; unparseable strings → default. |
 | `Extraction.normalize_keys` | `None` → empty; unwrap `{"extraction"|"data"|"result": {...}}` when the inner dict has `nodes` or `relationships`; Gemma two-list `[nodes, rels]`; bare list of dicts/strings → nodes (strings become `{"name": s}`); a node's embedded `"relationships"` list is hoisted to the top level. |
 | `Extraction.ensure_list` | `nodes`/`relationships` `None` or scalar → `[]`; string items in `nodes` → `{"name": …}`. |
 
@@ -213,15 +201,14 @@ Why it matters: Kuzu's Cypher dialect differs from Neo4j's; the Neo4j-era hyphen
 
 `LLMService._clean_json(json_str) -> str`, in order: (1) if ` ``` ` present, take the first fenced block (` ```json ` or bare) with `re.DOTALL`; (2) strip control characters `\x00-\x08 \x0b \x0c \x0e-\x1f` (newline, CR and tab survive); (3) map `‘ ’ ‛` → `'` and `“ ” „` → `"`; (4) `json_repair.repair_json(...)`, or return the cleaned string unchanged with a warning if `json_repair` is missing. Tests cover fence extraction with surrounding prose, null/bell removal, smart-quote normalisation, missing closing brace, trailing comma, and a combined case. The repair-dependent cases (`{"key": "value"` → valid JSON) fail without `json-repair==0.55.0`.
 
-Why it matters: every structured LLM call (`extract_structured`, ingestion extraction, query analysis) goes through this; it is the first line of defence behind the validators in §5.2.
+Why it matters: every structured LLM call (ingestion extraction, query analysis) goes through this; it is the first line of defence behind the validators in §5.2.
 
 ### 5.6 `test_meili_contract.py` — primary-key invariant
 
-`_make_meili_service()` sets `client`, `collection="test_nodes"`, `_enabled=True`, `is_available`, and replaces `_index()` with a mock whose `add_documents` returns a task with `task_uid=1`. Contracts:
+`_make_meili_service()` sets the backing `_client` (the `client` property is a lazy reconnecting getter), `collection="test_nodes"`, `is_available`, and replaces `_index()` with a mock whose `add_documents` returns a task with `task_uid=1`. Contract:
 
-- `update_node_community(node_id, relationship_natural_language="", name="")` → the document sent to `add_documents` always contains `node_id` even when `get_node` returns `None` (document `{"node_id": …}` is synthesised), and contains `name` when supplied. Implementation detail now: it delegates to `update_nodes_community([...])`, which merges into the existing document and calls `add_documents(docs, primary_key="node_id")` once.
 - `index_node(node_id, name, node_type, isolated_contexts_text="", relationship_natural_language="", community_level=None)` → document has `node_id` and `name`.
-- Index errors are caught and logged with `logger.debug` (`update_nodes_community`) — never raised into ingestion. (`index_node` logs at `warning`; the test only covers the community path.)
+- Index errors are caught and logged — never raised into ingestion.
 
 Why it matters: Meilisearch's index is created with `primaryKey: "node_id"`; a document without it is rejected, silently dropping the node from keyword search. See [Search indexes](15-search-indexes-qdrant-meilisearch.md).
 
@@ -251,7 +238,7 @@ Targets `app/workflows/extraction_chunking.py`:
 
 ### 5.10 `test_ingestion_chunked_extraction.py` (new) — the agent's chunk/retry loop
 
-Loads the module with `importlib.import_module("app.workflows.agents.ingestion_agent")` because the package `__init__` re-exports the compiled LangGraph as the name `ingestion_agent`, shadowing the module. A `_StubLLM` documents the **duck-typed LLM protocol** the agent needs: `provider`, `ingestion_count_tokens(text)`, `ingestion_context_tokens()`, `get_ingestion_model()`, `_clean_json(raw)`, `async ingestion_generate_with_meta(prompt, temperature, max_tokens) -> (content, {"finish_reason", "truncated"})`, `async ingestion_generate(prompt, temperature, max_tokens)`. The stub finds the note as the text after the prompt's final `"nothing else:\n\n"` — a coupling to the extraction prompt's last line.
+Imports `app.workflows.agents.ingestion_agent` directly (the package `__init__` no longer re-exports anything). A `_StubLLM` documents the **duck-typed LLM protocol** the agent needs: `provider`, `ingestion_count_tokens(text)`, `ingestion_context_tokens()`, `get_ingestion_model()`, `_clean_json(raw)`, `async ingestion_generate_with_meta(prompt, temperature, max_tokens) -> (content, {"finish_reason", "truncated"})`, `async ingestion_generate(prompt, temperature, max_tokens)`. The stub finds the note as the text after the prompt's final `"nothing else:\n\n"` — a coupling to the extraction prompt's last line.
 
 Contracts for `await agent._extract_with_chunking(llm, note_text, images) -> (Extraction, chunk_count)`:
 
@@ -275,7 +262,7 @@ A `_FakeLlama` exposing only `n_ctx()` and `tokenize()` is injected as `runtime.
 
 - `LocalLlamaRuntime._remaining_output_budget(messages)` = `n_ctx − (Σ tokens + 8 per message + 4) − lm._GEN_SAFETY_MARGIN`; raises `lm.PromptTooLongError` when the prompt fills the window.
 - `count_tokens(text)`: with no resident model uses the heuristic `len(text) // 4 + 1` (`""` → 0); with a model uses its tokenizer.
-- `lm._default_chat_max_tokens()`: env `ORB_LLAMA_MAX_TOKENS` (legacy `LIVEOS_LLAMA_MAX_TOKENS`) — unset → `None` (dynamic budget), integer → that cap, garbage → `None`.
+- `lm._default_chat_max_tokens()`: env `ORB_LLAMA_MAX_TOKENS` — unset → `None` (dynamic budget), integer → that cap, garbage → `None`.
 - `resolve_chat_gguf(model_id)`: `None`/`""`/`"local-chat"` → `None` (meaning "use the Setup selection"); known catalog id not on disk → `RuntimeError("… not downloaded")`; known id present (`_gguf_looks_complete` true) → `resolve_models_dir()/gguf/<option.hf_file>`; an embedding id (`qwen3-embed-0.6b-q8`) → `RuntimeError("… not a chat model")`; an explicit existing `.gguf` path → that `Path`; unknown name → `None`.
 
 Why it matters: these are the invariants behind "one heavy model resident at a time" and the dynamic `max_tokens` that keeps long chats from overflowing the context — see [Local models and inference](12-local-models-and-inference.md) and [Data directory layout](22-data-directory-layout.md) for `models_dir/gguf/`.
@@ -359,8 +346,8 @@ There is no separate `typecheck` script, but `npm run build` is `tsc --noEmit &&
 
 | Gap | Detail | Risk |
 |---|---|---|
-| No CI test job | `.github/workflows/desktop-release.yml` is the only workflow and runs only on `desktop-v*` tags / manual dispatch; it never invokes pytest, pylint, eslint or `tsc`. | Regressions (like the three stale test modules) accumulate silently. |
-| Unit suite not runnable from the checked-in environment | `pytest`/`pytest-asyncio` absent from `requirements.txt`; the working `.venv` is partial; three modules assert removed APIs (§3.4). | New contributors cannot get a green run without archaeology. |
+| No CI test job | `.github/workflows/desktop-release.yml` is the only workflow and runs only on `desktop-v*` tags / manual dispatch; it never invokes pytest, pylint, eslint or `tsc`. | Regressions accumulate silently between manual runs. |
+| Unit suite needs a full environment | `pytest`/`pytest-asyncio` are absent from `requirements.txt` and `backend/.venv` is partial; the suite itself is green (§3.4). | New contributors must build a venv first. |
 | No frontend tests | No jest/vitest/RTL/playwright in `frontend/package.json`; only `eslint` and the `tsc --noEmit` in `npm run build`. | Editor (CodeMirror wikilink autocomplete), chat polling and graph canvas logic are unverified. |
 | No desktop-shell / runtime tests | `desktop/src-tauri` has no tests and `backend/app/desktop_runtime.py` (ports, sidecar boot, Firefly bootstrap) is exercised only by hand. | |
 | No integration tests | `tests/integration/` was deleted in `335a253`; nothing starts Qdrant/Meili/Kuzu/SQLite against a temp `DATA_DIR`. The API contract (`?kb=`, vault sync, ingestion status transitions) is covered only by the benchmark scripts, which need a full running app and an LLM. | Cross-service invariants (vault file ↔ SQLite row ↔ Kuzu ↔ Qdrant ↔ Meili) are untested. |
@@ -407,7 +394,7 @@ Follow the idioms the passing modules use; do not reach for the dead `mock_*` fi
 - **Retrieval F1 is F1 of means**, not mean of F1s.
 - **Results JSON lacks per-case F1/contains** — do not try to recompute report tables from it alone.
 - **`*.log` is gitignored except under `Results*/`** — a new results folder must be named `Results…` at the repo root (or the `Results/` subfolders) for its logs to be tracked.
-- **Log analysis scripts used for the reports (`analyze_test_logs.py`, `batch_ingest.py`, `backfill_failed_relationships.py`, `run_community_detection.py`) are not in the repo** (some were pruned in `3ab4f9d`, 2026-03-04, and `fbcafe7`); the README still references `scripts/run_community_detection.py`.
+- **Log analysis scripts used for the reports (`analyze_test_logs.py`, `batch_ingest.py`, `backfill_failed_relationships.py`, `run_community_detection.py`) are not in the repo** (some were pruned in `3ab4f9d`, 2026-03-04, and `fbcafe7`; `run_community_detection.py` was removed on 2026-09-19).
 
 ## 10. History / rationale
 

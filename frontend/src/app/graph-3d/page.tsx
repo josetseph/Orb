@@ -1,27 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Maximize2 } from "lucide-react";
 import { useKB } from "@/lib/kb-context";
 import { cn } from "@/lib/utils";
-import {
-  type KnowledgeNode,
-  HUD,
-  NodeDetailModal,
-  ProximityLabelLayer,
-  GraphSearchOverlay,
-  Graph3DCanvas,
-  nodeColor,
-  useGraph3DData,
-  useGraphSearch,
-  useProximityLabels,
-  useGraph3DCamera,
-  GraphModeSwitch,
-} from "@/components/graph3d";
+import type { KnowledgeNode } from "@/components/graph3d/types";
+import { HUD } from "@/components/graph3d/HUD";
+import { NodeDetailModal } from "@/components/graph3d/NodeDetailModal";
+import { ProximityLabelLayer } from "@/components/graph3d/ProximityLabelLayer";
+import { GraphSearchOverlay } from "@/components/graph3d/GraphSearchOverlay";
+import { Graph3DCanvas } from "@/components/graph3d/Graph3DCanvas";
+import { nodeColor } from "@/components/graph3d/nodeColors";
+import { useGraph3DData } from "@/components/graph3d/hooks/useGraph3DData";
+import { useProximityLabels } from "@/components/graph3d/hooks/useProximityLabels";
+import { useGraph3DCamera } from "@/components/graph3d/hooks/useGraph3DCamera";
+import { GraphModeSwitch } from "@/components/graph3d/GraphModeSwitch";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyNode = any;
 
 export default function Graph3DPage() {
-  const { currentKB, isHydrated } = useKB();
+  const { currentKB } = useKB();
   const [selectedNode, setSelectedNode] = useState<KnowledgeNode | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
 
@@ -33,7 +30,7 @@ export default function Graph3DPage() {
     nodeTypeMapRef,
     hasFittedRef,
     userNavigatedRef,
-  } = useGraph3DData(currentKB, isHydrated);
+  } = useGraph3DData(currentKB);
 
   const nodes = graphData.nodes as AnyNode[];
   const links = graphData.links as AnyNode[];
@@ -75,15 +72,26 @@ export default function Graph3DPage() {
     linksRef.current = filtered.links as AnyNode[];
   }, [filtered, nodesRef, linksRef]);
 
-  const {
-    searchOpen,
-    setSearchOpen,
-    searchQuery,
-    setSearchQuery,
-    searchResults,
-    searchInputRef,
-    searchOpenRef,
-  } = useGraphSearch(nodesRef, filtered.nodes);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchOpenRef = useRef(false);
+
+  // Filter nodes client-side as the user types; prefix matches first.
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return [];
+    const q = searchQuery.toLowerCase();
+    return (filtered.nodes as AnyNode[])
+      .filter((n) => (n.name ?? "").toLowerCase().includes(q))
+      .sort((a, b) => {
+        const aStarts = (a.name ?? "").toLowerCase().startsWith(q);
+        const bStarts = (b.name ?? "").toLowerCase().startsWith(q);
+        if (aStarts && !bStarts) return -1;
+        if (!aStarts && bStarts) return 1;
+        return (a.name ?? "").localeCompare(b.name ?? "");
+      })
+      .slice(0, 8);
+  }, [searchQuery, filtered.nodes]);
 
   const { graphRef, flyToNode, handleNodeClick } = useGraph3DCamera({
     nodeCount: filtered.nodes.length,

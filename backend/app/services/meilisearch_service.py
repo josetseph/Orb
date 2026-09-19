@@ -194,22 +194,6 @@ class MeilisearchService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Meili index_node failed for {node_id}: {exc}")
 
-    def update_node_community(
-        self,
-        node_id: str,
-        relationship_natural_language: str = "",
-        name: str = "",
-    ) -> None:
-        self.update_nodes_community(
-            [
-                {
-                    "node_id": node_id,
-                    "relationship_natural_language": relationship_natural_language,
-                    "name": name,
-                }
-            ]
-        )
-
     def update_nodes_community(self, rows: list[dict]) -> None:
         """Batch community-field refresh: one add_documents call (and one task
         wait) for the whole set, instead of one HTTP write per node."""

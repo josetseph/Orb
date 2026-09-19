@@ -36,10 +36,8 @@ class Settings(BaseSettings):
         env_file=str(BACKEND_DIR / ".env"), env_file_encoding="utf-8", extra="ignore"
     )
 
-    PROJECT_NAME: str = "Orb"
     # Vite build to serve at "/" (desktop: the packaged UI). Unset -> ../frontend/dist if built.
     FRONTEND_DIR: str | None = None
-    API_V1_STR: str = "/api/v1"
     # Include 127.0.0.1 — Electron desktop loads that origin (≠ localhost for CORS)
     CORS_ORIGINS: str = (
         "http://localhost:3700,http://localhost:3701,"
@@ -51,21 +49,16 @@ class Settings(BaseSettings):
     # ── Desktop / path layout ─────────────────────────────────────────────────
     DATA_DIR: str = _default_data_dir()
     MODELS_DIR: str = _default_models_dir()
-    # AI setup: "local" | "cloud" | "hybrid" | "none"
-    AI_SETUP_MODE: str = "none"
 
     # ── Kuzu (embedded graph database) ──────────────────────────────────────
     KUZU_DB_PATH: str = DEFAULT_KUZU_DB_PATH
 
     # ── LLM Provider (local = in-process GGUF via llama-cpp-python)
     LLM_PROVIDER: str = "local"
-    LLM_FALLBACK_PROVIDER: str | None = None
     # OpenAI-compat HTTP fields — unused for in-process local; used by cloud HTTP
     LLM_BASE_URL: str = "http://127.0.0.1:8080"
     LLM_API_KEY: str = "local"
     LLM_MODEL: str = "local-chat"
-    LLM_KEEP_ALIVE: str = "10m"
-    LLM_RESPONSE_FORMAT: str = "text"
     CHAT_MODEL: str | None = None
     INGESTION_MODEL: str | None = None
     INGESTION_PROVIDER: str | None = None
@@ -73,14 +66,11 @@ class Settings(BaseSettings):
     INGESTION_GEMINI_MODEL: str | None = None
 
     EMBEDDING_PROVIDER: str = "local"
-    EMBEDDING_BASE_URL: str = "http://127.0.0.1:8081"
-    EMBEDDING_API_KEY: str = "local"
     EMBEDDING_MODEL: str = "local-embed"
     EMBEDDING_DIMENSIONS: int = 1024
 
     VECTOR_SIMILARITY_THRESHOLD: float = 0.50
     VECTOR_PRE_RERANK_THRESHOLD: float = 0.45
-    COMMUNITY_RECOMPUTE_BATCH_SIZE: int = 100
     COMMUNITY_DETECTION_ENABLED: bool = False
     TEMPORAL_DIGESTS_ENABLED: bool = False
     TEMPORAL_DIGEST_PERIOD: str = "month"
@@ -89,7 +79,6 @@ class Settings(BaseSettings):
     RERANKER_SCORE_THRESHOLD: float = 0.05
     GRAPH_EXPAND_TOP_NEIGHBORS: int = 10
     GRAPH_EXPAND_SCORE_THRESHOLD: float = 0
-    MAX_POTENTIAL_QUESTIONS: int = 10
     # 3 is enough for most personal-KB questions; multi-hop rarely benefits past ~3.
     MAX_LOOP_ITERATIONS: int = 3
     CHAT_HISTORY_MAX_MESSAGES: int = 24
@@ -155,10 +144,8 @@ class Settings(BaseSettings):
     # Contributor Postgres only — leave unset for Orb desktop (SQLite).
 
     LOG_LEVEL: str = "INFO"
-    INGESTION_AGENT_CONCURRENCY: int = 2
     INGESTION_PIPELINE_CONCURRENCY: int = 1
     MULTIMEDIA_CONCURRENCY: int = 1
-    USE_DYNAMIC_EMBEDDING_INSTRUCTION: bool = True
 
 
 

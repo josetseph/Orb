@@ -32,7 +32,6 @@
 | `backend/app/utils/graph_layout.py` | Pure-Python deterministic 3D layouts | `compute_solar_positions`, `compute_spring_layout_3d`, `SOLAR_*` constants, `_fibonacci_sphere`, `_deterministic_jitter`, `_majority_key` |
 | `backend/app/api/graph.py` | FastAPI router: 3D full graph, node detail, entity autocomplete, text scan, note subgraph | `router`, `ScanTextInput`, `_apply_meili_content`, `_needs_title` |
 | `backend/app/api/admin.py` | FastAPI router: maintenance status, rebuild communities, temporal digests, reset, reingest | `router`, `TemporalDigestInput` |
-| `backend/scripts/run_community_detection.py` | CLI wrapper around `ingestion_workflow.rebuild_leiden_communities()` for the default KB | — |
 | `backend/app/services/kb_registry.py` | Per-KB Kuzu path derivation/repair and lazy `GraphService` construction | `_kuzu_db_file`, `normalize_kuzu_path`, `KBContext.graph`, `KBRegistry._cleanup_stores` |
 | `backend/app/workflows/ingestion.py` | The only writer of REFERENCES/SEMANTIC_REL edges, communities, digests and positions | `IngestionWorkflow._write_ontology`, `rebuild_leiden_communities`, `build_temporal_digests`, `_queue_leiden_recompute_if_due`, `get_maintenance_status` |
 | `backend/app/core/config.py` | `KUZU_DB_PATH`, `COMMUNITY_*`, `TEMPORAL_DIGEST*` settings | `settings` |
@@ -101,7 +100,7 @@ erDiagram
         DOUBLE confidence
         DOUBLE strength
         DOUBLE relevance
-        DOUBLE edge_weight "0.5*strength + 0.3*confidence + 0.2*relevance"
+        DOUBLE edge_weight "schema-only since 2026-09-19; new edges leave it NULL"
         STRING relationship_id "uuid4; key for Qdrant node_relationships point"
         STRING ingested_at "ISO-8601 naive UTC"
         STRING last_updated "ISO-8601 naive UTC"
@@ -173,7 +172,7 @@ There is **one connection per service** used for both reads and writes; Kuzu's o
 ### 4.4 When the DB is actually opened
 
 - **Default KB:** eagerly, at import time. `backend/app/services/graph.py` ends with `graph_service = GraphService()`, so importing the module (which `kb_registry`, `ingestion`, `retrieval` all do) opens `DATA_DIR/kuzu/kuzu_graph`. Unit tests therefore stub `kuzu.Database`/`kuzu.Connection` before importing (`test_graph_queries._get_graph_service_class`).
-- **Other KBs:** lazily, on first access of `KBContext.graph`. `_build_context` deliberately does *not* open Kuzu ("notes/finance must work even if Kuzu path was misconfigured"). `_ensure_lazy()` (called by `get_retrieval_service` / `get_ingestion_workflow` / `get_chat_workflow`) touches `self.graph`, so any chat/ingest request opens it.
+- **Other KBs:** lazily, on first access of `KBContext.graph`. `_build_context` deliberately does *not* open Kuzu ("notes/finance must work even if Kuzu path was misconfigured"). `_ensure_lazy()` (called by `get_ingestion_workflow` / `get_chat_workflow`) touches `self.graph`, so any chat/ingest request opens it.
 - `KBContext.graph` raises `RuntimeError("No Kuzu path configured for KB …")` if the normalised path is empty.
 
 ### 4.5 Closing and deleting
@@ -305,12 +304,12 @@ create_or_update_relationship(
 Steps:
 1. Empty `relationship_type` → `ValueError`. Otherwise `re.sub(r"[^A-Za-z0-9_]", "_", relationship_type.strip())`. (The ingestion caller has already run `clean_rel_type`, which strips entity-name tokens from the predicate and falls back to `relates_to`.)
 2. `relationship_id = relationship_id or str(uuid4())`.
-3. `edge_weight = round(strength*0.5 + confidence*0.3 + relevance*0.2, 4)`. With the extraction schema's scales (strength/relevance 1–10, confidence 0–1) the practical range is roughly 1.8–10.3; it is stored but **not used** by any current query or ranker (kept from 033589d's symbolic ranking era).
+3. No per-edge score is computed. `confidence`, `strength`, `relevance` and `edge_weight` remain in the DDL (kept from 033589d's symbolic ranking era) but the writer no longer sets them; no query or ranker reads them.
 4. Resolve ids: if `source_id`/`target_id` not passed, `resolve_node_id(name.lower().strip())` via Qdrant. Either missing → return `{"action": "failed", "reason": "unresolvable IDs", …}` without touching Kuzu.
 5. Look for an existing edge with the same `(source_id, target_id, rel_type)` (`LIMIT 1`).
-6. **Reinforce** (exists): `last_updated = now`, `mention_count = coalesce(mention_count,0)+1`, `confidence = max(old, new)`, and `relationship_id`/`strength`/`relevance`/`edge_weight` only filled when currently NULL. `note_id`, `ingested_at` unchanged → provenance is *first* asserting note; strength/relevance are first-write-wins.
-7. **Create** (absent): `MERGE` both endpoints as `Node` (`ON CREATE SET kind='indexable'` — no name/type; normally they already exist from `query_nodes`), then `CREATE (source)-[r:SEMANTIC_REL]->(target)` setting `rel_type, confidence, strength, relevance, edge_weight, relationship_id, ingested_at = last_updated = now, mention_count = 1, note_id`.
-8. Return `{"action": "created"|"reinforced", "source", "target", "relationship_type", "confidence", "strength", "relevance", "edge_weight", "natural_language", "relationship_id"}`.
+6. **Reinforce** (exists): `last_updated = now`, `mention_count = coalesce(mention_count,0)+1`, and `relationship_id` only filled when currently NULL. `note_id`, `ingested_at` unchanged → provenance is *first* asserting note.
+7. **Create** (absent): `MERGE` both endpoints as `Node` (`ON CREATE SET kind='indexable'` — no name/type; normally they already exist from `query_nodes`), then `CREATE (source)-[r:SEMANTIC_REL]->(target)` setting `rel_type, relationship_id, ingested_at = last_updated = now, mention_count = 1, note_id`.
+8. Return `{"action": "created"|"reinforced", "source", "target", "relationship_type", "natural_language", "relationship_id"}`.
 
 `now` is `datetime.utcnow().isoformat()` — a naive ISO string with microseconds and no `Z`.
 
@@ -327,7 +326,7 @@ An edge is identified by the triple `(source.id, target.id, rel_type)` and is **
 | Field | Source | Read by |
 |---|---|---|
 | `confidence` | LLM extraction (0–1) | `_hop_query` returns `coalesce(r.confidence, 1.0)` as `confidence_path`; var-length query returns `coalesce(r.confidence, 0.0)`. Retrieval receives it but current code does no confidence filtering (the in-code comment "Confidence filtering is done in Python below" is stale; see §18). |
-| `strength`, `relevance`, `edge_weight` | LLM extraction / formula | not read by any query today |
+| `confidence`, `strength`, `relevance`, `edge_weight` | schema-only (never written since 2026-09-19) | not read by any query today |
 | `mention_count` | reinforcement counter | not read by any query today |
 | `note_id` | first asserting note | not read by any query today (REFERENCES.note_id is what evidence lookups use) |
 
@@ -389,7 +388,7 @@ Response includes `orphans_removed`. Community nodes are not recounted; a commun
 
 ### 9.1 What the algorithm really is
 
-Everything is named *Leiden* — `rebuild_leiden_communities`, `create_leiden_community`, `set_node_community_membership` docstrings, log prefixes `[Community]`, the admin endpoint, the CLI script — but **no Leiden/Louvain/igraph/networkx code exists in the repo** (`git grep` for `leidenalg|igraph|networkx` returns nothing; none are in `backend/requirements.txt`). The implementation in `IngestionWorkflow.rebuild_leiden_communities` is **agglomerative clustering of embedding vectors** using `sklearn.cluster.AgglomerativeClustering(n_clusters=None, distance_threshold=…, metric="cosine", linkage="average")` on L2-normalised vectors from `embedding_service.embed_documents`. The graph topology (SEMANTIC_REL edges) is **not** an input to clustering; only node text is. Treat "Leiden" as a historical label.
+Everything is named *Leiden* — `rebuild_leiden_communities`, `create_leiden_community`, `set_node_community_membership` docstrings, log prefixes `[Community]`, the admin endpoint — but **no Leiden/Louvain/igraph/networkx code exists in the repo** (`git grep` for `leidenalg|igraph|networkx` returns nothing; none are in `backend/requirements.txt`). The implementation in `IngestionWorkflow.rebuild_leiden_communities` is **agglomerative clustering of embedding vectors** using `sklearn.cluster.AgglomerativeClustering(n_clusters=None, distance_threshold=…, metric="cosine", linkage="average")` on L2-normalised vectors from `embedding_service.embed_documents`. The graph topology (SEMANTIC_REL edges) is **not** an input to clustering; only node text is. Treat "Leiden" as a historical label.
 
 ### 9.2 Three-level hierarchy
 
@@ -442,11 +441,9 @@ The caller (`rebuild_leiden_communities`) then calls `qdrant.delete_node(id)` an
 |---|---|---|
 | **Idle after ingestion** | `process_note` `finally:` → `IngestionTrackerService.end_ingestion(self.rebuild_leiden_communities)`; when the active-ingestion counter reaches 0 → `schedule_recompute` → `_debounce_recompute` sleeps `COMMUNITY_IDLE_SECONDS = 120` (module constant in `ingestion_tracker.py`, **not** a setting) then `asyncio.to_thread(callback)` if there are pending node ids **or** `_recompute_needed` | `settings.COMMUNITY_DETECTION_ENABLED` (default **False** in `config.py`; `.env.example` ships `true`) |
 | **Admin** | `POST /api/v1/admin/rebuild-communities` → `BackgroundTasks.add_task(kb.get_ingestion_workflow().rebuild_leiden_communities)` | none — works even when the flag is off |
-| **CLI** | `python scripts/run_community_detection.py` → `ingestion_workflow.rebuild_leiden_communities()` on the module singleton (default KB only) | none; **must not run while the backend is up** (same Kuzu file, see §16) |
 
 Pending ids come from `_queue_leiden_recompute_if_due(note_id)`: the note's 1-hop `indexable` neighbours are added to `_tracker._pending_node_ids`. They are only a *trigger*; the rebuild is always full-graph (the tracker's `queue_nodes_for_community_recompute` "always returns an empty batch").
 
-`COMMUNITY_RECOMPUTE_BATCH_SIZE` (default 100) is declared in `Settings` but **referenced nowhere** — dead configuration.
 
 ### 9.7 Cancellation, single-flight and early stop
 
@@ -630,7 +627,7 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 
 | Method & path | Body | Response | Side effects |
 |---|---|---|---|
-| `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running", "pending_nodes", "needed", "timer_armed", "idle_seconds"}, "temporal_digests": {"running"}, "ingestion": {"active", "last_completed_at"}, "healthy": true}` | none; combines the per-KB workflow flags with the global tracker snapshot |
+| `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running", "pending_nodes", "needed", "timer_armed", "idle_seconds"}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}` | none; combines the per-KB workflow flags with the global tracker snapshot |
 | `POST /api/v1/admin/rebuild-communities` | — | `{"status":"started","message":…}` | `BackgroundTasks` → `rebuild_leiden_communities()` for the KB; ignores `COMMUNITY_DETECTION_ENABLED` |
 | `POST /api/v1/admin/build-temporal-digests` | `{"period": "month"|"week"|"year"|null}` | `{"status":"started","message":"… (period=…)"}` | `BackgroundTasks` → `build_temporal_digests(period)`; **no-ops if `TEMPORAL_DIGESTS_ENABLED` is False** |
 | `POST /api/v1/admin/reset-ingestion-data` | — | `{"status":"started",…}` | Synchronously `UPDATE notes SET processed=false, failed=false WHERE kb_id=…` and commit; then in background `kb.graph.wipe_all_nodes()`, `kb.qdrant.reset_all()`, `kb.meili.reset_all()`. Tables/collections/indexes are recreated empty; Kuzu tables are **not** dropped (schema stays). |
@@ -643,7 +640,6 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 | `DATA_DIR` | `Settings` (from `paths.json`) | platform app-support dir | Root for `kuzu/` — the only input that actually determines Kuzu file locations |
 | `KUZU_DB_PATH` | `Settings` | `DATA_DIR/kuzu/kuzu_graph` | Default-KB DB file. **Env/.env values are ignored**: `config.py` overwrites `settings.KUZU_DB_PATH` after construction. `.env.example`'s `KUZU_DB_PATH=data/kuzu/kuzu_graph` is therefore documentation only. |
 | `COMMUNITY_DETECTION_ENABLED` | `Settings` | `False` (code) / `true` (`.env.example`) | Gates the *automatic* idle-triggered rebuild only |
-| `COMMUNITY_RECOMPUTE_BATCH_SIZE` | `Settings` | `100` | **Unused** anywhere |
 | `TEMPORAL_DIGESTS_ENABLED` | `Settings` | `False` (code) / `true` (`.env.example`) | Gates both the automatic timer **and** the body of `build_temporal_digests` (admin trigger no-ops when off) |
 | `TEMPORAL_DIGEST_PERIOD` | `Settings` | `"month"` | Default bucket granularity (`month`/`week`/`year`) |
 | `COMMUNITY_IDLE_SECONDS` | module constant `ingestion_tracker.py` | `120` | Idle debounce for community rebuild and temporal digests; not configurable via env |
@@ -668,7 +664,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 ## 16. Invariants, constraints & locked decisions
 
 1. **`kuzu==0.11.3` is pinned** (`backend/requirements.txt`). Query syntax was tuned against this build: never put `all(rel IN relationships(path) WHERE …)` (or other predicate functions over `relationships(path)`) inside a variable-length `MATCH`/`WHERE` — it trips a `KU_UNREACHABLE` assertion. Filter in Python. Any upgrade needs a full re-run of every Cypher string in `graph.py`, `ingestion.py`, `notes.py`.
-2. **Single writer, single process.** One `GraphService` (one `kuzu.Database`) per KB per process, guarded by `KBRegistry`'s cache and the instance `RLock`. Do not open a KB's Kuzu file from a second process (e.g. `scripts/run_community_detection.py`, ad-hoc scripts) while the backend is running.
+2. **Single writer, single process.** One `GraphService` (one `kuzu.Database`) per KB per process, guarded by `KBRegistry`'s cache and the instance `RLock`. Do not open a KB's Kuzu file from a second process (ad-hoc scripts) while the backend is running.
 3. **Every Kuzu statement goes through `execute_query`** so it is locked and logged. Do not touch `self.conn` directly.
 4. **Parameters, never string interpolation.** The only f-string in a query is the integer `max_depth` bound. Node names, ids, titles and rel types are always `$params`; `rel_type` is additionally sanitised to `[A-Za-z0-9_]`. KB slugs are sanitised at creation so paths cannot escape `DATA_DIR`.
 5. **Kuzu is structure; Qdrant is content and the name→id authority; Meilisearch is derived.** Do not store descriptions/summaries/contexts in Kuzu; do not resolve names from Kuzu except as the documented fallback.
@@ -704,15 +700,15 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 
 ## 18. Gotchas & non-obvious behaviours
 
-1. **"Leiden" is not Leiden.** It is sklearn agglomerative clustering over embeddings; SEMANTIC_REL topology is ignored by community detection.
+1. **"Leiden" is not Leiden.** It is a greedy cosine-threshold merge over embeddings (plain numpy); SEMANTIC_REL topology is ignored by community detection.
 2. **`KUZU_DB_PATH` from env is ignored**; only `DATA_DIR` matters.
 3. **`pos_x/pos_y/pos_z` are written but never read.** `/graph/3d/full` computes a solar layout per request. Both module docstrings describing "stored spring positions for the flat graph" are stale.
 4. **Feature flags default to `False` in code but `true` in `.env.example`.** Desktop builds without a `.env` get no automatic community detection or digests unless `runtime_config.json` sets them.
 5. **`POST /admin/build-temporal-digests` returns `started` but does nothing when `TEMPORAL_DIGESTS_ENABLED` is False**, contradicting its docstring. `rebuild-communities` really does ignore its flag.
-6. **`COMMUNITY_RECOMPUTE_BATCH_SIZE` is dead config; `COMMUNITY_IDLE_SECONDS=120` is a constant.**
+6. **`COMMUNITY_IDLE_SECONDS=120` is a constant.**
 7. **Stale unit tests.** `backend/tests/unit/test_graph_queries.py` calls `find_paths_between_nodes` and `get_related_nodes(..., min_confidence=…)`, both removed in da75dfc, and its stub sets `svc._db/_conn` while the class uses `db/conn`; `test_relationships.py` imports `app.schemas.relationships`, deleted in da75dfc. These tests fail today; the depth-1 tests still pass. `test_graph_layout.py` is current.
 8. **`get_related_nodes` depth>1 is undirected, unfiltered and has no `edge_direction`**; the "Confidence filtering is done in Python below" comment describes removed code. Depth 1 returns `coalesce(confidence,1.0)`, depth>1 `coalesce(confidence,0.0)`.
-9. **Reinforcement is first-write-wins** for `strength`, `relevance`, `edge_weight`, `note_id`, `ingested_at`; only `confidence` (max), `mention_count`, `last_updated` evolve.
+9. **Reinforcement is first-write-wins** for `relationship_id`, `note_id`, `ingested_at`; only `mention_count` and `last_updated` evolve.
 10. **REFERENCES edges are never removed on re-ingest**, only on note delete.
 11. **Notes are "indexable" for name lookup** (`kind IN ['indexable','note']`), so `find_nodes_by_name("meeting")` can return note titles.
 12. **`get_node_detail.community_id` is an arbitrary one** of the node's up-to-three communities (`OPTIONAL MATCH … LIMIT 1`), while `get_full_3d_graph.community_id` is the finest level.
@@ -752,4 +748,4 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 | `f8f527f` | 2026-08-06 | Security/data-loss audit: KB delete contained to app paths, slug sanitisation, blocking Kuzu work moved to threads. |
 | `b84ca73` | 2026-08-06 | Batched Meili community updates and Kuzu position writes (`store_node_positions` UNWIND chunks). |
 | `8de5cda` | 2026-08-07 | Batched embeds/upserts/Kuzu writes (single UNWIND for nodes+REFERENCES, `set_node_community_membership` UNWIND, `find_name_variants_batch`), concurrent entity/BM25/vector search. |
-| 2026-08-02 rename | — | LifeOS/LiveOS → Orb; `LIVEOS_*` env aliases survive in the desktop port config. |
+| 2026-08-02 rename | — | LifeOS/LiveOS → Orb (the `LIVEOS_*` env aliases were dropped 2026-09-19). |

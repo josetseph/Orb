@@ -15,7 +15,7 @@ import {
 import { api } from "@/lib/api";
 import type { Note } from "@/lib/types";
 import { cn, isAudioUrl, isImageUrl, isVideoUrl } from "@/lib/utils";
-import { MarkdownNoteEditor } from "@/components/markdown-editor";
+import MarkdownNoteEditor from "@/components/markdown-editor/MarkdownNoteEditor";
 import { EntityDetailPanel } from "@/components/entity-detail-panel";
 import { ConnectedNotesPanel } from "@/components/connected-notes-panel";
 import { useNotesPageController } from "./_hooks/useNotesPageController";

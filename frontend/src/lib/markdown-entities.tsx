@@ -18,12 +18,18 @@ import { api } from "@/lib/api";
 
 export type ScannedEntity = { node_id: string; name: string; node_type: string };
 
-/** Allow entity:// pseudo-links through react-markdown's URL sanitizer. */
-export function urlTransform(url: string): string {
-  if (url.startsWith("entity://")) return url;
-  // Reproduce react-markdown's defaultUrlTransform for all other schemes.
-  return /^(https?|ircs?|mailto|xmpp):/i.test(url) || !url.includes(":") ? url : "";
+/** react-markdown's defaultUrlTransform, plus URLs starting with any of `prefixes`. */
+export function urlTransformAllowing(...prefixes: string[]) {
+  return (url: string): string =>
+    prefixes.some((p) => url.startsWith(p)) ||
+    /^(https?|ircs?|mailto|xmpp):/i.test(url) ||
+    !url.includes(":")
+      ? url
+      : "";
 }
+
+/** Allow entity:// pseudo-links through react-markdown's URL sanitizer. */
+export const urlTransform = urlTransformAllowing("entity://");
 
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

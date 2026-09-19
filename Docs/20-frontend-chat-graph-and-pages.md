@@ -21,13 +21,13 @@
 | Notes | `/notes` | see [19](19-frontend-notes-editor.md) | | |
 | Finance | `/finance` | see [17](17-finance-firefly.md) | | |
 
-All pages are lazy react-router routes registered in `src/App.tsx`. All KB-scoped pages read `currentKB` from `useKB()`; only `/chat` and `/graph-3d` also gate on `isHydrated`.
+All pages are lazy react-router routes registered in `src/App.tsx`. All KB-scoped pages read `currentKB` from `useKB()`, which is correct on the first render (no hydration gating).
 
 ## 2. Home — `/`
 
 Static landing page. No state, no effects, no API calls.
 
-- Layout: full-screen `bg-black` with `ShaderBackground`, centred column (`max-w-4xl`), staggered `framer-motion` fade-ins (delays 0 → 0.8 s).
+- Layout: full-screen `bg-black` with `ShaderBackground`, centred column (`max-w-4xl`), staggered CSS fade-ins.
 - (Historical — `src/app/page.tsx` no longer exists; `/` now redirects to `/notes`.) Content was: logo (`/logo.png`, 96 px), gradient title "Orb", subtitle "Your multimodal, graph-based knowledge system", three link cards → `/chat` (Chat), `/notes` (Notes), `/graph-3d` (Graph), a tagline pill, and four stack pills (SQLite, Kuzu, Qdrant, Meilisearch).
 - Gotcha: the "Graph" card links to `/graph-3d` directly, not `/graph`; both work because `/graph` redirects.
 
@@ -52,7 +52,7 @@ Everything about the conversation itself (`messages`, `conversations`, `activeCo
 ### 3.2 Effects
 
 1. **Global preview hook** — on mount sets `window.__chatSetPreview = (n) => setPreviewNote(n)`, deleted on unmount. `AssistantMessageBody` calls it when a reference chip is clicked (avoids prop-drilling into the memoised link renderer).
-2. **KB init** — `if (!isHydrated) return; void initializeForKb(currentKB)` on `[currentKB, isHydrated]`. Lists conversations for the KB and opens the first one (or an empty new chat).
+2. **KB init** — `void initializeForKb(currentKB)` on `[currentKB]`. Lists conversations for the KB and opens the first one (or an empty new chat).
 3. **Auto-scroll** on `[messages]`.
 4. **Greeting** once.
 
@@ -112,9 +112,9 @@ Everything about the conversation itself (`messages`, `conversations`, `activeCo
 
 ```mermaid
 flowchart LR
-  KB[useKB: currentKB, isHydrated] --> D[useGraph3DData]
+  KB[useKB: currentKB] --> D[useGraph3DData]
   D -->|graphData, refs| C[Graph3DCanvas]
-  D -->|nodesRef| S[useGraphSearch]
+  D -->|nodes| S[search useMemo in page.tsx]
   S --> O[GraphSearchOverlay]
   C -. graphRef .-> CAM[useGraph3DCamera]
   CAM -->|flyToNode| O
@@ -127,7 +127,7 @@ flowchart LR
 
 ### 4.1 Payload and adaptation
 
-`GET /graph/3d/full?kb=` → `{nodes: [{node_id, name, node_type, description, community_id?, x, y, z}], edges: [{source, target, type}]}` (positions are pre-computed server-side, see [14](14-graph-storage-kuzu.md)). `useGraph3DData` (runs only when `isHydrated`, aborts on KB change):
+`GET /graph/3d/full?kb=` → `{nodes: [{node_id, name, node_type, description, community_id?, x, y, z}], edges: [{source, target, type}]}` (positions are pre-computed server-side, see [14](14-graph-storage-kuzu.md)). `useGraph3DData` (aborts on KB change):
 
 - `id = node_id`; `fx/fy/fz = x/y/z` (pinned — the force engine is disabled with `cooldownTicks=0`/`warmupTicks=0`, so the layout is exactly the backend's).
 - `val = 1 + min(8, degree)` where degree counts only edges whose both endpoints exist; used for sphere size (`nodeRelSize=10`).
@@ -148,7 +148,7 @@ See `Graph3DCanvas` props in 18 §11.1. Colouring: node colour = `nodeColor(node
 
 ### 4.5 Search overlay
 
-`useGraphSearch` filters `nodesRef.current` by case-insensitive `name.includes(q)`, prefix matches first, then alphabetical, max 8. Enter → fly to first; click → fly to that; Escape or blur → close and clear. Entirely client-side — no `/graph/entities/search` call on this page.
+A `useMemo` in `graph-3d/page.tsx` filters the nodes by case-insensitive `name.includes(q)`, prefix matches first, then alphabetical, max 8. Enter → fly to first; click → fly to that; Escape or blur → close and clear. Entirely client-side — no `/graph/entities/search` call on this page.
 
 ### 4.6 Node detail modal
 
@@ -235,7 +235,6 @@ The save effect writes controls only when `controlsLoadedKbRef.current === curre
 ### 5.5 Edge cases and gotchas
 
 - Empty filtered graph → "No notes to graph yet" + "Open Notes" link (also shown when filters hide everything).
-- The page does not gate on `isHydrated`; with a non-default KB it fetches the default graph first, then the real one (aborted via generation/abort).
 - `getNotesGraph` triggers a backend link rebuild each call; do not poll this endpoint.
 - Controls are per KB; the 3D page reads only `textFade` from them.
 - `center_id` in the payload is ignored by this page (it is used by `ConnectedNotesPanel` semantics on the backend side only).
@@ -284,7 +283,6 @@ Rendered inside every KB card under the metadata with `kb`, `onSaved={fetchKBs}`
 - Slug derivation is duplicated client-side; if the backend slugging changes, `isActive`/`handleSelect` must follow.
 - `emptyKB` is addressed by slug, `deleteKB`/`renameKB`/LLM routes by `id`.
 - Deleting the active KB resets to default but does not clear `ChatProvider` state until `/chat` re-initialises.
-- No `isHydrated` gating, but the page only *writes* the KB so it is harmless.
 - `window.confirm` dialogs are native; in the Tauri WebView they render as OS dialogs.
 
 ## 7. Settings — `/settings`
@@ -344,55 +342,33 @@ Plus links to `/notes` (batch delete), `/kb`, `/finance`, and a static "Data gui
 
 First-run and re-configuration page for paths, AI mode and local model download. Mirrors the shell's first-run setup page ([04](04-desktop-shell.md)) but talks to the backend, not the bridge, for persistence.
 
-### 8.1 State and load
+### 8.1 What the page is
 
-`status: SetupStatus`, `dataDir`, `modelsDir`, `vaultPath`, `aiMode: "local"|"cloud"|"hybrid"|"none"`, `saving`, `saved`, `error`, `catalog: ModelCatalog`, `chatId`, `downloadMsg`, `downloading`, `mmBusy`; `canBrowse` as on `/kb`.
+`/setup` is the **Storage** page inside `SettingsShell` (title "Storage", intro "Where Orb keeps indexes and model weights. Restart after changing a path."). It has no AI-mode picker and no model download UI — models are chosen and downloaded on `/models`. It owns two things: the three bootstrap paths, and the per-workspace maintenance actions.
 
-- Mount: `GET /setup/status` → seeds `dataDir`, `modelsDir`, `vaultPath = default_vault_path || active_vault_path || ""`. Error: "Could not load setup status." The page no longer has an AI-mode picker or any model UI: it is paths plus a link to `/models`, and the footer line shows the **derived** mode as a read-only observation.
-- When `aiMode === "local"`: `GET /setup/model-catalog` → `ModelCatalog {hardware{ram_gb, usable_model_gb, accel?{backend}}, embed, reranker, chat_options[], suggested_chat, selected_chat?, budget_note}`; `chatId` is chosen as `prev || selected_chat.id || suggested_chat.id || first option with fits_budget !== false || first option` — the saved selection wins so reopening Setup does not snap back to the suggested model. Error: "Could not load model catalog."
+### 8.2 State and load
 
-### 8.2 UI
+- Mount: `GET /setup/status` → seeds `dataDir`, `modelsDir`, `vaultPath = default_vault_path || active_vault_path || ""`. Error: "Could not load setup status."
+- A second effect polls `GET /admin/maintenance-status?kb=` (3 s while a user-triggered rebuild runs, 15 s otherwise, paused while the tab is hidden) to drive the Rebuild button state; it is independent of the sidebar indicator's poller.
 
-- **Paths** section: Notes vault folder, Data directory (required), Models directory (required); each with desktop "Browse…" (`pickDirectory` with `defaultPath`). Inputs disabled while downloading. Subtitle: "restart the desktop app after changing paths".
-- **AI setup** cards: Full local (`local`), Cloud / hybrid (`cloud`; also highlighted when stored mode is `hybrid`), Skip for now (`none`). Copy explains that without AI the app works "like Obsidian" (notes, wikilinks, finance) and that chat/ingest/entity graph stay unavailable.
-- **Local models** (only `local` + catalog loaded): `budget_note`, auto-selected Embed and Reranker labels, static multimedia line (Florence-2 · Whisper large-v3-turbo · Marlin-2B), and the chat-model list: each option shows label, "suggested" tag, "may be tight" when `fits_budget === false`, family / `~size_gb GB download` / `needs ~min_ram_gb GB`. Clicking sets `chatId` and fires `POST /setup/select-chat-model {chat_id}` (errors ignored). Empty list → hint to free memory or set `ORB_RAM_GB`.
-- **Save setup** (form submit): `POST /setup/paths {data_dir, models_dir, default_vault_path?}` — `ai_setup_mode` is no longer sent, so `save_paths_file` preserves whatever is on disk — then `GET /setup/status`; error "Failed to save paths. Check that directories are writable."
-- **Download button** (local only; disabled when saving/downloading/no `chatId`): label cycles "Download selected models" → "Downloading…" → "Multimedia still downloading…"; reads "Re-download / verify models on disk" when `status.local_models_ready`.
-- Status line: `Backend: <database_backend> · AI mode · models: ready|missing · configured: yes|no`.
-- Download banner (amber) shows while `downloading || mmBusy || downloadMsg` with an indeterminate pulse bar.
+### 8.3 UI
 
-### 8.3 Download flow
-
-```mermaid
-sequenceDiagram
-  participant UI as SetupPage
-  participant API as FastAPI
-  UI->>API: POST /setup/download-models {include_multimodal:false, chat_id} (timeout 0)
-  API-->>UI: done (chat GGUF + auto embed/rerank on disk)
-  UI->>API: GET /setup/status
-  UI->>UI: saved=true, msg "Models on disk…" (or "Download finished. Check models directory…")
-  UI->>API: POST /setup/download-models {include_multimodal:true, multimodal_only:true}  (background, mmBusy)
-  API-->>UI: done
-  UI->>API: GET /setup/multimodal-status
-  UI->>UI: msg lists ready vs missing among florence/whisper/marlin
-```
-
-- `runDownload(chatId)` is guarded against re-entry (`downloading`). GGUF-only first so Chat becomes usable quickly; Florence/Whisper/Marlin are fetched afterwards via `startBackgroundMultimodal()` and never block.
-- Error path: if the GGUF POST throws, the page re-checks `GET /setup/status`; if `local_models_ready` is already true it treats it as success ("Models already on disk…") and still starts the multimodal download. Otherwise error text is extracted from `response.data` (string, `.detail`, or JSON-stringified first 400 chars) → "Model download failed: …".
-- Multimodal failure / status-check failure only changes `downloadMsg` ("Chat still works; retry later…").
-- **Auto-start**: there is *no* automatic download on page load; downloads start only from the button. (The `AiLimitedBanner` deep-links here with "Continue download" when `needs_model_download` is true.)
+- **Paths** form: Default workspace vault (optional; other workspaces pick their own vault when created), Data folder (required), Models folder (required). Each field has a desktop "Browse…" button (`pickDesktopDirectory` with `defaultPath`) when the Tauri bridge is present.
+- **Save**: `POST /setup/paths {data_dir, models_dir, default_vault_path?}` then `GET /setup/status`; button cycles "Save" → "Saving…" → "Saved". Error: "Failed to save paths. Check that directories are writable."
+- Status line next to the button: `Backend: <database_backend> · models: ready|missing · configured: yes|no` (`local_models_ready`, `ai_configured`).
+- **Maintenance** rows (all scoped to `currentKB`):
+  - *Re-ingest whole vault* → `POST /admin/reingest-all?kb=`; shows "Queued N notes" for 5 s.
+  - *Rebuild communities and digests* → `POST /admin/rebuild-communities?kb=` then `POST /admin/build-temporal-digests?kb=`; the poller flips the button back to idle when the backend reports nothing running.
+  - *Reset indexes* → two-click confirmation ("Confirm reset?" for 5 s) then `POST /admin/reset-ingestion-data?kb=`. Notes on disk are untouched.
 
 ### 8.4 Gotchas
 
 - Saving paths does not restart services; the backend writes `paths.json` and the user must relaunch for `data_dir`/`models_dir` changes to take effect ([04](04-desktop-shell.md)).
-- `aiMode` `"hybrid"` is displayed as the Cloud card but saved back as whatever `aiMode` holds; clicking the Cloud card sets `"cloud"`, so a hybrid user who re-saves silently becomes `cloud`.
-- The `downloadModels` request has no timeout and no progress channel — the banner is indeterminate; closing the page does not cancel the server-side download.
-- `getMultimodalStatus()` is typed `unknown`; the page reads `.models` as `Record<string, boolean>`.
-- No `isHydrated`/KB usage — setup is global.
+- The maintenance poller and the sidebar `SystemStatusIndicator` hit the same endpoint independently; two pollers per open Storage page is expected.
+- No KB usage for the paths half — paths are global; the maintenance half is per workspace.
 
 ## 9. Cross-page gotchas
 
-- Only `/chat` and `/graph-3d` gate on `isHydrated`; `/notes-graph`, `/kb`, `/settings`, `/finance` issue a default-KB request first when a non-default KB is stored (one wasted round-trip; results are discarded by generation/abort logic where present).
 - Native `window.confirm`/`alert` are used for destructive confirmations on `/chat` and `/kb`; `/settings` uses two-click confirmation instead. Keep one style per page.
 - Three pages hard-code model/provider marketing strings (chat footer, setup multimedia line, settings hints); none read the live configuration.
 - `localStorage`/`sessionStorage` keys touched by these pages: `orb_current_kb` (KB), `orb:notes-graph-controls:<kb>` (2D controls; 3D reads `textFade`), `orb:last-note-id:<kb>` (written by notes-graph "Open in Notes", read by the editor).

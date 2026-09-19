@@ -110,7 +110,7 @@ So filename and title can legitimately diverge: files created by older builds (`
 
 ### 3.5 `created_at` handling
 
-`CreateNoteInput.created_at: str | None`. `_parse_date_str` tries `dateutil.isoparse`, then `dateparser.parse` (natural language), coercing naive results to UTC; if both fail it returns **now** (never an error). On `PUT`, `created_at` is only updated when the body provides a non-empty string (the frontend's autosave sends `undefined`; the date picker sends a value). The ingestion `NoteInput.created_at` is fed from this column so temporal extraction uses the user's note date, not the file mtime.
+`CreateNoteInput.created_at: str | None`. `_parse_date_str` uses `datetime.fromisoformat` (ISO 8601 only), coercing naive results to UTC; if that fails it returns **now** (never an error). On `PUT`, `created_at` is only updated when the body provides a non-empty string (the frontend's autosave sends `undefined`; the date picker sends a value). The ingestion `NoteInput.created_at` is fed from this column so temporal extraction uses the user's note date, not the file mtime.
 
 ### 3.6 Folders
 

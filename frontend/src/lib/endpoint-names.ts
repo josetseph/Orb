@@ -7,17 +7,13 @@
  * name; for those a label lives in localStorage, falling back to the host.
  */
 
+import { loadJson, saveJson } from "@/lib/utils";
+
 const KEY = "orb.endpointNames";
 
 function readAll(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = window.localStorage.getItem(KEY);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  const parsed = loadJson<unknown>(KEY, {});
+  return parsed && typeof parsed === "object" ? (parsed as Record<string, string>) : {};
 }
 
 /** Host of a URL, or the raw string when it will not parse. */
@@ -52,14 +48,9 @@ export function endpointName(url: string): string {
 
 /** Empty name clears the override and falls back to the host. */
 export function setEndpointName(url: string, name: string): void {
-  if (typeof window === "undefined") return;
   const all = readAll();
   const trimmed = name.trim();
   if (trimmed) all[url] = trimmed;
   else delete all[url];
-  try {
-    window.localStorage.setItem(KEY, JSON.stringify(all));
-  } catch {
-    // A name is a convenience; losing it must never break saving an endpoint.
-  }
+  saveJson(KEY, all);
 }

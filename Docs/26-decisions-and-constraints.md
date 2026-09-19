@@ -29,9 +29,9 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: an unsigned app must not silently pull binaries from GitHub Releases.
 - Enforced: no updater is wired today; when added it is `tauri-plugin-updater`, gated by `ORB_ENABLE_UPDATER=1` and never active on unsigned builds ([05](05-packaging-build-and-release.md) §5).
 
-### A5. Rename LifeOS/LiveOS → Orb, keep read-compatibility aliases
+### A5. Rename LifeOS/LiveOS → Orb
 - Rationale: existing installs must keep working after the rename (`6162be2`).
-- Enforced: `envFirst("ORB_X", "LIVEOS_X")` in the shell, `_env_first` in `core/paths.py`, App Support fallback dirs, `lifeos_current_kb` migration in `kb-context.tsx`. **New code writes only `ORB_*`.**
+- Enforced: only `ORB_*` env names and the `Orb` App Support folder exist (the read-compatibility aliases from the rename were removed on 2026-09-19); the `lifeos_current_kb` browser-storage migration in `kb-context.tsx` remains. **New code writes only `ORB_*`.**
 
 ---
 
@@ -65,7 +65,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B7. Cloud providers remain available but are opt-in
 - Rationale: privacy-first default; some users want frontier quality.
-- Enforced: AI gating derived from real configuration (`ai_gate.py`) rather than a stored `AI_SETUP_MODE`; keys never in `runtime_config.json`.
+- Enforced: AI gating derived from real configuration (`ai_gate.py`); there is no stored AI mode; keys never in `runtime_config.json`.
 
 ### B8. Multimodal stack is one shared torch + transformers ≥ 5.7 install
 - Rejected: a second transformers major just for Marlin; separate venvs per model.
@@ -120,9 +120,9 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: benchmark reports showed better multi-hop recall with one joint pass plus dedup/merge (`559e988`, Final Implementation reports).
 - Enforced: `ingestion_agent` extraction → storage nodes; entity resolution by exact normalised name against Qdrant `node_cores` (Kuzu fallback). Embedding-similarity merging and `is_similarity` edges were removed with the bi-temporal design and are not written today.
 
-### D2. Relationship weight `edge_weight = strength×0.5 + confidence×0.3 + relevance×0.2` (1–10 scale)
+### D2. Relationships carry no per-edge score (superseded 2026-09-19)
 - Rationale: fixed, explainable blend computed at ingest time and stored on every `SEMANTIC_REL` (it was the input to the now-removed symbolic reranker).
-- Current use: written by `GraphService` (`edge_weight` merge logic keeps the first non-null value) and exposed on graph payloads; `retrieval.py` does not currently rank by it. Because the extraction prompt never asks for scores, nearly every edge carries the defaults (5/7/5 → 5.6). Keep the formula stable so existing edges stay comparable.
+- History: `edge_weight = strength×0.5 + confidence×0.3 + relevance×0.2` was written from 033589d until 2026-09-19, but the extraction prompt never asked for scores, so every edge carried the defaults (5/7/5 → 5.6). The fields and the formula were removed; the Kuzu columns stay (NULL on new edges) so old databases open unchanged. Re-introduce scores only together with a prompt that produces them.
 - Enforced: `schemas/extraction.py` comment, `services/graph.py`, `tests/unit/test_extraction_schemas.py`.
 
 ### D3. Temporal digests instead of bi-temporal relationship evolution
@@ -144,7 +144,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### D7. Community detection is idle-triggered, pre-emptible, and off by default
 - Rejected: synchronous recompute after every note.
-- Rationale: throughput; a new ingestion signals a running recompute to stop early. The algorithm is named "Leiden" throughout code, logs and UI but is implemented with scikit-learn agglomerative clustering over node embeddings (thresholds 0.25 / 0.35 / 0.75 across levels).
+- Rationale: throughput; a new ingestion signals a running recompute to stop early. The algorithm is named "Leiden" throughout code, logs and UI but is implemented with a greedy cosine-threshold centroid merge over node embeddings (plain numpy; see `_embedding_cluster`).
 - Enforced: `ingestion_tracker.COMMUNITY_IDLE_SECONDS=120`, `_community_run_state_lock`; `COMMUNITY_DETECTION_ENABLED` and `TEMPORAL_DIGESTS_ENABLED` default `False` in `Settings` (`.env.example` says `true`).
 
 ### D8. Retrieval is a bounded multi-hop loop, `MAX_LOOP_ITERATIONS=3`

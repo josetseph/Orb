@@ -40,7 +40,6 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/app/notes/_lib/folder-tree.ts` | Builds the sidebar tree from `Note.rel_path` + extra folders. | `buildFolderTree` |
 | `frontend/src/app/notes/_lib/processing-status.ts` | Maps `processing_stage` strings to UI states. | `getProcessingLabel`, `isPendingReingestNote`, `isActiveProcessingNote` |
 | `frontend/src/app/notes/_lib/rewrite-vault-urls.ts` | Single-pass rewrite of vault file paths inside note markdown after move/rename. | `rewriteVaultPathsInContent` |
-| `frontend/src/app/notes/_lib/api-error.ts` | Extracts FastAPI `detail` (string or validation array) from an axios error. | `getApiErrorDetail` |
 | `frontend/src/app/notes/_lib/parse-note-attachments.ts` | Regex extraction of `![]()` / `[📎…]()` / `[🎤…]()` links. | `parseNoteAttachments` |
 | `frontend/src/app/notes/_lib/media-recorder.ts` | Picks a supported `MediaRecorder` MIME type. | `pickSupportedAudioMimeType` |
 | `frontend/src/app/notes/_lib/storage-keys.ts` | sessionStorage key for last-opened note per KB. | `lastNoteStorageKey` |
@@ -73,7 +72,7 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/components/entity-detail-panel.tsx` | Slide-over with entity details, relationships, source notes. | `EntityDetailPanel` |
 | `frontend/src/components/blob-media-player.tsx` | Fetches media as blob and plays it (auth-free, range-safe). | `BlobMediaPlayer` |
 | `frontend/src/lib/markdown-entities.tsx` | Shared entity-matching / markdown-to-React helpers used by read-only renderers. | (see §10) |
-| `frontend/src/lib/api.ts` (notes/vault/graph subset) | axios client methods. | `api.getNotes`, `api.getNote`, `api.createNote`, `api.updateNote`, `api.updateNoteOnUnload`, `api.deleteNote`, `api.batchDeleteNotes`, `api.moveNote`, `api.ingestNote`, `api.getNoteStatus`, `api.reingestVault`, `api.listVaultFolders`, `api.mkdirVaultFolder`, `api.moveVaultFile`, `api.deleteVaultFile`, `api.resolveVaultLocalPath`, `api.upload`, entity/search/scan-text/note-subgraph methods |
+| `frontend/src/lib/api.ts` (notes/vault/graph subset) | `fetch`-based client methods. | `api.getNotes`, `api.getNote`, `api.createNote`, `api.updateNote`, `api.updateNoteOnUnload`, `api.deleteNote`, `api.batchDeleteNotes`, `api.moveNote`, `api.ingestNote`, `api.getNoteStatus`, `api.reingestVault`, `api.listVaultFolders`, `api.mkdirVaultFolder`, `api.moveVaultFile`, `api.deleteVaultFile`, `api.resolveVaultLocalPath`, `api.upload`, entity/search/scan-text/note-subgraph methods |
 
 ## 3. Page composition and layout
 
@@ -101,7 +100,7 @@ Key composition facts:
 - `MarkdownNoteEditor` is rendered with `key={selectedNote.id}`, so switching notes **remounts** the CodeMirror view (fresh undo history, fresh extension state). Controlled `value={selectedNote.content}` and `onChange={selection.handleContentChange}`.
 - `ConnectedNotesPanel` is only mounted while `showConnectedPanel` is true; it receives `noteId`, `noteContent`, `kb` and two navigation callbacks: `onSelectNote(id)` looks the id up in `list.notes` and calls `handleNoteSelect`; `onSelectEntity(nodeId, name)` opens the entity panel.
 - `EntityDetailPanel` is always mounted while a note is selected; it renders nothing until `nodeId` is non-null.
-- Both `DatePickerModal` and `FilePreviewModal` are wrapped in framer-motion `AnimatePresence` for exit animation; `FolderDialog`/`RenameDialog`/`WikilinkHoverCard` are plain conditional renders.
+- `DatePickerModal`, `FilePreviewModal`, `FolderDialog` and `RenameDialog` are native `<dialog>` elements opened with `showModal()` (Esc, backdrop and focus trapping come from the browser); `WikilinkHoverCard` is a plain conditional render.
 - All props are threaded explicitly (no context) — `NotesSidebar` alone takes 38 props. `VaultFolderTree` receives the sidebar's scroll container via `scrollRef` because it virtualises against that element.
 
 ### Component → props table
@@ -131,7 +130,7 @@ Key composition facts:
 
 | State / ref | Purpose |
 |---|---|
-| `currentKB`, `currentKBName`, `isHydrated` | From `useKB()` (`frontend/src/lib/kb-context.tsx`). `isHydrated` gates all fetches until the KB slug is read from localStorage. |
+| `currentKB`, `currentKBName` | From `useKB()` (`frontend/src/lib/kb-context.tsx`); correct on the first render, so nothing is gated. |
 | `currentKBRef` | Mirror of `currentKB` kept in an effect; used by autosave's unmount/unload flushes so they save to the KB the note belongs to even if the ref-holder closure is stale. |
 | `editorRef: RefObject<MarkdownNoteEditorHandle>` | Imperative handle exposing `insertAtCursor` (media uploads insert markdown at the caret). |
 | `showConnectedPanel` | Toggles `ConnectedNotesPanel`. |
@@ -157,12 +156,12 @@ Assignments to `.current` happen synchronously during render (not in an effect) 
 | Order | Hook | Receives from earlier hooks | Provides to later hooks |
 |---|---|---|---|
 | 1 | `useNoteSelection({ currentKB, setNotes: setNotesStable })` | — | `selectedNote`, `setSelectedNote`, `contentBeforeEditRef`, `titleBeforeEditRef`, `selectedNoteRef`, `syncSelectedNoteFromList`, `patchLocalNote`, `openNoteById`, `refreshSelectedNote`, `clearSelectionForKBSwitch`, `handleContentChange`, `handleTitleChange` |
-| 2 | `useNotesList({ currentKB, isHydrated, syncSelectedNoteFromList*, setIngestingNoteIds*, onVaultListing*, clearSelectionForKBSwitch* })` | (via bridges) | `notes`, `setNotes`, `searchQuery`, `processedFilter`, setters, `isLoading`, `fetchNotes` |
+| 2 | `useNotesList({ currentKB, syncSelectedNoteFromList*, setIngestingNoteIds*, onVaultListing*, clearSelectionForKBSwitch* })` | (via bridges) | `notes`, `setNotes`, `searchQuery`, `processedFilter`, setters, `isLoading`, `fetchNotes` |
 | 3 | `useNoteAutosave({ selectedNote, selectedNoteRef, contentBeforeEditRef, titleBeforeEditRef, currentKB, currentKBRef, patchLocalNote })` | selection | `isSaving`, `setIsSaving`, `handleSaveNote`, `autoSaveTimeoutRef` |
 | 4 | `useNoteSelectHandler({ currentKB, selectedNote, contentBeforeEditRef, titleBeforeEditRef, handleSaveNote, setSelectedNote })` | selection, autosave | `handleNoteSelect` |
 | 5 | `useNoteIngest({ currentKB, selectedNote, contentBeforeEditRef, titleBeforeEditRef, handleSaveNote, setSelectedNote, setNotes, setIsSaving })` | selection, list, autosave | `ingestingNoteIds`, `setIngestingNoteIds`, `handleIngestNote` |
 | 6 | `useVaultTree({ currentKB, searchQuery, processedFilter, fetchNotes, selectedNote, onContentChange: handleContentChange, refreshSelectedNote, patchLocalNote })` | list, selection | folder/drag/dialog state, move/rename/mkdir/delete handlers, `applyVaultListing`, `refreshVaultFiles`, `expandFolderAndAncestors` |
-| 7 | `useNoteRestoreEffects({ isHydrated, currentKB, searchQuery, processedFilter, selectedNoteRef, openNoteById, refreshSelectedNote, fetchNotes })` | list, selection | (effects only) |
+| 7 | `useNoteRestoreEffects({ currentKB, searchQuery, processedFilter, selectedNoteRef, openNoteById, refreshSelectedNote, fetchNotes })` | list, selection | (effects only) |
 | 8 | `useNoteMedia({ currentKB, selectedNote, editorRef, handleContentChange, refreshSelectedNote, fetchNotes, searchQuery, processedFilter, setSelectedNote, contentBeforeEditRef, titleBeforeEditRef, setIsSaving, refreshVaultFiles })` | selection, list, autosave, vault | upload/record/preview/date state + handlers |
 | 9 | `useNoteBatchSelection({ currentKB, notes, selectedNote, setSelectedNote, contentBeforeEditRef, autoSaveTimeoutRef, fetchNotes, searchQuery, processedFilter })` | list, selection, autosave | `selectedNoteIds`, `setSelectedNoteIds`, `batchDeleting`, `toggleNoteSelected`, `toggleSelectAll`, `handleBatchDeleteNotes` |
 | 10 | `useWikilinkPreview({ notes, onNoteSelect: handleNoteSelect, sourceNote: selectedNote, kb, onNotesChanged: () => list.fetchNotes(searchQuery, processedFilter) })` | list, select handler | `wikilinkPreview`, `handleWikilinkClick`, `handleWikilinkHover`, `handleWikilinkLeave` |
@@ -245,14 +244,14 @@ The autosave timer is cleared *before* the DELETE so a debounced PUT cannot resu
 4. If `requestId` is stale → return silently. Otherwise `setNotes(data)` then `syncSelectedNoteFromList(data)`.
 5. Then (still guarded by `requestId`) `api.listVaultFolders(currentKB)` → `onVaultListing({folders, attachments, media_files, vault_name})`. Failures are ignored ("folders optional").
 6. Prune `ingestingNoteIds` to ids still present **and** `isActiveProcessingNote`. Comment: *"Only keep polling notes the user already queued for ingest — never start 'ingesting' tracking from autosave / vault-watcher markers."*
-7. Errors other than cancellations (`isRequestCancelled`: `axios.isCancel` or `DOMException` `AbortError`) are logged. `isLoading` is cleared only by the latest request.
+7. Errors other than cancellations (`isRequestCancelled`: a `DOMException` named `AbortError`) are logged. `isLoading` is cleared only by the latest request.
 
 Consequence: every `fetchNotes` is **two** sequential requests (`/notes` then `/vault/folders`), and the vault listing is refreshed on every search keystroke debounce.
 
 ### 5.3 Effects
 
-- **KB hydration / switch effect** `[currentKB, isHydrated]`: no-op until hydrated; if the KB changed since last run → `clearSelectionForKBSwitch()`; then `fetchNotes(undefined, processedFilter)`.
-- **Debounced search/filter effect** `[searchQuery, processedFilter, isHydrated]`: skips its **first** run (`searchEffectRanRef`) because the effect above already fetched — otherwise the initial load would issue two identical fetches. Subsequent changes schedule `fetchNotes(searchQuery, processedFilter)` after **300 ms**; cleanup clears the timer.
+- **KB switch effect** `[currentKB]`: if the KB changed since last run → `clearSelectionForKBSwitch()`; then `fetchNotes(undefined, processedFilter)`.
+- **Search/filter effect** `[debouncedQuery, processedFilter]`: skips its **first** run (`searchEffectRanRef`) because the effect above already fetched. The query text goes through `useDebounced(searchQuery, 300)` (`lib/utils.ts`); the processed filter applies immediately.
 
 There is no pagination: `GET /notes` returns the whole list (backend default `limit` is documented in §17) and rendering cost is handled by virtualisation in `VaultFolderTree` (§9.4). Sorting is whatever the backend returns (created_at descending) but the tree re-sorts alphabetically (folders first) — see §9.2.
 
@@ -425,7 +424,7 @@ The comment in the file records the motivation: *"large vaults previously render
 1. Filters `vaultFolders` to exclude `attachments` and `attachments/*` (the attachments folder gets its own section).
 2. Builds the tree, then buckets `mediaFiles` by parent folder (skipping anything under `attachments/`).
 3. Linearises into `TreeRow[]` respecting `collapsedFolders`: `vault-header` → recursive `folder`/`note` rows (media files of a folder are appended after its children) → root media rows → `attachments-header` → (`attachments-empty` | `attachment` rows) when `!collapsedFolders.has("attachments")`.
-4. `useVirtualizer({ count: rows.length, getScrollElement: () => scrollRef.current, estimateSize: () => 28, overscan: 12 })` from `@tanstack/react-virtual`; rows are absolutely positioned with `translateY(vi.start)` and measured via `virtualizer.measureElement`. The container height is `virtualizer.getTotalSize()` (min 40 px).
+4. Rows render as plain elements with the `.tree-row` class (`content-visibility: auto; contain-intrinsic-size: auto 50px`), so the browser skips layout and paint for off-screen rows without a virtualiser.
 
 Row keys: `folder:<path>`, `note:<id>`, `media:<rel_path>`, `attachment:<rel_path>`, plus fixed keys for headers.
 
@@ -467,7 +466,7 @@ Single-pass regex `oldUrl|from` (longest alternative first, both escaped) where 
 
 ## 10. Restore and refresh effects (`useNoteRestoreEffects`)
 
-One effect with deps `[isHydrated, currentKB, openNoteById, refreshSelectedNote]`:
+One effect with deps `[currentKB, openNoteById, refreshSelectedNote]`:
 
 1. **Deep link:** if `?note=<id>` is in the URL → write it to `sessionStorage[lastNoteStorageKey(kb)]`, `openNoteById(id)`, then `history.replaceState({}, "", "/notes")` so a refresh does not fight in-page selection. Returns early (no listeners registered in this run; they are registered when the effect re-runs on the next dep change — in practice `openNoteById`/`refreshSelectedNote` are stable, so listeners are only attached if `currentKB` or hydration changes; see §21).
 2. **Cold restore:** `restoreSelection()` — only when `selectedNoteRef.current` is null, read the per-KB key and `openNoteById`.
@@ -719,7 +718,7 @@ Layout: a tiny force simulation in React state — nodes seeded deterministicall
 
 ### 16.2 `EntityDetailPanel`
 
-Props: `nodeId: string | null; name?; kb?; onClose`. Absolutely positioned right slide-over (`w-80`, framer-motion x-slide) inside the editor column. On `nodeId` change it calls `api.getNodeDetail(nodeId, kb)` → `GET /graph/3d/node/{node_id}?kb=`; response fields rendered: `name`, `node_type` badge, `description`, `isolated_contexts` (first 6), `facts`, `domain`, `community_name || community_id`, `connections` (first 10, with `← relationship` / `→ relationship` by `direction`), `related_notes` ("Mentioned in notes", names only — not clickable). Empty body shows *"No stored contexts yet for this entity. Re-ingest the note …"*; a failed fetch shows "Entity details unavailable". Footer links to `/graph-3d`. The backend endpoint also backfills missing names from SQLite/Qdrant into Kuzu as a side effect of viewing (see `backend/app/api/graph.py`).
+Props: `nodeId: string | null; name?; kb?; onClose`. Absolutely positioned right slide-over (`w-80`) inside the editor column. On `nodeId` change it calls `api.getNodeDetail(nodeId, kb)` → `GET /graph/3d/node/{node_id}?kb=`; response fields rendered: `name`, `node_type` badge, `description`, `isolated_contexts` (first 6), `facts`, `domain`, `community_name || community_id`, `connections` (first 10, with `← relationship` / `→ relationship` by `direction`), `related_notes` ("Mentioned in notes", names only — not clickable). Empty body shows *"No stored contexts yet for this entity. Re-ingest the note …"*; a failed fetch shows "Entity details unavailable". Footer links to `/graph-3d`. The backend endpoint also backfills missing names from SQLite/Qdrant into Kuzu as a side effect of viewing (see `backend/app/api/graph.py`).
 
 ### 16.3 `BlobMediaPlayer`
 
@@ -736,7 +735,7 @@ All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL
 | `getNoteStatus(id)` | `GET /notes/{id}/status` | **no kb** | `get_note_ingestion_status` — still filtered by `kb_id == get_kb()`; without `?kb=` this resolves to the default KB, so polling a note that lives in a non-default KB returns **404** (caught and ignored by the poller; see §21). 503 on DB timeout. | `{id, processed, failed, status: "completed"|"failed"|"processing", processing_stage, processing_model}` |
 | `createNote(content, created_at?, kb, title?, folder?)` | `POST /notes` | `{content, created_at, title, folder}` (`CreateNoteInput`) | `create_note`: uuid4 id, `processing_stage="Saved"`, `persist_note_body(..., title, folder)` writes the `.md` (filename derived from title or `Untitled N`), `refresh_note_links`. No ingest. | `Note` |
 | `updateNote(id, content, created_at?, kb, title?)` | `PUT /notes/{id}` | `{content, created_at, title}` | `update_note`: `persist_note_body`; if `title is not None` → `rename_note_file_for_title` (renames `.md`, rewrites refs/wikilinks in other notes); `created_at` parsed if present; `updated_at = now`; **never starts ingestion**; resets watcher markers (`pending…`, `External…`, `Changed on disk`, empty) to `"Saved"` but leaves `Queued…`/`Starting…` stages alone; `refresh_note_links`. | `Note` |
-| `updateNoteOnUnload(id, content, kb, title?)` | `PUT /notes/{id}` | `{content, title}` via `fetch keepalive` (< 60 000 chars) else axios | same | ignored |
+| `updateNoteOnUnload(id, content, kb, title?)` | `PUT /notes/{id}` | `{content, title}` via `fetch keepalive` (< 60 000 chars) else the normal `http.put` | same | ignored |
 | `deleteNote(id, kb)` | `DELETE /notes/{id}` | — | `_delete_note_impl`: delete vault file + `note_links` + row (commit), then best-effort Kuzu note node, orphaned entity nodes, Qdrant/Meili docs, and attachment files referenced by the body. Idempotent (`already_gone`). | `{status:"deleted", id, orphans_removed}` |
 | `batchDeleteNotes(ids, kb)` | `POST /notes/batch-delete` | `{ids}` (1–100) | loops `_delete_note_impl`, collecting failures | `{deleted, failed:[{id,error}], deleted_count, failed_count}` |
 | `moveNote(id, folder, kb)` | `POST /notes/{id}/move` | `{folder}` (`""` = root) | `vault_ops.move_note_to_folder`; 409 on `FileExistsError`, 400 on missing/invalid | `{...moved, note: Note}` |
@@ -779,7 +778,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 
 ## 19. Error handling
 
-- `_lib/api-error.ts` `getApiErrorDetail(error)` reads `error.response.data.detail` from an axios error; returns the string, or joins a FastAPI validation array (`[{msg}]`) with `; `, or `null`. Used by vault operations and uploads so 400/404/409 messages from the backend (e.g. "Path escapes vault", "already exists") surface verbatim in `alert()`.
+- `errMessage(err, fallback)` in `lib/utils.ts` reads `err.response.data.detail`; returns the string, or joins a FastAPI validation array (`[{msg}]`) with `; `, or falls back to `err.message` / the given fallback. Used by vault operations and uploads so 400/404/409 messages from the backend (e.g. "Path escapes vault", "already exists") surface verbatim in `alert()`.
 - Every user-initiated mutation catches, `console.error`s and `alert()`s a fixed message (create, delete, batch delete, ingest, upload, recording, mic access, date change, move/rename/mkdir/delete-file, reveal, wikilink create). There is no toast system on this page.
 - Background operations swallow errors silently: list fetch cancellations (`isRequestCancelled`), `listVaultFolders`, status polling (per-id try/catch), unmount/unload saves, reingest vault, entity scans (`.catch(() => [])`), neighbour graph ("Could not load graph." inline), node detail (inline "Entity details unavailable").
 - Autosave failure only logs; baselines are left unchanged so the note stays dirty and the next change retries. There is no visible "unsaved" indicator beyond the header text staying at "Saved" (which is computed from `isSaving`, not from dirtiness).
@@ -822,7 +821,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 - **Entity autocomplete yields to wikilink completion** inside `[[…`; typing `|` ends wikilink completion entirely.
 - **Media widgets ignore events (`ignoreEvent → true`)**, so you cannot place the cursor by clicking on an embed; click the gutter or use arrows to reach the raw line.
 - **The "Saved" header label reflects `isSaving`, not dirtiness**; a note can be dirty for up to 1.5 s (or indefinitely after a failed PUT) while the header says "Saved".
-- **`updateNoteOnUnload` silently downgrades to a plain PUT above ~60 KB**, which the browser may kill; the unmount flush (route change) uses axios regardless.
+- **`updateNoteOnUnload` silently downgrades to a plain PUT above ~60 KB**, which the browser may kill; the unmount flush (route change) uses the normal request path regardless.
 - **`FilePreviewModal` PDF/`<img>` load from `/vault-files/...`** on the same origin — large files preview fine because responses are streamed.
 - **`ConnectedNotesPanel.onSelectNote` only works for notes present in `list.notes`** (page does a `find`); a neighbour filtered out by the current search cannot be opened from the panel.
 - **`EntityDetailPanel` is positioned `absolute` inside the editor column** and overlays the Connected panel when both are open.

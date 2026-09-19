@@ -3,9 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
-  type Dispatch,
   type MutableRefObject,
-  type SetStateAction,
 } from "react";
 import { api } from "@/lib/api";
 import type { Note } from "@/lib/types";
@@ -112,30 +110,31 @@ export function useNoteAutosave({
     };
   }, [selectedNote, handleSaveNote, contentBeforeEditRef, titleBeforeEditRef]);
 
-  // Flush pending edits when leaving the page.
-  useEffect(() => {
-    return () => {
-      if (autoSaveTimeoutRef.current) {
-        clearTimeout(autoSaveTimeoutRef.current);
-      }
-      const note = selectedNoteRef.current;
-      if (
-        note &&
-        (note.content !== contentBeforeEditRef.current ||
-          (note.title || "") !== titleBeforeEditRef.current)
-      ) {
-        void api
-          .updateNote(
-            note.id,
-            note.content,
-            undefined,
-            currentKBRef.current,
-            note.title || undefined,
-          )
-          .catch(() => {});
-      }
-    };
+  // Flush pending edits when leaving the page. Reads the refs at unmount time
+  // on purpose: the note being edited then is the one to save.
+  const flushOnUnmount = useCallback(() => {
+    if (autoSaveTimeoutRef.current) {
+      clearTimeout(autoSaveTimeoutRef.current);
+    }
+    const note = selectedNoteRef.current;
+    if (
+      note &&
+      (note.content !== contentBeforeEditRef.current ||
+        (note.title || "") !== titleBeforeEditRef.current)
+    ) {
+      void api
+        .updateNote(
+          note.id,
+          note.content,
+          undefined,
+          currentKBRef.current,
+          note.title || undefined,
+        )
+        .catch(() => {});
+    }
   }, [selectedNoteRef, contentBeforeEditRef, titleBeforeEditRef, currentKBRef]);
+
+  useEffect(() => flushOnUnmount, [flushOnUnmount]);
 
   // Save on window unload. A plain XHR is killed with the window, so use the
   // keepalive path which the browser lets finish after close.
@@ -176,7 +175,3 @@ export function useNoteAutosave({
     cancelPendingAutosave,
   };
 }
-
-export type NoteAutosaveApi = ReturnType<typeof useNoteAutosave> & {
-  setIsSaving: Dispatch<SetStateAction<boolean>>;
-};

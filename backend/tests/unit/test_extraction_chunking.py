@@ -100,16 +100,16 @@ class TestMergeExtractions:
         b = Extraction(nodes=[Node(name="Paris", type="Place")])
         assert merge_extractions([a, b]).nodes[0].type == "Place"
 
-    def test_relationships_dedupe_keeping_highest_confidence(self):
-        low = ExtractedRelationship(
-            source_name="Ama", target_name="Kofi", relationship_type="is_friends_with", confidence=5
+    def test_relationships_dedupe_keeping_first(self):
+        first = ExtractedRelationship(
+            source_name="Ama", target_name="Kofi", relationship_type="is_friends_with", natural_language="a"
         )
-        high = ExtractedRelationship(
-            source_name="ama", target_name="kofi", relationship_type="IS_FRIENDS_WITH", confidence=9
+        later = ExtractedRelationship(
+            source_name="ama", target_name="kofi", relationship_type="IS_FRIENDS_WITH", natural_language="b"
         )
-        merged = merge_extractions([Extraction(relationships=[low]), Extraction(relationships=[high])])
+        merged = merge_extractions([Extraction(relationships=[first]), Extraction(relationships=[later])])
         assert len(merged.relationships) == 1
-        assert merged.relationships[0].confidence == 9
+        assert merged.relationships[0].natural_language == "a"
 
     def test_none_parts_are_skipped(self):
         merged = merge_extractions([None, Extraction(nodes=[Node(name="A")])])

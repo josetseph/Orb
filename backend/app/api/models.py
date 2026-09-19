@@ -68,13 +68,14 @@ def _vision_row() -> dict:
     }
 
 
-def _media_state() -> dict:
+def _media_rows() -> list[dict]:
     """Qwen3-ASR and Marlin plus the vision route — what Orb runs on attachments.
 
     Reported read-only alongside embed/rerank so the page accounts for every
     model on the machine, not just the chat one. Transcription additionally
     reports which engine will serve it, since that differs by platform.
     """
+    from app.core.config import settings
     from app.services import asr_engine
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
 
@@ -99,9 +100,7 @@ def _media_state() -> dict:
         }
         if kind == "asr":
             try:
-                choice = asr_engine.choose(
-                    path.parent, preferred_engine=settings_asr_engine()
-                )
+                choice = asr_engine.choose(path.parent, preferred_engine=settings.ASR_ENGINE)
                 row["engine"] = choice.engine
                 row["engine_note"] = (
                     "Qwen3-ASR via MLX"
@@ -117,7 +116,7 @@ def _media_state() -> dict:
             row["hint"] = None
         rows.append(row)
     rows.append(_speakers_row())
-    return {"models": rows}
+    return rows
 
 
 def _speakers_row() -> dict:
@@ -137,12 +136,6 @@ def _speakers_row() -> dict:
         "engine_note": "off (ASR_SPEAKERS=false)" if not settings.ASR_SPEAKERS else "pyannote on CPU",
         "hint": None if installed else "not downloaded yet",
     }
-
-
-def settings_asr_engine() -> str:
-    from app.core.config import settings
-
-    return settings.ASR_ENGINE
 
 
 def _local_state() -> dict:
@@ -181,7 +174,7 @@ def _local_state() -> dict:
         # what search and media use without offering a footgun.
         "embed": stack.get("embed"),
         "reranker": stack.get("reranker"),
-        "media": _media_state()["models"],
+        "media": _media_rows(),
     }
 
 
@@ -248,19 +241,19 @@ async def inspect_local_model(body: InspectPathInput):
     Answers "can Orb run this, and if not, why" so the page can refuse with a
     specific reason instead of failing later inside a loader.
     """
-    from app.services.model_discovery import inspect_any_chat_model, model_ref_for
+    from app.services.model_discovery import chat_warnings, inspect_chat_model, model_ref_for
+    from app.services.model_formats import loadable_path
 
-    path = Path(body.path).expanduser()
-    described, error = inspect_any_chat_model(path)
+    # A folder resolves to the GGUF inside it, so the stored ref is always a file.
+    path = loadable_path(Path(body.path).expanduser())
+    info, error = inspect_chat_model(path)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
-    fmt = getattr(described, "format", None)
     return {
         "ref": model_ref_for(path),
         "path": str(path),
-        "name": getattr(described, "name", None) or getattr(described, "display_name", path.stem),
-        "format": fmt.value if hasattr(fmt, "value") else "gguf",
-        "size_gb": getattr(described, "size_gb", 0),
-        "warnings": list(getattr(described, "warnings", ()) or ()),
+        "name": info.display_name,
+        "size_gb": info.size_gb,
+        "warnings": chat_warnings(info),
     }

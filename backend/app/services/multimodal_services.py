@@ -36,9 +36,9 @@ _MULTIMODAL_PIP = [
     "pyannote.audio>=4.0",
 ]
 if sys.platform == "darwin" and platform.machine() == "arm64":
-    # Same markers as requirements-multimodal.txt: the Apple GPU path for
-    # transcription and MLX-format chat models.
-    _MULTIMODAL_PIP += ["mlx-qwen3-asr>=0.4", "mlx-lm>=0.20"]
+    # Same marker as requirements-multimodal.txt: the Apple GPU path for
+    # transcription.
+    _MULTIMODAL_PIP += ["mlx-qwen3-asr>=0.4"]
 
 
 def _deps_importable() -> tuple[bool, str | None]:
@@ -125,11 +125,7 @@ def services_ready() -> dict:
     }
 
 
-def ensure_multimodal_services(
-    *,
-    install_deps: bool = False,
-    start_marlin: bool = True,  # noqa: ARG001 — API compat; Marlin is in-process
-) -> dict:
+def ensure_multimodal_services(*, install_deps: bool = False) -> dict:
     """Prepare in-process multimodal runtime (no HTTP processes spawned)."""
     asr = multimodal_model_path("asr")
     marlin = multimodal_model_path("marlin")

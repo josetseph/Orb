@@ -11,7 +11,7 @@
 The frontend is a **pure client of the FastAPI backend**. It owns:
 
 - Rendering every screen of Orb (home, chat, notes, notes graph, 3D entity graph, finance, knowledge bases, setup, settings) as a react-router single-page app (`src/App.tsx`, lazy route chunks). There is no server-side rendering or data fetching of any kind; the API serves `dist/index.html` for every route (history-API fallback).
-- The HTTP client (`src/lib/api.ts`) — the **only** place that knows backend paths. Pages never call `axios`/`fetch` directly except for two deliberate exceptions documented below (`updateNoteOnUnload` keepalive PUT in `api.ts` itself, and `fetchMediaObjectUrl` in `utils.ts` for blob media).
+- The HTTP client (`src/lib/api.ts`) — the **only** place that knows backend paths. Pages never call `fetch` directly except for two deliberate exceptions documented below (`updateNoteOnUnload` keepalive PUT in `api.ts` itself, and `fetchMediaObjectUrl` in `utils.ts` for blob media).
 - Client-side state that must outlive a page: the active knowledge base (`KBProvider`, persisted in `localStorage`) and the chat session (`ChatProvider`, in-memory, survives route changes because it is mounted in the root layout).
 - The dev-only proxy configuration (`vite.config.ts`) that keeps the browser same-origin with the backend during `npm run dev`; in the desktop app the API serves the build itself.
 - The Tauri bridge consumer (`src/lib/desktop.ts`): type-safe access to `window.orbDesktop` with browser fallbacks.
@@ -59,7 +59,6 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `src/components/sidebar.tsx` | Fixed 80 px left rail with nav + KB label + status light | `Sidebar` |
 | `src/components/ai-limited-banner.tsx` | Bottom banner when `ai_configured` is false | `AiLimitedBanner` |
 | `src/components/system-status-indicator.tsx` | Polls `/admin/maintenance-status`; coloured dot in sidebar | `SystemStatusIndicator` |
-| `src/components/suppress-three-warnings.tsx` | Filters `THREE.Clock` deprecation from `console.warn` | `SuppressThreeWarnings` |
 | `src/components/shader-background.tsx` | Canvas particle background (100 particles, 30 % opacity) | `ShaderBackground` |
 | `src/components/blob-media-player.tsx` | `<video>`/`<audio>`/YouTube/Vimeo player with blob fallback | `BlobMediaPlayer` |
 | `src/components/segmented-note-content.tsx` | Renders note markdown split at multimedia markers, with entity + attachment links | `SegmentedNoteContent` |
@@ -75,10 +74,9 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `src/components/graph3d/GraphSearchOverlay.tsx` | `/`-triggered search box and result list | `GraphSearchOverlay` |
 | `src/components/graph3d/NodeDetailModal.tsx` | Centered modal; fetches node detail | `NodeDetailModal` |
 | `src/components/graph3d/hooks/useGraph3DData.ts` | Fetch `/graph/3d/full`, adapt to force-graph shape, degree-weighted `val` | `useGraph3DData` |
-| `src/components/graph3d/hooks/useGraphSearch.ts` | Client-side substring search over nodes | `useGraphSearch` |
 | `src/components/graph3d/hooks/useProximityLabels.ts` | rAF loop projecting near nodes/links to screen labels | `useProximityLabels` |
 | `src/components/graph3d/hooks/useGraph3DCamera.ts` | FPS camera rig (drag look, right-drag pan, wheel, WASD/QE, fly-to) | `useGraph3DCamera` |
-| `desktop/build.py` `frontend` stage (repo root) | `npm ci && npm run build`, copies `dist/` to `desktop/resources/frontend/` with a source stamp ([05](05-packaging-build-and-release.md)) | — |
+| `desktop/build.py` `frontend` stage (repo root) | `npm ci && npm run build`, copies `dist/` to `desktop/resources/frontend/` ([05](05-packaging-build-and-release.md)) | — |
 | `backend/app/main.py` `_SpaFiles` mount (repo root) | Serves `FRONTEND_DIR` (default `frontend/dist`) at `/` with `index.html` fallback | — |
 
 ## 3. Stack
@@ -87,21 +85,18 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 |---|---|---|
 | Framework | `vite@^8` + `@vitejs/plugin-react@^6` (`react({ compiler: true })`, `oxc-transform-react`), `react-router-dom@^7` | `main.tsx`, `App.tsx`, all of `src/app` |
 | UI runtime | `react@19.2.8`, `react-dom@19.2.8` | — |
-| Styling | `tailwindcss@^4` via `@tailwindcss/postcss`, `@tailwindcss/typography` (`prose` classes), `clsx` + `tailwind-merge` (`cn`) | `globals.css`, every component |
-| Animation | `framer-motion@^12` (`motion.*`, `AnimatePresence`) | home, chat, kb, settings, notes-graph, entity panel |
+| Styling | `tailwindcss@^4` via `@tailwindcss/postcss`, `@tailwindcss/typography` (`prose` classes), `clsx` (exported as `cn`) | `globals.css`, every component |
 | Icons | `lucide-react@^1` | everywhere |
 | Markdown rendering | `react-markdown@^10` + `remark-gfm@^4` | chat, `SegmentedNoteContent`, notes-graph preview |
 | Markdown editing | CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`, `@uiw/react-codemirror`) | `components/markdown-editor` ([19](19-frontend-notes-editor.md)) |
-| Virtualised lists | `@tanstack/react-virtual` | notes sidebar ([19](19-frontend-notes-editor.md)) |
 | 3D graph | `three@^0.185`, `react-force-graph-3d@^1.29`, `@types/three` | `components/graph3d` |
 | 2D graph | `react-force-graph-2d@^1.29` | `app/notes-graph` |
-| HTTP | `axios@^1.20` | `lib/api.ts` only |
+| HTTP | native `fetch` (one `request()` helper) | `lib/api.ts` only |
 | Fonts | `@fontsource-variable/inter` imported in `main.tsx` → `--font-sans` in `globals.css` | everywhere |
 | Images | Plain `<img>` from `public/` | logos |
 | Lint / TS | `eslint@^9`, `typescript-eslint@^8`, `eslint-plugin-react-hooks@^7`, `typescript@^6` | — |
-| `class-variance-authority` | Listed as a dependency but **not imported anywhere** in `src/` | — |
 
-React Compiler note: because the compiler is enabled in `vite.config.ts`, the compiler auto-memoises components and hooks. The code still uses explicit `useMemo`/`useCallback` in many places (written before/independent of the compiler). Two ESLint rules from the React Compiler preset appear as inline disables: `react-hooks/set-state-in-effect` (in `NodeDetailModal`, `useGraphSearch`) and `react-hooks/exhaustive-deps`. Do not "fix" those disables blindly — the effects intentionally key on a subset of deps (see §12 gotchas).
+React Compiler note: because the compiler is enabled in `vite.config.ts`, the compiler auto-memoises components and hooks. The code still uses explicit `useMemo`/`useCallback` in many places (written before/independent of the compiler). `npm run lint` is clean; the two remaining `react-hooks/set-state-in-effect` disables (`useNotesList`, `useFinanceWorkspace`) mark large shared async fetchers whose only synchronous `setState` is a no-op in the effect context, and each carries its reason.
 
 ## 4. Directory conventions
 
@@ -150,14 +145,14 @@ Helpers:
 
 | Helper | Behaviour |
 |---|---|
-| `withKb(kb, params?)` | Returns `{...params, kb}` **only when `kb` is truthy and not `"default"`**; returns `undefined` if the result is empty. Used for GETs whose params go through axios `params`. |
+| `withKb(kb, params?)` | Returns `{...params, kb}` **only when `kb` is truthy and not `"default"`**; returns `undefined` if the result is empty. Used for GETs whose params become the query string. |
 | `kbQuery(kb)` | Returns `"?kb=<encoded>"` or `""` under the same rule. Used when the path is built by string concatenation (POST/PUT/DELETE and GETs with path params). |
-| `http.get/post/put/patch/del` | One-line axios wrappers returning `r.data`. `get` and `post` accept `RequestOpts = { signal?: AbortSignal }`; `put/patch/del` do not support cancellation. |
-| `isRequestCancelled(err)` | `axios.isCancel(err) || (err instanceof DOMException && err.name === "AbortError")`. Callers that abort in effect cleanups use this to avoid surfacing spurious errors (e.g. notes list hook). |
+| `http.get/post/put/patch/del` | Thin wrappers over one `request()` built on `fetch`: query params skip `null`/`undefined`, JSON and `FormData` bodies, `signal`, an optional `timeout` (via `AbortSignal.timeout`) and a `text` response mode. A non-2xx status throws an `Error` carrying `response.status` and the parsed `response.data`. |
+| `isRequestCancelled(err)` | `err instanceof DOMException && err.name === "AbortError"`. Callers that abort in effect cleanups use this to avoid surfacing spurious errors (e.g. notes list hook). |
 
 Consequences of the `"default"` rule: the default KB is addressed by **omitting** `kb`; the backend's `get_kb` dependency resolves a missing param to the default KB ([07 §3.3](07-api-reference.md)). Never send `kb=default` explicitly from new code — it is harmless but breaks the "omit means default" symmetry used in tests and logs.
 
-No axios instance, interceptors, base headers or retry logic exist. Every method surfaces the raw axios error; pages typically inspect `err.response?.data?.detail` (kb page, setup page) or swallow it.
+No interceptors, base headers or retry logic exist. Every method surfaces the thrown error; pages typically inspect `err.response?.data?.detail` (or use `errMessage` from `lib/utils.ts`) (kb page, setup page) or swallow it.
 
 ### 6.2 Method catalogue
 
@@ -172,7 +167,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 | `listChatConversations(kb): ChatConversation[]` | `GET /chat/conversations?kb=` | |
 | `getChatMessages(conversationId): ChatMessageRecord[]` | `GET /chat/conversations/{id}/messages` | **No `kb`** — see 07 §8 caveat. |
 | `deleteChatConversation(conversationId)` | `DELETE /chat/conversations/{id}` | **No `kb`.** |
-| `exportChat(conversationId, format="markdown")` | `GET /chat/conversations/{id}/export?format=` | `json` → parsed body via `http.get`; `markdown` → raw axios with `responseType: "text"`, returns string. |
+| `exportChat(conversationId, format="markdown")` | `GET /chat/conversations/{id}/export?format=` | `json` → parsed body via `http.get`; `markdown` → `http.get(..., { text: true })`, returns string. |
 
 **File storage**
 
@@ -238,7 +233,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 |---|---|---|
 | `getSetupStatus(): SetupStatus` | `GET /setup/status` | Used by banner, setup, settings. |
 | `getModelCatalog(chatId?)` | `GET /setup/model-catalog?chat_id=` | |
-| `saveSetupPaths({data_dir, models_dir, default_vault_path?, ai_setup_mode?})` | `POST /setup/paths` | |
+| `saveSetupPaths({data_dir, models_dir, default_vault_path?})` | `POST /setup/paths` | |
 | `downloadModels(includeMultimodal=true, chatId?, {multimodalOnly?})` | `POST /setup/download-models` `{include_multimodal, chat_id, multimodal_only}` with **`timeout: 0`** | Multi-GB; the request stays open until the backend finishes. |
 | `selectChatModel(chatId)` | `POST /setup/select-chat-model` `{chat_id}` | |
 | `getMultimodalStatus()` | `GET /setup/multimodal-status` | Response typed as `unknown`; setup page reads `.models` record. |
@@ -254,7 +249,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 
 | Method | Call | Notes |
 |---|---|---|
-| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running,pending_nodes?,needed?,timer_armed?,idle_seconds?}, temporal_digests:{running}, ingestion?:{active,last_completed_at?}, healthy?}` |
+| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running,pending_nodes?,needed?,timer_armed?,idle_seconds?}, temporal_digests:{running}, ingestion?:{active}, healthy?}` |
 | `rebuildCommunities(kb)` | `POST /admin/rebuild-communities?kb=` `{}` | |
 | `buildTemporalDigests(period?, kb)` | `POST /admin/build-temporal-digests?kb=` `{period: period ?? null}` | |
 | `resetIngestionData(kb)` | `POST /admin/reset-ingestion-data?kb=` `{}` | |
@@ -306,7 +301,6 @@ useEffect(() => {
 ```tsx
 <KBProvider>
   <ChatProvider>
-    <SuppressThreeWarnings />
     <div className="flex h-screen w-full overflow-hidden">
       <Sidebar />
       <main className="relative flex min-w-0 flex-1">
@@ -323,14 +317,13 @@ Title, description and icons live in `index.html` (`<html class="dark">`). Becau
 
 ```mermaid
 flowchart TD
-  L[App.tsx] --> KB[KBProvider<br/>currentKB, isHydrated<br/>localStorage orb_current_kb]
+  L[App.tsx] --> KB[KBProvider<br/>currentKB<br/>localStorage orb_current_kb]
   KB --> CH[ChatProvider<br/>messages, conversations, polling]
   CH --> S[Sidebar]
   S --> SSI[SystemStatusIndicator<br/>polls /admin/maintenance-status]
   CH --> M[main ml-20]
   M --> P[page.tsx of the route]
   CH --> B[AiLimitedBanner<br/>GET /setup/status once]
-  CH --> W[SuppressThreeWarnings]
   P -->|useKB| KB
   P -->|useChat chat only| CH
   P -->|api.*| API[(lib/api.ts → /api/v1 same origin → FastAPI 17401)]
@@ -338,7 +331,7 @@ flowchart TD
   B -->|api.getSetupStatus| API
 ```
 
-Data flow rule: **KB slug flows down via context; every network call takes it as an explicit argument.** There is no global axios default for `kb`, so a component that forgets to pass `currentKB` silently talks to the default KB.
+Data flow rule: **KB slug flows down via context; every network call takes it as an explicit argument.** There is no global default for `kb`, so a component that forgets to pass `currentKB` silently talks to the default KB.
 
 ## 8. Providers
 
@@ -350,17 +343,16 @@ Context value:
 |---|---|---|
 | `currentKB` | `string` | KB **slug** (`"default"` for the built-in KB). This is what goes into `?kb=`. |
 | `currentKBName` | `string` | Display name (sidebar label, chat badge, settings text). |
-| `isHydrated` | `boolean` | `false` on the first render (`useSyncExternalStore` server snapshot); `true` once mounted, after `localStorage` has been read. |
 | `setCurrentKB(slug, displayName?)` | fn | Trims; empty → `"default"`; name defaults to slug; writes storage. |
 | `setCurrentKBName(name)` | fn | Updates only the name (after a rename); writes storage. |
 
-Persistence: key **`orb_current_kb`**, value `JSON.stringify({slug, name})`. `readStorage()`:
+Persistence: key **`orb_current_kb`**, value `JSON.stringify({slug, name})`, read and written through `loadJson`/`saveJson` in `lib/utils.ts`. `readStorage()`:
 
 1. Reads `orb_current_kb`; if absent, tries legacy keys `lifeos_current_kb` then `liveos_current_kb`, copies the first hit to the new key and deletes the legacy key (one-time migration from the LifeOS/LiveOS names).
 2. If the raw value does not start with `{` it is treated as the old plain-string format: `{slug: raw, name: raw}`.
 3. Any exception (no `localStorage`, bad JSON) → `{slug:"default", name:"default"}`.
 
-Initial render state is always `{default, default}` with `isHydrated=false`; the effect then swaps in the stored KB. **Pages must gate their first fetch on `isHydrated`** — otherwise they fetch the default KB, then refetch the real one (the graph pages and chat do this correctly; `notes-graph`, `kb`, `settings` and `finance` ignore `isHydrated` and rely on the `[currentKB]` dependency to refetch, which costs one wasted request per page load when a non-default KB is active).
+The provider initialises its state from storage in a lazy `useState` initialiser, so the first render already has the stored KB and pages fetch the right KB on their first effect. There is no hydration flag (a leftover from the Next.js era) and nothing to gate on.
 
 Who reads it: `sidebar`, `system-status-indicator`, `chat`, `graph-3d`, `notes-graph`, `kb`, `settings`, `finance`, `notes/_hooks/useNotesPageController`. Who writes it: only `kb/page.tsx` (switch, delete, delete-all, rename).
 
@@ -467,7 +459,6 @@ Active state uses **exact** `pathname === item.href` (so `/notes?note=…` still
 | `Sidebar` | — | Navigation rail (see §10). | — (child polls) | `layout.tsx` |
 | `SystemStatusIndicator` | — | Sidebar activity light; see §15. | `GET /admin/maintenance-status?kb=` | `Sidebar` |
 | `AiLimitedBanner` | — | Fixed bottom banner when AI is not configured; see §16. | `GET /setup/status` (once per mount) | `layout.tsx` |
-| `SuppressThreeWarnings` | — | Monkey-patches `console.warn` on mount to drop messages containing both `"THREE.Clock"` and `"deprecated"` (emitted by `react-force-graph-3d`, which still uses `THREE.Clock` after three r168 deprecated it). Restores on unmount. Renders `null`. | — | `layout.tsx` |
 | `ShaderBackground` | — | Full-viewport `<canvas class="fixed inset-0 z-0 opacity-30">`; 100 `ParticleImpl` dots (size 3–8, speed ±0.25 px/frame, bluish rgba) drawn via `requestAnimationFrame`, wrapping at edges. Canvas is sized once from `offsetWidth/Height` on mount and on `resize` (particles keep the original bounds — a known cosmetic imperfection). Cancels rAF on unmount. Despite its name it is 2D canvas, not WebGL. | — | home, chat, notes, notes-graph, kb, settings, setup, finance (not graph-3d) |
 | `BlobMediaPlayer` | `url`, `kbId="default"`, `kind:"video"\|"audio"`, `className?` | Renders an `<iframe>` when `youtubeEmbedUrl`/`vimeoEmbedUrl` match; otherwise a `<video controls playsInline>` / `<audio controls>` whose `src` is `encodeFileUrl(resolveFileUrl(url, kbId))`. On the first `onError` it retries **once** by `fetchMediaObjectUrl` → `blob:` object URL (handles moov-at-end MP4s and proxies that mishandle Range); a second failure shows "Could not play this video/audio." Object URLs are revoked on unmount/url change, including when the blob resolves after unmount. | `GET /vault-files/...` (media) | chat file preview, `SegmentedNoteContent`, notes `FilePreviewModal` |
 | `SegmentedNoteContent` | `content`, `onFileClick(url, filename)`, `onEntityClick?(nodeId, name)`, `proseClassName`, `kb="default"` | Note-content renderer used for read-only previews. Splits `content` on multimedia markers produced by ingestion — `[Image: <title>]`, `[PDF Extraction (<file>)]:`, `[Audio Transcript (<title>)]:`, `[Video Transcript (<title>)]:` — into `Segment{type,label,content}`; each non-text segment gets a coloured `SegmentDivider` pill (image blue, pdf amber, audio emerald, video purple) and each segment is rendered by `ReactMarkdown` + `remark-gfm` with `urlTransform` and a custom `a` renderer. Entity scan (`useScannedEntities`) runs only when `onEntityClick` is provided; matches are injected as `entity://` links before rendering. Link renderer: `entity://<id>` → blue pill button; attachment links (text starting with 📎/🖇/🎤 or `isAttachmentHref`) render inline `<img>`, `BlobMediaPlayer` (video), `<iframe>` (pdf) or a purple file button, all calling `onFileClick(resolvedUrl, filename)`; everything else → `MarkdownAnchor`. Empty content renders `*Empty note*`. | `POST /graph/entities/scan-text` (when entity clicks enabled) | chat note-preview modal |
@@ -488,8 +479,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 | `ProximityLabelLayer` | component | Absolutely-positioned DOM labels (`ProximityLabel{id,name,nodeType,sx,sy,opacity}`, `LinkLabel{id,label,sx,sy,opacity}`), `pointer-events:none`, z-20. |
 | `GraphSearchOverlay` | component | Top-right "Search /" button → input + up to 8 results; Enter flies to the first, click flies to that node, Escape/blur closes. Uses `onMouseDown preventDefault` on results so the input's blur does not close the list before click. |
 | `NodeDetailModal` | component | Fixed full-screen backdrop (z-999) + card tinted with `nodeColor`; fetches `getNodeDetail` on `node.node_id` change (deps intentionally exclude `node`/`kb`), merges `{...node, ...detail}`; on error falls back to the click payload. Shows description, first 4 contexts, community, up to 8 connections, domain. |
-| `useGraph3DData(kb, isHydrated)` | hook | Fetches `/graph/3d/full`, maps `node_id→id`, pins positions via `fx/fy/fz`, computes degree-weighted `val = 1 + min(8, degree)`, drops dangling edges, mirrors nodes/links into refs, builds `nodeTypeMapRef`, resets fit flags on every load. |
-| `useGraphSearch(nodesRef)` | hook | Client-side `includes` filter, prefix matches first, alphabetical, top 8. |
+| `useGraph3DData(kb)` | hook | Fetches `/graph/3d/full`, maps `node_id→id`, pins positions via `fx/fy/fz`, computes degree-weighted `val = 1 + min(8, degree)`, drops dangling edges, mirrors nodes/links into refs, builds `nodeTypeMapRef`, resets fit flags on every load. |
 | `useProximityLabels({...})` | hook | rAF loop throttled to 100 ms: projects nodes within an adaptive radius (`max(150, extent*0.55, camDist*0.22)`) to screen space, top 16 nearest, opacity `(zoomLike - textFade + 0.35)/0.7` with `textFade` read from `localStorage["orb:notes-graph-controls:<kb>"]` (shared with the 2D graph, default 0.55); link labels within 55 % of that radius, top 8, skipping `MEMBER_OF`. Uses CSS pixel dimensions (`clientWidth`) not buffer size to avoid DPR offset. |
 | `useGraph3DCamera({...})` | hook | Polls every 100 ms until the force-graph exposes `camera()/renderer()`, then disables the built-in `OrbitControls` and installs an FPS rig on `window`: left-drag = yaw/pitch (quaternion from YXZ Euler, pitch clamped ±(π/2−0.01)), right-drag = pan scaled by camera distance, wheel = fly along view axis (distance-scaled, deltaMode-normalised), WASD/Q/E = continuous move loop, `/` or Ctrl/Cmd+K = toggle search. 5 px drag threshold distinguishes click from drag; `handleNodeClick` ignores clicks that ended a drag. `flyToNode` animates 1.2 s cubic-ease to 80 units from the target while looking at it. Every user input sets `userNavigatedRef` so `zoomToFit` never fires again. |
 
@@ -501,8 +491,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 - **Visual vocabulary** (repeat these for consistency): translucent panels `border border-white/10 bg-white/5 backdrop-blur-xl rounded-2xl`; brand gradient `from-purple-500 to-pink-500`; accent per feature — purple/pink (chat, notes), teal (wikilink/notes-graph, connected panel), blue (entities), amber (setup/AI warnings), red (destructive), emerald/violet/sky (status light).
 - **Prose**: `react-markdown` output is styled with typography `prose prose-invert …` class strings (`PROSE_CLASSNAME` in chat, `PREVIEW_PROSE` in notes-graph, an inline string for the chat note-preview modal). `not-prose` is applied to embedded media blocks and segment dividers so typography margins do not apply.
 - **Scrollbars**: global WebKit scrollbar styling (8 px, translucent thumb).
-- **Motion**: page headers and list items animate with `framer-motion` (`initial/animate/exit`), lists wrapped in `AnimatePresence`.
-- `cn()` (`clsx` + `tailwind-merge`) is the only class-composition helper; use it whenever conditional classes might conflict.
+- `cn()` is `clsx`; use it for conditional class joins. Nothing passes conflicting Tailwind utilities through it, so no merge step is needed.
 
 ## 13. `src/lib/types.ts` listing
 
@@ -520,7 +509,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 | `KBLLMConfig` | `kb_id, override{provider, model, ingestion_model}` (nullable), `effective: EffectiveLLM`, `providers: string[]`, `local_models: {id,label,size_gb}[]` (chat GGUFs on disk — the only local models a KB may pin) | `GET/PATCH /kb/{id}/llm` |
 | `FinanceAccount`, `FinanceTransaction`, `FinanceBudget`, `FinanceCategory`, `FinanceRecurrence`, `FinanceRuleGroup`, `FinanceRule`, `FinanceSearchResult`, `FinanceWorkspace`, `FinanceSummary`, `FinanceReport` | Firefly-derived shapes; see [17](17-finance-firefly.md) | `/finance/*` |
 | `NotesGraphPayload` | `nodes:{id, title, type, rel_path?}[]` (`type` is `"note"` or `"missing"`), `edges:{source,target,type}[]`, `center_id?` | `/graph/notes`, `/graph/notes/{id}/neighbors`, `/graph/entities/note-subgraph` |
-| `SetupStatus` | `data_dir, models_dir, paths_json?, default_vault_path?, active_vault_path?, ai_setup_mode, ai_configured, local_models_ready?, multimodal_ready?, needs_model_download?, database_backend, llm_provider?` | `GET /setup/status` |
+| `SetupStatus` | `data_dir, models_dir, paths_json?, default_vault_path?, active_vault_path?, ai_configured, local_models_ready?, multimodal_ready?, database_backend, llm_provider?` | `GET /setup/status` |
 
 Types that live outside `types.ts`: `Message` (`chat-context.tsx`), `ScannedEntity` (`markdown-entities.tsx`), `KnowledgeNode` (`components/graph3d/types.ts`), `OrbDesktopBridge` (`desktop.ts`), setup page's local `ModelCatalog`/`CatalogOption`, settings page's `LLMSettings`, notes-graph's `GraphNode/GraphLink/Controls`, and the notes editor's `_lib/types.ts`. Several `api.ts` methods declare their return shape inline instead of in `types.ts` (`getGraph3DFull`, `getNodeDetail`, `listVaultFolders`, `resolveVaultLocalPath`, `batchDeleteNotes`, `emptyKB`, `deleteAllNonDefaultKBs`, `getMaintenanceStatus`).
 
@@ -560,13 +549,13 @@ Displayed state (`buildStatus`) — first match wins:
 | `community` (violet, pulsing) | Communities | `community_detection.running` | includes `pending_nodes` when > 0 |
 | `digest` (sky, pulsing) | Digests | `temporal_digests.running` | |
 | `community` (violet, pulsing) | Queued | `community_detection.timer_armed` | "Community rebuild armed — starts after ~{idle_seconds ?? 120}s idle (N nodes queued)." |
-| `idle` (emerald) | Ready | otherwise | "Idle. Last ingestion finished <localised last_completed_at>." or "Idle — no ingestion or community jobs running." |
+| `idle` (emerald) | Ready | otherwise | "No ingestion or community jobs running." |
 
 The settings page runs a second, independent poller on the same endpoint (3 s active / 15 s idle) to drive its Rebuild/Digest button states; it does not share state with the indicator.
 
 ## 16. `AiLimitedBanner` gating
 
-On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides on request failure. Two variants: if `needs_model_download` is true the text says local models are not downloaded ("Continue download" → `/setup`), else "AI not configured — limited experience (notes & wikilinks work; chat / ingest / entity graph need setup)" ("Set up AI" → `/setup`). "Dismiss" hides it for the life of the layout (i.e. until full reload — the state is not persisted, and because the layout persists across client navigation, it does not reappear on route change). It never re-checks after setup completes without a reload. Fixed at `bottom-4 left-24 right-4 z-50`, so it overlaps page content; pages do not reserve space for it. The backend's AI gate (07 §3.7) is the actual enforcement; this banner is advisory.
+On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides on request failure. One message: "No model configured yet — notes work; chat, ingest and the graph need one." with a "Choose a model" link to `/models`. "Dismiss" hides it for the life of the layout.
 
 ## 17. Performance patterns
 
@@ -596,7 +585,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 
 **New page**
 1. Create `src/app/<route>/page.tsx` exporting a default component, and add a lazy `<Route>` for it in `src/App.tsx`.
-2. Read the KB with `const { currentKB, isHydrated } = useKB()` and gate the first fetch on `isHydrated` (`if (!isHydrated) return;` inside the effect) so you do not fetch the default KB and then refetch.
+2. Read the KB with `const { currentKB } = useKB()`; it is correct on the first render.
 3. Put route-private pieces in `src/app/<route>/_components`, `_hooks`, `_lib`.
 4. Add a `ShaderBackground` + a `relative z-10` content wrapper if you want the house look; content sits inside the flex `<main>` automatically (`App.tsx` does it).
 5. Register the route in the `navigation` array of `src/components/sidebar.tsx` (label, href, lucide icon). Active highlighting is exact-path.
@@ -607,9 +596,9 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 1. Add a method to the `api` object in `src/lib/api.ts` under the matching `// ── Domain ──` comment. Use `http.get(path, withKb(kb, params), opts)` for GETs with query params, and `` `${path}${kbQuery(kb)}` `` for POST/PUT/PATCH/DELETE. Give it `kb = "default"` as the last positional parameter unless the endpoint is global (setup, settings, kb list). Add `opts?: RequestOpts` if the call can be superseded.
 2. Put the response shape in `src/lib/types.ts` when more than one file will use it; inline it otherwise.
 3. Document it in [07 §8](07-api-reference.md) (the frontend↔backend cross-check) so the mapping stays auditable.
-4. Never hardcode `/api/v1` or a port in a page; never call `axios` from a page.
+4. Never hardcode `/api/v1` or a port in a page; never call `fetch` from a page.
 
-**New shared component**: `src/components/<kebab-name>.tsx` (or a feature folder with `index.ts`), props typed inline, KB passed explicitly (`kb`/`kbId` prop with `"default"` default), no context reads inside leaf components except `useKB` in navigation chrome.
+**New shared component**: `src/components/<kebab-name>.tsx` (or a feature folder; import files by path, no barrels), props typed inline, KB passed explicitly (`kb`/`kbId` prop with `"default"` default), no context reads inside leaf components except `useKB` in navigation chrome.
 
 ## 20. Invariants, constraints, and locked decisions
 
@@ -618,7 +607,6 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 - **`kb` is omitted for the default KB** (`withKb`/`kbQuery`); the backend interprets absence as default. Never introduce a global default header.
 - **KB slug in storage key `orb_current_kb`** as `{slug,name}` JSON; legacy keys are migrated once and deleted. Do not add a second source of truth for the active KB.
 - **Providers stay in `App.tsx`** so chat polling and the KB survive navigation. Do not move `ChatProvider` into `/chat`.
-- **`isHydrated` gating** is the mechanism that prevents a default-KB fetch before storage is read; do not read `localStorage` during render.
 - **Every URL is relative** (`/api/v1`, `/vault-files`). Never hardcode a host or port in the frontend; the API port is the UI origin.
 - **The bridge stays minimal** (`isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`). Anything that can be an HTTP call must be one — the Tauri capability file grants the UI exactly those plugin commands.
 - **Entity links are `entity://<node_id>`** markdown links injected client-side; `urlTransform` must keep allowing that scheme and nothing else beyond `http(s)/irc(s)/mailto/xmpp` and relative URLs (XSS boundary for ingested web content).
@@ -635,11 +623,9 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 - `KnowledgeBase.typesense_collection` is the historical field name; the value refers to the Meilisearch index.
 - The chat page passes the note-preview setter to message bodies through `window.__chatSetPreview` rather than props/context. It is installed in a mount effect and deleted on unmount; any second chat instance would clobber it.
 - `AiLimitedBanner` checks `/setup/status` once per layout mount; after finishing setup the banner persists until a full reload, and "Dismiss" is not persisted.
-- `SuppressThreeWarnings` globally patches `console.warn`; if you see other `THREE.*` warnings disappearing, that is not it (the filter requires both substrings) — but remember the patch exists when debugging console output.
 - `EntityDetailPanel` links to `/graph-3d` with a raw `<a>`, causing a full reload (state loss); `Link` was not used deliberately or otherwise — treat as low-priority.
 - `useProximityLabels` reads the **notes-graph** control key `orb:notes-graph-controls:<kb>` for `textFade`; adjusting "Text fade threshold" on `/notes-graph` also changes label fade on `/graph-3d`.
 - `KBProvider` initial value is `default` even when storage says otherwise — components that render KB-dependent UI on first paint (sidebar label) flash "default" briefly; this is expected.
-- `class-variance-authority` is a declared dependency with zero imports.
 - `cooldownTicks={0}` / `warmupTicks={0}` on the 3D canvas mean the force engine does **not** run — positions come pre-computed from the backend (`x,y,z` pinned via `fx/fy/fz`). Removing `fx/fy/fz` would make the graph collapse to the origin.
 
 ## 22. History / rationale

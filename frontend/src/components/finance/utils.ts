@@ -1,5 +1,3 @@
-export const FIELD_INPUT = "input";
-
 /** Empty-state row shared by every list on the Finance screen. */
 export const EMPTY_ROW =
   "rounded-md border border-dashed border-n-800 px-3 py-5 text-[12.5px] text-n-500";
@@ -27,16 +25,6 @@ export function tomorrowIso() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   return d.toISOString().slice(0, 10);
-}
-
-export function errMessage(err: unknown, fallback: string): string {
-  if (typeof err === "object" && err && "response" in err) {
-    const detail = (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail;
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail)) return detail.map(String).join("; ");
-  }
-  if (err instanceof Error && err.message) return err.message;
-  return fallback;
 }
 
 export function money(value: number, currency?: string | null) {

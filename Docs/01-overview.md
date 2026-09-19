@@ -18,10 +18,10 @@ Key user-facing capabilities:
 |---|---|
 | Notes & vault | Real `.md` files in a per-knowledge-base vault folder (Obsidian-compatible), folders, attachments, `[[wikilinks]]` with autocomplete and disambiguation, entity highlighting in the editor, in-app voice recording |
 | Multimedia ingest | PDF text + vision on embedded images and scanned pages (Florence-2), image captions/OCR, audio and video transcription (Whisper), video visual understanding (Marlin); results are appended to the note markdown |
-| Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and weighted relationships, optional community clustering (labelled "Leiden", implemented with scikit-learn agglomerative clustering) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
+| Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and relationships, optional community clustering (labelled "Leiden", implemented as a greedy cosine merge over embeddings) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
 | Chat | Multi-hop research loop combining entity lookup, keyword search (Meilisearch), vector search (Qdrant), graph expansion and a local cross-encoder reranker; persistent conversations; optional "thinking" display |
 | Knowledge bases | Multiple fully isolated KBs (separate vault, graph, vectors, keyword index, Firefly administration) switchable from the sidebar |
-| Finance | Per-KB Firefly III administration: accounts, transactions, budgets, categories, bills, piggy banks, recurrences, rules, reports, search |
+| Finance | Per-KB Firefly III administration: accounts, transactions, budgets, categories, recurrences, rules, reports, search |
 | Local models | First-run setup page picks a data dir and a models dir (NAS/OneDrive friendly); GGUF chat/embed/rerank via llama-cpp-python inside the API process; cloud providers optional |
 
 ---
@@ -54,13 +54,13 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 | Layer | Technology | Version pins (as of 0.2.0) |
 |---|---|---|
 | Desktop shell | Tauri 2 (Rust) with dialog / notification / opener plugins; updater not wired | – |
-| UI | Vite + React (react-router) static build served by the API, React Compiler, Tailwind CSS, CodeMirror 6, three.js + react-force-graph (2D/3D), framer-motion, axios | React 19.2.6, Tailwind 4, TypeScript 6 |
-| API | FastAPI + uvicorn, Pydantic v2, pydantic-settings, SQLAlchemy 2 async (aiosqlite), LangGraph, tenacity, httpx | FastAPI 0.128, LangGraph 1.0.6 |
+| UI | Vite + React (react-router) static build served by the API, React Compiler, Tailwind CSS, CodeMirror 6, three.js + react-force-graph (2D/3D), native `fetch` | React 19.2.6, Tailwind 4, TypeScript 6 |
+| API | FastAPI + uvicorn, Pydantic v2, pydantic-settings, SQLAlchemy 2 async (aiosqlite), httpx | FastAPI 0.128 |
 | Graph | Kuzu embedded graph database | kuzu 0.11.3 |
 | Vectors | Qdrant (local binary) + qdrant-client | Qdrant v1.18.2, client 1.17.1 |
 | Keyword search | Meilisearch (local binary) + meilisearch python | Meilisearch v1.49.0, client 0.34.1 |
 | Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Florence-2, Whisper, Marlin) | llama-cpp-python ≥ 0.3 |
-| Cloud LLMs | openai, anthropic, google-genai, HuggingFace; `instructor` for structured output; `json-repair` | – |
+| Cloud LLMs | openai, anthropic, google-genai, HuggingFace; plain-JSON structured output cleaned with `json-repair` | – |
 | Document parsing | PyMuPDF, Pillow, python-docx, openpyxl, `av` (media probing), ffmpeg (transcoding) | – |
 | Finance | Firefly III (Laravel) on a portable PHP 8.5 from NativePHP `php-bin` | Firefly v6.6.6, php-bin 1.2.0 |
 | Packaging | `desktop/build.py` + `cargo tauri build`: python-build-standalone CPython, Vite build, Firefly seed; no Node ships | Python 3.12.9 |
@@ -90,7 +90,7 @@ The full picture with diagrams is in [02-system-architecture.md](02-system-archi
 - Current version **0.3.0** (`desktop/src-tauri/tauri.conf.json`, `Cargo.toml`; `frontend/package.json` still reads `0.2.0` and the FastAPI `version` string `0.1.0`).
 - Installers are **unsigned**; macOS users may need `xattr -cr /Applications/Orb.app`. Notarization and Authenticode hooks exist but are not enabled.
 - Auto-update is not wired (planned: `tauri-plugin-updater`, gated by `ORB_ENABLE_UPDATER=1`).
-- Name lineage: **LiveOS Brain** (January–July 2026 research prototype) → **LifeOS** (desktop pivot, `3f21e08`) → **Orb** (`6162be2`, same day, 2026-08-02). Legacy `LIVEOS_*` / `LifeOS` identifiers survive only as read-compatibility aliases.
+- Name lineage: **LiveOS Brain** (January–July 2026 research prototype) → **LifeOS** (desktop pivot, `3f21e08`) → **Orb** (`6162be2`, same day, 2026-08-02). The `LIVEOS_*` / `LifeOS` read-compatibility aliases were removed on 2026-09-19.
 
 ---
 

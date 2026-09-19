@@ -26,6 +26,7 @@ import {
 } from "@codemirror/commands";
 import { searchKeymap } from "@codemirror/search";
 import { api } from "@/lib/api";
+import { useDebounced } from "@/lib/utils";
 import { liveMarkdownExtensions } from "./markdownHighlight";
 import { createLivePreviewHideMarks } from "./livePreviewHideMarks";
 import {
@@ -303,27 +304,25 @@ const MarkdownNoteEditor = forwardRef<
   }));
 
   // Scan note text for entity mentions (debounced while typing; remounts per note via key=)
+  const scanValue = useDebounced(value, 600);
   useEffect(() => {
-    if (!value || value.length < 10) {
+    if (!scanValue || scanValue.length < 10) {
       setScannedEntities([]);
       return;
     }
     let cancelled = false;
-    const timer = window.setTimeout(() => {
-      api
-        .scanTextEntities(value, kb)
-        .then((entities) => {
-          if (!cancelled) setScannedEntities(entities);
-        })
-        .catch(() => {
-          if (!cancelled) setScannedEntities([]);
-        });
-    }, 600);
+    api
+      .scanTextEntities(scanValue, kb)
+      .then((entities) => {
+        if (!cancelled) setScannedEntities(entities);
+      })
+      .catch(() => {
+        if (!cancelled) setScannedEntities([]);
+      });
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
     };
-  }, [kb, value]);
+  }, [kb, scanValue]);
 
   // Rebuild entity decorations when the scanned list changes
   useEffect(() => {

@@ -313,27 +313,13 @@ class QdrantService:
                 logger.debug(f"Qdrant search failed for {collection}: {exc}")
                 return []
 
-        targets = [
-            c
-            for c in self.collections
-            if not (day_only and c != self._col_contexts)
-        ]
-        if not targets:
-            return []
-        if len(targets) == 1:
-            return _search_one(targets[0])
-
-        # Query collections concurrently — each is an independent network call.
-        # Results are flattened in self.collections order so downstream merge
-        # behaviour is identical to the previous sequential loop.
-        from concurrent.futures import ThreadPoolExecutor
-
-        with ThreadPoolExecutor(max_workers=len(targets)) as pool:
-            per_collection = list(pool.map(_search_one, targets))
-
+        # ponytail: sequential over 3 local collections; fan out with a thread pool
+        # if Qdrant ever moves off localhost.
         hits: list[dict[str, Any]] = []
-        for chunk in per_collection:
-            hits.extend(chunk)
+        for collection in self.collections:
+            if day_only and collection != self._col_contexts:
+                continue
+            hits.extend(_search_one(collection))
         return hits
 
     def search_node_cores(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -1036,38 +1022,6 @@ class QdrantService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Qdrant delete_node failed for {node_id}: {exc}")
 
-    def scroll_oversized_contexts(self, min_chars: int) -> list[dict]:
-        """Context points longer than ``min_chars`` — whole notes stored as one context."""
-        if not self.is_available() or not self.client:
-            return []
-        out: list[dict] = []
-        offset = None
-        try:
-            while True:
-                points, offset = self.client.scroll(
-                    collection_name=self._col_contexts,
-                    limit=500,
-                    offset=offset,
-                    with_payload=True,
-                    with_vectors=False,
-                )
-                for point in points:
-                    payload = point.payload or {}
-                    content = payload.get("content") or ""
-                    if len(content) > min_chars:
-                        out.append(
-                            {
-                                "node_id": payload.get("parent_node_id"),
-                                "content": content,
-                                "note_created_at": payload.get("note_created_at"),
-                            }
-                        )
-                if not points or offset is None:
-                    break
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[Qdrant] scroll_oversized_contexts failed: {exc}")
-        return out
-
     def node_ids_for_note(self, note_id: str) -> set[str]:
         """Nodes holding a context that came from this note."""
         if not self.is_available() or not self.client or not note_id:
@@ -1109,22 +1063,6 @@ class QdrantService:
             )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Qdrant delete_note_contexts failed for {note_id}: {exc}")
-
-    def delete_node_contexts(self, node_id: str) -> None:
-        """Drop every context point of a node; its core and relationships stay."""
-        if not self.is_available() or not self.client:
-            return
-        try:
-            self.client.delete(
-                collection_name=self._col_contexts,
-                points_selector=FilterSelector(
-                    filter=Filter(
-                        must=[FieldCondition(key="parent_node_id", match=MatchValue(value=node_id))]
-                    )
-                ),
-            )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"Qdrant delete_node_contexts failed for {node_id}: {exc}")
 
     def scroll_all_isolated_contexts_with_dates(self) -> list[dict]:
         """Return payload dicts for every isolated_context point that has a note_created_at field.

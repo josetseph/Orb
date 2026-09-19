@@ -85,7 +85,6 @@ def mock_meili_service():
     svc = MagicMock()
     svc.is_available = MagicMock(return_value=True)
     svc.index_node = MagicMock()
-    svc.update_node_community = MagicMock()
     svc.delete_node = MagicMock()
     return svc
 

@@ -580,17 +580,13 @@ class GraphService:
         target_name: str,
         target_label: str,
         relationship_type: str,
-        confidence: float = 1.0,
-        strength: float = 5.0,
-        relevance: float = 5.0,
         natural_language: str = "",
         relationship_id: str = None,
-        context: str = "",
         note_id: str = None,
         source_id: str = "",
         target_id: str = "",
     ) -> dict:  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        """Upsert a SEMANTIC_REL edge between two nodes, merging weights on conflict."""
+        """Upsert a SEMANTIC_REL edge between two nodes."""
         import uuid as _uuid
         from datetime import datetime
 
@@ -603,10 +599,6 @@ class GraphService:
 
         if not relationship_id:
             relationship_id = str(_uuid.uuid4())
-
-        edge_weight = round(
-            (strength * 0.5) + (confidence * 0.3) + (relevance * 0.2), 4
-        )
 
         if not source_id and source_name:
             source_id = self.resolve_node_id(source_name.lower().strip()) or ""
@@ -624,10 +616,6 @@ class GraphService:
                 "source": source_name,
                 "target": target_name,
                 "relationship_type": relationship_type,
-                "confidence": confidence,
-                "strength": strength,
-                "relevance": relevance,
-                "edge_weight": edge_weight,
                 "natural_language": natural_language,
                 "relationship_id": relationship_id,
                 "previous_type": None,
@@ -639,7 +627,7 @@ class GraphService:
             """
             MATCH (source:Node {id: $source_id})-[r:SEMANTIC_REL]->(target:Node {id: $target_id})
             WHERE r.rel_type = $rel_type
-            RETURN r.rel_type AS current_type, r.confidence AS current_confidence
+            RETURN r.rel_type AS current_type
             LIMIT 1
             """,
             {
@@ -659,28 +647,17 @@ class GraphService:
                 WHERE r.rel_type = $rel_type
                 SET r.last_updated = $ingestion_time,
                     r.mention_count = coalesce(r.mention_count, 0) + 1,
-                    r.confidence = CASE
-                        WHEN $confidence > coalesce(r.confidence, 0.0) THEN $confidence
-                        ELSE r.confidence
-                    END,
                     r.relationship_id = CASE
                         WHEN r.relationship_id IS NULL THEN $relationship_id
                         ELSE r.relationship_id
-                    END,
-                    r.strength = CASE WHEN r.strength IS NULL THEN $strength ELSE r.strength END,
-                    r.relevance = CASE WHEN r.relevance IS NULL THEN $relevance ELSE r.relevance END,
-                    r.edge_weight = CASE WHEN r.edge_weight IS NULL THEN $edge_weight ELSE r.edge_weight END
+                    END
                 """,
                 {
                     "source_id": source_id,
                     "target_id": target_id,
                     "rel_type": relationship_type,
-                    "confidence": confidence,
                     "ingestion_time": ingestion_time,
                     "relationship_id": relationship_id,
-                    "strength": strength,
-                    "relevance": relevance,
-                    "edge_weight": edge_weight,
                 },
             )
         else:
@@ -698,10 +675,6 @@ class GraphService:
                 MATCH (target:Node {id: $target_id})
                 CREATE (source)-[r:SEMANTIC_REL]->(target)
                 SET r.rel_type = $rel_type,
-                    r.confidence = $confidence,
-                    r.strength = $strength,
-                    r.relevance = $relevance,
-                    r.edge_weight = $edge_weight,
                     r.relationship_id = $relationship_id,
                     r.ingested_at = $ingestion_time,
                     r.last_updated = $ingestion_time,
@@ -712,10 +685,6 @@ class GraphService:
                     "source_id": source_id,
                     "target_id": target_id,
                     "rel_type": relationship_type,
-                    "confidence": confidence,
-                    "strength": strength,
-                    "relevance": relevance,
-                    "edge_weight": edge_weight,
                     "relationship_id": relationship_id,
                     "ingestion_time": ingestion_time,
                     "note_id": note_id,
@@ -732,10 +701,6 @@ class GraphService:
             "source": source_name,
             "target": target_name,
             "relationship_type": relationship_type,
-            "confidence": confidence,
-            "strength": strength,
-            "relevance": relevance,
-            "edge_weight": edge_weight,
             "natural_language": natural_language,
             "relationship_id": relationship_id,
         }

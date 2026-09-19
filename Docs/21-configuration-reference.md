@@ -1,6 +1,6 @@
 # Configuration reference
 
-**What this covers.** Every configuration knob the Orb backend and desktop shell read: pydantic `Settings` fields (env vars / `backend/.env`), the `ORB_*`/`LIVEOS_*` environment variables read directly via `os.environ`, the two JSON bootstrap files (`paths.json`, `DATA_DIR/runtime_config.json`), the per-KB LLM override columns, the desktop port variables, and the layer that sets each value (first-run setup, desktop runtime, `.env`, runtime config, or hard-coded). It also states the precedence rules and the differences between desktop and bare-uvicorn runs. The narrative explanation of how `Settings` is built lives in [Backend core](06-backend-core-and-configuration.md); this file is the lookup table.
+**What this covers.** Every configuration knob the Orb backend and desktop shell read: pydantic `Settings` fields (env vars / `backend/.env`), the `ORB_*` environment variables read directly via `os.environ`, the two JSON bootstrap files (`paths.json`, `DATA_DIR/runtime_config.json`), the per-KB LLM override columns, the desktop port variables, and the layer that sets each value (first-run setup, desktop runtime, `.env`, runtime config, or hard-coded). It also states the precedence rules and the differences between desktop and bare-uvicorn runs. The narrative explanation of how `Settings` is built lives in [Backend core](06-backend-core-and-configuration.md); this file is the lookup table.
 
 **Related docs:** [Backend core and configuration](06-backend-core-and-configuration.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Local models and inference](12-local-models-and-inference.md) · [LLM providers and prompting](13-llm-providers-and-prompting.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Finance / Firefly](17-finance-firefly.md) · [Frontend architecture](18-frontend-architecture.md) · [Data directory layout](22-data-directory-layout.md) · [Logging and observability](23-logging-and-observability.md) · [Development guide](27-development-guide.md)
 
@@ -23,7 +23,7 @@ Markers: **unused** = declared but never read in `backend/app`; **overridden** =
 pydantic-settings resolves each field as: **process environment** > `backend/.env` (absolute path `BACKEND_DIR / ".env"`, `extra="ignore"`) > **field default** (some defaults are themselves computed from `paths.json`). Then, in this order, code mutates the live object:
 
 1. `config.py` bottom: `KUZU_DB_PATH := <DATA_DIR>/kuzu/kuzu_graph`, `MODELS_PATH := MODELS_DIR` (always).
-2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`, `AI_SETUP_MODE` from `runtime_config.json` **win over env/.env**.
+2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` from `runtime_config.json` **win over env/.env**.
 3. `main.startup_event`: `local_models.sync_embedding_infrastructure()` — `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` from the models manifest **win over env/.env**.
 4. Later, at user action: `PATCH /api/v1/settings`, `POST /api/v1/setup/paths`, Setup model selection (`ensure_chat_and_embed_models` also sets `LLM_MODEL`).
 
@@ -31,7 +31,7 @@ So for the provider/model axis the effective order is: **per-KB override (row in
 
 ### 2.2 For directly-read env vars
 
-`paths.py` and `local_models.py` use `_env_first(...)`, which returns the first variable in the list that is non-empty (`paths._env_first` treats any truthy string as set; `local_models._env_first` also ignores whitespace-only). The `ORB_*` name is always listed before its `LIVEOS_*` alias, so `ORB_*` wins when both are set. These are read **at call time** (each model load, each download), except `CHAT_MODEL_ID` / `EMBED_MODEL_ID` / `RERANK_MODEL_ID` (`ORB_*_GGUF`) which are module constants evaluated once at import.
+`paths.py` and `local_models.py` read these with `os.environ.get("ORB_X") or default`. The `LIVEOS_*` aliases no longer exist. These are read **at call time** (each model load, each download), except `CHAT_MODEL_ID` / `EMBED_MODEL_ID` / `RERANK_MODEL_ID` (`ORB_*_GGUF`) which are module constants evaluated once at import.
 
 ### 2.3 Layers per run mode
 
@@ -59,7 +59,6 @@ flowchart LR
 | Qdrant | `127.0.0.1:17433` (set by the runtime) | default `127.0.0.1:6333` |
 | Meili | `127.0.0.1:17470`, key from `DATA_DIR/meili_master_key` | `127.0.0.1:7700`, `orb-dev-key` |
 | Firefly | `FIREFLY_BASE_URL=http://127.0.0.1:17412`, `FIREFLY_RUNTIME_FILE=DATA_DIR/firefly/runtime.json` | not configured unless set |
-| AI mode | derived from configuration (`ai_gate.derived_setup_mode()`); `AI_SETUP_MODE` is persisted but not read | same |
 | UI | served by the API at `/` (`FRONTEND_DIR`) — CORS unused | Vite dev server on 3700 proxies to the API; CORS default list |
 | Logs | `DATA_DIR/logs/*.log`; runtime + API stdout in `backend.log` | `DATA_DIR/logs` + terminal |
 
@@ -71,13 +70,13 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `ORB_PATHS_FILE` (`LIVEOS_PATHS_FILE`) | path / `<App Support>/Orb/paths.json` (falls back to `LifeOS`/`LiveOS` dirs that already have one) | env — `paths.paths_json_location()`; also `src-tauri/src/runtime.rs` | Location of the bootstrap JSON | rarely (scratch profiles); the shell and runtime read the same default location |
-| `ORB_DATA_DIR` (`LIVEOS_DATA_DIR`, `DATA_DIR`) | path / `paths.json.data_dir` → `<repo>/data` | env — `paths.resolve_data_dir()`; `Settings.DATA_DIR` default is that result | Root for `orb.db`, `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`, `firefly/`, `runtime_config.json`, `meili_master_key`, `boot-status.json` | setup (`paths.json`); env only in dev |
-| `ORB_MODELS_DIR` (`LIVEOS_MODELS_DIR`, `MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/`, HF snapshots (`florence-2-large`, …), `models_manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
+| `ORB_PATHS_FILE` | path / `<App Support>/Orb/paths.json` | env — `paths.paths_json_location()`; also `src-tauri/src/runtime.rs` | Location of the bootstrap JSON | rarely (scratch profiles); the shell and runtime read the same default location |
+| `ORB_DATA_DIR` (`DATA_DIR`) | path / `paths.json.data_dir` → `<repo>/data` | env — `paths.resolve_data_dir()`; `Settings.DATA_DIR` default is that result | Root for `orb.db`, `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`, `firefly/`, `runtime_config.json`, `meili_master_key`, `boot-status.json` | setup (`paths.json`); env only in dev |
+| `ORB_MODELS_DIR` (`MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/`, HF snapshots (`florence-2-large`, …), `models_manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
 | `MODELS_PATH` | str / `"models"` → **overridden** to `MODELS_DIR` | `Settings` (config.py bottom, `paths.sync_settings_paths`) | Alias only | code |
 | `KUZU_DB_PATH` | str / **overridden** to `<DATA_DIR>/kuzu/kuzu_graph` | `Settings`; `kb_registry` default KB, `graph.GraphService` default | Default KB's Kuzu file; per-KB files are `<DATA_DIR>/kuzu/<slug>/kuzu_graph` | code |
-| `ORB_DEFAULT_VAULT` (`LIVEOS_DEFAULT_VAULT`) | path / none | env — `paths.resolve_default_vault_path()` **after** `paths.json.default_vault_path` | Default KB vault folder when the file has none; else `<DATA_DIR>/vaults/default` | rarely (dev) |
-| `ORB_HF_STAGING`, `ORB_DOWNLOAD_STAGING` (`LIVEOS_HF_STAGING`, `LIVEOS_DOWNLOAD_STAGING`) | path / macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%/Orb/model-downloads`, Linux `~/.cache/orb/model-downloads` | env — `paths.local_download_staging_dir()` | Local SSD staging dir for GGUF/HF downloads destined for a network `MODELS_DIR` | rarely |
+| `ORB_DEFAULT_VAULT` | path / none | env — `paths.resolve_default_vault_path()` **after** `paths.json.default_vault_path` | Default KB vault folder when the file has none; else `<DATA_DIR>/vaults/default` | rarely (dev) |
+| `ORB_HF_STAGING`, `ORB_DOWNLOAD_STAGING` | path / macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%/Orb/model-downloads`, Linux `~/.cache/orb/model-downloads` | env — `paths.local_download_staging_dir()` | Local SSD staging dir for GGUF/HF downloads destined for a network `MODELS_DIR` | rarely |
 | `ORB_FORCE_DOWNLOAD_STAGING` | any non-empty | env — `local_models.download_file` | Always stage downloads locally even when `MODELS_DIR` is not a network volume | rarely |
 | `APPDATA`, `LOCALAPPDATA` | OS | env — `paths._default_app_support`, `local_download_staging_dir` (Windows) | Windows base dirs | OS |
 | `PYTHONPATH` | `<backendDir>` | Python | Makes `app.*` importable when cwd ≠ `backend/` | shell |
@@ -98,25 +97,21 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `LLM_MODEL` | str / `"local-chat"` | `Settings`; `llm.get_chat_model` (local + final fallback), `local_models` (label; set to the selected catalog id by `ensure_chat_and_embed_models`), `api/settings.py` | Local model id / placeholder; `"local-chat"` resolves to the manifest selection at runtime | manifest, .env |
 | `OPENAI_MODEL` / `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `HUGGINGFACE_MODEL` | str \| None / `None` | `Settings`; `llm.get_chat_model`, `get_ingestion_model`, provider call sites (`_anthropic_*` always use `ANTHROPIC_MODEL`), `multimedia.py` image captions | Per-provider fallback model when `CHAT_MODEL` unset. `HUGGINGFACE_MODEL` is **required** for `huggingface` (`init_clients` raises) | .env |
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `HUGGINGFACE_API_KEY` | str \| None / `None` | **Seed only** — read once by `credentials.CredentialStore._seed_from_env_unlocked`. Runtime reads (`llm.py`, `ai_gate`, `multimedia.py`) all go through `credentials.get()` | Cloud credentials for contributors running outside the desktop shell; report `source: "env"`. End users set keys in **Settings → Cloud API keys**, which the shell encrypts to `DATA_DIR/credentials.enc` and pushes to `PUT /api/v1/credentials` (memory-only in the backend) | keychain; .env as fallback |
-| `LLM_FALLBACK_PROVIDER` | str \| None / `None` | `Settings`; `llm.LLMService.__init__` (`fallback_provider`, secondary `LLMService(provider)` built on demand) | Provider tried when the primary call fails; explicit-provider instances get none (no recursion) | .env |
 | `LLM_BASE_URL` | str / `http://127.0.0.1:8080` | `Settings`; `llm.get_base_url()` (system default endpoint for `openai_compat`), `ai_gate` (cloud heuristics), `api/settings.py`, `runtime_config` | The endpoint used when `LLM_PROVIDER=openai_compat` and no per-KB `llm_base_url` is set. Normalised by `credentials.normalize_base_url`; a malformed value is ignored with a warning rather than crashing | runtime (`base_url`), .env |
 | `LLM_API_KEY` | str / `"local"` | `Settings`; `ai_gate` only | Treated as "real" when not `local`/`lm-studio`/`ollama` | .env |
-| `LLM_KEEP_ALIVE` | str / `"10m"` | `Settings` — **unused** (Ollama era) | — | — |
-| `LLM_RESPONSE_FORMAT` | str / `"text"` | `Settings`; `llm._local_response_format_candidates` | `text` → only `{"type":"text"}`; any other value → try `json_object` then fall back to `text` | .env |
 | `CHAT_HISTORY_MAX_MESSAGES` | int / `24` | `Settings`; `chat_store.recent_turns` limit, `llm.py` + `retrieval.py` history slicing | Max prior turns loaded/injected | .env |
 
 ### 3.4 LLM — ingestion axis
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `INGESTION_PROVIDER` | str \| None / `None` | `Settings`; `llm._init_ingestion_clients` (per-KB `ingestion_provider` ctor arg overrides it) | Blank → ingestion aliases the chat clients; set → separate clients for `local`/`gemini`/`openai`/`anthropic`/`huggingface` (keys required) | .env |
+| `INGESTION_PROVIDER` | str \| None / `None` | `Settings`; `llm.init_clients` builds the ingestion client set (per-KB `ingestion_provider` ctor arg overrides it) | Blank → ingestion aliases the chat clients; set → separate clients for `local`/`gemini`/`openai`/`anthropic`/`huggingface` (keys required) | .env |
 | `INGESTION_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model`, `api/settings.py`, `kb_registry._system_model_for` | Provider-agnostic ingestion model; wins over fallbacks | runtime (`ingestion_model`), .env |
 | `INGESTION_LLM_MODEL` | str \| None / `"local-chat"` | `Settings`; `llm.get_ingestion_model` (local branch), `kb_registry._system_model_for` (ignored when equal to the placeholder) | Local ingestion model fallback | .env |
 | `INGESTION_GEMINI_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model` (gemini branch) | Gemini ingestion fallback before `GEMINI_MODEL` | .env |
 | `ORB_EXTRACTION_CHUNK_TOKENS` (working tree) | int / `4000` ceiling | env — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
 | `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | .env |
 | `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel Florence/Whisper/Marlin jobs | .env |
-| `INGESTION_AGENT_CONCURRENCY` | int / `2` | `Settings` — **unused** | — | — |
 
 ### 3.5 Embeddings axis
 
@@ -125,10 +120,8 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `EMBEDDING_PROVIDER` | str / `"local"` | `Settings`; `embedding.EmbeddingService.__init__` | Accepted: `local`, `auto`, `""` (and deprecated `ollama`/`lm_studio` → local). **Anything else raises** `ValueError` — `openai` in `.env.example` does not work | runtime (`local`), .env |
 | `EMBEDDING_MODEL` | str / `"local-embed"` | `Settings`; `embedding.py` (`is_qwen3` substring check → query instruction), overwritten by `sync_embedding_infrastructure`/`ensure_chat_and_embed_models` | Embedding model id (catalog id from manifest) | manifest > .env |
 | `EMBEDDING_DIMENSIONS` | int / `1024` | `Settings`; `qdrant_service` (vector size for collection create), `local_models` (manifest sync) | Must match the GGUF's output; changed dims trigger Qdrant collection recreation in `sync_embedding_infrastructure` | manifest > .env |
-| `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY` | str / `http://127.0.0.1:8081`, `"local"` | `Settings` — **unused** | — | — |
-| `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | bool / `True` | `Settings` — **unused** | — | — |
 | `ORB_EMBED_GGUF` | str / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | env (import-time constant `local_models.EMBED_MODEL_ID`) | Legacy default GGUF id used when the manifest has no selection (`gguf_paths_if_present` fallback) | rarely |
-| `ORB_EMBED_N_CTX` (`LIVEOS_EMBED_N_CTX`) | int / `8192` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked` | `n_ctx` for the embed GGUF | runtime (`8192`) |
+| `ORB_EMBED_N_CTX` | int / `8192` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked` | `n_ctx` for the embed GGUF | runtime (`8192`) |
 
 ### 3.6 Qdrant
 
@@ -160,22 +153,22 @@ Kuzu has no other knobs; per-KB paths, healing of legacy directory paths (`norma
 
 ### 3.9 Local GGUF runtime (`ORB_LLAMA_*`, `ORB_EMBED_*`, `ORB_RERANK_*`, model ids)
 
-All read in `backend/app/services/local_models.py` (and `model_catalog.py` for the light-weight detector) via `_env_first("ORB_X", "LIVEOS_X", default=…)` **at each model load**, so changing them and reloading the model (idle unload or Setup "select model") takes effect without a restart — except the three `*_GGUF` constants.
+All read in `backend/app/services/local_models.py` (and `model_catalog.py` for the light-weight detector) via `os.environ.get("ORB_X")` **at each model load**, so changing them and reloading the model (idle unload or Setup "select model") takes effect without a restart — except the three `*_GGUF` constants.
 
 | Name (alias) | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `ORB_LLAMA_BACKEND` (`LIVEOS_LLAMA_BACKEND`) | `auto` \| `metal` \| `cuda` \| `vulkan` \| `cpu` / `auto` | `local_models.detect_llama_backend`, `model_catalog.detect_accel_backend` (only `ORB_` name) | Forces the llama.cpp accel path. `auto`: macOS → `metal` (`n_gpu_layers=-1`); Linux/Windows with `nvidia-smi` → `cuda` (-1); else `cpu` (0). Forced `cpu` → 0 layers, forced GPU → -1 | rarely |
-| `ORB_LLAMA_N_GPU_LAYERS` (`LIVEOS_…`) | int / per backend (-1 GPU, 0 CPU) | same | Overrides layer offload count | rarely |
-| `ORB_LLAMA_N_CTX` (`LIVEOS_LLAMA_N_CTX`) | int / `16384` | `_default_chat_n_ctx` → `_chat_kwargs`, `_remaining_output_budget` fallback, `llm.ingestion_context_tokens` | Chat GGUF context window. Raised automatically to `max_tokens + prompt_reserve` when an explicit `ORB_LLAMA_MAX_TOKENS` is set and `n_ctx` is smaller. Comment: 16k + `swa_full` fits ~24 GB Metal; 32k OOMs | runtime (`16384`) |
-| `ORB_LLAMA_MAX_TOKENS` (`LIVEOS_LLAMA_MAX_TOKENS`) | int \| unset / **unset** (working tree; was `10240`) | `_default_chat_max_tokens` → `create_chat_completion`, `_chat_kwargs` | Explicit output cap. **When unset (new default), the runtime sizes `max_tokens` per call as `n_ctx − prompt_tokens − 32` (`_GEN_SAFETY_MARGIN`), raising `PromptTooLongError` if fewer than 256 tokens (`_MIN_OUTPUT_TOKENS`) would remain.** `0`/non-int → treated as unset. Supervisor now injects it **only if the parent env has it** (committed code injected `"10240"`) | runtime (pass-through only) |
-| `ORB_LLAMA_PROMPT_RESERVE` (`LIVEOS_…`) | int / `4096` | `_chat_kwargs` | Minimum context reserved for the prompt when computing `min_ctx = max_tokens + prompt_reserve` | runtime (`4096`) |
-| `ORB_LLAMA_SWA_FULL` (`LIVEOS_…`) | bool-ish / `true` | `_llama_metal_safe_kwargs` | `swa_full=False` only for `0`/`false`/`no`; otherwise `True` (required for stable Gemma 4 output; compact SWA causes "or the" ordinal loops, detected by `_ORDINAL_LOOP_RE` → `RepetitionLoopError`) | runtime (`true`) |
-| `ORB_LLAMA_FLASH_ATTN` (`LIVEOS_…`) | bool-ish / off | `_llama_metal_safe_kwargs` | `flash_attn=True` for `1`/`true`/`yes` | rarely |
-| `ORB_LLAMA_REPEAT_PENALTY` (`LIVEOS_…`) | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs | Sampling repeat penalty | runtime (`1.12`) |
-| `ORB_LLAMA_N_THREADS` (`LIVEOS_…`) | int / llama.cpp default | `_chat_kwargs` | CPU threads | rarely |
-| `ORB_EMBED_N_CTX` (`LIVEOS_…`) | int / `8192` | `_load_embed_unlocked` | Embed GGUF context | runtime (`8192`) |
-| `ORB_RERANK_N_CTX` (`LIVEOS_…`) | int / `8192` | `LocalGGUFReranker.ensure_loaded` | Reranker GGUF context | runtime (`8192`) |
-| `ORB_MODEL_IDLE_SECONDS` (`LIVEOS_…`) | float / `300` | `model_idle_seconds` → idle watcher threads for chat/embed and reranker | Seconds of inactivity before in-process GGUFs are unloaded; `0` = never unload; negatives clamp to 0 | rarely |
+| `ORB_LLAMA_BACKEND` | `auto` \| `metal` \| `cuda` \| `vulkan` \| `cpu` / `auto` | `local_models.detect_llama_backend`, `model_catalog.detect_accel_backend` (only `ORB_` name) | Forces the llama.cpp accel path. `auto`: macOS → `metal` (`n_gpu_layers=-1`); Linux/Windows with `nvidia-smi` → `cuda` (-1); else `cpu` (0). Forced `cpu` → 0 layers, forced GPU → -1 | rarely |
+| `ORB_LLAMA_N_GPU_LAYERS` | int / per backend (-1 GPU, 0 CPU) | same | Overrides layer offload count | rarely |
+| `ORB_LLAMA_N_CTX` | int / `16384` | `_default_chat_n_ctx` → `_chat_kwargs`, `_remaining_output_budget` fallback, `llm.ingestion_context_tokens` | Chat GGUF context window. Raised automatically to `max_tokens + prompt_reserve` when an explicit `ORB_LLAMA_MAX_TOKENS` is set and `n_ctx` is smaller. Comment: 16k + `swa_full` fits ~24 GB Metal; 32k OOMs | runtime (`16384`) |
+| `ORB_LLAMA_MAX_TOKENS` | int \| unset / **unset** (working tree; was `10240`) | `_default_chat_max_tokens` → `create_chat_completion`, `_chat_kwargs` | Explicit output cap. **When unset (new default), the runtime sizes `max_tokens` per call as `n_ctx − prompt_tokens − 32` (`_GEN_SAFETY_MARGIN`), raising `PromptTooLongError` if fewer than 256 tokens (`_MIN_OUTPUT_TOKENS`) would remain.** `0`/non-int → treated as unset. Supervisor now injects it **only if the parent env has it** (committed code injected `"10240"`) | runtime (pass-through only) |
+| `ORB_LLAMA_PROMPT_RESERVE` | int / `4096` | `_chat_kwargs` | Minimum context reserved for the prompt when computing `min_ctx = max_tokens + prompt_reserve` | runtime (`4096`) |
+| `ORB_LLAMA_SWA_FULL` | bool-ish / `true` | `_llama_metal_safe_kwargs` | `swa_full=False` only for `0`/`false`/`no`; otherwise `True` (required for stable Gemma 4 output; compact SWA causes "or the" ordinal loops, detected by `_ORDINAL_LOOP_RE` → `RepetitionLoopError`) | runtime (`true`) |
+| `ORB_LLAMA_FLASH_ATTN` | bool-ish / off | `_llama_metal_safe_kwargs` | `flash_attn=True` for `1`/`true`/`yes` | rarely |
+| `ORB_LLAMA_REPEAT_PENALTY` | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs | Sampling repeat penalty | runtime (`1.12`) |
+| `ORB_LLAMA_N_THREADS` | int / llama.cpp default | `_chat_kwargs` | CPU threads | rarely |
+| `ORB_EMBED_N_CTX` | int / `8192` | `_load_embed_unlocked` | Embed GGUF context | runtime (`8192`) |
+| `ORB_RERANK_N_CTX` | int / `8192` | `LocalGGUFReranker.ensure_loaded` | Reranker GGUF context | runtime (`8192`) |
+| `ORB_MODEL_IDLE_SECONDS` | float / `300` | `model_idle_seconds` → idle watcher threads for chat/embed and reranker | Seconds of inactivity before in-process GGUFs are unloaded; `0` = never unload; negatives clamp to 0 | rarely |
 | `ORB_CHAT_GGUF` | HF `repo/file` / `bartowski/google_gemma-4-E4B-it-GGUF/google_gemma-4-E4B-it-Q4_K_M.gguf` | import-time `CHAT_MODEL_ID` | Legacy default chat GGUF (used only when the manifest has no selection) | rarely |
 | `ORB_EMBED_GGUF` | / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | `EMBED_MODEL_ID` | Legacy default embed GGUF | rarely |
 | `ORB_RERANK_GGUF` | / `mradermacher/Qwen3-Reranker-0.6B-GGUF/Qwen3-Reranker-0.6B.Q4_K_M.gguf` | `RERANK_MODEL_ID` → `reranker_gguf_path` fallback | Legacy default reranker GGUF | rarely |
@@ -218,8 +211,6 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int / `10` | Relationship entries kept per graph expansion |
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | float / `0` | Neighbour score filter (only when > 0) |
 | `MAX_LOOP_ITERATIONS` | int / `3` | Multi-hop loop iterations |
-| `MAX_POTENTIAL_QUESTIONS` | int / `10` | **unused** |
-| `COMMUNITY_RECOMPUTE_BATCH_SIZE` | int / `100` | **unused** |
 
 ### 3.13 Feature switches
 
@@ -228,7 +219,6 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 | `COMMUNITY_DETECTION_ENABLED` | bool / **`False`** (`.env.example` says `true`) | `workflows/ingestion.py`, `services/ingestion_tracker.py` | Post-ingest community detection and the idle-timer auto-recompute; `POST /admin/rebuild-communities` still works manually |
 | `TEMPORAL_DIGESTS_ENABLED` | bool / **`False`** | `workflows/ingestion.py` | Debounced digest rebuild after ingest; `build_temporal_digests` no-ops when false |
 | `TEMPORAL_DIGEST_PERIOD` | str / `"month"` (`week`/`year` accepted) | `workflows/ingestion.py`, `api/admin.py` | Default granularity |
-| `AI_SETUP_MODE` | str / `"none"` (`local` \| `cloud` \| `hybrid` \| `none`/`skip`) | `Settings`; `runtime_config`, desktop shell | **Gates nothing.** `ai_gate` derives readiness from real configuration and `api_desktop` reports `derived_setup_mode()`; the key persists only for the first-run setup page. (§14 of [06](06-backend-core-and-configuration.md)); `local`/`none` also disables cloud image captions | runtime > supervisor (from `paths.json.ai_setup_mode` via `desktop/main.js`, default `none`) > .env |
 
 ### 3.14 Firefly III
 
@@ -247,22 +237,21 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 | `CORS_ORIGINS` | CSV str / `http://localhost:3700,http://localhost:3701,http://127.0.0.1:3700,http://127.0.0.1:3701,http://localhost:17400,http://127.0.0.1:17400` | `main.py` | `allow_origins` list; unused in the desktop app (UI is same-origin) | .env |
 | `CORS_ALLOW_ORIGIN_REGEX` | str \| None / `None` | `main.py` | `allow_origin_regex` | .env |
 | `LOG_LEVEL` | str / `INFO` | `Settings`; `log.setup_logging` (`getattr(logging, X.upper(), INFO)` — invalid names silently become INFO) | Root + component logger level; `errors.log` always ERROR | .env |
-| `PROJECT_NAME`, `API_V1_STR` | `Orb`, `/api/v1` | **unused** | — | — |
 
 ### 3.16 Desktop shell and runtime: ports and process env (`desktop/src-tauri/src/runtime.rs`, `backend/app/desktop_runtime.py`)
 
 | Name (alias) | Default | Read in | Effect |
 |---|---|---|---|
-| `ORB_API_PORT` (`LIVEOS_API_PORT`) | `17401` | `runtime.rs`, `desktop_runtime.py` | uvicorn port; the window URL and the UI origin follow it |
-| `ORB_FIREFLY_PORT` (`LIVEOS_FIREFLY_PORT`) | `17412` | `desktop_runtime.py` | Firefly `artisan serve` port and `FIREFLY_BASE_URL` |
-| `ORB_QDRANT_PORT` (`LIVEOS_QDRANT_PORT`) | `17433` | `desktop_runtime.py` | Qdrant HTTP port → `QDRANT_PORT` |
-| `ORB_MEILI_PORT` (`LIVEOS_MEILI_PORT`) | `17470` | `desktop_runtime.py` | Meili port → `MEILI_PORT` |
+| `ORB_API_PORT` | `17401` | `runtime.rs`, `desktop_runtime.py` | uvicorn port; the window URL and the UI origin follow it |
+| `ORB_FIREFLY_PORT` | `17412` | `desktop_runtime.py` | Firefly `artisan serve` port and `FIREFLY_BASE_URL` |
+| `ORB_QDRANT_PORT` | `17433` | `desktop_runtime.py` | Qdrant HTTP port → `QDRANT_PORT` |
+| `ORB_MEILI_PORT` | `17470` | `desktop_runtime.py` | Meili port → `MEILI_PORT` |
 | `ORB_URL` | `http://127.0.0.1:<ORB_API_PORT>` | `runtime.rs` | Window URL override (Vite dev server on 3700) |
 | `ORB_PATHS_FILE`, `ORB_SKIP_WIZARD`, `ORB_ROOT`, `ORB_PYTHON`, `ORB_USE_RESOURCES` | see [04](04-desktop-shell.md) §6 | `runtime.rs` | Scratch profile, skip setup, dev layout/interpreter overrides |
 | `ORB_QDRANT_VERSION`, `ORB_MEILI_VERSION`, `ORB_SHA256_<ASSET>` | `v1.18.2`, `v1.49.0`, unset | `desktop_runtime.py` | Binary versions fetched into `DATA_DIR/bin`; optional checksum pins |
-| `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX` | `none` / `local` / `local` / see §3.10 | `desktop_runtime.py` `os.environ.setdefault` | Defaults the runtime applies unless already exported |
+| `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX` | `local` / `local` / see §3.10 | `desktop_runtime.py` `os.environ.setdefault` | Defaults the runtime applies unless already exported |
 
-Env the shell sets on the runtime process (`runtime.rs`): `PYTHONPATH=<backend>`, `PATH` (with Homebrew/usr-local bins for ffmpeg), `FRONTEND_DIR` and `ORB_RESOURCES_ROOT` (packaged builds only), `AI_SETUP_MODE` (from `paths.json`). Env the runtime sets before importing `Settings` (`desktop_runtime.main()`): `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT`, `MEILI_HOST=127.0.0.1`, `MEILI_PORT`, `MEILI_MASTER_KEY`, `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`, plus the `setdefault` block above. Paths come from `paths.json` through `app.core.paths`; `ORB_DATA_DIR`/`ORB_MODELS_DIR` are not injected (they still override when exported).
+Env the shell sets on the runtime process (`runtime.rs`): `PYTHONPATH=<backend>`, `PATH` (with Homebrew/usr-local bins for ffmpeg), `FRONTEND_DIR` and `ORB_RESOURCES_ROOT` (packaged builds only). Env the runtime sets before importing `Settings` (`desktop_runtime.main()`): `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT`, `MEILI_HOST=127.0.0.1`, `MEILI_PORT`, `MEILI_MASTER_KEY`, `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`, plus the `setdefault` block above. Paths come from `paths.json` through `app.core.paths`; `ORB_DATA_DIR`/`ORB_MODELS_DIR` are not injected (they still override when exported).
 
 ### 3.17 Frontend env (`frontend/`)
 
@@ -276,14 +265,13 @@ Env the shell sets on the runtime process (`runtime.rs`): `PYTHONPATH=<backend>`
 
 ### 4.1 `paths.json`
 
-Location: `ORB_PATHS_FILE` or `<App Support>/Orb/paths.json` (macOS `~/Library/Application Support/Orb/`, Windows `%APPDATA%\Orb\`, Linux `~/.config/Orb/`; `LifeOS`/`LiveOS` folders are used instead if they already contain one).
+Location: `ORB_PATHS_FILE` or `<App Support>/Orb/paths.json` (macOS `~/Library/Application Support/Orb/`, Windows `%APPDATA%\Orb\`, Linux `~/.config/Orb/`).
 
 ```json
 {
   "data_dir": "/abs/path/Orb/data",
   "models_dir": "/abs/path/Orb/models",
-  "default_vault_path": "/abs/path/Vault",
-  "ai_setup_mode": "local"
+  "default_vault_path": "/abs/path/Vault"
 }
 ```
 
@@ -292,9 +280,8 @@ Location: `ORB_PATHS_FILE` or `<App Support>/Orb/paths.json` (macOS `~/Library/A
 | `data_dir` | yes | setup page (`save_setup` in `src-tauri/src/commands.rs`), `POST /api/v1/setup/paths` (`paths.save_paths_file`) | `paths.resolve_data_dir` (after env), `runtime.rs` (log dir) |
 | `models_dir` | yes | same | `paths.resolve_models_dir` |
 | `default_vault_path` | no (preserved if omitted on save) | same | `paths.resolve_default_vault_path` (**before** env) |
-| `ai_setup_mode` | no (preserved) | same | `runtime.rs` → exported as `AI_SETUP_MODE` env on the runtime process; backend never reads the key directly |
 
-All paths are stored absolute (`expanduser().resolve()`). The backend caches the parsed file for the process lifetime (`_PATHS_CACHE`); `save_paths_file` refreshes it, `clear_paths_cache()` drops it. Deleting the file shows the first-run setup page again on next desktop launch.
+All paths are stored absolute (`expanduser().resolve()`). The backend caches the parsed file for the process lifetime (`_PATHS_CACHE`); `save_paths_file` refreshes it. Deleting the file shows the first-run setup page again on next desktop launch.
 
 ### 4.2 `DATA_DIR/runtime_config.json`
 
@@ -303,8 +290,7 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
   "provider": "gemini",
   "model": "gemini-2.5-pro",
   "ingestion_model": "gemini-2.0-flash",
-  "base_url": "http://127.0.0.1:8080",
-  "ai_setup_mode": "cloud"
+  "base_url": "http://127.0.0.1:8080"
 }
 ```
 
@@ -314,9 +300,8 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
 | `model` | `CHAT_MODEL` | `PATCH /api/v1/settings` |
 | `ingestion_model` | `INGESTION_MODEL` | `PATCH /api/v1/settings` |
 | `base_url` | `LLM_BASE_URL` | `PATCH /api/v1/settings` |
-| `ai_setup_mode` | `AI_SETUP_MODE` | `POST /api/v1/setup/paths` (Setup page), `save_setup` (shell) |
 
-Only these five keys survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
+Only these four keys survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
 
 ### 4.3 `MODELS_DIR/models_manifest.json` (pointer)
 
@@ -373,7 +358,6 @@ chat provider      = (ctor provider | settings.LLM_PROVIDER).lower(); ollama/lm_
 ingestion provider = (ctor ingestion_provider | settings.INGESTION_PROVIDER | "").lower()
                      ollama/lm_studio → local; "" → chat provider (clients aliased)
 embedding provider = settings.EMBEDDING_PROVIDER: local|auto|"" → local; else ValueError
-fallback provider  = settings.LLM_FALLBACK_PROVIDER (only for the global service)
 ```
 
 Per-KB services are built as `LLMService(prov, chat_model=…, ingestion_model=…, ingestion_provider=prov)` so a pinned KB never mixes providers between chat and ingestion.
@@ -393,10 +377,6 @@ else {"local": LLM_MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL,
 
 | Key | Status |
 |---|---|
-| `PROJECT_NAME`, `API_V1_STR` | never read |
-| `LLM_KEEP_ALIVE` | never read (`_with_keep_alive` returns the body unchanged) |
-| `EMBEDDING_BASE_URL`, `EMBEDDING_API_KEY`, `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | never read |
-| `INGESTION_AGENT_CONCURRENCY`, `COMMUNITY_RECOMPUTE_BATCH_SIZE`, `MAX_POTENTIAL_QUESTIONS` | never read |
 | `DATABASE_*` (commented out in `.env.example`) | no longer `Settings` fields; SQLite only |
 | `KUZU_DB_PATH`, `MODELS_PATH` | read but overwritten by code |
 | `LLM_BASE_URL`, `LLM_API_KEY` | only affect `ai_is_configured()`; no HTTP client uses them |
@@ -408,7 +388,7 @@ else {"local": LLM_MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL,
 
 ## 7. Adding a knob (checklist)
 
-1. Decide the layer: import-time constant (needs restart), `Settings` field (env/.env), runtime-mutable (`runtime_config.MUTABLE_KEYS` + `apply_to_settings` + `api/settings.LLMSettings`), per-KB (column in `knowledge_bases` + `kb_registry` DDL/`_ensure_optional_columns` + `KBContext`), or `ORB_*` env read at call time (`_env_first("ORB_X", "LIVEOS_X", default=...)`).
+1. Decide the layer: import-time constant (needs restart), `Settings` field (env/.env), runtime-mutable (`runtime_config.MUTABLE_KEYS` + `apply_to_settings` + `api/settings.LLMSettings`), per-KB (column in `knowledge_bases` + `kb_registry` DDL/`_ensure_optional_columns` + `KBContext`), or `ORB_*` env read at call time (`os.environ.get("ORB_X")`).
 2. Add the field/env read, a line in `backend/.env.example`, and — for desktop-relevant values — the default in `desktop_runtime.main()` (`os.environ.setdefault` block or the sidecar `os.environ.update`).
 3. Read it where used via `settings.X` at call time; if it must be captured at import, note the restart requirement in the docstring.
 4. Update this file and [06](06-backend-core-and-configuration.md) §5.3.

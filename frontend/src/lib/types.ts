@@ -270,11 +270,9 @@ export interface SetupStatus {
     paths_json?: string;
     default_vault_path?: string;
     active_vault_path?: string;
-    ai_setup_mode: string;
     ai_configured: boolean;
     local_models_ready?: boolean;
     multimodal_ready?: boolean;
-    needs_model_download?: boolean;
     database_backend: string;
     llm_provider?: string;
 }

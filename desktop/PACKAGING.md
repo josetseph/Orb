@@ -21,7 +21,7 @@ Bundles land in `desktop/src-tauri/target/release/bundle/{dmg,nsis,appimage,deb}
 | `python` | `resources/backend/` | python-build-standalone + `pip install -r backend/requirements.txt` (Metal `llama-cpp-python` on Apple Silicon) + `backend/app`. An interpreter whose imports still pass is reused; `ORB_REBUILD_PYTHON=1` forces a rebuild. |
 | `frontend` | `resources/frontend/` | `npm ci && npm run build` in `frontend/`, copies `dist/`. Node ships nothing. |
 | `firefly` | `resources/firefly/` | `python -m app.desktop_runtime prefetch-firefly` with the bundled Python — the same code that installs Firefly at runtime. Reused when present; `ORB_REBUILD_FIREFLY=1` refetches. |
-| `check` | — | Trees exist, the bundled Python imports every critical module, and each tree's source stamp matches the sources on disk (so a stale tree never ships). |
+| `check` | — | Trees exist and the bundled Python imports every critical module. |
 | `dist` | bundles | `check`, then `cargo tauri build --config '{"bundle":{"resources":…}}'`. The resource map is passed here rather than kept in `tauri.conf.json` so dev builds never copy the multi-GB trees. |
 
 ## Runtime layout

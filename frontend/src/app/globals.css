@@ -190,11 +190,17 @@ a:hover {
   .menu-item {
     @apply flex w-full cursor-pointer items-center gap-2.5 rounded-[5px] px-2.5 py-1.5 text-left text-[12.5px] text-text hover:bg-n-900;
   }
-  .dialog-backdrop {
-    @apply fixed inset-0 z-[80] grid place-items-center bg-n-900/50 p-4;
-  }
+  /* Native <dialog> opened with showModal(); the top layer handles stacking. */
   .dialog {
-    @apply flex w-full max-w-[440px] animate-rise flex-col gap-3 rounded-lg bg-surface p-4 shadow-lg;
+    @apply flex w-full max-w-[440px] animate-rise flex-col gap-3 rounded-lg bg-surface p-4 text-text shadow-lg;
+  }
+  .dialog::backdrop {
+    @apply bg-n-900/50;
+  }
+  /* Off-screen sidebar rows skip layout; 50px ≈ a two-line note row. */
+  .tree-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 50px;
   }
   .dialog-title {
     @apply text-[17px] font-medium;

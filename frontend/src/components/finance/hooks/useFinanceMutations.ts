@@ -1,6 +1,7 @@
 import { useLayoutEffect, useState, type FormEvent, type MutableRefObject } from "react";
 import { api } from "@/lib/api";
-import { errMessage, monthStartIso, todayIso, tomorrowIso } from "../utils";
+import { errMessage } from "@/lib/utils";
+import { monthStartIso, todayIso, tomorrowIso } from "../utils";
 import type { FinanceWorkspaceState, FormSeeders } from "./useFinanceWorkspace";
 
 export function useFinanceMutations(

@@ -1,5 +1,4 @@
-import { useMemo, useState, type DragEvent, type RefObject } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
+import { useMemo, useState, type DragEvent } from "react";
 import {
   ChevronRight,
   FileText,
@@ -31,8 +30,6 @@ type VaultFolderTreeProps = {
   selectedFileRels: Set<string>;
   onToggleFileSelected: (relPath: string) => void;
   onMoveVaultFiles: (rels: string[], folder: string) => void;
-  /** Scrollable ancestor (the sidebar body) used to window the tree rows. */
-  scrollRef: RefObject<HTMLDivElement | null>;
   onToggleFolder: (path: string) => void;
   onSelectFolder: (path: string) => void;
   onNoteSelect: (note: Note) => void;
@@ -56,8 +53,7 @@ type VaultFolderTreeProps = {
 
 /**
  * Flattened row model. The nested folder tree is linearized (respecting
- * collapsed state) so the list can be virtualized — large vaults previously
- * rendered one DOM node per note and re-built the whole tree per keystroke.
+ * collapsed state); rows off-screen skip layout via `content-visibility`.
  */
 type TreeRow =
   | { key: string; kind: "vault-header" }
@@ -100,7 +96,6 @@ export function VaultFolderTree({
   selectedFileRels,
   onToggleFileSelected,
   onMoveVaultFiles,
-  scrollRef,
   onToggleFolder,
   onSelectFolder,
   onNoteSelect,
@@ -234,18 +229,6 @@ export function VaultFolderTree({
     }
     return out;
   }, [notes, vaultFolders, mediaFiles, attachmentFiles, expandedFolders, attachmentsOpen]);
-
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    // Sizes are cached per row, not per index: opening a folder shifts every
-    // row below it, and an index-keyed cache then paints note rows at the
-    // height of whatever used to sit there.
-    getItemKey: (index) => rows[index].key,
-    // Note rows carry a second line; the rest are single-line.
-    estimateSize: (index) => (rows[index].kind === "note" ? 50 : 30),
-    overscan: 12,
-  });
 
   const acceptVaultDrop = (e: DragEvent, folderPath: string) => {
     e.preventDefault();
@@ -550,26 +533,12 @@ export function VaultFolderTree({
   };
 
   return (
-    <div
-      className="relative w-full"
-      style={{ height: virtualizer.getTotalSize(), minHeight: 40 }}
-      onDragOver={allowVaultDragOver}
-      onDrop={(e) => acceptVaultDrop(e, "")}
-    >
-      {virtualizer.getVirtualItems().map((vi) => {
-        const row = rows[vi.index];
-        return (
-          <div
-            key={row.key}
-            data-index={vi.index}
-            ref={virtualizer.measureElement}
-            className="absolute left-0 top-0 w-full"
-            style={{ transform: `translateY(${vi.start}px)` }}
-          >
-            {renderRow(row)}
-          </div>
-        );
-      })}
+    <div className="min-h-10 w-full" onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, "")}>
+      {rows.map((row) => (
+        <div key={row.key} className="tree-row">
+          {renderRow(row)}
+        </div>
+      ))}
     </div>
   );
 }

@@ -5,8 +5,8 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,6 @@ class PathsInput(BaseModel):
     data_dir: str
     models_dir: str
     default_vault_path: str | None = None
-    ai_setup_mode: str | None = None
 
 
 @router.get("/api/v1/setup/status")
@@ -51,7 +50,7 @@ async def setup_status():
         paths_json_location,
         resolve_default_vault_path,
     )
-    from app.services.ai_gate import ai_is_configured, derived_setup_mode
+    from app.services.ai_gate import ai_is_configured
     from app.services.local_models import gguf_paths_if_present
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
     gguf = gguf_paths_if_present()
@@ -60,7 +59,6 @@ async def setup_status():
         is_hf_snapshot_ready(multimodal_model_path(k))
         for k in ("asr", "marlin")
     )
-    mode = derived_setup_mode()
     vault = resolve_default_vault_path()
     default_kb = kb_registry.get_kb_by_name("default")
     return {
@@ -69,13 +67,9 @@ async def setup_status():
         "paths_json": str(paths_json_location()),
         "default_vault_path": str(vault) if vault else "",
         "active_vault_path": (default_kb.vault_path if default_kb else "") or "",
-        # Derived from what is actually configured (see ai_gate), not from a
-        # mode the user picks — Setup no longer asks.
-        "ai_setup_mode": mode,
         "ai_configured": ai_is_configured(),
         "local_models_ready": local_models_ready,
         "multimodal_ready": multimodal_ready,
-        "needs_model_download": mode == "local" and not local_models_ready,
         "database_backend": "sqlite",
         "llm_provider": settings.LLM_PROVIDER,
     }
@@ -222,11 +216,7 @@ async def start_multimodal_services(install_deps: bool = Query(True)):
     from app.services.multimodal_services import ensure_multimodal_services
 
     try:
-        return await asyncio.to_thread(
-            lambda: ensure_multimodal_services(
-                install_deps=install_deps, start_marlin=True
-            )
-        )
+        return await asyncio.to_thread(ensure_multimodal_services, install_deps=install_deps)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return {"started": False, "mode": "in_process", "error": str(exc)}
 
@@ -289,18 +279,12 @@ async def start_local_llm(body: DownloadModelsInput | None = None):
 
 @router.post("/api/v1/setup/paths")
 async def setup_paths(body: PathsInput):
-    from app.core import runtime_config
     from app.core.config import settings
     from app.core.log import reconfigure_logging
     from app.core.paths import sync_settings_paths
     from app.services.kb_registry import DEFAULT_KB_ID, kb_registry
 
-    save_paths_file(
-        body.data_dir,
-        body.models_dir,
-        body.default_vault_path,
-        ai_setup_mode=body.ai_setup_mode,
-    )
+    save_paths_file(body.data_dir, body.models_dir, body.default_vault_path)
     sync_settings_paths(settings)
     reconfigure_logging()
     vault_out = ""
@@ -308,18 +292,11 @@ async def setup_paths(body: PathsInput):
         ensure_vault(body.default_vault_path)
         updated = kb_registry.set_vault_path(DEFAULT_KB_ID, body.default_vault_path)
         vault_out = updated.vault_path if updated else body.default_vault_path
-    if body.ai_setup_mode:
-        settings.AI_SETUP_MODE = body.ai_setup_mode
-        overrides = runtime_config.load()
-        overrides["ai_setup_mode"] = body.ai_setup_mode
-        runtime_config.save(overrides)
-        runtime_config.apply_to_settings(overrides)
     return {
         "status": "ok",
         "data_dir": str(Path(body.data_dir).expanduser().resolve()),
         "models_dir": str(Path(body.models_dir).expanduser().resolve()),
         "default_vault_path": vault_out,
-        "ai_setup_mode": settings.AI_SETUP_MODE,
     }
 
 
@@ -457,28 +434,6 @@ class CreateBudgetInput(BaseModel):
 class CreateCategoryInput(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     notes: str | None = None
-
-
-class CreateBillInput(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    amount: float = Field(gt=0)
-    repeat_freq: str = "monthly"
-    date: str | None = None
-    currency: str | None = None
-
-
-class CreatePiggyInput(BaseModel):
-    name: str = Field(min_length=1, max_length=255)
-    account_id: str = Field(min_length=1)
-    target_amount: float = Field(gt=0)
-    current_amount: float = 0.0
-    start_date: str | None = None
-    target_date: str | None = None
-
-
-class CreateTagInput(BaseModel):
-    tag: str = Field(min_length=1, max_length=255)
-    description: str | None = None
 
 
 class CreateRecurrenceInput(BaseModel):
@@ -648,87 +603,6 @@ async def delete_category(category_id: str, kb: KBContext = Depends(get_finance_
         raise _finance_error(exc) from exc
 
 
-@router.get("/api/v1/finance/bills")
-async def list_bills(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_bills(kb)
-
-
-@router.post("/api/v1/finance/bills")
-async def create_bill(body: CreateBillInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_bill(
-            kb,
-            name=body.name,
-            amount=body.amount,
-            repeat_freq=body.repeat_freq,
-            date_value=body.date,
-            currency_code=body.currency,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/bills/{bill_id}")
-async def delete_bill(bill_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_bill(kb, bill_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.get("/api/v1/finance/piggy-banks")
-async def list_piggy_banks(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_piggy_banks(kb)
-
-
-@router.post("/api/v1/finance/piggy-banks")
-async def create_piggy_bank(body: CreatePiggyInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_piggy_bank(
-            kb,
-            name=body.name,
-            account_id=body.account_id,
-            target_amount=body.target_amount,
-            current_amount=body.current_amount,
-            start_date=body.start_date,
-            target_date=body.target_date,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/piggy-banks/{piggy_id}")
-async def delete_piggy_bank(piggy_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_piggy_bank(kb, piggy_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.get("/api/v1/finance/tags")
-async def list_tags(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_tags(kb)
-
-
-@router.post("/api/v1/finance/tags")
-async def create_tag(body: CreateTagInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_tag(kb, tag=body.tag, description=body.description)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/tags/{tag_id}")
-async def delete_tag(tag_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_tag(kb, tag_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
 @router.get("/api/v1/finance/recurrences")
 async def list_recurrences(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_recurrences(kb)
@@ -819,147 +693,6 @@ async def delete_rule(rule_id: str, kb: KBContext = Depends(get_finance_kb)):
         raise _finance_error(exc) from exc
 
 
-@router.get("/api/v1/finance/webhooks")
-async def list_webhooks(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_webhooks(kb)
-
-
-@router.post("/api/v1/finance/webhooks")
-async def create_webhook(body: dict, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_webhook(
-            kb,
-            title=str(body.get("title") or ""),
-            url=str(body.get("url") or ""),
-            trigger=str(body.get("trigger") or "STORE_TRANSACTION"),
-            response=str(body.get("response") or "TRANSACTIONS"),
-            delivery=str(body.get("delivery") or "JSON"),
-            active=bool(body.get("active", True)),
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/webhooks/{webhook_id}")
-async def delete_webhook(webhook_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_webhook(kb, webhook_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.get("/api/v1/finance/object-groups")
-async def list_object_groups(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_object_groups(kb)
-
-
-@router.post("/api/v1/finance/object-groups")
-async def create_object_group(body: dict, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_object_group(kb, title=str(body.get("title") or ""))
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.put("/api/v1/finance/object-groups/{group_id}")
-async def update_object_group(group_id: str, body: dict, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.update_object_group(
-            kb, group_id, title=str(body.get("title") or "")
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/object-groups/{group_id}")
-async def delete_object_group(group_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_object_group(kb, group_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.get("/api/v1/finance/exchange-rates")
-async def list_exchange_rates(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_exchange_rates(kb)
-
-
-@router.post("/api/v1/finance/exchange-rates")
-async def create_exchange_rate(body: dict, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_exchange_rate(
-            kb,
-            date_value=str(body.get("date") or ""),
-            from_code=str(body.get("from") or ""),
-            to_code=str(body.get("to") or ""),
-            rate=float(body.get("rate") or 0),
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/exchange-rates/{rate_id}")
-async def delete_exchange_rate(rate_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_exchange_rate(kb, rate_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.get("/api/v1/finance/attachments")
-async def list_attachments(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.list_attachments(kb)
-
-
-@router.post("/api/v1/finance/attachments")
-async def create_attachment(
-    kb: KBContext = Depends(get_finance_kb),
-    filename: str = Form(...),
-    attachable_type: str = Form(...),
-    attachable_id: str = Form(...),
-    title: str | None = Form(default=None),
-    notes: str | None = Form(default=None),
-    file: UploadFile | None = File(default=None),
-):
-    try:
-        file_bytes = await file.read() if file is not None else None
-        return await firefly_service.create_attachment(
-            kb,
-            filename=filename or (file.filename if file else "file"),
-            attachable_type=attachable_type,
-            attachable_id=attachable_id,
-            title=title,
-            notes=notes,
-            file_bytes=file_bytes,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.get("/api/v1/finance/attachments/{attachment_id}/download")
-async def download_attachment(attachment_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        content, filename = await firefly_service.download_attachment(kb, attachment_id)
-        return Response(
-            content=content,
-            media_type="application/octet-stream",
-            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
-
-@router.delete("/api/v1/finance/attachments/{attachment_id}")
-async def delete_attachment(attachment_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_attachment(kb, attachment_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
-
 
 @router.get("/api/v1/finance/search")
 async def finance_search(
@@ -991,11 +724,6 @@ async def get_finance_report(
         return await firefly_service.report(kb, start=start, end=end)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         raise _finance_error(exc) from exc
-
-
-@router.post("/api/v1/finance/open")
-async def open_finance_workspace(kb: KBContext = Depends(get_finance_kb)):
-    return await firefly_service.prepare_open(kb)
 
 
 # Python's mimetypes guesses types no browser will decode: .m4a becomes

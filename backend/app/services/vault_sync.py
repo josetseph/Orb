@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,94 +17,46 @@ from app.services.vault import title_from_filename
 logger = get_logger("VaultSync")
 
 
-def list_vault_folders(vault: Path, *, include_attachments: bool = True) -> list[str]:
-    """Return vault-relative folder paths (excludes hidden dirs)."""
+def _iter_rel(vault: Path, keep) -> Iterator[tuple[Path, str]]:
+    """Yield ``(path, vault-relative posix path)`` for non-hidden entries ``keep`` accepts."""
     if not vault.exists():
-        return []
-    out: set[str] = set()
-    if include_attachments and (vault / "attachments").is_dir():
-        out.add("attachments")
+        return
+    root = vault.resolve()
     for path in vault.rglob("*"):
-        if not path.is_dir():
-            continue
         try:
-            rel = str(path.resolve().relative_to(vault.resolve())).replace("\\", "/")
+            rel = path.resolve().relative_to(root).as_posix()
         except ValueError:
             continue
-        parts = rel.split("/")
-        if any(p.startswith(".") for p in parts):
+        if any(p.startswith(".") for p in rel.split("/")) or not keep(path, rel):
             continue
-        out.add(rel)
-        for i in range(1, len(parts)):
-            out.add("/".join(parts[:i]))
+        yield path, rel
+
+
+def list_vault_folders(vault: Path, *, include_attachments: bool = True) -> list[str]:
+    """Return vault-relative folder paths (excludes hidden dirs)."""
+    out = {"attachments"} if include_attachments and (vault / "attachments").is_dir() else set()
+    for _, rel in _iter_rel(vault, lambda p, _r: p.is_dir()):
+        parts = rel.split("/")
+        out.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
     return sorted(out)
 
 
 def list_attachment_files(vault: Path) -> list[dict[str, str]]:
-    """List files anywhere under vault/attachments/, including subfolders.
-
-    Recursive on purpose: mkdir and move already support organising
-    attachments into folders, but a flat listing made a moved file vanish
-    from the UI even though it was still there and still linked.
-    """
-    att = vault / "attachments"
-    if not att.is_dir():
-        return []
-    files: list[dict[str, str]] = []
-    for path in sorted(att.rglob("*")):
-        if not path.is_file():
-            continue
-        try:
-            sub = str(path.relative_to(att)).replace("\\", "/")
-        except ValueError:
-            continue
-        if any(part.startswith(".") for part in sub.split("/")):
-            continue
-        files.append({"name": path.name, "rel_path": f"attachments/{sub}"})
-    return files
+    """List files anywhere under vault/attachments/, including subfolders."""
+    found = _iter_rel(vault / "attachments", lambda p, _r: p.is_file())
+    return [{"name": p.name, "rel_path": f"attachments/{rel}"} for p, rel in sorted(found, key=lambda t: t[1])]
 
 
 def list_vault_media_files(vault: Path) -> list[dict[str, str]]:
     """List all non-markdown files in the vault (attachments and elsewhere)."""
-    if not vault.exists():
-        return []
-    files: list[dict[str, str]] = []
-    for path in vault.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            rel = str(path.resolve().relative_to(vault.resolve())).replace("\\", "/")
-        except ValueError:
-            continue
-        parts = rel.split("/")
-        if any(p.startswith(".") for p in parts):
-            continue
-        if rel.lower().endswith(".md"):
-            continue
-        # Skip empty keep files used for empty folders
-        if path.name == ".keep":
-            continue
-        files.append({"name": path.name, "rel_path": rel})
-    return sorted(files, key=lambda f: f["rel_path"].lower())
+    found = _iter_rel(vault, lambda p, r: p.is_file() and not r.lower().endswith(".md"))
+    return sorted(({"name": p.name, "rel_path": rel} for p, rel in found), key=lambda f: f["rel_path"].lower())
 
 
 def iter_vault_md_files(vault: Path) -> list[str]:
-    """Return vault-relative paths for all note markdown files."""
-    if not vault.exists():
-        return []
-    out: list[str] = []
-    for path in vault.rglob("*.md"):
-        try:
-            rel = str(path.resolve().relative_to(vault.resolve())).replace("\\", "/")
-        except ValueError:
-            continue
-        parts = rel.split("/")
-        if any(p.startswith(".") for p in parts):
-            continue
-        if parts[0] == "attachments" or "/attachments/" in f"/{rel}/":
-            continue
-        out.append(rel)
-    return sorted(out)
+    """Return vault-relative paths for all note markdown files (attachments excluded)."""
+    found = _iter_rel(vault, lambda p, r: r.lower().endswith(".md") and "/attachments/" not in f"/{r}/")
+    return sorted(rel for _, rel in found)
 
 
 async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:

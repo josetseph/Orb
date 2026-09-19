@@ -1,5 +1,6 @@
 import { useEffect, useState, type MutableRefObject, type RefObject } from "react";
 import * as THREE from "three";
+import { loadJson } from "@/lib/utils";
 import type {
   LinkLabel,
   ProximityLabel,
@@ -37,18 +38,11 @@ export function useProximityLabels({
     let lastUpdate = 0;
 
     const loadTextFade = (): number => {
-      try {
-        const raw = localStorage.getItem(
-          `orb:notes-graph-controls:${currentKB || "default"}`,
-        );
-        if (!raw) return DEFAULT_TEXT_FADE;
-        const parsed = JSON.parse(raw) as { textFade?: number };
-        return typeof parsed.textFade === "number"
-          ? parsed.textFade
-          : DEFAULT_TEXT_FADE;
-      } catch {
-        return DEFAULT_TEXT_FADE;
-      }
+      const { textFade } = loadJson<{ textFade?: number }>(
+        `orb:notes-graph-controls:${currentKB || "default"}`,
+        {},
+      );
+      return typeof textFade === "number" ? textFade : DEFAULT_TEXT_FADE;
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -164,7 +158,6 @@ export function useProximityLabels({
       setProximityLabels(labels);
 
       // ── Link labels ─────────────────────────────────────────────────────────
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const nearbyLinks: Array<{
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         link: any;

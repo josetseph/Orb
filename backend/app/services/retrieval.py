@@ -3,6 +3,7 @@
 # pylint: disable=too-many-lines,import-outside-toplevel
 import asyncio
 import calendar
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -48,63 +49,24 @@ class RetrievalService:
 
         return llm_service
 
-    def _log_retrieval_details(
-        self,
-        query: str,
-        results: List[dict],
-        query_entities: List[str],
-        query_concepts: List[str],
-    ):
-        """
-        Log detailed retrieval results to dedicated file for debugging.
-        Includes full node summaries, not truncated versions.
-        """
-        logger.debug("=" * 100)
-        logger.debug(f"RETRIEVAL SESSION: {datetime.now().isoformat()}")
-        logger.debug(f"QUERY: {query}")
-        logger.debug(f"EXTRACTED ENTITIES: {query_entities}")
-        logger.debug(f"EXTRACTED CONCEPTS: {query_concepts}")
-        logger.debug("=" * 100)
-
-        for i, doc in enumerate(results):
-            logger.debug(f"\n--- RESULT {i+1} ---")
-            logger.debug(f"TYPE: {doc.get('type', 'unknown')}")
-            logger.debug(f"SCORE: {doc.get('final_score', 0):.2f}")
-            logger.debug(f"BOOSTS: {doc.get('boosts', {})}")
-            logger.debug(f"SYMBOLIC IMMUNE: {doc.get('symbolic_immune', False)}")
-
-            # Get node details from original object
-            original = doc.get("original_obj", {})
-            if original:
-                logger.debug(f"NODE NAME: {original.get('name', 'N/A')}")
-                logger.debug(f"NODE LABELS: {original.get('labels', [])}")
-                logger.debug(f"NODE TYPE: {original.get('entity_type', 'N/A')}")
-
-                # Full summary - not truncated!
-                summary = original.get("summary") or original.get("description") or ""
-                logger.debug(f"FULL SUMMARY ({len(summary)} chars):")
-                logger.debug(summary if summary else "(empty)")
-
-                # Isolated context if available
-                isolated = original.get("isolated_context") or ""
-                if isolated:
-                    logger.debug(f"ISOLATED CONTEXT ({len(isolated)} chars):")
-                    logger.debug(isolated)
-
-            # Linked notes
-            linked_notes = doc.get("linked_notes", [])
-            if linked_notes:
-                logger.debug(f"LINKED NOTES ({len(linked_notes)}):")
-                for note in linked_notes:
-                    logger.debug(
-                        f"  - {note.get('title', 'Untitled')} ({note.get('id', 'N/A')})"
-                    )
-
-            # Full text sent to LLM
-            logger.debug(f"TEXT SENT TO LLM ({len(doc.get('text', ''))} chars):")
-            logger.debug(doc.get("text", ""))
-
-        logger.debug("\n" + "=" * 100 + "\n")  # pylint: disable=logging-not-lazy
+    def _log_retrieval_details(self, query: str, results: List[dict], query_entities: List[str]):
+        """One DEBUG line per retrieval: what came back and the text handed to the LLM."""
+        summary = {
+            "query": query,
+            "entities": query_entities,
+            "results": [
+                {
+                    "name": doc.get("original_obj", {}).get("name"),
+                    "type": doc.get("type"),
+                    "score": doc.get("final_score"),
+                    "boosts": doc.get("boosts"),
+                    "linked_notes": [n.get("id") for n in doc.get("linked_notes", [])],
+                    "text": doc.get("text", ""),
+                }
+                for doc in results
+            ],
+        }
+        logger.debug(json.dumps(summary, default=str))
 
     def _get_node_relationships(  # pylint: disable=too-many-locals,too-many-branches
         self, node: dict, max_relationships: int = 5
@@ -986,39 +948,17 @@ class RetrievalService:
         ]
         question_attribute = query_analysis.get("question_attribute", None)
         query_keywords = query_analysis.get("keywords", [])
-        query_concepts = query_analysis.get("concepts", [])
 
         # Build an enriched query string for vector embedding and reranking.
         # Appending the question attribute sharpens semantic focus — e.g.
         # "Were Scott Derrickson and Ed Wood of the same nationality?"
         # becomes "...nationality" so vectors cluster around nationality facts.
-        _extra_terms = " ".join(
-            t for t in ([question_attribute] + query_concepts) if t
-        ).strip()
-        enriched_query = f"{query} {_extra_terms}".strip() if _extra_terms else query
+        enriched_query = f"{query} {question_attribute}" if question_attribute else query
 
         # ============ ENTITY EXTRACTION ============
         # The LLM is the sole source of entity names from the query.
         # No regex/TitleCase fallback — the LLM already handles multi-word names.
-        llm_entities_raw = query_analysis.get("entities", [])
-
-        # Strip stopwords and single-character tokens that match everything
-        filtered_by_length = []
-        filtered_by_stopwords = []
-
-        query_entities = list(llm_entities_raw)
-
-        if filtered_by_stopwords or filtered_by_length:
-            logger.info(f"  [Entity Filter] Raw LLM entities: {llm_entities_raw}")
-            if filtered_by_stopwords:
-                logger.info(
-                    f"  [Entity Filter] Removed by stopwords: {filtered_by_stopwords}"
-                )
-            if filtered_by_length:
-                logger.info(
-                    f"  [Entity Filter] Removed by length (<2): {filtered_by_length}"
-                )
-            logger.info(f"  [Entity Filter] Final entities: {query_entities}")
+        query_entities = list(query_analysis.get("entities", []))
 
         logger.info(
             f"  [LLM Analysis] Intent: {query_analysis.get('intent')}, "
@@ -1164,11 +1104,9 @@ class RetrievalService:
             return _unique_candidates
 
         async def _meili_branch() -> list[dict]:
-            """STEP 1b: BM25 keyword search over query + keywords/concepts (parallel per term)."""
+            """STEP 1b: BM25 keyword search over query + keywords (parallel per term)."""
             _meili_queries = [query] + [
-                t
-                for t in query_keywords + query_concepts
-                if t and t.lower() not in query.lower()
+                t for t in query_keywords if t and t.lower() not in query.lower()
             ]
             _per_term = await asyncio.gather(
                 *[self._search_meili_by_keyword(_ts_q) for _ts_q in _meili_queries]
@@ -1435,12 +1373,7 @@ class RetrievalService:
             logger.info(f"    {i+1}. [{dtype}] {name} (rerank={score:.4f})")
 
         # Detailed logging to file (full summaries, not truncated)
-        self._log_retrieval_details(
-            query,
-            combined_results,
-            query_entities,
-            [],  # Pass extracted entities for logging
-        )
+        self._log_retrieval_details(query, combined_results, query_entities)
 
         t_total = time.perf_counter() - t_start
         logger.info(
@@ -1449,21 +1382,6 @@ class RetrievalService:
         )
 
         return combined_results
-
-    async def retrieve_with_self_correction(
-        self,
-        query: str,
-        top_k: int = 50,
-        progress_callback: Callable[[str, str | None], None] | None = None,
-        conversation_history: list[dict] | None = None,
-    ) -> tuple[str | None, list[dict], str | None]:
-        """Entry-point alias for the primary structured sub-question pipeline."""
-        return await self.retrieve_with_iterative_loop(
-            query,
-            top_k=top_k,
-            progress_callback=progress_callback,
-            conversation_history=conversation_history,
-        )
 
     async def _apply_reranker_logging(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
         self,

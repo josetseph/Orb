@@ -3,16 +3,9 @@ import { getDesktopBridge, pickDesktopFile, pickDesktopDirectory } from "@/lib/d
 import { cn } from "@/lib/utils";
 import type { InstalledModel } from "@/lib/models-types";
 
-const FORMAT_LABEL: Record<string, string> = {
-  gguf: "GGUF",
-  mlx: "MLX",
-  transformers: "Safetensors",
-};
-
 /**
- * Choose one local model: pick from what is on disk, or point at a file or
- * folder anywhere. Models this machine cannot run stay visible with the reason,
- * so a missing model never looks like a disappearance.
+ * Choose one local GGUF model: pick from what is on disk, or point at a file
+ * or folder anywhere.
  */
 export function ModelPicker({
   models,
@@ -73,9 +66,8 @@ export function ModelPicker({
             </option>
           )}
           {models.map((m) => (
-            <option key={m.ref} value={m.ref} disabled={!m.runnable}>
-              {m.label} · {FORMAT_LABEL[m.format] ?? m.format} · {m.size_gb} GB
-              {m.runnable ? "" : " — cannot run here"}
+            <option key={m.ref} value={m.ref}>
+              {m.label} · {m.size_gb} GB
             </option>
           ))}
           {!known && !isPlaceholder && (
@@ -98,7 +90,7 @@ export function ModelPicker({
               type="button"
               disabled={disabled || browsing}
               onClick={() => void browse("folder")}
-              title="Pick a model folder — MLX or safetensors, or a folder holding a .gguf"
+              title="Pick a folder holding a .gguf"
               className="btn btn-secondary btn-sm h-[30px]"
             >
               <FolderOpen className="h-3.5 w-3.5" /> folder
@@ -109,21 +101,14 @@ export function ModelPicker({
 
       {canBrowse && (
         <p className="text-[11px] text-n-500">
-          Point at a <span className="font-mono">.gguf</span> file, or a folder holding GGUF, MLX or
-          safetensors weights — Orb detects the format and says so if it cannot run it here.
+          Point at a <span className="font-mono">.gguf</span> file, or a folder holding one.
         </p>
       )}
       {selected && (
         <p className="text-[11px] text-n-500">
-          {FORMAT_LABEL[selected.format] ?? selected.format}
+          GGUF
           {selected.context_length ? ` · ${selected.context_length.toLocaleString()} token context` : ""}
           {selected.shards > 1 ? ` · ${selected.shards} shards` : ""}
-        </p>
-      )}
-      {selected && !selected.runnable && (
-        <p className="flex items-start gap-1.5 text-[11px] text-danger-text">
-          <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
-          {selected.unsupported_reason}
         </p>
       )}
       {(selected?.warnings ?? []).map((w) => (
