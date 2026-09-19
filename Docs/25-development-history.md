@@ -10,7 +10,7 @@
 - Section 2 tells the story era by era (five eras), with the key diffs that mark each transition.
 - Section 3 is the decision log: one entry per architectural decision, with date, commit, alternatives rejected, and rationale/evidence.
 - Section 4 lists removed subsystems and legacy paths still visible in the code today.
-- Section 5 is the version history (`0.1.0` -> `0.2.0`).
+- Section 5 is the version history (`0.1.0` -> `1.0.0`).
 - Section 6 summarises uncommitted work in the working tree as of 2026-09-02.
 - Section 7 lists open questions / discrepancies discovered while reconstructing this history.
 
@@ -294,7 +294,7 @@ Do **not** resurrect any of these. They are listed so an assistant reading an al
 
 ## 5. Version history
 
-Versions are the `version` field in `desktop/package.json` (the backend and frontend do not carry independent versions).
+The version lives in `desktop/src-tauri/tauri.conf.json` and `Cargo.toml` (the release tag is `desktop-v<version>`); `frontend/package.json` and the FastAPI `version` are kept in step by hand.
 
 | Version | Date / SHA | Scope |
 |---|---|---|
@@ -303,6 +303,8 @@ Versions are the `version` field in `desktop/package.json` (the backend and fron
 | **0.1.1** | 2026-08-02 `45fcca5` | macOS Gatekeeper fix, per-arch CI (arm64/Intel Mac, Linux AppImage), Node 24, author metadata, `node_deps` bundling. |
 | *(unreleased)* | 2026-08-03 → 08-06 `fbcafe7`…`72413b9` | API modularisation and legacy removal, notes-page fixes, Windows Firefly prefetch, security/data-loss/perf audit, wikilink autocomplete, title↔filename sync. |
 | **0.2.0** | 2026-08-07 `e14dc67` | "ingest/retrieval speedups and wikilink UX" — includes `8de5cda` batching/parallel I/O. `02ac9d3` (Firefly download race fix) landed after the bump and is in HEAD without a version change. |
+| *0.3.0 (untagged)* | 2026-09-18 `1b5e452` | Electron shell replaced by a Tauri 2 shell over the Python desktop runtime; version bumped in the tree but never tagged. |
+| **1.0.0** | 2026-09-19 `1d5c7d7` | Major: the over-engineering sweep (§6 entry of the same date) — one LLM call path, GGUF-only local chat, no stored AI mode, finance API trimmed to what the UI uses, 16 dependencies dropped, ~7k lines removed, suite green. First release from the Tauri shell. |
 
 ## 6. Uncommitted work in progress (as of 2026-09-02)
 

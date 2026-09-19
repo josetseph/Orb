@@ -1,6 +1,6 @@
 [package]
 name = "orb"
-version = "0.3.0"
+version = "1.0.0"
 description = "Orb desktop shell"
 authors = ["Joseph Etse <projects@josetseph.com>"]
 edition = "2021"

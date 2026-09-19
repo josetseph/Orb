@@ -26,7 +26,7 @@ logger = get_logger("API")
 # Use `request_trace_id.get()` in any async context to retrieve it.
 request_trace_id: ContextVar[str] = ContextVar("request_trace_id", default="")
 
-app = FastAPI(title="Orb API", version="0.1.0")
+app = FastAPI(title="Orb API", version="1.0.0")
 register_all_routers(app)
 
 cors_origins = [

@@ -151,7 +151,7 @@ open /Applications/Orb.app
 
 > [!TIP]
 > Unsigned builds may need an extra click through Gatekeeper / SmartScreen until notarization and Authenticode are enabled.
-> Prefer **v0.2.0+** — faster ingest/retrieval, Obsidian-style wikilinks, and Firefly upgrade fixes. Avoid v0.1.0 Mac builds (could show “damaged” from broken Node helper symlinks in CI).
+> Prefer **v1.0.0+** — the first Tauri-based build: smaller, faster to start, one model picker in Settings. Avoid v0.1.0 Mac builds (could show “damaged” from broken Node helper symlinks in CI).
 
 ---
 
