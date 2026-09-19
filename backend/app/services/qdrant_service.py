@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import time
 import uuid
 from typing import Any
 
@@ -46,19 +47,35 @@ class QdrantService:
         self._col_contexts = (
             col_contexts or settings.QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS
         )
-        self._enabled = True
+        self._client: QdrantClient | None = None
+        self._retry_at = 0.0
+        self._connect()
+
+    @property
+    def client(self) -> QdrantClient | None:
+        """(Re)connect lazily: the desktop runtime boots Qdrant after the API is up."""
+        if self._client is None and time.monotonic() >= self._retry_at:
+            self._connect()
+        return self._client
+
+    @property
+    def _enabled(self) -> bool:
+        return self._client is not None
+
+    def _connect(self) -> None:
         try:
-            self.client = QdrantClient(
+            client = QdrantClient(
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
                 api_key=settings.QDRANT_API_KEY,
             )
+            client.get_collections()  # the constructor never touches the network
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._enabled = False
-            self.client = None
-            logger.warning(f"Qdrant client init failed, disabling Qdrant path: {exc}")
+            self._client = None
+            self._retry_at = time.monotonic() + 5
+            logger.warning(f"Qdrant not reachable yet (retrying on use): {exc}")
             return
-
+        self._client = client
         # Prefer the selected local embed model's dims before creating collections.
         try:
             from app.services.local_models import load_manifest
@@ -227,7 +244,7 @@ class QdrantService:
 
     def is_available(self) -> bool:
         """Return True if Qdrant is reachable and the service is enabled."""
-        if not self._enabled or not self.client:
+        if not self.client:
             return False
         try:
             self.client.get_collections()
@@ -237,7 +254,7 @@ class QdrantService:
 
     def reset_all(self) -> None:
         """Delete and recreate all Qdrant collections for this KB, wiping all vectors."""
-        if not self._enabled or not self.client:
+        if not self.client:
             return
         for name in (self._col_cores, self._col_rels, self._col_contexts):
             try:
@@ -557,6 +574,7 @@ class QdrantService:
         content: str,
         vector: list[float],
         note_created_at: str | None = None,
+        note_id: str | None = None,
     ) -> bool:
         """Append a single new item to a sub-item collection without touching existing points.
 
@@ -568,6 +586,10 @@ class QdrantService:
         vector = self._prepare_vector(vector) or vector
         point_id = str(uuid.uuid4())
         payload: dict[str, Any] = {"parent_node_id": node_id, "content": content}
+        if note_id:
+            # Which note said it — so re-ingesting or deleting that note can
+            # take its contexts back out instead of piling new ones on top.
+            payload["note_id"] = note_id
         if note_created_at:
             payload["note_created_at"] = note_created_at
         point = PointStruct(id=point_id, vector=vector, payload=payload)
@@ -1013,6 +1035,96 @@ class QdrantService:
                 )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Qdrant delete_node failed for {node_id}: {exc}")
+
+    def scroll_oversized_contexts(self, min_chars: int) -> list[dict]:
+        """Context points longer than ``min_chars`` — whole notes stored as one context."""
+        if not self.is_available() or not self.client:
+            return []
+        out: list[dict] = []
+        offset = None
+        try:
+            while True:
+                points, offset = self.client.scroll(
+                    collection_name=self._col_contexts,
+                    limit=500,
+                    offset=offset,
+                    with_payload=True,
+                    with_vectors=False,
+                )
+                for point in points:
+                    payload = point.payload or {}
+                    content = payload.get("content") or ""
+                    if len(content) > min_chars:
+                        out.append(
+                            {
+                                "node_id": payload.get("parent_node_id"),
+                                "content": content,
+                                "note_created_at": payload.get("note_created_at"),
+                            }
+                        )
+                if not points or offset is None:
+                    break
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[Qdrant] scroll_oversized_contexts failed: {exc}")
+        return out
+
+    def node_ids_for_note(self, note_id: str) -> set[str]:
+        """Nodes holding a context that came from this note."""
+        if not self.is_available() or not self.client or not note_id:
+            return set()
+        out: set[str] = set()
+        offset = None
+        try:
+            while True:
+                points, offset = self.client.scroll(
+                    collection_name=self._col_contexts,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="note_id", match=MatchValue(value=note_id))]
+                    ),
+                    limit=500,
+                    offset=offset,
+                    with_payload=["parent_node_id"],
+                    with_vectors=False,
+                )
+                for point in points:
+                    pid = (point.payload or {}).get("parent_node_id")
+                    if pid:
+                        out.add(pid)
+                if not points or offset is None:
+                    break
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[Qdrant] node_ids_for_note failed: {exc}")
+        return out
+
+    def delete_note_contexts(self, note_id: str) -> None:
+        """Drop every context this note contributed, on every node."""
+        if not self.is_available() or not self.client or not note_id:
+            return
+        try:
+            self.client.delete(
+                collection_name=self._col_contexts,
+                points_selector=FilterSelector(
+                    filter=Filter(must=[FieldCondition(key="note_id", match=MatchValue(value=note_id))])
+                ),
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Qdrant delete_note_contexts failed for {note_id}: {exc}")
+
+    def delete_node_contexts(self, node_id: str) -> None:
+        """Drop every context point of a node; its core and relationships stay."""
+        if not self.is_available() or not self.client:
+            return
+        try:
+            self.client.delete(
+                collection_name=self._col_contexts,
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        must=[FieldCondition(key="parent_node_id", match=MatchValue(value=node_id))]
+                    )
+                ),
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Qdrant delete_node_contexts failed for {node_id}: {exc}")
 
     def scroll_all_isolated_contexts_with_dates(self) -> list[dict]:
         """Return payload dicts for every isolated_context point that has a note_created_at field.

@@ -753,6 +753,16 @@ async def _delete_note_impl(
             )
         await asyncio.to_thread(_best_effort_delete_index_node, kb, entity_id, "orphan")
 
+    # What this note said about entities that survive it goes too.
+    try:
+        stale = await asyncio.to_thread(kb.qdrant.node_ids_for_note, note_id)
+        await asyncio.to_thread(kb.qdrant.delete_note_contexts, note_id)
+        wf = kb.get_ingestion_workflow()
+        for nid in stale - set(orphan_ids):
+            await wf._reindex_node(nid)  # pylint: disable=protected-access
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[delete_note] Context cleanup failed: %s", exc)
+
     logger.info(
         "[delete_note] Deleted note %s; removed %s orphaned entity nodes.",
         note_id,

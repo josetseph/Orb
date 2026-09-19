@@ -1303,6 +1303,7 @@ async def summarization_node(state: IngestionState):
             state["extraction"].nodes,
             state["content"],
             note_created_at=state.get("created_at"),
+            note_id=state.get("note_id"),
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"[Agent] Context indexing failed: {e}", exc_info=True)

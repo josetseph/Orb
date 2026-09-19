@@ -24,6 +24,50 @@ _DEFAULT_CHUNK_TOKENS = 4000
 MIN_SPLIT_TOKENS = 400
 
 _SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
+_STOPWORDS = {"the", "and", "with", "from", "for", "that", "this", "model", "method", "system", "systems"}
+
+
+def sentences_about(name: str, text: str, *, max_sentences: int = 4, max_chars: int = 600) -> str:
+    """The sentences of ``text`` that mention ``name``, in document order.
+
+    The fallback when the model returned no context for an entity: a few
+    sentences about it, never the whole note — a 100k-character note stored as
+    one entity's context swamps its embedding and its detail panel alike.
+    Empty when the name never appears.
+    """
+    needle = (name or "").strip().lower()
+    if not needle or not text:
+        return ""
+    sentences = [x.strip() for x in _SENTENCE_RE.split(re.sub(r"\s+", " ", text))]
+    # Exact name first; the model often canonicalises ("Waterfall Model" for a
+    # note that says "the waterfall approach"), so fall back to every word of
+    # the name, then to its one distinctive word.
+    words = [w for w in re.findall(r"[a-z0-9]+", needle) if len(w) > 3 and w not in _STOPWORDS]
+    tests = [lambda t: needle in t]
+    if words:
+        tests.append(lambda t: all(w in t for w in words))
+        if len(words) > 1:
+            longest = max(words, key=len)
+            tests.append(lambda t: longest in t)
+    matches = next((m for m in ([x for x in sentences if t(x.lower())] for t in tests) if m), [])
+    picked: list[str] = []
+    used = 0
+    for sentence in matches:
+        if needle not in sentence.lower():
+            needle = next((w for w in words if w in sentence.lower()), needle)
+        if len(sentence) > max_chars:
+            # A single monster "sentence" (a table row, a transcript run): keep
+            # the window around the first mention.
+            at = sentence.lower().index(needle)
+            lo = max(0, at - max_chars // 2)
+            sentence = ("…" if lo else "") + sentence[lo : lo + max_chars].strip() + "…"
+        if used + len(sentence) > max_chars * max_sentences:
+            break
+        picked.append(sentence)
+        used += len(sentence)
+        if len(picked) >= max_sentences:
+            break
+    return " ".join(picked)
 
 
 def chunk_token_budget(

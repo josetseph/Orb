@@ -24,6 +24,7 @@ from app.services.llm import llm_service
 from app.services.qdrant_service import QdrantService, qdrant_service
 from app.services.meilisearch_service import MeilisearchService, meilisearch_service
 from app.workflows.agents.ingestion_agent import ingestion_agent
+from app.workflows.extraction_chunking import sentences_about
 
 logger = get_logger("IngestionPipeline")
 
@@ -880,10 +881,19 @@ class IngestionWorkflow:
             )
 
     async def _update_neighborhoods(
-        self, nodes, new_content: str, note_created_at: str | None = None
+        self,
+        nodes,
+        new_content: str,
+        note_created_at: str | None = None,
+        note_id: str | None = None,
     ):
         """
         Refreshes isolated contexts for all nodes affected by this note.
+
+        The note's previous contexts are removed first, so a re-ingest replaces
+        what this note said about each entity rather than appending a second
+        copy; entities the new run no longer mentions are re-indexed from what
+        other notes still say about them.
         Runs with concurrency=4 and uses entity-level locks to prevent races
         when multiple ingestion runs touch the same node.
 
@@ -900,7 +910,11 @@ class IngestionWorkflow:
             name = (node.name or "").lstrip("#").strip().lower()
             if not name:
                 continue
-            context = getattr(node, "isolated_context", "") or new_content
+            # No context from the model: the sentences that mention the entity,
+            # never the whole note (which is what this used to store).
+            context = getattr(node, "isolated_context", "") or sentences_about(
+                node.name or "", new_content
+            )
             ntype = (getattr(node, "type", "") or "").lower().strip() or "thing"
             ctx_key = (context or "").strip()
             if name not in name_to_contexts:
@@ -915,18 +929,29 @@ class IngestionWorkflow:
             (name, ctxs, name_to_type[name]) for name, ctxs in name_to_contexts.items()
         ]
 
+        stale: set[str] = set()
+        if note_id:
+            stale = await asyncio.to_thread(self._qdrant.node_ids_for_note, note_id)
+            await asyncio.to_thread(self._qdrant.delete_note_contexts, note_id)
+            if stale:
+                logger.info(f"[Neighborhood] Dropped this note's earlier contexts on {len(stale)} node(s)")
+
+        touched: set[str] = set()
         if nodes_to_update:
             _sem = asyncio.Semaphore(4)
 
             async def _run_summary(name, new_contexts, ntype):
                 async with _sem:
-                    await self._update_node_summary(
+                    nid = await self._update_node_summary(
                         "Indexable",
                         name,
                         new_contexts,
                         node_type=ntype,
                         note_created_at=note_created_at,
+                        note_id=note_id,
                     )
+                    if nid:
+                        touched.add(nid)
 
             logger.info(
                 f"[Neighborhood] Updating {len(nodes_to_update)} unique node summaries "
@@ -939,6 +964,82 @@ class IngestionWorkflow:
                 f"[Neighborhood] {len(nodes_to_update)} node context updates complete."
             )
 
+        # Entities this note used to mention but no longer does: rebuild them
+        # from whatever contexts remain (possibly none).
+        for nid in stale - touched:
+            await self._reindex_node(nid)
+
+    async def _reindex_node(self, node_id: str) -> None:
+        """Rewrite a node's merged vector and search document from its stored contexts."""
+        core = await asyncio.to_thread(self._qdrant.get_node_content_by_id, node_id) or {}
+        name = (core.get("name") or "").strip()
+        if not name:
+            return
+        node_type = core.get("type") or "thing"
+        contexts = [c for c in core.get("isolated_contexts", []) if c and c.strip()]
+        merged = " ".join(contexts)
+
+        def _write():
+            # With no contexts left the name keeps the node findable by vector search.
+            vector = embedding_service.embed_documents([merged or name])[0]
+            self._qdrant.upsert_node_core(
+                node_id=node_id, name=name, node_type=node_type,
+                description_vector=vector, description=merged,
+            )
+            rel_nl = " ".join(
+                r.get("natural_language", "")
+                for r in self._qdrant.get_relationships_for_node_ids([node_id])
+                if r.get("natural_language")
+            )
+            self._meili.index_node(
+                node_id=node_id, name=name, node_type=node_type,
+                isolated_contexts_text=merged, relationship_natural_language=rel_nl,
+            )
+
+        await asyncio.to_thread(_write)
+        logger.info(f"[Neighborhood] '{name}' re-indexed from {len(contexts)} remaining context(s)")
+
+    async def prune_whole_note_contexts(self, min_chars: int = 1500) -> dict:
+        """Replace whole-note contexts with the sentences about each entity.
+
+        Before ``sentences_about`` an entity the model had not described got
+        the entire note as its context. A real context is a paragraph, so
+        anything past ``min_chars`` is one of those; each is rebuilt from the
+        text it holds (which *is* the note), then the node's contexts,
+        merged vector and search document are rewritten.
+        """
+        oversized = await asyncio.to_thread(self._qdrant.scroll_oversized_contexts, min_chars)
+        by_node: dict[str, list[str]] = {}
+        for item in oversized:
+            if item.get("node_id"):
+                by_node.setdefault(item["node_id"], []).append(item["content"])
+        logger.info(
+            f"[Prune] {len(oversized)} whole-note context(s) across {len(by_node)} node(s)"
+        )
+        repaired, emptied = 0, 0
+        for node_id, blobs in by_node.items():
+            core = await asyncio.to_thread(self._qdrant.get_node_content_by_id, node_id) or {}
+            name = (core.get("name") or "").strip()
+            if not name:
+                continue
+            kept = [c for c in core.get("isolated_contexts", []) if c and len(c) <= min_chars]
+            rebuilt = [t for t in (sentences_about(name, blob) for blob in blobs) if t]
+            contexts = list(dict.fromkeys(kept + rebuilt))
+            await asyncio.to_thread(self._qdrant.delete_node_contexts, node_id)
+            if contexts:
+                await self._update_node_summary(
+                    "Indexable", name, contexts, node_type=core.get("type") or ""
+                )
+                repaired += 1
+            else:
+                emptied += 1
+                # Nothing left to say; the merged vector and search doc must not
+                # keep describing it with the note it no longer holds.
+                await self._reindex_node(node_id)
+                logger.warning(f"[Prune] '{name}' never appears in its own note text; contexts dropped")
+        logger.info(f"[Prune] done — {repaired} node(s) rebuilt, {emptied} left without contexts")
+        return {"oversized": len(oversized), "nodes": len(by_node), "rebuilt": repaired, "emptied": emptied}
+
     async def _update_node_summary(  # pylint: disable=too-many-locals,too-many-statements,too-many-arguments,too-many-positional-arguments
         self,
         label: str,
@@ -946,9 +1047,10 @@ class IngestionWorkflow:
         new_contexts: list[str],
         node_type: str = "",
         note_created_at: str | None = None,
-    ):
+        note_id: str | None = None,
+    ) -> str | None:
         """
-        Updates a node by accumulating isolated contexts only.
+        Updates a node by accumulating isolated contexts only. Returns the node id.
 
         This path intentionally does NOT generate description/facts/questions.
         Ingestion stores verbatim isolated contexts and their embeddings, and keeps
@@ -1122,6 +1224,7 @@ class IngestionWorkflow:
                         content=_ctx_text,
                         vector=_ctx_vector,
                         note_created_at=note_created_at,
+                        note_id=note_id,
                     ):
                         wrote += 1
                 return wrote
@@ -1206,6 +1309,7 @@ class IngestionWorkflow:
             logger.info(
                 f"  [NodeSummary] ✓ COMPLETE: '{name}' (type='{node_type}', id={node_id})"
             )
+            return node_id
 
     @staticmethod
     def _parse_name_summary(raw: str) -> tuple[str | None, str | None]:
