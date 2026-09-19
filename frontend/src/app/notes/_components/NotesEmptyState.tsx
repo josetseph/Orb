@@ -1,5 +1,3 @@
-"use client";
-
 import { FileText, NotebookPen } from "lucide-react";
 
 type NotesEmptyStateProps = {

@@ -1,95 +1,74 @@
 # Orb Desktop Packaging
 
-Build unsigned macOS (`.dmg`), Windows (`.exe`), and Linux (`.AppImage`) installers that bundle Electron, embedded Python, portable Node, a Next.js standalone UI, and a seeded Firefly III + PHP runtime.
+Build unsigned macOS (`.dmg`), Windows (`.exe`, NSIS), and Linux (`.AppImage`, `.deb`)
+installers that bundle the Tauri shell, embedded Python (which serves the built UI),
+and a seeded Firefly III + PHP runtime.
 
 ## Quick start (local build)
 
 ```bash
-# From repo root — requires network for Python/Node/Firefly/PHP downloads + pip
-cd desktop
-npm install
-npm run prepare-dist    # ~10–20 min: Python wheels, frontend build, Node
-npm run dist:mac        # or dist:win on Windows
+# From repo root — needs network for the Python/Firefly/PHP downloads + pip
+python3 desktop/build.py prepare   # ~10–20 min: Python wheels, UI build, Firefly seed
+python3 desktop/build.py dist      # preflight + cargo tauri build
 ```
 
-Artifacts land in `desktop/dist/`.
+Bundles land in `desktop/src-tauri/target/release/bundle/{dmg,nsis,appimage,deb}/`.
 
-## Dev vs packaged layout
+## Stages (`desktop/build.py`)
 
-| Mode | How |
-|------|-----|
-| **Dev** | `npm start` — uses repo `backend/` + `frontend/` (`next dev`) |
-| **Packaged test** | Run `prepare-dist`, then `ORB_RESOURCES=./resources npm start` |
-| **Installer** | `prepare-dist` + `electron-builder` |
+| Stage | Output | Notes |
+|---|---|---|
+| `python` | `resources/backend/` | python-build-standalone + `pip install -r backend/requirements.txt` (Metal `llama-cpp-python` on Apple Silicon) + `backend/app`. An interpreter whose imports still pass is reused; `ORB_REBUILD_PYTHON=1` forces a rebuild. |
+| `frontend` | `resources/frontend/` | `npm ci && npm run build` in `frontend/`, copies `dist/`. Node ships nothing. |
+| `firefly` | `resources/firefly/` | `python -m app.desktop_runtime prefetch-firefly` with the bundled Python — the same code that installs Firefly at runtime. Reused when present; `ORB_REBUILD_FIREFLY=1` refetches. |
+| `check` | — | Trees exist, the bundled Python imports every critical module, and each tree's source stamp matches the sources on disk (so a stale tree never ships). |
+| `dist` | bundles | `check`, then `cargo tauri build --config '{"bundle":{"resources":…}}'`. The resource map is passed here rather than kept in `tauri.conf.json` so dev builds never copy the multi-GB trees. |
 
-User data (SQLite, vault, Qdrant/Meili binaries, GGUF models) always lives outside the app bundle under Application Support / `%APPDATA%\Orb\`.
-Firefly's writable state also lives outside the bundle under the same app-data root.
+## Runtime layout
 
-## Networking (important)
+Everything under `resources/` lands in the app's resource dir (`Orb.app/Contents/Resources`
+on macOS). The shell finds `backend/python/bin/python3` (or `python.exe`) there and runs
+`python -m app.desktop_runtime` with `FRONTEND_DIR` and `ORB_RESOURCES_ROOT` set.
 
-Desktop uses a dedicated high port block so it does not collide with typical
-dev stacks (`8000`, `3000`, `6333`, `7700`):
+User data always lives outside the bundle under Application Support / `%APPDATA%\Orb\`
+(`paths.json`, `data/` with SQLite, vault, Qdrant/Meili binaries and data, Firefly's
+writable state, logs; `models/` with GGUFs). Not bundled: GGUF models, Qdrant and
+Meilisearch (first-run download into `DATA_DIR/bin`), the Firefly SQLite database.
+
+## Networking
 
 | Service | Port |
-|---------|------|
-| UI (Next) | **17400** |
-| API (FastAPI) | **17401** |
+|---|---|
+| API (serves the UI) | **17401** |
 | Firefly III | **17412** |
 | Qdrant | **17433** |
 | Meilisearch | **17470** |
 
-Qwen3-ASR / Marlin / chat / embed / rerank all load **in-process** in the API (no model HTTP ports).
-
-- Electron loads `http://127.0.0.1:17400`.
-- Desktop frontend build uses **same-origin** `NEXT_PUBLIC_API_URL=/api/v1` with Next rewrites to `http://127.0.0.1:17401`.
-- Override any port with `ORB_UI_PORT`, `ORB_API_PORT`, `ORB_FIREFLY_PORT`, `ORB_QDRANT_PORT`, `ORB_MEILI_PORT`.
-- Docker / contributor compose keeps its own mapped ports (e.g. host `8700` → backend).
-
-## What gets bundled
-
-- **backend/** — portable CPython + `app/` + pip deps (`kuzu`, `llama-cpp-python`, etc.)
-- **frontend/** — Next.js standalone (`server.js` on port 17400)
-- **node/** — portable Node to run the frontend server (headers/docs pruned)
-- **firefly/** — Firefly III release app + portable PHP seed copied into app-data on first launch
-
-Not bundled: GGUF models, Qdrant/Meilisearch (first-run download into `DATA_DIR`), or the Firefly SQLite database.
-
-Frontend standalone deps are stored as `frontend/node_deps/` (not `node_modules`)
-because electron-builder strips folders named `node_modules` from `extraResources`.
-The supervisor boots the UI with `node run-server.js`.
-The supervisor copies the Firefly seed from bundled resources into `DATA_DIR/firefly/`, writes `.env`, keeps the SQLite DB under `DATA_DIR/firefly/app/storage/database/firefly.sqlite`, then serves Firefly locally on port `17412`.
+Override with `ORB_API_PORT`, `ORB_FIREFLY_PORT`, `ORB_QDRANT_PORT`, `ORB_MEILI_PORT`
+(both the shell and the runtime read them). The UI runs from `http://127.0.0.1:17401`,
+so its access to the shell's native pickers and notifications is granted by
+`src-tauri/capabilities/remote-ui.json`, which lists that origin explicitly.
 
 ## Platform notes
 
 - Build **macOS** installers on macOS (Metal `llama-cpp-python` on arm64; needs `cmake`).
-- Build **Windows** installers on Windows (CPU wheels; x64 only for v1).
-- Build **Linux** installers on Linux (AppImage; x64 only for v1).
+- Build **Windows** installers on Windows (CPU wheels; x64 only).
+- Build **Linux** installers on Linux (x64 only; needs `libwebkit2gtk-4.1-dev
+  libappindicator3-dev librsvg2-dev patchelf`).
 - Do not cross-compile native Python wheels.
 
 ## CI
 
-Push a tag matching `desktop-v*` to trigger `.github/workflows/desktop-release.yml` (unsigned artifacts, 120m timeout, cmake on macOS).
+Push a tag matching `desktop-v*` to trigger `.github/workflows/desktop-release.yml`
+(one matrix job per platform; unsigned artifacts).
 
-## Stage 6 — Signing & auto-update (when ready)
+## Signing, notarization, auto-update (when ready)
 
-### macOS notarization
+`cargo tauri build` signs and notarizes macOS bundles when `APPLE_SIGNING_IDENTITY`,
+`APPLE_ID`, `APPLE_PASSWORD` and `APPLE_TEAM_ID` are set, and Windows bundles via
+`bundle.windows.certificateThumbprint` / signtool. Hardened-runtime entitlements come
+from `build/entitlements.mac.plist`.
 
-```bash
-export APPLE_ID="you@example.com"
-export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"
-export APPLE_TEAM_ID="XXXXXXXXXX"
-# Optional: CSC_LINK + CSC_KEY_PASSWORD for Developer ID signing
-```
-
-[`scripts/notarize.js`](scripts/notarize.js) runs after sign when `APPLE_*` are set.
-
-### Windows Authenticode
-
-Set `CSC_LINK` (certificate file) and `CSC_KEY_PASSWORD` for electron-builder.
-
-### Auto-update
-
-1. Publish signed builds to GitHub Releases (`publish.owner` = `josetseph`).
-2. Set `ORB_ENABLE_UPDATER=1` so `electron-updater` in [`main.js`](main.js) checks releases.
-
-Unsigned builds **never** check for updates unless that env is set.
+Auto-update is not wired yet. When it is: `tauri-plugin-updater`, a minisign keypair
+(`TAURI_SIGNING_PRIVATE_KEY`), a `latest.json` on the GitHub release, and the same
+opt-in gate as before (`ORB_ENABLE_UPDATER=1`; unsigned builds never check).

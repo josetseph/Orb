@@ -1,9 +1,6 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
-import Image from "next/image";
-import { usePathname, useRouter } from "next/navigation";
+import { Link } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Check,
   ChevronsUpDown,
@@ -50,8 +47,8 @@ function useDismiss(open: boolean, close: () => void) {
 }
 
 export function Sidebar() {
-  const pathname = usePathname();
-  const router = useRouter();
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
   const { currentKB, currentKBName, currentKBRecord, kbs, setCurrentKB, refreshKBs } =
     useKB();
   const [wsOpen, setWsOpen] = useState(false);
@@ -84,7 +81,7 @@ export function Sidebar() {
           className="flex w-full items-center gap-2.5 rounded-md border border-transparent px-2 py-1.5 text-left hover:bg-n-900"
           title="Switch workspace"
         >
-          <Image
+          <img
             src="/logo-icon.png"
             alt="Orb"
             width={26}
@@ -143,7 +140,7 @@ export function Sidebar() {
               className="menu-item text-n-400"
               onClick={() => {
                 setWsOpen(false);
-                router.push("/kb?new=1");
+                navigate("/kb?new=1");
               }}
             >
               <Plus className="h-3.5 w-3.5" /> New workspace
@@ -153,7 +150,7 @@ export function Sidebar() {
               className="menu-item text-n-400"
               onClick={() => {
                 setWsOpen(false);
-                router.push("/kb");
+                navigate("/kb");
               }}
             >
               <Settings className="h-3.5 w-3.5" /> Workspace settings
@@ -183,7 +180,7 @@ export function Sidebar() {
           return (
             <Link
               key={item.href}
-              href={item.href}
+              to={item.href}
               className={cn(
                 "relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium hover:bg-n-900",
                 active ? "bg-n-900 text-text" : "text-n-400",
@@ -204,7 +201,7 @@ export function Sidebar() {
         <div className="hr-fade" />
         <ActivityStatus />
         <Link
-          href="/kb"
+          to="/kb"
           className={cn(
             "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] hover:bg-n-900",
             settingsActive ? "bg-n-900 text-text" : "text-n-400",

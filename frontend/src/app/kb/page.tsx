@@ -1,7 +1,5 @@
-"use client";
-
 import { useEffect, useState, type FormEvent } from "react";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { Cpu, Loader2, Plus, Wallet } from "lucide-react";
 import { api } from "@/lib/api";
 import { kbSlug, useKB } from "@/lib/kb-context";
@@ -187,7 +185,7 @@ export default function KBPage() {
                         />
                     </SettingRow>
                     <SettingRow icon={<Cpu className="h-[18px] w-[18px]" />} title="Model" description={modelSummary(current)}>
-                        <Link href="/models" className="btn btn-secondary btn-sm no-underline">
+                        <Link to="/models" className="btn btn-secondary btn-sm no-underline">
                             Change
                         </Link>
                     </SettingRow>

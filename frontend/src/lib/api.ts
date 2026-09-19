@@ -25,9 +25,8 @@ import type {
   NoteStatus,
   SetupStatus,
 } from "@/lib/types";
-import { resolveApiBaseUrl } from "@/lib/desktop";
 
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1").replace(/\/$/, "");
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api/v1").replace(/\/$/, "");
 
 /** Merge optional kb into axios query params (omit for default). */
 function withKb(
@@ -112,7 +111,7 @@ export const api = {
     formData.append("file", file);
     // Desktop: hit FastAPI directly so large files aren't truncated by the
     // Next.js rewrite proxy (default 10MB → socket hang up / 500).
-    const base = await resolveApiBaseUrl(API_BASE_URL);
+    const base = API_BASE_URL;
     const response = await axios.post(
       `${base}/upload${kbQuery(kb)}`,
       formData,
@@ -722,6 +721,20 @@ export const api = {
     return http.get("/credentials");
   },
 
+  /** Store the key for an OpenAI-compatible endpoint (its URL is the identity). */
+  async setEndpointCredential(baseUrl: string, apiKey: string): Promise<{ base_url: string; configured: boolean }> {
+    return http.put("/credentials/endpoint", { base_url: baseUrl, api_key: apiKey || "not-needed" });
+  },
+
+  async deleteEndpointCredential(baseUrl: string): Promise<{ base_url: string; configured: boolean; cleared: boolean }> {
+    return http.del(`/credentials/endpoint?base_url=${encodeURIComponent(baseUrl)}`);
+  },
+
+  /** Show a vault / data / models file in Finder, Explorer or the file manager. */
+  async revealInFolder(path: string): Promise<{ ok: boolean }> {
+    return http.post("/desktop/reveal", { path });
+  },
+
   /** Ask an OpenAI-compatible server which models it serves. */
   async getEndpointModels(baseUrl: string): Promise<{ base_url: string; models: string[] }> {
     return http.get("/llm/endpoint-models", { base_url: baseUrl });
@@ -742,6 +755,8 @@ export const api = {
       active: number;
       last_completed_at?: string | null;
     };
+    /** Desktop runtime boot progress while local services start behind the API. */
+    boot?: { status: string; ts?: number };
     healthy?: boolean;
   }> {
     return http.get(`/admin/maintenance-status`, withKb(kb));

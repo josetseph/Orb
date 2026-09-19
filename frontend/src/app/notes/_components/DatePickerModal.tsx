@@ -1,5 +1,3 @@
-"use client";
-
 type DatePickerModalProps = {
   createdAt: string;
   pendingDateChange: string | null;

@@ -19,6 +19,7 @@ configured, and where its key came from.
 
 from __future__ import annotations
 
+import json
 import threading
 from urllib.parse import unquote, urlsplit, urlunsplit
 
@@ -109,8 +110,16 @@ def normalize_provider(provider: str) -> str:
     return {"google": "gemini", "hf": "huggingface"}.get(name, name)
 
 
+_KEYRING_SERVICE = "Orb"
+_KEYRING_INDEX = "__index__"  # keyring has no "list": the ids live in one JSON entry
+
+
 class CredentialStore:
-    """Thread-safe provider -> API key map held only in memory."""
+    """Thread-safe provider -> API key map, persisted in the OS keychain.
+
+    macOS Keychain, Windows Credential Manager or Secret Service on Linux via
+    ``keyring``. When no backend is usable the keys still work for this session.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
@@ -126,10 +135,21 @@ class CredentialStore:
             return self._version
 
     def _seed_from_env_unlocked(self) -> None:
-        """Import env/.env keys once, without overwriting pushed values."""
+        """Load keychain keys once, then env/.env keys without overwriting them."""
         if self._seeded:
             return
         self._seeded = True
+        try:
+            import keyring
+
+            index = keyring.get_password(_KEYRING_SERVICE, _KEYRING_INDEX)
+            for name in json.loads(index) if index else []:
+                value = keyring.get_password(_KEYRING_SERVICE, name)
+                if value:
+                    self._keys[name] = value
+                    self._sources[name] = SOURCE_KEYCHAIN
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Keychain unavailable, credentials are session-only: %s", exc)
         from app.core.config import settings
 
         for provider, attr in _ENV_SETTING.items():
@@ -162,8 +182,26 @@ class CredentialStore:
             self._keys[name] = value
             self._sources[name] = source
             self._version += 1
+            self._persist_unlocked(name, value)
         # Length only — never the key itself.
         logger.info("Credential set for %s (%s, %d chars)", name, source, len(value))
+
+    def _persist_unlocked(self, name: str, value: str | None) -> None:
+        """Write (or delete, when value is None) one key and keep the index in step."""
+        try:
+            import keyring
+
+            if value is None:
+                try:
+                    keyring.delete_password(_KEYRING_SERVICE, name)
+                except keyring.errors.PasswordDeleteError:
+                    pass
+            else:
+                keyring.set_password(_KEYRING_SERVICE, name, value)
+            stored = sorted(k for k, s in self._sources.items() if s == SOURCE_KEYCHAIN)
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_INDEX, json.dumps(stored))
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Could not update the keychain (key kept for this session): %s", exc)
 
     def clear(self, provider: str) -> bool:
         name = normalize_provider(provider)
@@ -173,6 +211,7 @@ class CredentialStore:
             self._sources.pop(name, None)
             if existed:
                 self._version += 1
+                self._persist_unlocked(name, None)
         if existed:
             logger.info("Credential cleared for %s", name)
         return existed

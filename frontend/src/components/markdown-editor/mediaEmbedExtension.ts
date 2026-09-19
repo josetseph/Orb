@@ -60,7 +60,7 @@ function processingLabel(kind: MediaKind): string {
 const MEDIA_URL = "(?:[^()\\n]|\\([^()\\n]*\\))+";
 const MEDIA_RE = new RegExp(
   `(?:!\\[([^\\]]*)\\]\\((${MEDIA_URL})\\)|\\[([📎🖇🎤]?[^\\]]*)\\]\\((${MEDIA_URL})\\))`,
-  "g",
+  "gu",
 );
 
 type MediaKind =

@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo, useRef, useState, type MutableRefObject } from "react";
 
 export function useGraphSearch(

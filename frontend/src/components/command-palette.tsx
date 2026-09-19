@@ -1,7 +1,5 @@
-"use client";
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useNavigate } from "react-router-dom";
 import {
   ChevronsUpDown,
   FileText,
@@ -34,7 +32,7 @@ type Item = {
 };
 
 export function CommandPalette() {
-  const router = useRouter();
+  const navigate = useNavigate();
   const { currentKB, kbs, setCurrentKB } = useKB();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -86,7 +84,7 @@ export function CommandPalette() {
     const q = query.trim().toLowerCase();
     const go = (href: string) => () => {
       close();
-      router.push(href);
+      navigate(href);
     };
     const noteItems: Item[] = notes.map((n) => ({
       key: `note:${n.id}`,
@@ -96,7 +94,7 @@ export function CommandPalette() {
       run: () => {
         sessionStorage.setItem(lastNoteStorageKey(currentKB), n.id);
         close();
-        router.push(`/notes?note=${encodeURIComponent(n.id)}`);
+        navigate(`/notes?note=${encodeURIComponent(n.id)}`);
       },
     }));
     const wsItems: Item[] = kbs
@@ -123,7 +121,7 @@ export function CommandPalette() {
       { name: "Workspaces", items: q ? wsItems : wsItems.slice(0, 3) },
       { name: "Commands", items: commands },
     ].filter((g) => g.items.length);
-  }, [query, notes, kbs, currentKB, close, router, setCurrentKB]);
+  }, [query, notes, kbs, currentKB, close, navigate, setCurrentKB]);
 
   const flat = useMemo(() => groups.flatMap((g) => g.items), [groups]);
 

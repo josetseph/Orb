@@ -1,8 +1,8 @@
 # Finance: embedded Firefly III
 
-**What this covers.** How Orb embeds Firefly III as its personal-finance ledger and exposes it per Knowledge Base: the backend proxy (`backend/app/services/firefly_service.py` — `FireflyService`), the *administration-per-KB* isolation model (Firefly user groups), request scoping (`_run_scoped`, `user_group_id` stamping, PHP id-filters), every public service method with the Firefly endpoint it calls and the mapping into Orb's `Finance*` shapes, the `runtime.json` contract shared with the desktop shell (token minting/refresh, `.env`, upgrade/stash-swap, seeding, migrations), readiness states, the finance chat path, and the Next.js finance workspace (`frontend/src/app/finance/page.tsx`, `frontend/src/components/finance/**`). The route table itself lives in the API reference and the shell-side provisioning steps in the desktop doc; this file goes deeper on both and links rather than repeats.
+**What this covers.** How Orb embeds Firefly III as its personal-finance ledger and exposes it per Knowledge Base: the backend proxy (`backend/app/services/firefly_service.py` — `FireflyService`), the *administration-per-KB* isolation model (Firefly user groups), request scoping (`_run_scoped`, `user_group_id` stamping, PHP id-filters), every public service method with the Firefly endpoint it calls and the mapping into Orb's `Finance*` shapes, the `runtime.json` contract shared with the desktop shell (token minting/refresh, `.env`, upgrade/stash-swap, seeding, migrations), readiness states, the finance chat path, and the React finance workspace (`frontend/src/app/finance/page.tsx`, `frontend/src/components/finance/**`). The route table itself lives in the API reference and the shell-side provisioning steps in the desktop doc; this file goes deeper on both and links rather than repeats.
 
-**Related docs:** [Desktop shell §11 (PHP/Firefly bootstrap)](04-desktop-shell.md#11-firefly-iii--php-runtime-bootstrap-firefly-runtimejs) · [API reference: Finance routes](07-api-reference.md#finance-routes-api_desktoppy) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Frontend architecture](18-frontend-architecture.md) · [Frontend chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Packaging & release](05-packaging-build-and-release.md) · [Logging](23-logging-and-observability.md) · [Decisions & constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
+**Related docs:** [Desktop shell and runtime §4 (PHP/Firefly bootstrap)](04-desktop-shell.md#4-the-runtime-desktop_runtimepy) · [API reference: Finance routes](07-api-reference.md#finance-routes-api_desktoppy) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Frontend architecture](18-frontend-architecture.md) · [Frontend chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Packaging & release](05-packaging-build-and-release.md) · [Logging](23-logging-and-observability.md) · [Decisions & constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
 
 ---
 
@@ -12,8 +12,8 @@
 
 | Layer | Owns |
 |---|---|
-| `desktop/firefly-runtime.js` | Provisioning the portable PHP binary and the Firefly III release tree under `DATA_DIR/firefly/`, writing `.env`, running migrations/seeds, creating Passport keys/client, creating the single Firefly user, minting the personal-access API token, persisting all of it in `runtime.json`. |
-| `desktop/supervisor.js` (`startFirefly`, backend env) | Spawning `php artisan serve --host 127.0.0.1 --port 17412`, waiting for HTTP, injecting `FIREFLY_BASE_URL` and `FIREFLY_RUNTIME_FILE` into the FastAPI child. |
+| `backend/app/desktop_runtime.py` | Provisioning the portable PHP binary and the Firefly III release tree under `DATA_DIR/firefly/`, writing `.env`, running migrations/seeds, creating Passport keys/client, creating the single Firefly user, minting the personal-access API token, persisting all of it in `runtime.json`. |
+| `backend/app/desktop_runtime.py` (`start_firefly`, env setup) | Spawning `php artisan serve --host 127.0.0.1 --port 17412`, waiting for HTTP, exporting `FIREFLY_BASE_URL` and `FIREFLY_RUNTIME_FILE` before the API imports `Settings`. |
 | `backend/app/services/firefly_service.py` | The only code in the backend that talks to Firefly. HTTP client + bearer auth, per-KB *administration* (user-group) lifecycle, request scoping, resource CRUD, normalisation into Orb's flat JSON shapes, readiness reporting, the finance branch of chat. |
 | `backend/app/api_desktop.py` (Finance section) | Pydantic input models, route wrappers, `_finance_error` status mapping, multipart handling for attachments. |
 | `backend/app/services/kb_registry.py` (`firefly_group_id`, `firefly_group_title`, `set_firefly_group`, `detach_firefly_group`) | Persisting the KB → administration mapping in SQLite `knowledge_bases`. |
@@ -22,11 +22,11 @@
 **Explicitly not owned here**
 
 - Firefly III itself (a Laravel/PHP app, version `v6.6.6`, unmodified release tarball). Orb never patches its source; it drives it through the REST API and a handful of `php -r` scripts that boot Laravel and touch Eloquent models directly.
-- Port allocation (`desktop/ports.js`: `firefly: 17412`, env `ORB_FIREFLY_PORT` / legacy `LIVEOS_FIREFLY_PORT`) — see [Desktop shell §9](04-desktop-shell.md#9-ports-portsjs).
+- Port allocation (`desktop_runtime.py` `PORTS["firefly"]` = 17412, env `ORB_FIREFLY_PORT` / legacy `LIVEOS_FIREFLY_PORT`) — see [Desktop shell and runtime §4](04-desktop-shell.md#4-the-runtime-desktop_runtimepy).
 - Generic `?kb=` resolution (`backend/app/api/deps.py:get_kb`) — see [API reference](07-api-reference.md).
 - The KB lifecycle routes in `backend/app/api/kb.py` that *call into* this service (empty/delete/rename) — documented in §15 as interfaces.
 
-There are **no unit tests** for the finance subsystem (`backend/tests/unit` has none; the only "finance" hits under `backend/tests` are benchmark corpus notes).
+There are **no unit tests** for the finance subsystem (`backend/tests/unit` has none).
 
 ## 2. Files
 
@@ -39,9 +39,8 @@ There are **no unit tests** for the finance subsystem (`backend/tests/unit` has 
 | `backend/app/core/config.py` | Settings keys | `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`, `FIREFLY_API_TOKEN` |
 | `backend/app/api/chat.py` | Finance-aware chat branch | `_answer_chat_query` calls `looks_like_finance_query` / `answer_finance_question` |
 | `backend/app/api/kb.py` | Calls `destroy_kb_administration` on empty/delete, `sync_kb_group_title` on rename | — |
-| `desktop/firefly-runtime.js` | PHP + Firefly provisioning, `.env`, migrations, seed, Passport, user + token, `runtime.json` | `FIREFLY_VERSION`, `PHP_BIN_VERSION`, `fireflyUrl`, `fireflyDataRoot`, `fireflyAppDir`, `fireflyRuntimeFile`, `phpBinaryPath`, `ensurePhpRuntime`, `ensureFireflyApp`, `ensureFireflyRuntime` |
-| `desktop/scripts/prefetch-firefly.js` | Build-time: produce the bundled seed `desktop/resources/firefly/{php,app}` by running `ensurePhpRuntime` + `ensureFireflyApp` into a temp dir | `main()` |
-| `desktop/supervisor.js` | `startFirefly()`, backend env injection, boot order | — |
+| `backend/app/desktop_runtime.py` | PHP + Firefly provisioning, `.env`, migrations, seed, Passport, user + token, `runtime.json`; `start_firefly()`; boot order | `FIREFLY_VERSION`, `PHP_BIN_VERSION`, `firefly_root`, `firefly_app_dir`, `firefly_runtime_file`, `php_binary`, `ensure_php_runtime`, `ensure_firefly_app`, `ensure_firefly_runtime`, `start_firefly` |
+| `backend/app/desktop_runtime.py prefetch-firefly DEST` (called by `desktop/build.py prepare`) | Build-time: produce the bundled seed `desktop/resources/firefly/{php,app}` by running `ensure_php_runtime` + `ensure_firefly_app` into a scratch dir | `main()` |
 | `frontend/src/app/finance/page.tsx` | Page shell: composes hooks + tabs, chooses not-ready vs workspace view | `FinancePage` (default) |
 | `frontend/src/components/finance/hooks/useFinanceWorkspace.ts` | Loads workspace + all lists per KB, derived account groups, form seeding | `useFinanceWorkspace`, `FinanceWorkspaceState`, `FormSeeders` |
 | `frontend/src/components/finance/hooks/useFinanceMutations.ts` | All form state and every create/delete/search/report/reset action | `useFinanceMutations`, `FinanceMutationsState` |
@@ -66,24 +65,24 @@ Trade-offs that follow (documented in §16–§18): a ~1 s Laravel bootstrap for
 
 ## 4. Runtime contract: `runtime.json`, `.env`, token minting and refresh
 
-The shell (`desktop/firefly-runtime.js`) *produces* the runtime; the backend *consumes* it. The full provisioning sequence (PHP download/seed, tarball download, stash/swap upgrade, migrations, seeding) is walked step by step in [Desktop shell §11.2–11.5](04-desktop-shell.md#112-ensurephpruntimedatadir-onstatus). This section documents the **contract** — every field, who writes it, who reads it, and when it changes.
+The desktop runtime (`backend/app/desktop_runtime.py`, the Firefly half of it) *produces* the runtime file; `FireflyService` *consumes* it. The provisioning sequence (PHP download/seed, tarball download, stash/swap upgrade, migrations, seeding) is summarised in [Desktop shell and runtime §4](04-desktop-shell.md#4-the-runtime-desktop_runtimepy); the function names below are the Python ones. This section documents the **contract** — every field, who writes it, who reads it, and when it changes.
 
 ### 4.1 `runtime.json` — every field
 
-Location: `DATA_DIR/firefly/runtime.json` (`fireflyRuntimeFile(dataDir)`), passed to the backend as env `FIREFLY_RUNTIME_FILE`. Written by `writeJson` with mode `0600` (the file carries the password, APP_KEY and API token, and the data dir may be cloud-synced).
+Location: `DATA_DIR/firefly/runtime.json` (`firefly_runtime_file(data_dir)`), passed to the API as env `FIREFLY_RUNTIME_FILE`. Written by `_write_private` with mode `0600` (the file carries the password, APP_KEY and API token, and the data dir may be cloud-synced).
 
 | Field | Type | Written by | When | Read by |
 |---|---|---|---|---|
-| `email` | string, default `"orb@local.invalid"` | `ensureRuntimeMetadata` | first boot (kept forever after) | `ensureFireflyEnv` (`SITE_OWNER`), `readBootstrapState`, `bootstrapUserScript` |
-| `password` | string, `randomSecret(16)` = 16 random bytes base64url | `ensureRuntimeMetadata` | first boot | `bootstrapUserScript` via env `ORB_FIREFLY_BOOTSTRAP_PASSWORD` (bcrypt'ed into `users.password` and **re-set on every user bootstrap**). Never read by the backend. It is the password you would use to log in to Firefly's own web UI as `orb@local.invalid`. |
-| `instanceId` | UUID v4 | `ensureRuntimeMetadata` | first boot | nothing else in the tree reads it (informational). |
-| `appKey` | `"base64:" + 32 random bytes b64` | `ensureFireflyEnv` | first boot, or whenever the stored value does not start with `base64:` | `.env` `APP_KEY`. Changing it invalidates Laravel-encrypted data (sessions, encrypted attributes). |
-| `cronToken` | 32-char base64url | `ensureFireflyEnv` | first boot or when length ≠ 32 | `.env` `STATIC_CRON_TOKEN`. Nothing in Orb calls Firefly's cron endpoint. |
-| `passportReady` | bool | `ensureFireflyRuntime` | every boot (set `true` after key/client checks) | **nobody** — deliberately informational; the code trusts `passportKeysExist()` and the `oauth_clients` count instead (see 4.3). |
-| `userReady` | bool | `ensureFireflyRuntime` | after the user bootstrap script | nobody (informational, same reason). |
+| `email` | string, default `"orb@local.invalid"` | `_ensure_runtime_metadata` | first boot (kept forever after) | `_ensure_firefly_env` (`SITE_OWNER`), `_bootstrap_state_script`, `_bootstrap_user_script` |
+| `password` | string, `secrets.token_urlsafe(24)` | `_ensure_runtime_metadata` | first boot | `_bootstrap_user_script` via env `ORB_FIREFLY_BOOTSTRAP_PASSWORD` (bcrypt'ed into `users.password` and **re-set on every user bootstrap**). Never read by the backend. It is the password you would use to log in to Firefly's own web UI as `orb@local.invalid`. |
+| `instanceId` | UUID v4 | `_ensure_runtime_metadata` | first boot | nothing else in the tree reads it (informational). |
+| `appKey` | `"base64:" + 32 random bytes b64` | `_ensure_firefly_env` | first boot, or whenever the stored value does not start with `base64:` | `.env` `APP_KEY`. Changing it invalidates Laravel-encrypted data (sessions, encrypted attributes). |
+| `cronToken` | 32-char base64url | `_ensure_firefly_env` | first boot or when length ≠ 32 | `.env` `STATIC_CRON_TOKEN`. Nothing in Orb calls Firefly's cron endpoint. |
+| `passportReady` | bool | `ensure_firefly_runtime` | every boot (set `true` after key/client checks) | **nobody** — deliberately informational; the code trusts the key files and the `oauth_clients` count instead (see 4.3). |
+| `userReady` | bool | `ensure_firefly_runtime` | after the user bootstrap script | nobody (informational, same reason). |
 | `userId` | int | user bootstrap | after the user bootstrap script | backend `_bootstrap_user_id()` — every PHP script embeds `User::find(<userId>)`; falls back to `1` if missing/non-numeric. |
 | `groupId` | int | user bootstrap | after the user bootstrap script; **removed** by backend `destroy_kb_administration` when the default KB's administration is destroyed and it equals this value | backend `_activate_scope_locked`: the `default` KB adopts this group instead of creating a new one. |
-| `apiToken` | string (Passport personal access token, a JWT) | user bootstrap | after the user bootstrap script; **set to `null`** when Passport keys are regenerated or when no OAuth client exists | backend `_token()` (unless `FIREFLY_API_TOKEN` overrides). Shell also returns it from `ensureFireflyRuntime` as `token` but the supervisor does not forward it. |
+| `apiToken` | string (Passport personal access token, a JWT) | user bootstrap | after the user bootstrap script; **set to `null`** when Passport keys are regenerated or when no OAuth client exists | backend `_token()` (unless `FIREFLY_API_TOKEN` overrides). |
 
 Example (fields in write order):
 
@@ -113,24 +112,24 @@ self._scope_lock = asyncio.Lock()
 self._switched_group_id: int | None = None
 ```
 
-- `_load_runtime()` re-reads and re-parses the JSON file **on every call** (no caching). Missing file / unreadable / invalid JSON → `{}`. Consequences: a token minted by the shell after the backend started is picked up on the next request without a restart; conversely a manual edit takes effect immediately.
+- `_load_runtime()` re-reads and re-parses the JSON file **on every call** (no caching). Missing file / unreadable / invalid JSON → `{}`. Consequences: a token minted by the runtime after the API started is picked up on the next request without a restart; conversely a manual edit takes effect immediately.
 - `_token()` precedence: `settings.FIREFLY_API_TOKEN` (env) if truthy → else `runtime["apiToken"]` if a non-blank string → else `None`. With `None`, `status()` reports `bootstrapping` and no Firefly request is attempted.
-- `_php_paths()` derives everything from the runtime file's **directory**: `php = <dir>/php/php`, `app_dir = <dir>/app`. This is a hard-coded layout assumption (shell's `phpBinaryPath` is more flexible; see [04 §11.1](04-desktop-shell.md#111-constants-and-on-disk-layout)). If `FIREFLY_RUNTIME_FILE` is unset, `Path("")` → `.` and PHP is looked up at `./php/php` relative to the backend's cwd (it will not exist → `RuntimeError("Embedded PHP binary not found at …")` on the first scoped call).
+- `_php_paths()` derives everything from the runtime file's **directory**: `php = <dir>/php/php`, `app_dir = <dir>/app`. This is a hard-coded layout assumption matching `desktop_runtime.php_binary` / `firefly_app_dir`. If `FIREFLY_RUNTIME_FILE` is unset, `Path("")` → `.` and PHP is looked up at `./php/php` relative to the backend's cwd (it will not exist → `RuntimeError("Embedded PHP binary not found at …")` on the first scoped call).
 - `_bootstrap_user_id()` accepts int or numeric string, else `1`.
-- `destroy_kb_administration` is the only backend **writer**: it pops `groupId` and rewrites the file with `json.dumps(runtime, indent=2)` via `Path.write_text` — note this does **not** re-apply mode 0600 and does not add the trailing newline the shell writes (harmless; the shell's `readJson` tolerates both).
+- `destroy_kb_administration` is the only backend **writer**: it pops `groupId` and rewrites the file with `json.dumps(runtime, indent=2)` via `Path.write_text` — note this does **not** re-apply mode 0600 and does not add the trailing newline the shell writes (harmless; the runtime's reader tolerates both).
 
-Env injection (`desktop/supervisor.js`, backend child): `FIREFLY_BASE_URL: fireflyUrl()` (= `http://127.0.0.1:17412`) and `FIREFLY_RUNTIME_FILE: <dataDir>/firefly/runtime.json`. `FIREFLY_API_TOKEN` is **never** set by the shell — it exists for development against an external Firefly (set all three env vars by hand; `_php_paths` will then point at a non-existent PHP and administration creation will fail unless the runtime dir layout is mirrored).
+Env injection (`desktop_runtime.py`, before uvicorn imports `Settings`): `FIREFLY_BASE_URL` = `http://127.0.0.1:17412` and `FIREFLY_RUNTIME_FILE` = `<DATA_DIR>/firefly/runtime.json`. `FIREFLY_API_TOKEN` is **never** set by the runtime — it exists for development against an external Firefly (set all three env vars by hand; `_php_paths` will then point at a non-existent PHP and administration creation will fail unless the runtime dir layout is mirrored).
 
-### 4.3 Token minting and refresh (shell side)
+### 4.3 Token minting and refresh (runtime side)
 
-`ensureFireflyRuntime` runs on **every** app boot before `artisan serve` is spawned (`startAll`: search engines → Firefly → API+UI in parallel). Order and the exact invalidation rules:
+`ensure_firefly_runtime` runs on **every** app boot before `artisan serve` is spawned (`boot_sidecars` in `desktop_runtime.py`: the API is already serving; Qdrant + Meilisearch → Firefly run behind it in a background thread). Order and the exact invalidation rules:
 
 1. `php artisan migrate --force` then `php artisan db:seed --force` (full base seed — commit `f8f527f` replaced a currency-only `TransactionCurrencySeeder` because an empty `account_types` table made asset-account creation fail).
-2. `readBootstrapState()` — inline PHP returning `{user_id, group_id, clients}` where `clients = count(oauth_clients)`. Throws on failure (see rationale in [04 §11.5](04-desktop-shell.md#115-migrations-passport-user-token-ensurefireflyruntime)).
-3. `passportKeysExist()` — both `storage/oauth-private.key` and `oauth-public.key` must exist with size > 0. If not: `php artisan passport:keys --force` and **`runtime.apiToken = null`** (a token is an RS256 JWT signed by the private key; a new keypair makes every old token fail verification with 401).
+2. `_bootstrap_state_script(email)` via `_run_php` — inline PHP returning `{user_id, group_id, clients}` where `clients = count(oauth_clients)`. Raises on failure.
+3. Key check — both `storage/oauth-private.key` and `oauth-public.key` must exist with size > 0. If not: `php artisan passport:keys --force` and **`runtime.apiToken = null`** (a token is an RS256 JWT signed by the private key; a new keypair makes every old token fail verification with 401).
 4. If `clients === 0`: `php artisan passport:client --personal --no-interaction` and **`runtime.apiToken = null`** (personal access tokens are issued against the personal client; a missing client means the DB was reset).
 5. `runtime.passportReady = true`; write.
-6. If `!state.user_id || !runtime.apiToken` → run `bootstrapUserScript(email, "Orb")` with the password in env `ORB_FIREFLY_BOOTSTRAP_PASSWORD` (argv would be visible in `ps`). The script is idempotent: `UserGroup::firstOrCreate(['title' => 'Orb'])`, `Role owner`, `UserRole owner`, requires the `EUR` seed currency, creates or updates the user (`user_group_id`, bcrypt password, unblocked), attaches role and `GroupMembership`, sets EUR as group default and user default, then `$user->createToken('Orb Desktop')->accessToken`. Result → `userReady`, `userId`, `groupId`, `apiToken`.
+6. If `not state.user_id or not runtime.apiToken` → run `_bootstrap_user_script(email, "Orb")` with the password in env `ORB_FIREFLY_BOOTSTRAP_PASSWORD` (argv would be visible in `ps`). The script is idempotent: `UserGroup::firstOrCreate(['title' => 'Orb'])`, `Role owner`, `UserRole owner`, requires the `EUR` seed currency, creates or updates the user (`user_group_id`, bcrypt password, unblocked), attaches role and `GroupMembership`, sets EUR as group default and user default, then `$user->createToken('Orb Desktop')->accessToken`. Result → `userReady`, `userId`, `groupId`, `apiToken`.
 
 So a **new token is minted** exactly when: first boot; Passport keys were missing/empty (e.g. after `app/storage` loss or a botched upgrade); no OAuth client existed (DB recreated); or the user row disappeared. Each mint adds another `oauth_access_tokens` row named `Orb Desktop`; old tokens are not revoked (they may still be valid if keys were not rotated). There is **no time-based refresh**: Passport personal tokens default to a very long expiry, and neither side checks `expires_at`. If the token ever does expire the backend will report `auth_mismatch` (401) forever until `apiToken` is cleared from `runtime.json` (or the file deleted) and the app restarted.
 
@@ -138,11 +137,11 @@ The `runtime.groupId` written here is the group titled **`Orb`** (the bootstrap 
 
 ### 4.4 `.env` and app-tree upgrades (contract summary)
 
-Regenerated on every boot by `ensureFireflyEnv` — the table of keys is in [04 §11.4](04-desktop-shell.md#114-layout-metadata-env). Contract points that matter to the backend:
+Regenerated on every boot by `_ensure_firefly_env`. Contract points that matter to the backend:
 
 - `APP_URL = http://127.0.0.1:17412`, `TRUSTED_PROXIES = 127.0.0.1,::1` (was `**` before `fbcafe7`), `AUTHENTICATION_GUARD = web`, `DB_CONNECTION = sqlite`, `DB_DATABASE = <app>/storage/database/firefly.sqlite` (absolute), `QUEUE_CONNECTION = sync` (webhooks/rules run inline in the request), `MAIL_MAILER = log`, `APP_NAME = Orb_Finance`.
-- Upgrades: when `app/.orb-firefly-version` ≠ `FIREFLY_VERSION` (`v6.6.6`, override `ORB_FIREFLY_VERSION`), `stashAppState` copies `storage/database`, `storage/upload`, `storage/oauth-{private,public}.key` aside, `swapInAppTree` replaces `app/` atomically-ish (`app.bak` fallback), `restoreAppState` copies the stash back. Everything the backend depends on (SQLite DB with all administrations, uploads, Passport keys → token validity) therefore survives a Firefly version bump; only if the keys were lost does step 3 above rotate the token.
-- Build-time seed: `desktop/scripts/prefetch-firefly.js` runs `ensurePhpRuntime` + `ensureFireflyApp` into an `os.tmpdir()` scratch dir and copies `php/` and `app/` into `desktop/resources/firefly/` (gitignored, packaged as `<resources>/firefly`). At runtime `bundledFireflyRoot()` prefers that seed over a download when its markers (`php/.orb-php-runtime`, `app/.orb-firefly-version`) match. The seed contains **no** database, keys or `runtime.json` — those are always created per install.
+- Upgrades: when `app/.orb-firefly-version` ≠ `FIREFLY_VERSION` (`v6.6.6`, override `ORB_FIREFLY_VERSION`), `_stash_app_state` copies `storage/database`, `storage/upload`, `storage/oauth-{private,public}.key` aside, `_swap_in_app_tree` replaces `app/` atomically-ish (`app.bak` fallback), `_restore_app_state` copies the stash back. Everything the backend depends on (SQLite DB with all administrations, uploads, Passport keys → token validity) therefore survives a Firefly version bump; only if the keys were lost does step 3 above rotate the token.
+- Build-time seed: `python -m app.desktop_runtime prefetch-firefly DEST` (the `firefly` stage of `desktop/build.py prepare`) runs `ensure_php_runtime` + `ensure_firefly_app` into a scratch dir and copies `php/` and `app/` into `desktop/resources/firefly/` (gitignored, packaged as `<resources>/firefly`). At runtime `_bundled_firefly_root()` (via `ORB_RESOURCES_ROOT`) prefers that seed over a download when its markers (`php/.orb-php-runtime`, `app/.orb-firefly-version`) match. The seed contains **no** database, keys or `runtime.json` — those are always created per install.
 
 ## 5. The per-KB administration model
 
@@ -302,7 +301,7 @@ Caching: **none** at the HTTP level; the only memoised state is `_switched_group
 | Condition | Returned `status` | `ready`/`exists` | `detail` |
 |---|---|---|---|
 | `base_url` empty (`FIREFLY_BASE_URL` unset — e.g. running the backend outside the shell) | `disabled` | false/false | "Firefly base URL is not configured" |
-| `_token()` is `None` (runtime file missing, `apiToken` null because the shell is still bootstrapping or just rotated keys) | `bootstrapping` | false/false | "Firefly runtime has not finished minting its API token yet" |
+| `_token()` is `None` (runtime file missing, `apiToken` null because the desktop runtime is still bootstrapping or just rotated keys) | `bootstrapping` | false/false | "Firefly runtime has not finished minting its API token yet" |
 | `GET /api/v1/about` raised `FireflyHTTPError` with 401/403 | `auth_mismatch` | false/false | the error string (`Firefly GET /api/v1/about failed (401): Unauthenticated.`) |
 | `FireflyHTTPError` with any other status | `error` | false/false | error string |
 | Any other exception (connection refused while `artisan serve` is not up yet, timeout) | `starting` | false/false | exception string |
@@ -595,11 +594,11 @@ Not wired in the UI (backend-only): bills, piggy banks, tags, webhooks, object g
 - `FinanceTabs`: nine buttons in the order Overview, Accounts, Transactions, Budgets, Categories, Recurring, Rules, Search, Reports.
 - `Panel(title, icon?)`, `Field(label)`, `MetricCard(icon,label,value,currency)`, `DeletableList(rows{id,title,subtitle?}, empty, busy, onDelete)`, `AccountList(accounts, currency?, empty)` (uses `currency || account.currency`), `TransactionList(rows, currency?, onDelete?, busy?)` (colour: deposit emerald, withdrawal rose, transfer sky; amount uses `tx.currency_code || currency`; date via `toLocaleDateString`), `BasicSummaryList(basic)` (label = `title || monetary_value || key`; amount = `value_parsed ?? value ?? primitive`), `ChartList(data)` (accepts a list or `{data: [...]}`; label = `label || key || name || Series n`; value = `y ?? value ?? Σ entries[].y`), `SuggestInput(value, onChange, suggestions, placeholder)` (case-insensitive contains filter, max 8, closes 120 ms after blur so a click registers).
 - `utils.ts`: `FIELD_INPUT` Tailwind class string; `TabId` union; `money(value, currency?)` → `"12.34 USD"`; `todayIso()` / `tomorrowIso()` use `toISOString().slice(0,10)` (**UTC** date), while `monthStartIso()` uses local `getFullYear/getMonth` — near midnight the default transaction date and the report start can disagree by a day; `errMessage(err, fallback)`.
-- All finance client calls go through `api.ts`'s axios `http` helper with `withKb(kb, params)` (GET) or `kbQuery(kb)` (POST/DELETE) appending `?kb=`; base URL `NEXT_PUBLIC_API_URL ?? "/api/v1"` proxied by Next to the backend.
+- All finance client calls go through `api.ts`'s axios `http` helper with `withKb(kb, params)` (GET) or `kbQuery(kb)` (POST/DELETE) appending `?kb=`; base URL `VITE_API_URL ?? "/api/v1"`, same origin as the API (which serves the UI).
 
 ### 13.6 Link-out to Firefly's own UI
 
-There is **no** link-out in the current frontend: nothing renders `workspace.firefly_url`, and `POST /finance/open` has no client wrapper. The backend keeps `firefly_url` in every workspace payload and `prepare_open` ready for it. If added, the link must be opened after `prepare_open` (so the active administration matches the KB) and would open in the system browser (Electron `setWindowOpenHandler` denies in-app popups and calls `shell.openExternal`); the user would log in with `runtime.json`'s `email`/`password`. Other places in the UI that mention Firefly are copy only: the Settings page's "Clear finance data" (calls the same reset route) and "Empty this knowledge base" buttons, the KB page's delete confirmations, and the sidebar entry `Finance → /finance`.
+There is **no** link-out in the current frontend: nothing renders `workspace.firefly_url`, and `POST /finance/open` has no client wrapper. The backend keeps `firefly_url` in every workspace payload and `prepare_open` ready for it. If added, the link must be opened after `prepare_open` (so the active administration matches the KB) and would open in the system browser (the Tauri window's navigation guard sends foreign URLs and `window.open` to the system browser); the user would log in with `runtime.json`'s `email`/`password`. Other places in the UI that mention Firefly are copy only: the Settings page's "Clear finance data" (calls the same reset route) and "Empty this knowledge base" buttons, the KB page's delete confirmations, and the sidebar entry `Finance → /finance`.
 
 ## 14. Configuration keys and on-disk layout
 
@@ -607,20 +606,20 @@ There is **no** link-out in the current frontend: nothing renders `workspace.fir
 
 | Key | Default | Set by | Effect |
 |---|---|---|---|
-| `FIREFLY_BASE_URL` | `None` | supervisor → `http://127.0.0.1:17412` | Empty ⇒ `status()` = `disabled`; every `_request` raises "Firefly base URL is not configured". Trailing `/` stripped. |
-| `FIREFLY_RUNTIME_FILE` | `None` | supervisor → `<DATA_DIR>/firefly/runtime.json` | Source of `apiToken`, `userId`, `groupId`; its parent directory fixes `php/php` and `app/` locations for PHP scripts. |
-| `FIREFLY_API_TOKEN` | `None` | never by the shell | Overrides `runtime.apiToken` when set (dev/external Firefly). |
+| `FIREFLY_BASE_URL` | `None` | `desktop_runtime.py` → `http://127.0.0.1:17412` | Empty ⇒ `status()` = `disabled`; every `_request` raises "Firefly base URL is not configured". Trailing `/` stripped. |
+| `FIREFLY_RUNTIME_FILE` | `None` | `desktop_runtime.py` → `<DATA_DIR>/firefly/runtime.json` | Source of `apiToken`, `userId`, `groupId`; its parent directory fixes `php/php` and `app/` locations for PHP scripts. |
+| `FIREFLY_API_TOKEN` | `None` | never by the runtime | Overrides `runtime.apiToken` when set (dev/external Firefly). |
 
 There are no `ORB_`/`LIVEOS_` aliases for these three; they are read only through `settings`.
 
-### 14.2 Shell-side knobs (`desktop/`)
+### 14.2 Runtime-side knobs (`desktop_runtime.py`)
 
 | Env | Default | Effect |
 |---|---|---|
-| `ORB_FIREFLY_PORT` (legacy `LIVEOS_FIREFLY_PORT`) | `17412` | `PORTS.firefly`; changes `APP_URL`, `artisan serve --port`, and `FIREFLY_BASE_URL`. |
+| `ORB_FIREFLY_PORT` (legacy `LIVEOS_FIREFLY_PORT`) | `17412` | `PORTS["firefly"]`; changes `APP_URL`, `artisan serve --port`, and `FIREFLY_BASE_URL`. |
 | `ORB_FIREFLY_VERSION` | `v6.6.6` | Release tag to download / seed marker to expect. Changing it triggers the stash-swap upgrade on next boot. |
 | `ORB_PHP_BIN_VERSION` | `1.2.0` | NativePHP `php-bin` tag; forms `PHP_RUNTIME_ID = nativephp:<ver>:php-8.5`. |
-| `ORB_FIREFLY_BOOTSTRAP_PASSWORD` | — | Not a user knob: set by the shell only for the user-bootstrap `php -r` child. |
+| `ORB_FIREFLY_BOOTSTRAP_PASSWORD` | — | Not a user knob: set by the runtime only for the user-bootstrap `php -r` child. |
 
 ### 14.3 On-disk layout (`DATA_DIR/firefly/`)
 
@@ -638,10 +637,10 @@ DATA_DIR/firefly/
 │   ├── storage/oauth-private.key, oauth-public.key   Passport RSA keys — token validity depends on them
 │   ├── storage/logs/            Laravel logs (LOG_CHANNEL=stack)
 │   └── bootstrap/cache/
-├── app.bak/                     transient during swapInAppTree
+├── app.bak/                     transient during _swap_in_app_tree
 ├── .app-state-stash/ (.new)     transient during upgrades; may be the ONLY copy of the DB if an upgrade died
 └── .tmp/                        php-8.5.zip, FireflyIII-<ver>.tar.gz, extraction scratch
-DATA_DIR/logs/firefly.log        stdout/stderr of `artisan serve` (supervisor: serviceLogPath(dataDir, "firefly"))
+DATA_DIR/logs/firefly.log        stdout/stderr of `artisan serve` (desktop_runtime.py `_spawn("firefly", …, log=…)`)
 DATA_DIR/orb.db                  knowledge_bases.firefly_group_id / firefly_group_title (the KB → administration map)
 ```
 
@@ -651,8 +650,8 @@ The mapping lives in **two** places that must agree: `orb.db` (per KB) and `runt
 
 | Direction | Contract |
 |---|---|
-| Shell → Firefly | `ensureFireflyRuntime` must finish (migrate, seed, keys, client, user, token) before `artisan serve` starts; `waitHttp(fireflyUrl(), 120 s)` gates the rest of boot. A failure in `startFirefly` **aborts app boot** (it is awaited in `startAll` before the API/UI start; only multimodal services are deferred). |
-| Shell → Backend | Env `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`; the runtime file's directory layout (`php/php`, `app/`). |
+| Runtime → Firefly | `ensure_firefly_runtime` must finish (migrate, seed, keys, client, user, token) before `artisan serve` starts; `wait_http(…, 120 s)` gates the rest of `boot_sidecars`. A failure in `start_firefly` does **not** abort the app: the API is already serving; `boot-status.json` reports `Local services failed to start: …` and finance stays `starting`/`bootstrapping` (multimodal prep, which runs after Firefly, is skipped too). |
+| Runtime → API | Env `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE` (set before uvicorn imports `Settings`); the runtime file's directory layout (`php/php`, `app/`). |
 | Backend ↔ Firefly | REST over loopback with `Authorization: Bearer`; `php -r` scripts executed with `cwd=app/` that `require vendor/autoload.php` + `bootstrap/app.php` and use Eloquent models `FireflyIII\User`, `Models\UserGroup`, `UserRole`, `GroupMembership`, `TransactionCurrency`, `Factory\UserGroupFactory`, and the twelve ledger models. These class names and the `user_group_id` column are an **implicit dependency on Firefly internals** — a Firefly upgrade that renames them breaks scoping while the REST layer keeps working. |
 | Backend → registry | `kb_registry.get_metadata`, `set_firefly_group`, `detach_firefly_group`. |
 | KB routes → service | `destroy_kb_administration` (empty, delete, delete-non-default; best-effort), `sync_kb_group_title` (rename; best-effort). KB **create** does not call the service. |
@@ -667,7 +666,7 @@ The mapping lives in **two** places that must agree: `orb.db` (per KB) and `runt
 4. **PHP scripts must print JSON last.** `_run_php` parses from the last `{`; a script that prints a JSON object followed by other output will break.
 5. **Titles are `Orb: <kb.name>`.** The create script finds-or-creates by title; the rename path keeps them in sync. Do not create groups with other titles.
 6. **`default` adopts `runtime.groupId`.** This keeps the bootstrap group (titled `Orb`) from being orphaned; destroying it pops `groupId` so a later `default` scope creates `Orb: default` fresh.
-7. **Never store the token in argv or logs.** The shell passes the bootstrap password via env; the backend only ever puts the token in the `Authorization` header. Error strings from `_request` include method/path/status/body but never headers.
+7. **Never store the token in argv or logs.** The desktop runtime passes the bootstrap password via env; the backend only ever puts the token in the `Authorization` header. Error strings from `_request` include method/path/status/body but never headers.
 8. **Runtime flags are advisory.** `passportReady`/`userReady` are written but never trusted; the DB and key files are (commit `f8f527f`).
 9. **Amounts are strings on the wire, floats in Orb.** Two-decimal formatting on write, `_as_float` on read.
 10. **`limit=100`, first page only.** A locked simplification; see Gotchas before "fixing" it (the PHP allow-list filters *after* the page is fetched, so paginating requires either server-side `user_group_id` support or fetching all pages).
@@ -679,23 +678,23 @@ The mapping lives in **two** places that must agree: `orb.db` (per KB) and `runt
 | Failure | Where it surfaces | Behaviour / recovery |
 |---|---|---|
 | PHP binary missing (`php/php` absent, or `FIREFLY_RUNTIME_FILE` unset) | first scoped call for a KB without a cached switch | `RuntimeError("Embedded PHP binary not found at …")` → `get_workspace` returns `status: "error"`; mutating routes 502; unwrapped GET lists 500. Fix: let the shell re-provision (`ensurePhpRuntime` re-downloads when the marker mismatches) or delete `firefly/php`. |
-| Port 17412 busy | shell `waitHttp` times out (120 s) or `artisan serve` exits | Boot fails (`startFirefly` is awaited). `freeDesktopPorts` sweeps Orb's own ports before start; a foreign process on 17412 needs `ORB_FIREFLY_PORT`. Backend sees `starting`. |
+| Port 17412 busy | runtime `wait_http` times out (120 s) or `artisan serve` exits | Sidecar boot reports a failure in `boot-status.json`; the app keeps running without finance. `free_ports` sweeps Orb's own ports before start; a foreign process on 17412 needs `ORB_FIREFLY_PORT`. Backend sees `starting`. |
 | Firefly not yet up / crashed after boot | `httpx.ConnectError` inside `_request` | `status()` → `starting`; scoped calls raise → 502/500; UI shows "Firefly is starting" with Refresh. |
-| `apiToken` null (keys rotated, first boot in progress) | `_token()` None | `status()` → `bootstrapping`; no HTTP attempted. Resolves when the shell finishes minting. |
+| `apiToken` null (keys rotated, first boot in progress) | `_token()` None | `status()` → `bootstrapping`; no HTTP attempted. Resolves when the desktop runtime finishes minting. |
 | Token invalid (401/403) — e.g. keys regenerated but `runtime.json` restored from a backup | `/about` → `FireflyHTTPError(401)` | `auth_mismatch` (amber card). Fix: set `"apiToken": null` in `runtime.json` and restart so the shell mints a new token. |
-| Migration failure (`artisan migrate` non-zero, e.g. corrupt SQLite, disk full, cloud-sync lock) | shell `runPhp` throws | Boot aborts with the PHP stderr in the shell error; the DB is untouched. `DKR_RUN_MIGRATION=false` prevents Firefly from also migrating at request time. |
+| Migration failure (`artisan migrate` non-zero, e.g. corrupt SQLite, disk full, cloud-sync lock) | runtime `_run_php` raises | Firefly boot stops with the PHP stderr in `backend.log` / `boot-status.json`; the DB is untouched. `DKR_RUN_MIGRATION=false` prevents Firefly from also migrating at request time. |
 | Seed failure (`db:seed`) | same | Same; asset-account creation would 422 without `account_types`. |
 | `readBootstrapState` throws | same | Boot aborts (deliberate since `f8f527f` — silently treating it as "absent" reset Passport every boot). |
 | Group missing in Firefly but present in `orb.db` (DB deleted/restored) | `_php_switch_group_script` → `User or group not found` (exit 1) | Every scoped call for that KB fails; `get_workspace` → `error`. Recovery: `POST /finance/reset-administration` (destroy script exits 0 with `reason: "missing"`, mapping detached) then reopen Finance → new group. Note `destroy_kb_administration` runs the destroy script *without* switching first, so it works even in this state. |
-| Bootstrap user missing (`userId` stale) | create/switch scripts → `Bootstrap user not found` | Shell re-creates the user on next boot (`!state.user_id`), but `userId` may change; the backend re-reads `runtime.json` per call so no restart is needed. |
+| Bootstrap user missing (`userId` stale) | create/switch scripts → `Bootstrap user not found` | The runtime re-creates the user on next boot (`not state.user_id`), but `userId` may change; the backend re-reads `runtime.json` per call so no restart is needed. |
 | `_ids_for_group` PHP failure | list calls | Empty allow-list → empty lists (fail closed) with a warning; UI shows "No … yet." even though data exists. |
 | PHP timeout (>90 s, e.g. cold disk / antivirus) | `subprocess.TimeoutExpired` | Not a `RuntimeError` → 500 from wrapped routes; `get_workspace` still catches (→ `error`). |
 | Firefly 422 (validation) | `FireflyHTTPError(422)` with Firefly's `message` | 502 with detail such as `Firefly POST /api/v1/accounts failed (422): The given data was invalid.` — the UI shows it in the red banner. |
 | Firefly returns empty body on create (exchange rates) | handled | Re-list or synthetic row (§9.10). |
-| Upgrade interrupted after wiping `app/` | shell | `stashAppState` reuses the previous stash if it captured nothing; `swapInAppTree` restores `app.bak` on populate failure. Worst case (stash also missing): a fresh DB — all administrations lost while `orb.db` still maps them (→ "group missing" row above). |
-| Download race / corrupted archive | shell | `downloadFile` opens the file only after HTTP 200 and verifies `content-length` (`02ac9d3`); extraction of an empty tree throws before the swap. |
+| Upgrade interrupted after wiping `app/` | runtime | `_stash_app_state` reuses the previous stash if it captured nothing; `_swap_in_app_tree` restores `app.bak` on populate failure. Worst case (stash also missing): a fresh DB — all administrations lost while `orb.db` still maps them (→ "group missing" row above). |
+| Download race / corrupted archive | runtime | `_download` (via `local_models.download_file`) writes the archive only on success; extraction of an empty tree raises before the swap. |
 
-Logging: backend logger name `FireflyService` (warnings for enrichment failures, id-list failures, destroy failures, budget-limit failures, seed-bill cleanup; info on destroy). Route-level failures in KB routes log with `[empty-kb]`/`[delete-kb]`/`[delete-non-default]` prefixes. Shell status strings (`Migrating Firefly database…`, `Seeding Firefly base data…`, `Preparing Firefly API auth…`, `Creating Firefly desktop user…`, `Using bundled …`, `Embedded PHP ready`, `Firefly III app ready`) go to the splash via `onStatus`. Firefly's own output: `DATA_DIR/logs/firefly.log` and `app/storage/logs/`.
+Logging: backend logger name `FireflyService` (warnings for enrichment failures, id-list failures, destroy failures, budget-limit failures, seed-bill cleanup; info on destroy). Route-level failures in KB routes log with `[empty-kb]`/`[delete-kb]`/`[delete-non-default]` prefixes. Shell status strings (`Migrating Firefly database…`, `Seeding Firefly base data…`, `Preparing Firefly API auth…`, `Creating Firefly desktop user…`, `Using bundled …`, `Embedded PHP ready`, `Firefly III app ready`) go to `DATA_DIR/boot-status.json` (via `status()`) and the UI's status indicator. Firefly's own output: `DATA_DIR/logs/firefly.log` and `app/storage/logs/`.
 
 ## 18. Gotchas and non-obvious behaviours
 
@@ -718,7 +717,7 @@ Logging: backend logger name `FireflyService` (warnings for enrichment failures,
 - **`runtime.json` is re-read per request** (cheap, but means a corrupted file switches the whole finance feature to `bootstrapping` instantly). The backend's rewrite drops the 0600 mode.
 - **`todayIso()`/`tomorrowIso()` are UTC, `monthStartIso()` is local** in the frontend.
 - **GET list routes have no error wrapper** — a Firefly outage during `refresh()` produces plain-text 500s for accounts/transactions (which are required) and the banner shows the generic message; budgets/categories/etc. degrade to `[]` silently.
-- **`_php_paths` ignores `phpBinaryPath`'s search logic**: if a future NativePHP zip moves the binary to `bin/php`, the shell keeps working and the backend breaks.
+- **`_php_paths` duplicates `desktop_runtime.php_binary`**: if a future NativePHP zip moves the binary to `bin/php`, both must change together.
 - **`user_group_id` stamping uses `setdefault`**, so a caller-supplied `params["user_group_id"]` wins — `summary`/`report`/`_list_accounts_unlocked` pass it explicitly (same value).
 
 ## 19. Extension points
@@ -727,17 +726,17 @@ Logging: backend logger name `FireflyService` (warnings for enrichment failures,
 - **Add a new Firefly resource to the backend:** (1) if it has a `user_group_id` column, add the Eloquent model name to the `allowed` set in `_php_model_ids_for_group_script` **and** to the model list in `_php_destroy_group_script`; (2) write `_normalize_<x>`; (3) implement `list_<x>` via `_list_scoped_resources(group_id, model=…, path=…, normalize=…)`, and `create_<x>`/`delete_<x>` as closures passed to `_run_scoped`; (4) add routes in `api_desktop.py` with a Pydantic body and `_finance_error` wrapping (wrap the GET too); (5) document in 07.
 - **Add a currency to the create fallback:** extend `_CURRENCY_META` (only matters when Firefly's seed lacks the code).
 - **Change the group naming scheme:** `_group_title_for_kb` and `sync_kb_group_title` must change together; existing groups are found by title, so also migrate titles or ids.
-- **Expose "open in Firefly":** call `POST /finance/open`, then `window.open(url)` (Electron opens externally); consider surfacing `runtime.json` credentials in Settings.
+- **Expose "open in Firefly":** call `POST /finance/open`, then `window.open(url)` (the Tauri shell opens it externally); consider surfacing `runtime.json` credentials in Settings.
 - **Reduce PHP spawns:** cache `_ids_for_group` results per (model, gid) and invalidate on create/delete of that model under the same lock; or pass `user_group_id` and verify Firefly honours it per endpoint before dropping the allow-list.
-- **Upgrade Firefly:** bump `ORB_FIREFLY_VERSION`/`FIREFLY_VERSION`, re-run `desktop/scripts/prefetch-firefly.js` for the bundled seed, then verify every PHP script's model/class names and the `user_group_id` column still exist, and re-check endpoints that gained/lost `user_group_id` support.
+- **Upgrade Firefly:** bump `ORB_FIREFLY_VERSION`/`FIREFLY_VERSION`, re-run `ORB_REBUILD_FIREFLY=1 python3 desktop/build.py prepare` for the bundled seed, then verify every PHP script's model/class names and the `user_group_id` column still exist, and re-check endpoints that gained/lost `user_group_id` support.
 
 ## 20. History / rationale
 
 | Commit | Date | Relevance |
 |---|---|---|
-| `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" | 2026-08-02 | Introduces `firefly_service.py` (complete method set, unchanged since), `firefly-runtime.js`, the per-KB administration model, and the reset/empty/delete wiring. Original runtime: currency-only seed (`TransactionCurrencySeeder`), `passportReady`/`userReady` flags trusted, password passed in argv, `TRUSTED_PROXIES="**"`, a separate `generateTokenScript`. |
+| `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" | 2026-08-02 | Introduces `firefly_service.py` (complete method set, unchanged since), the shell-side Firefly bootstrap (since ported to `desktop_runtime.py`), the per-KB administration model, and the reset/empty/delete wiring. Original runtime: currency-only seed (`TransactionCurrencySeeder`), `passportReady`/`userReady` flags trusted, password passed in argv, `TRUSTED_PROXIES="**"`, a separate `generateTokenScript`. |
 | `6162be2` "Rebrand LifeOS / LiveOS to Orb" | 2026-08-02 | Group titles `Orb: …`, token name `Orb Desktop`, `APP_NAME=Orb_Finance`, env aliases. |
-| `fbcafe7` "Align codebase with Orb desktop product and drop legacy Docker-era paths" | 2026-08-03 | Deletes the legacy native ledger `backend/app/models/finance.py`; splits the 1,945-line `finance/page.tsx` into `components/finance/**` (hooks, tabs, shared components); `fireflyUrl` moves to `ports.js`; `TRUSTED_PROXIES` narrowed to loopback; zip extraction passes paths via argv. |
+| `fbcafe7` "Align codebase with Orb desktop product and drop legacy Docker-era paths" | 2026-08-03 | Deletes the legacy native ledger `backend/app/models/finance.py`; splits the 1,945-line `finance/page.tsx` into `components/finance/**` (hooks, tabs, shared components); `fireflyUrl` moves to the shell's port table; `TRUSTED_PROXIES` narrowed to loopback; zip extraction passes paths via argv. |
 | `38d6038` "Fix Windows Firefly prefetch by extracting PHP zips without system Python" | 2026-08-04 | `extractZipWindows` (PowerShell `Expand-Archive`, bsdtar fallback). |
 | `f8f527f` "Harden security and fix data-loss and perf issues from full-codebase audit" | 2026-08-06 | Backend: `FireflyHTTPError` (status-aware `auth_mismatch`), `_switched_group_id` cache ("cache Firefly scope switches"), destroy clears the cache. Shell: full `db:seed`, `readBootstrapState` + `passportKeysExist` replace the trusted flags, token nulled on key/client regeneration, bootstrap password via env, `stashAppState`/`restoreAppState`/`swapInAppTree` preserve `storage/**` across upgrades, HTTPS-only capped redirects, 64 MiB `maxBuffer`, 0600 on `runtime.json`/`.env`. |
 | `02ac9d3` "Fix GitHub release download race that wiped Firefly archives mid-extract" | 2026-08-07 | `downloadFile` defers `createWriteStream` until HTTP 200 and validates `content-length`. |

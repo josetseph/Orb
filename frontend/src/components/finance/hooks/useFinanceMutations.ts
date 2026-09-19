@@ -1,5 +1,3 @@
-"use client";
-
 import { useLayoutEffect, useState, type FormEvent, type MutableRefObject } from "react";
 import { api } from "@/lib/api";
 import { errMessage, monthStartIso, todayIso, tomorrowIso } from "../utils";

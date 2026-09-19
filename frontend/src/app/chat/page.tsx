@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   ArrowUp,
@@ -12,7 +10,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import Image from "next/image";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
@@ -279,7 +276,7 @@ export default function ChatPage() {
       if (!ok) window.open(filePreview.url, "_blank", "noopener,noreferrer");
     } catch (error) {
       console.error("Reveal failed:", error);
-      alert("Could not reveal this file on disk.");
+      alert(`Could not reveal this file on disk: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   };
 
@@ -389,7 +386,7 @@ export default function ChatPage() {
                 </div>
               ) : (
                 <div key={message.id} className="flex animate-rise gap-3.5">
-                  <Image src="/logo-icon.png" alt="" width={24} height={24} className="mt-1 h-6 w-6 shrink-0 rounded-[7px]" />
+                  <img src="/logo-icon.png" alt="" width={24} height={24} className="mt-1 h-6 w-6 shrink-0 rounded-[7px]" />
                   <AssistantMessageBody
                     message={message}
                     kb={currentKB}
@@ -413,7 +410,7 @@ export default function ChatPage() {
 
             {isLoading && (
               <div className="flex items-center gap-3.5">
-                <Image src="/logo-icon.png" alt="" width={24} height={24} className="h-6 w-6 animate-pulse rounded-[7px]" />
+                <img src="/logo-icon.png" alt="" width={24} height={24} className="h-6 w-6 animate-pulse rounded-[7px]" />
                 <span className="text-[13px] text-n-400">{loadingStage || "Thinking…"}</span>
                 {loadingModel && (
                   <span className="text-[11px] text-n-600">· {loadingModel}, on this machine</span>

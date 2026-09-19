@@ -1,5 +1,3 @@
-"use client";
-
 import { AlertTriangle, Check, File as FileIcon, FolderOpen, Loader2 } from "lucide-react";
 import { getDesktopBridge, pickDesktopFile, pickDesktopDirectory } from "@/lib/desktop";
 import { cn } from "@/lib/utils";

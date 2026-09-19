@@ -1,7 +1,5 @@
-"use client";
-
 import { useEffect, useState } from "react";
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { AlertTriangle, X } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -37,7 +35,7 @@ export function AiLimitedBanner() {
           ? "Local models are still downloading — chat and ingest wait until they finish."
           : "No model configured yet — notes work; chat, ingest and the graph need one."}
       </span>
-      <Link href="/models" className="font-medium text-accent no-underline">
+      <Link to="/models" className="font-medium text-accent no-underline">
         {needsDownload ? "Continue download" : "Choose a model"}
       </Link>
       <button

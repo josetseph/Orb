@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import meilisearch
@@ -24,23 +25,35 @@ class MeilisearchService:
     """Meilisearch client managing per-KB node indexes for keyword search."""
 
     def __init__(self, collection_name: str | None = None) -> None:
-        self._enabled = True
         # Keep attribute name `collection` for call-site compatibility
         self.collection = collection_name or settings.MEILI_INDEX_NAME
-        self.client = None
+        self._client = None
+        self._retry_at = 0.0
+        self._connect()
+
+    @property
+    def client(self):
+        """(Re)connect lazily: the desktop runtime boots Meilisearch after the API is up."""
+        if self._client is None and time.monotonic() >= self._retry_at:
+            self._connect()
+        return self._client
+
+    @property
+    def _enabled(self) -> bool:
+        return self._client is not None
+
+    def _connect(self) -> None:
         try:
-            host = settings.MEILI_HOST
-            port = settings.MEILI_PORT
-            key = settings.MEILI_MASTER_KEY
-            url = f"http://{host}:{port}"
-            self.client = meilisearch.Client(url, key)
+            client = meilisearch.Client(
+                f"http://{settings.MEILI_HOST}:{settings.MEILI_PORT}", settings.MEILI_MASTER_KEY
+            )
+            client.health()
+            self._client = client
             self._ensure_collection()
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._enabled = False
-            self.client = None
-            logger.warning(
-                f"Meilisearch client init failed, disabling search path: {exc}"
-            )
+            self._client = None
+            self._retry_at = time.monotonic() + 5
+            logger.warning(f"Meilisearch not reachable yet (retrying on use): {exc}")
 
     def _index(self):
         return self.client.index(self.collection)
@@ -73,7 +86,7 @@ class MeilisearchService:
             logger.debug(f"[Meili] Settings update: {exc}")
 
     def is_available(self) -> bool:
-        if not self._enabled or not self.client:
+        if not self.client:
             return False
         try:
             self.client.health()
@@ -82,7 +95,7 @@ class MeilisearchService:
             return False
 
     def reset_all(self) -> None:
-        if not self._enabled or not self.client:
+        if not self.client:
             return
         try:
             task = self.client.delete_index(self.collection)

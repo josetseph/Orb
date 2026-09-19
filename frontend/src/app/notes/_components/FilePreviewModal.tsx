@@ -1,5 +1,3 @@
-"use client";
-
 import { FolderOpen, X } from "lucide-react";
 import { BlobMediaPlayer } from "@/components/blob-media-player";
 import { isDesktopApp, revealInFolderLabel } from "@/lib/desktop";
@@ -44,7 +42,6 @@ export function FilePreviewModal({
         </div>
         <div className="max-h-[calc(90vh-52px)] overflow-y-auto p-4">
           {filePreview.type === "image" && (
-            /* eslint-disable-next-line @next/next/no-img-element */
             <img
               src={filePreview.url}
               alt={filePreview.filename}

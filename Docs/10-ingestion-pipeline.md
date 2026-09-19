@@ -46,7 +46,6 @@
 | `backend/tests/unit/test_extraction_schemas.py` | Unit tests for the tolerant extraction schema | — |
 | `backend/tests/unit/test_extraction_chunking.py` | Tests for splitting/budget/merge helpers (word-count tokenizer stub) | — |
 | `backend/tests/unit/test_ingestion_chunked_extraction.py` | Tests `_extract_with_chunking` / `_extract_chunk` / `_batch_image_titles` against a stub LLM that truncates large chunks | — |
-| `backend/tests/benchmark/prepare_dataset.py` | Batch client: create → `/ingest` → poll `/status` | `_create_and_ingest`, `_wait_for_completion` |
 
 ## 3. Architecture / flow
 
@@ -150,7 +149,6 @@ Every trigger builds a `NoteInput(content, created_at, title, skip_ingestion)` a
 | Legacy create+ingest | `api/notes.py` → `POST /api/v1/ingest` | new note row + vault file created first (`persist_note_body`, `refresh_note_links`) | row created with `processing_stage="Queued for ingestion"` (or `"Saved"` when `skip_ingestion`) | the request body itself; `created_at` filled with the parsed/created timestamp if absent; **`title` is whatever the caller sent (may be None → LLM title)** | `require_ai()` unless `skip_ingestion=True` |
 | Re-ingest all unprocessed/failed | `api/admin.py` → `POST /api/v1/admin/reingest-all` | `processed == False OR failed == True` in KB | none (flags left as-is; `process_note` will overwrite stage) | vault body, `created_at`, `title=note.title` | `require_ai()` |
 | Re-ingest whole vault | `api_desktop.py` → `POST /api/v1/notes/reingest-vault` | every note in KB | `processed=False, failed=False, processing_stage="Queued for vault re-ingest", processing_model=None` (committed before queueing); bodies read in one `asyncio.to_thread` batch | vault body, `created_at`, `title=n.title` | `require_ai()` |
-| Benchmark client | `backend/tests/benchmark/prepare_dataset.py` | HotPotQA/MuSiQue note files | via HTTP: `POST /api/v1/notes` then `POST /api/v1/notes/{id}/ingest`, then polls `GET /api/v1/notes/{id}/status` until `processed` or `failed` (no timeout) | — | — |
 
 Not triggers (common misconception): `POST /api/v1/notes` (create) and `PUT /api/v1/notes/{id}` (autosave) never ingest. The vault watcher/sync (`services/vault_watcher.py`, `services/vault_sync.py`) only writes advisory stages (`"Saved"`, `"Changed on disk — re-ingest when ready"`, `"External delete detected — review in Orb"`) and never queues work. `POST /api/v1/admin/reset-ingestion-data` wipes stores and clears flags but does not queue anything.
 

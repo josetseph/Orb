@@ -1,5 +1,3 @@
-"use client";
-
 import { useRef } from "react";
 import { FolderPlus, Loader2, Plus, Search, Zap } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -221,7 +219,6 @@ export function NotesSidebar({
           {visibleNotes.length} {visibleNotes.length === 1 ? "note" : "notes"} ·{" "}
           {selectedFolder || vaultName}
         </span>
-        <span>Drag to move</span>
       </div>
     </div>
   );

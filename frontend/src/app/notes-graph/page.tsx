@@ -1,5 +1,3 @@
-"use client";
-
 import React, {
   useCallback,
   useEffect,
@@ -7,8 +5,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import dynamic from "next/dynamic";
-import Link from "next/link";
+import { lazy } from "react";
+import { Link } from "react-router-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
@@ -30,9 +28,7 @@ import { GraphModeSwitch } from "@/components/graph3d";
 import type { Note, NotesGraphPayload } from "@/lib/types";
 import type { ForceGraphMethods, NodeObject } from "react-force-graph-2d";
 
-const ForceGraph2D = dynamic(() => import("react-force-graph-2d"), {
-  ssr: false,
-});
+const ForceGraph2D = lazy(() => import("react-force-graph-2d"));
 
 type GraphNode = {
   id: string;
@@ -535,7 +531,7 @@ export default function NotesGraphPage() {
           <div className="flex h-full flex-col items-center justify-center gap-2.5 text-center">
             <FileText className="h-8 w-8 text-n-700" />
             <p className="text-[14px] text-n-300">No notes to graph yet</p>
-            <Link href="/notes" className="btn btn-primary no-underline">
+            <Link to="/notes" className="btn btn-primary no-underline">
               Open Notes
             </Link>
           </div>
@@ -724,7 +720,6 @@ export default function NotesGraphPage() {
                                 );
                               }
                               return (
-                                // eslint-disable-next-line @next/next/no-img-element
                                 <img
                                   src={href || undefined}
                                   alt={alt || ""}
@@ -754,7 +749,7 @@ export default function NotesGraphPage() {
 
               {selectedNode.group === "Note" && selectedNode.uuid && (
                 <Link
-                  href={`/notes?note=${encodeURIComponent(selectedNode.uuid)}`}
+                  to={`/notes?note=${encodeURIComponent(selectedNode.uuid)}`}
                   onClick={() => {
                     if (selectedNode.uuid) {
                       sessionStorage.setItem(

@@ -1,8 +1,10 @@
 """FastAPI application entry point: middleware, startup hooks, router wiring."""
 
 # pylint: disable=wrong-import-order,wrong-import-position,import-outside-toplevel
+import asyncio
 import uuid
 from contextvars import ContextVar
+from pathlib import Path
 
 # Setup logging before any other imports — must precede service imports so
 # every module that calls get_logger() at import time finds logging configured.
@@ -15,6 +17,8 @@ from app.core.config import settings  # noqa: E402
 from app.core.database import init_db  # noqa: E402
 from fastapi import FastAPI, Request, Response  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+from starlette.exceptions import HTTPException  # noqa: E402
 
 logger = get_logger("API")
 
@@ -110,6 +114,11 @@ async def startup_event():
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning(f"Could not reset interrupted ingests: {exc}")
 
+    # Neither blocks serving: the desktop window opens as soon as /health answers.
+    asyncio.get_running_loop().run_in_executor(None, _background_startup)
+
+
+def _background_startup() -> None:
     try:
         from app.services.local_models import sync_embedding_infrastructure
 
@@ -132,3 +141,25 @@ async def shutdown_event():
         stop_vault_watchers()
     except Exception:  # pylint: disable=broad-exception-caught
         pass
+
+
+class _SpaFiles(StaticFiles):
+    """Static UI with history-API fallback: /notes, /chat… all load index.html."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code != 404 or path.split("/", 1)[0] in ("api", "vault-files"):
+                raise
+            return await super().get_response("index.html", scope)
+
+
+# The desktop app has no UI server: the API serves the Vite build so the window
+# and the API share one origin. Mounted last so every real route wins.
+_frontend_dir = Path(
+    settings.FRONTEND_DIR or Path(__file__).resolve().parents[2] / "frontend" / "dist"
+)
+if (_frontend_dir / "index.html").is_file():
+    app.mount("/", _SpaFiles(directory=_frontend_dir, html=True), name="ui")
+    logger.info(f"Serving UI from {_frontend_dir}")

@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef, useState, type MutableRefObject } from "react";
 import { api } from "@/lib/api";
 

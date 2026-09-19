@@ -1,6 +1,6 @@
-# 18 — Frontend architecture (Next.js app)
+# 18 — Frontend architecture (Vite + React app)
 
-**What this covers.** The structure of the `frontend/` Next.js 16 application that renders Orb's UI: the toolchain and build modes (dev on 3700 vs. standalone on 17400 under the Electron supervisor), the Next rewrite/proxy layer that maps `/api/v1`, `/vault-files`, `/health` and legacy `/files` to backend targets, the `src/lib` layer (`api.ts` method catalogue, `types.ts`, `utils.ts`, the Electron `desktop.ts` bridge, the `KBProvider` and `ChatProvider` React contexts, and the `markdown-entities` pipeline), the root layout and provider tree, the sidebar navigation map, the shared component catalogue (`src/components/*.tsx` and `src/components/graph3d/**`), styling/theme conventions, lint/TypeScript configuration, performance patterns, and step-by-step recipes for adding a page or an API call. Page-level behaviour is documented separately: the notes editor in [19](19-frontend-notes-editor.md) and every other page (home, chat, graphs, KB, settings, setup) in [20](20-frontend-chat-graph-and-pages.md). Finance UI components under `src/components/finance/**` are only referenced here; their behaviour is covered with the finance backend in [17](17-finance-firefly.md).
+**What this covers.** The structure of the `frontend/` Vite + React application that renders Orb's UI: the toolchain and build modes (Vite dev server on 3700 vs. the static `dist/` build served by the API on 17401), the dev-only Vite proxy for `/api/v1`, `/vault-files` and `/health`, the `src/lib` layer (`api.ts` method catalogue, `types.ts`, `utils.ts`, the Tauri `desktop.ts` bridge, the `KBProvider` and `ChatProvider` React contexts, and the `markdown-entities` pipeline), the root layout and provider tree, the sidebar navigation map, the shared component catalogue (`src/components/*.tsx` and `src/components/graph3d/**`), styling/theme conventions, lint/TypeScript configuration, performance patterns, and step-by-step recipes for adding a page or an API call. Page-level behaviour is documented separately: the notes editor in [19](19-frontend-notes-editor.md) and every other page (home, chat, graphs, KB, settings, setup) in [20](20-frontend-chat-graph-and-pages.md). Finance UI components under `src/components/finance/**` are only referenced here; their behaviour is covered with the finance backend in [17](17-finance-firefly.md).
 
 **Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build & release](05-packaging-build-and-release.md) · [API reference](07-api-reference.md) (section 8 cross-checks `api.ts` against backend routes) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Finance](17-finance-firefly.md) · [Notes editor](19-frontend-notes-editor.md) · [Chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Development guide](27-development-guide.md) · [Glossary](28-glossary.md)
 
@@ -10,16 +10,16 @@
 
 The frontend is a **pure client of the FastAPI backend**. It owns:
 
-- Rendering every screen of Orb (home, chat, notes, notes graph, 3D entity graph, finance, knowledge bases, setup, settings) in a single-page-app style under the Next.js App Router. Every page is a `"use client"` component; there is no server-side data fetching, no React Server Component that touches data, no Next route handlers (`app/api/**` does not exist) and no server actions.
+- Rendering every screen of Orb (home, chat, notes, notes graph, 3D entity graph, finance, knowledge bases, setup, settings) as a react-router single-page app (`src/App.tsx`, lazy route chunks). There is no server-side rendering or data fetching of any kind; the API serves `dist/index.html` for every route (history-API fallback).
 - The HTTP client (`src/lib/api.ts`) — the **only** place that knows backend paths. Pages never call `axios`/`fetch` directly except for two deliberate exceptions documented below (`updateNoteOnUnload` keepalive PUT in `api.ts` itself, and `fetchMediaObjectUrl` in `utils.ts` for blob media).
 - Client-side state that must outlive a page: the active knowledge base (`KBProvider`, persisted in `localStorage`) and the chat session (`ChatProvider`, in-memory, survives route changes because it is mounted in the root layout).
-- The reverse-proxy configuration (`next.config.ts` rewrites) that lets the browser talk same-origin to the backend in production desktop builds.
-- The Electron bridge consumer (`src/lib/desktop.ts`): type-safe access to `window.orbDesktop` with browser fallbacks.
+- The dev-only proxy configuration (`vite.config.ts`) that keeps the browser same-origin with the backend during `npm run dev`; in the desktop app the API serves the build itself.
+- The Tauri bridge consumer (`src/lib/desktop.ts`): type-safe access to `window.orbDesktop` with browser fallbacks.
 
 It does **not** own:
 
 - Any business logic about notes, vaults, ingestion, retrieval, graph, finance — all of that lives in the backend; the UI just calls endpoints and renders results.
-- Process supervision, ports, `paths.json`, model downloads — the Electron shell (`desktop/`, see [04](04-desktop-shell.md)) and backend do this; the frontend only reflects status.
+- Process supervision, ports, `paths.json`, model downloads — the Tauri shell (`desktop/`, see [04](04-desktop-shell.md)) and the desktop runtime/backend do this; the frontend only reflects status.
 - Authentication — none exists; the app is local-only.
 - Theming toggles — the app is hard-coded dark (`<html class="dark">`, black background).
 
@@ -29,31 +29,30 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 
 | Path | Purpose | Key exports / notes |
 |---|---|---|
-| `package.json` | Toolchain + deps; `dev` runs `next dev -p 3700` | scripts `dev`, `build`, `start`, `lint` |
-| `next.config.ts` | React Compiler, standalone output, unoptimized images, 512 MB proxy body, rewrites | `nextConfig` |
-| `tsconfig.json` | Strict TS, `@/*` → `./src/*`, bundler resolution | — |
-| `eslint.config.mjs` | `eslint-config-next` core-web-vitals + typescript, `_`-prefixed unused vars allowed | — |
+| `package.json` | Toolchain + deps; `dev` runs `vite --port 3700 --strictPort`, `build` runs `tsc --noEmit && vite build` | scripts `dev`, `build`, `preview`, `lint` |
+| `index.html` | Vite entry (`<div id="root">`, `<html class="dark">`, favicon links) | — |
+| `vite.config.ts` | `@vitejs/plugin-react` with the React Compiler, `@` alias, dev proxy of `/api/v1`, `/vault-files`, `/health` → `API_PROXY_TARGET` (default `http://127.0.0.1:17401`) | `defineConfig` |
+| `tsconfig.json` | Strict TS, `@/*` → `./src/*`, bundler resolution, `vite/client` types | — |
+| `eslint.config.mjs` | `@eslint/js` + `typescript-eslint` + `eslint-plugin-react-hooks` flat config, `_`-prefixed unused vars allowed | — |
 | `postcss.config.mjs` | Only `@tailwindcss/postcss` | — |
-| `Dockerfile` | Legacy multi-stage node:20-alpine standalone image on port 3000 (not used by desktop) | — |
-| `.gitignore` | Standard Next ignores; **`next-env.d.ts` is ignored** | — |
-| `public/favicon.ico`, `public/logo.png`, `public/logo-icon.png` | Brand assets referenced from layout/sidebar/chat | — |
-| `src/app/layout.tsx` | Root layout: Inter font, providers, sidebar, banner, `<main class="ml-20">` | `metadata`, `RootLayout` |
-| `src/app/globals.css` | Tailwind v4 import, typography plugin, black/white tokens, scrollbar CSS | — |
-| `src/app/page.tsx` | Home landing (`/`) | `Home` |
+| `public/favicon.ico`, `public/logo.png`, `public/logo-icon.png` | Brand assets referenced from sidebar/chat | — |
+| `src/main.tsx` | React root: Inter font import, `globals.css`, `StrictMode`, `BrowserRouter` | — |
+| `src/App.tsx` | Providers, sidebar, `CommandPalette`, `AiLimitedBanner`, lazy `<Routes>` (`/` → `/notes`, `/graph` → `/graph-3d`) | `App` |
+| `src/app/globals.css` | Tailwind v4 import, typography plugin, black/white tokens, `--font-sans` (Inter Variable), scrollbar CSS | — |
 | `src/app/chat/page.tsx` | Chat UI (`/chat`) — see [20](20-frontend-chat-graph-and-pages.md) | `ChatPage` |
-| `src/app/graph/page.tsx` | Server redirect `/graph` → `/graph-3d` | `GraphRedirectPage` |
 | `src/app/graph-3d/page.tsx` | 3D entity graph (`/graph-3d`) composed from `components/graph3d` | `Graph3DPage` |
 | `src/app/notes-graph/page.tsx` | 2D wikilink graph (`/notes-graph`) | `NotesGraphPage` |
 | `src/app/kb/page.tsx` | Knowledge base management (`/kb`) | `KBPage` |
 | `src/app/settings/page.tsx` | LLM provider/model + maintenance + data cleanup (`/settings`) | `SettingsPage` |
 | `src/app/setup/page.tsx` | Paths, AI mode, local model download (`/setup`) | `SetupPage` |
+| `src/app/models/page.tsx` + `_components/ModelPicker.tsx` | Model choices per KB / system, cloud endpoints, downloads (`/models`) — [20](20-frontend-chat-graph-and-pages.md) | `ModelsPage` |
 | `src/app/finance/page.tsx` | Finance workspace shell (`/finance`); components in `components/finance/**` — [17](17-finance-firefly.md) | `FinancePage` |
 | `src/app/notes/page.tsx` + `_components/**`, `_hooks/**`, `_lib/**` | Notes editor (`/notes`) — [19](19-frontend-notes-editor.md) | `NotesPage` |
 | `src/components/markdown-editor/**` | CodeMirror 6 note editor — [19](19-frontend-notes-editor.md) | `MarkdownNoteEditor` |
 | `src/lib/api.ts` | Axios HTTP client; every backend call | `api`, `RequestOpts`, `isRequestCancelled` |
 | `src/lib/types.ts` | Wire types shared across pages | `Note`, `ChatStatus`, `KnowledgeBase`, `SetupStatus`, finance types, … |
 | `src/lib/utils.ts` | `cn`, vault URL helpers, media URL classifiers, YouTube/Vimeo embed, blob fetch | see §9 |
-| `src/lib/desktop.ts` | Electron preload bridge typing + helpers | `getDesktopBridge`, `isDesktopApp`, `pickDesktopDirectory`, `resolveApiBaseUrl`, `revealInFolder`, `revealInFolderLabel` |
+| `src/lib/desktop.ts` | Tauri bridge typing + helpers | `getDesktopBridge`, `isDesktopApp`, `pickDesktopDirectory`, `pickDesktopFile`, `notifyIfUnfocused`, `revealInFolder` (API call), `revealInFolderLabel` |
 | `src/lib/kb-context.tsx` | Active-KB context, `localStorage` persistence, legacy key migration | `KBProvider`, `useKB` |
 | `src/lib/chat-context.tsx` | Chat session state machine + async polling | `ChatProvider`, `useChat`, `Message` |
 | `src/lib/markdown-entities.tsx` | Entity-link injection, URL sanitiser, scan cache hook, anchor renderer | `urlTransform`, `injectEntityLinks`, `useScannedEntities`, `flattenLinkText`, `isAttachmentHref`, `MarkdownAnchor` |
@@ -70,7 +69,7 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `src/components/graph3d/types.ts` | `KnowledgeNode` | — |
 | `src/components/graph3d/nodeColors.ts` | Type → colour map + hashed tail palette | `nodeColor` |
 | `src/components/graph3d/ErrorBoundary.tsx` | Class error boundary around the WebGL canvas | `ErrorBoundary` |
-| `src/components/graph3d/Graph3DCanvas.tsx` | `react-force-graph-3d` wrapper (dynamic import, no SSR) | `Graph3DCanvas` |
+| `src/components/graph3d/Graph3DCanvas.tsx` | `react-force-graph-3d` wrapper (`React.lazy` import) | `Graph3DCanvas` |
 | `src/components/graph3d/HUD.tsx` | Node/edge counter + controls hint | `HUD` |
 | `src/components/graph3d/ProximityLabelLayer.tsx` | DOM overlay of node/link labels | `ProximityLabelLayer`, `ProximityLabel`, `LinkLabel` |
 | `src/components/graph3d/GraphSearchOverlay.tsx` | `/`-triggered search box and result list | `GraphSearchOverlay` |
@@ -79,91 +78,70 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `src/components/graph3d/hooks/useGraphSearch.ts` | Client-side substring search over nodes | `useGraphSearch` |
 | `src/components/graph3d/hooks/useProximityLabels.ts` | rAF loop projecting near nodes/links to screen labels | `useProximityLabels` |
 | `src/components/graph3d/hooks/useGraph3DCamera.ts` | FPS camera rig (drag look, right-drag pan, wheel, WASD/QE, fly-to) | `useGraph3DCamera` |
-| `desktop/scripts/build-frontend.js` (repo root) | Builds standalone bundle into `desktop/resources/frontend`, renames `node_modules` → `node_deps`, writes `run-server.js` | — |
-| `desktop/supervisor.js#startFrontend` (repo root) | Spawns `node run-server.js` (prod) or `npm run dev -- -p 17400` (dev) | — |
+| `desktop/build.py` `frontend` stage (repo root) | `npm ci && npm run build`, copies `dist/` to `desktop/resources/frontend/` with a source stamp ([05](05-packaging-build-and-release.md)) | — |
+| `backend/app/main.py` `_SpaFiles` mount (repo root) | Serves `FRONTEND_DIR` (default `frontend/dist`) at `/` with `index.html` fallback | — |
 
 ## 3. Stack
 
 | Concern | Library / version (from `package.json`) | Where it shows up |
 |---|---|---|
-| Framework | `next@16.2.12`, App Router, `reactCompiler: true` (`babel-plugin-react-compiler@1.0.0`) | All of `src/app` |
-| UI runtime | `react@19.2.6`, `react-dom@19.2.6` | — |
+| Framework | `vite@^8` + `@vitejs/plugin-react@^6` (`react({ compiler: true })`, `oxc-transform-react`), `react-router-dom@^7` | `main.tsx`, `App.tsx`, all of `src/app` |
+| UI runtime | `react@19.2.8`, `react-dom@19.2.8` | — |
 | Styling | `tailwindcss@^4` via `@tailwindcss/postcss`, `@tailwindcss/typography` (`prose` classes), `clsx` + `tailwind-merge` (`cn`) | `globals.css`, every component |
 | Animation | `framer-motion@^12` (`motion.*`, `AnimatePresence`) | home, chat, kb, settings, notes-graph, entity panel |
 | Icons | `lucide-react@^1` | everywhere |
 | Markdown rendering | `react-markdown@^10` + `remark-gfm@^4` | chat, `SegmentedNoteContent`, notes-graph preview |
 | Markdown editing | CodeMirror 6 (`@codemirror/*`, `@lezer/highlight`, `@uiw/react-codemirror`) | `components/markdown-editor` ([19](19-frontend-notes-editor.md)) |
 | Virtualised lists | `@tanstack/react-virtual` | notes sidebar ([19](19-frontend-notes-editor.md)) |
-| 3D graph | `three@^0.184`, `react-force-graph-3d@^1.29`, `@types/three` | `components/graph3d` |
+| 3D graph | `three@^0.185`, `react-force-graph-3d@^1.29`, `@types/three` | `components/graph3d` |
 | 2D graph | `react-force-graph-2d@^1.29` | `app/notes-graph` |
-| HTTP | `axios@^1.16` | `lib/api.ts` only |
-| Fonts | `next/font/google` Inter → CSS var `--font-inter` | `layout.tsx` |
-| Images | `next/image` with `images.unoptimized: true` (no sharp at runtime; `sharp` is still a dependency and pinned via `overrides`) | logos |
-| Lint / TS | `eslint@^9`, `eslint-config-next@16.2.12`, `typescript@^6` | — |
+| HTTP | `axios@^1.20` | `lib/api.ts` only |
+| Fonts | `@fontsource-variable/inter` imported in `main.tsx` → `--font-sans` in `globals.css` | everywhere |
+| Images | Plain `<img>` from `public/` | logos |
+| Lint / TS | `eslint@^9`, `typescript-eslint@^8`, `eslint-plugin-react-hooks@^7`, `typescript@^6` | — |
 | `class-variance-authority` | Listed as a dependency but **not imported anywhere** in `src/` | — |
 
-React Compiler note: because `reactCompiler: true` is on, the compiler auto-memoises components and hooks. The code still uses explicit `useMemo`/`useCallback` in many places (written before/independent of the compiler). Two ESLint rules from the React Compiler preset appear as inline disables: `react-hooks/set-state-in-effect` (in `NodeDetailModal`, `useGraphSearch`) and `react-hooks/exhaustive-deps`. Do not "fix" those disables blindly — the effects intentionally key on a subset of deps (see §12 gotchas).
+React Compiler note: because the compiler is enabled in `vite.config.ts`, the compiler auto-memoises components and hooks. The code still uses explicit `useMemo`/`useCallback` in many places (written before/independent of the compiler). Two ESLint rules from the React Compiler preset appear as inline disables: `react-hooks/set-state-in-effect` (in `NodeDetailModal`, `useGraphSearch`) and `react-hooks/exhaustive-deps`. Do not "fix" those disables blindly — the effects intentionally key on a subset of deps (see §12 gotchas).
 
 ## 4. Directory conventions
 
-- **Route = folder** under `src/app/<route>/page.tsx`. Every page file begins with `"use client"` except `src/app/graph/page.tsx`, which is a server component calling `redirect("/graph-3d")`.
-- **Per-route private modules** use underscore folders that Next excludes from routing: `src/app/notes/_components/`, `_hooks/`, `_lib/`. Only the notes route uses this pattern today; new complex pages should follow it.
+- **Route = folder** under `src/app/<route>/page.tsx`, registered as a lazy `<Route>` in `src/App.tsx` (the folder convention is inherited from the Next.js era; routing itself is react-router). `/` redirects to `/notes` and `/graph` to `/graph-3d`.
+- **Per-route private modules** use underscore folders: `src/app/notes/_components/`, `_hooks/`, `_lib/`, `src/app/models/_components/`. New complex pages should follow it.
 - **Cross-route components** live in `src/components/` (flat `kebab-case.tsx` files) or a feature folder with a barrel (`src/components/graph3d/index.ts`, `src/components/finance/index.ts`, `src/components/markdown-editor/index.ts`). Feature folders use `PascalCase.tsx` for components and `hooks/useX.ts` for hooks.
 - **Shared non-UI code** lives in `src/lib/` (`api.ts`, `types.ts`, `utils.ts`, `desktop.ts`, contexts, `markdown-entities.tsx`).
 - **Imports** always use the `@/` alias (`@/lib/api`, `@/components/graph3d`); relative imports are only used inside a route's own `_components`/`_hooks`.
 - **Cross-route storage keys** are namespaced `orb:<feature>:<kb>` (e.g. `orb:notes-graph-controls:<kb>`, `orb:last-note-id:<kb>` from `src/app/notes/_lib/storage-keys.ts`) except the KB key itself, `orb_current_kb`.
-- **No tests** exist in `frontend/` (no jest/vitest/playwright config); see [24](24-testing-and-benchmarks.md).
+- **No tests** exist in `frontend/` (no jest/vitest/playwright config); see [24](24-testing.md).
 
 ## 5. Build modes, ports, and the proxy layer
 
-### 5.1 Three ways the app runs
+### 5.1 Two ways the app runs
 
-| Mode | Command / launcher | Port | `NEXT_PUBLIC_API_URL` | `API_PROXY_TARGET` / `FILES_PROXY_TARGET` | How `/api/v1` reaches FastAPI |
-|---|---|---|---|---|---|
-| Plain dev (`cd frontend && npm run dev`) | `next dev -p 3700` | 3700 | unset → `/api/v1` | unset → dev defaults `http://localhost:8700` / `http://localhost:9000` | Next rewrite → `localhost:8700` (**not** the desktop backend port 17401; you must run uvicorn on 8700 or export `API_PROXY_TARGET=http://127.0.0.1:17401`) |
-| Desktop dev (`ORB_FRONTEND_DEV=1` or no `server.js` in the frontend dir) | `desktop/supervisor.js` spawns `npm run dev -- -p 17400` | 17400 (`PORTS.ui`) | `http://127.0.0.1:17401/api/v1` (absolute, `apiV1Url()`) | `http://127.0.0.1:17401` | Browser calls the API origin directly (CORS is configured by the backend for `PORTS.ui` origins); rewrites exist but are bypassed for `api.*` calls. `/vault-files/*` media URLs are still relative, so they go through the rewrite. |
-| Desktop production (packaged, or `desktop/resources/frontend/server.js` present) | `build-frontend.js` builds; supervisor spawns `node run-server.js` with `PORT=17400 HOSTNAME=127.0.0.1 NODE_ENV=production` | 17400 | `/api/v1` (same-origin) | `http://127.0.0.1:17401` (both) | Next standalone server proxies `/api/v1/*`, `/vault-files/*`, `/health`, `/files/*` to FastAPI |
+| Mode | Command / launcher | Port | How `/api/v1` reaches FastAPI |
+|---|---|---|---|
+| Dev (`cd frontend && npm run dev`, optionally with `ORB_URL=http://127.0.0.1:3700 cargo tauri dev` for the shell) | `vite --port 3700 --strictPort` | 3700 | `vite.config.ts` proxies `/api/v1`, `/vault-files`, `/health` to `API_PROXY_TARGET` (default `http://127.0.0.1:17401`); the browser stays same-origin |
+| Desktop / packaged | `npm run build` (`tsc --noEmit && vite build`) → `dist/`, copied by `desktop/build.py` into `desktop/resources/frontend/`; the API mounts it at `/` (`FRONTEND_DIR`) | 17401 (the API's port) | Same origin — no proxy, no UI server, no body-size limit |
 
-`useProductionFrontend()` (`desktop/paths.js`) decides between the last two: `ORB_FRONTEND_DEV=1` (or legacy `LIVEOS_FRONTEND_DEV`) forces dev; a packaged layout forces prod; otherwise prod iff `<frontendDir>/server.js` exists. `getFrontendDir()` prefers `<resources>/frontend` when it contains `server.js`, else `<repo>/frontend`.
+There is no Node runtime in the packaged app; Node is used only to build `dist/`. Changing `ORB_API_PORT` needs no frontend rebuild: every URL is relative (`/api/v1`).
 
-The `Dockerfile` is a leftover from the Docker-compose era (ports 3000, hostnames `backend:8000`, `rustfs:9000`); nothing in the desktop pipeline uses it.
-
-### 5.2 `next.config.ts` in detail
+### 5.2 `vite.config.ts` in detail
 
 ```ts
-reactCompiler: true,
-output: "standalone",          // emits .next/standalone/server.js consumed by build-frontend.js
-images: { unoptimized: true },  // no image optimizer process in Electron
-experimental: { proxyClientMaxBodySize: "512mb" },
-rewrites: [
-  { source: "/api/v1/:path*",     destination: `${apiProxyTarget}/api/v1/:path*` },
-  { source: "/vault-files/:path*", destination: `${apiProxyTarget}/vault-files/:path*` },
-  { source: "/health",            destination: `${apiProxyTarget}/health` },
-  { source: "/files/:path*",      destination: `${filesProxyTarget}/:path*` },
-]
+const api = process.env.API_PROXY_TARGET ?? "http://127.0.0.1:17401";
+plugins: [react({ compiler: true })],
+resolve: { alias: { "@": path.resolve(import.meta.dirname, "src") } },
+server: { proxy: { "/api/v1": …, "/vault-files": …, "/health": … } }   // dev only
 ```
 
-- `apiProxyTarget = API_PROXY_TARGET ?? (NODE_ENV==="development" ? "http://localhost:8700" : "http://backend:8000")`. The comment above it says the desktop sets `http://127.0.0.1:8000`; the actual value passed by `build-frontend.js`/`supervisor.js` is `apiUrl()` = `http://127.0.0.1:17401`. Treat the comment as stale.
-- `filesProxyTarget = FILES_PROXY_TARGET ?? (dev ? "http://localhost:9000" : "http://rustfs:9000")`. This was the S3-compatible RustFS object store from the Docker era. The desktop sets `FILES_PROXY_TARGET=apiUrl()` so `/files/<x>` now proxies to `http://127.0.0.1:17401/<x>` — a path that does not exist on FastAPI. Nothing in `src/` generates `/files/...` URLs any more, but `isAttachmentHref()` in `markdown-entities.tsx` still recognises `/files/` and `/uploads/` for old note content. **Legacy**: keep the rewrite only for backwards compatibility with old notes; new code must use `/vault-files/<kb>/<rel>`.
-- `proxyClientMaxBodySize: "512mb"` exists because Next's proxy default (10 MB) truncated multipart uploads and produced "socket hang up"/500s. Uploads additionally bypass the proxy entirely in desktop builds (see `api.upload`).
-- Rewrites are evaluated at **build time** for the production standalone bundle. That is why `build-frontend.js` passes `API_PROXY_TARGET` during `npm run build` and the supervisor passes the same values again at runtime (harmless duplication; the build-time value is what is baked into `.next/routes-manifest.json`). Changing `ORB_API_PORT` after building therefore requires a rebuild of the frontend bundle.
-- `NEXT_PUBLIC_API_URL` is inlined into the client bundle at build time. `build-frontend.js` sets it to `/api/v1`, so the packaged UI is always same-origin regardless of what the supervisor passes at runtime.
-
-### 5.3 `desktop/scripts/build-frontend.js`
-
-1. `npm ci` then `npm run build` in `frontend/` with env `NEXT_PUBLIC_API_URL=/api/v1`, `API_PROXY_TARGET=FILES_PROXY_TARGET=http://127.0.0.1:<PORTS.api>`, `NODE_ENV=production`.
-2. Locates `.next/standalone/server.js` (or `.next/standalone/frontend/server.js` in monorepo-style output), copies the standalone dir, `.next/static`, and `public/` into `desktop/resources/frontend/`.
-3. Verifies `server.js` and `node_modules/next` exist, then **renames `node_modules` → `node_deps`** because electron-builder silently drops folders named `node_modules` from `extraResources`.
-4. Writes `run-server.js`, which prepends `node_deps` to `NODE_PATH`, calls `Module._initPaths()`, and `require("./server.js")`.
-
-The supervisor's production branch runs exactly that `run-server.js` with the bundled Node binary (`getNodeBinary()`), waits for `http://127.0.0.1:17400` via `waitHttp(..., 120000)`, and logs to `serviceLogPath(dataDir, "frontend")`. Backend and frontend are started in parallel (`Promise.all([startBackend(), startFrontend()])`). Full details in [04](04-desktop-shell.md) and [05](05-packaging-build-and-release.md).
+- `VITE_API_URL` (build-time, `import.meta.env`) can override the `/api/v1` base in `api.ts`; nothing sets it today.
+- `dist/` is served by `_SpaFiles` in `backend/app/main.py`: any 404 that is not under `api/` or `vault-files/` returns `index.html`, which is what makes deep links like `/notes?note=…` work on reload.
 
 ## 6. API layer — `src/lib/api.ts`
 
 ### 6.1 Construction
 
 ```ts
-const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1").replace(/\/$/, "");
+const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api/v1").replace(/\/$/, "");
 ```
 
 All URLs are `${API_BASE_URL}${path}`. Nothing else in the codebase constructs backend URLs (the notes editor's `rewrite-vault-urls.ts` only rewrites *media* hrefs to `/vault-files/...`, which is a rewrite, not the API).
@@ -200,7 +178,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 
 | Method | Call | Notes |
 |---|---|---|
-| `upload(file, kb)` | `POST {base}/upload?kb=` multipart `file`, `timeout: 10 min` | `base = await resolveApiBaseUrl(API_BASE_URL)` — in Electron this is the direct FastAPI origin (`http://127.0.0.1:17401/api/v1`) so the Next proxy is skipped; in a browser it is `API_BASE_URL`. |
+| `upload(file, kb)` | `POST {base}/upload?kb=` multipart `file`, `timeout: 10 min` | Same origin (`API_BASE_URL`); no proxy in between (§6.4). |
 
 **Notes / vault**
 
@@ -317,39 +295,35 @@ useEffect(() => {
 
 `cancelled` guards against late resolution; `controller.abort()` actually stops the request so the backend can stop building large payloads (notes graph, 3D graph). Pages that use imperative loaders instead of effects (notes-graph `loadGraph`) keep a generation counter (`loadGenRef`) plus an `AbortController` ref and ignore results whose generation is stale.
 
-### 6.4 Direct-to-desktop-port uploads
+### 6.4 Uploads
 
-`resolveApiBaseUrl(fallback)` (`desktop.ts`) memoises the bridge answer in a module variable `cachedDesktopApiBase`:
-
-- `undefined` = not asked yet; `null` = asked, no bridge (browser) → use fallback forever; string = direct origin.
-- If the bridge exists but `getApiBaseUrl()` throws (early startup before IPC is ready) the failure is **not cached**, so the next upload retries instead of routing every upload through the proxy for the whole session.
-
-Only `api.upload` uses it. All other calls are same-origin through the rewrite even in Electron.
+`api.upload(file, kb)` POSTs multipart to `${API_BASE_URL}/upload` with a 10-minute timeout. There is no separate upload origin any more: the API serves the UI, so uploads are same-origin with no proxy body limit in between.
 
 ## 7. Root layout and provider tree
 
-`src/app/layout.tsx`:
+`src/main.tsx` renders `<StrictMode><BrowserRouter><App /></BrowserRouter></StrictMode>` into `#root`; `src/App.tsx`:
 
 ```tsx
-<html lang="en" className="dark">
-  <body className={`${inter.variable} font-sans antialiased`}>
-    <KBProvider>
-      <ChatProvider>
-        <SuppressThreeWarnings />
-        <Sidebar />
-        <main className="ml-20 min-h-screen">{children}</main>
-        <AiLimitedBanner />
-      </ChatProvider>
-    </KBProvider>
-  </body>
-</html>
+<KBProvider>
+  <ChatProvider>
+    <SuppressThreeWarnings />
+    <div className="flex h-screen w-full overflow-hidden">
+      <Sidebar />
+      <main className="relative flex min-w-0 flex-1">
+        <Routes>{/* lazy page chunks; / → /notes, /graph → /graph-3d */}</Routes>
+      </main>
+    </div>
+    <CommandPalette />
+    <AiLimitedBanner />
+  </ChatProvider>
+</KBProvider>
 ```
 
-`metadata` = title "Orb", description "Your multimodal, graph-based personal memory system", icons from `/favicon.ico` and `/logo-icon.png`. The layout itself is a server component; every child it renders is a client component. Because both providers sit above `{children}`, their state persists across client-side navigations (chat messages survive leaving `/chat` and coming back; the KB survives everything until reload, and then is rehydrated from `localStorage`).
+Title, description and icons live in `index.html` (`<html class="dark">`). Because both providers sit above `{children}`, their state persists across client-side navigations (chat messages survive leaving `/chat` and coming back; the KB survives everything until reload, and then is rehydrated from `localStorage`).
 
 ```mermaid
 flowchart TD
-  L[RootLayout server] --> KB[KBProvider<br/>currentKB, isHydrated<br/>localStorage orb_current_kb]
+  L[App.tsx] --> KB[KBProvider<br/>currentKB, isHydrated<br/>localStorage orb_current_kb]
   KB --> CH[ChatProvider<br/>messages, conversations, polling]
   CH --> S[Sidebar]
   S --> SSI[SystemStatusIndicator<br/>polls /admin/maintenance-status]
@@ -359,10 +333,9 @@ flowchart TD
   CH --> W[SuppressThreeWarnings]
   P -->|useKB| KB
   P -->|useChat chat only| CH
-  P -->|api.*| API[(lib/api.ts → /api/v1 rewrite → FastAPI 17401)]
+  P -->|api.*| API[(lib/api.ts → /api/v1 same origin → FastAPI 17401)]
   SSI -->|api.getMaintenanceStatus| API
   B -->|api.getSetupStatus| API
-  API -.->|desktop only: upload| DIRECT[(http://127.0.0.1:17401/api/v1)]
 ```
 
 Data flow rule: **KB slug flows down via context; every network call takes it as an explicit argument.** There is no global axios default for `kb`, so a component that forgets to pass `currentKB` silently talks to the default KB.
@@ -377,7 +350,7 @@ Context value:
 |---|---|---|
 | `currentKB` | `string` | KB **slug** (`"default"` for the built-in KB). This is what goes into `?kb=`. |
 | `currentKBName` | `string` | Display name (sidebar label, chat badge, settings text). |
-| `isHydrated` | `boolean` | `false` during SSR and the first client render; `true` after the mount effect has read `localStorage`. |
+| `isHydrated` | `boolean` | `false` on the first render (`useSyncExternalStore` server snapshot); `true` once mounted, after `localStorage` has been read. |
 | `setCurrentKB(slug, displayName?)` | fn | Trims; empty → `"default"`; name defaults to slug; writes storage. |
 | `setCurrentKBName(name)` | fn | Updates only the name (after a rename); writes storage. |
 
@@ -457,17 +430,17 @@ Both providers were written to avoid a state library dependency: KB needs only a
 
 ## 9. Desktop bridge surface — `src/lib/desktop.ts`
 
-The Electron preload (`desktop/preload.js`) exposes `window.orbDesktop` via `contextBridge`; the type `OrbDesktopBridge` mirrors it. `getDesktopBridge()` returns `window.orbDesktop || window.liveosDesktop || null` (the second name is the pre-rename bridge, kept for older preload builds) and `null` during SSR.
+The Tauri shell injects `window.orbDesktop` from `desktop/src-tauri/src/init.js`; the type `OrbDesktopBridge` mirrors it. `getDesktopBridge()` returns `window.orbDesktop || null`. Only what the shell alone can do lives on the bridge; everything else is an API call.
 
 | Bridge member | Used by (frontend) | Fallback when absent |
 |---|---|---|
-| `isDesktop?: boolean` | `isDesktopApp()` → chat file-preview button label | `false` → button says "Open"/"Open file" |
-| `pickDirectory(opts)` | `pickDesktopDirectory()` → setup page "Browse…" ×3, kb page vault "Browse…" | Returns `null`; the pages hide the Browse button entirely when `getDesktopBridge()?.pickDirectory` is falsy (`canBrowse`) |
-| `getApiBaseUrl()` | `resolveApiBaseUrl()` → `api.upload` | Proxied `API_BASE_URL` |
-| `revealInFolder(path)` | `revealInFolder()` → chat file preview, notes `useNoteMedia`, `FilePreviewModal` | Returns `false` → chat opens the URL in a new tab via `window.open` |
-| `onStatus`, `getDefaultPaths`, `getAppInfo`, `saveWizard`, `wizardDone` | **Not used by the Next UI** (splash/wizard pages served by Electron itself, see [04](04-desktop-shell.md)) | — |
+| `isDesktop?: boolean` | `isDesktopApp()` → file-preview button label | `false` → button says "Open" |
+| `pickDirectory(opts)` | `pickDesktopDirectory()` → setup page "Browse…", kb page vault "Browse…", `ModelPicker` | Returns `null`; the pages hide the Browse button when `getDesktopBridge()?.pickDirectory` is falsy |
+| `pickFile(opts)` | `pickDesktopFile()` → `ModelPicker` (a `.gguf` outside the models dir) | Returns `null` |
+| `restartBackend()` | `SystemStatusIndicator` "Restart backend" button (shown only in the error state) | Button not rendered |
+| `notify(title, body)` | `notifyIfUnfocused()` → `useNotesList` when a note finishes or fails ingestion and the window is not focused | No-op |
 
-`revealInFolderLabel()` picks "Reveal in Finder" / "Reveal in Explorer" / "Reveal in folder" from `navigator.userAgent`. Reveal is server-validated: the frontend first calls `api.resolveVaultLocalPath(url, kb)` to translate a `/vault-files/...` URL into an absolute path, then hands that to the bridge, which only allows vault/data/models locations.
+`revealInFolder(path)` is **not** a bridge member: it calls `POST /api/v1/desktop/reveal`, which validates that the path lies under `DATA_DIR`, `MODELS_DIR` or a KB vault and runs the platform's reveal command ([07 §3.9](07-api-reference.md)). `revealInFolderLabel()` picks "Reveal in Finder" / "Reveal in Explorer" / "Reveal in folder" from `navigator.userAgent`. The frontend first calls `api.resolveVaultLocalPath(url, kb)` to translate a `/vault-files/...` URL into an absolute path, then hands that to the API.
 
 ## 10. Sidebar navigation map — `src/components/sidebar.tsx`
 
@@ -510,7 +483,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 | `KnowledgeNode` | type | `{node_id, name, node_type, description, isolated_contexts?, facts?, domain?, status?, community_id?, x, y, z}` |
 | `nodeColor(type)` | fn | Case-insensitive switch over ~40 known types (`concept` cyan, `entity` purple, `community` fuchsia, `task` rose, `reference` amber, `person` emerald, `note` blue, …); unknown types get a deterministic colour from a 24-entry `TAIL_PALETTE` via a `h*31+c` hash; empty type → slate `#94a3b8`. |
 | `ErrorBoundary` | class component | Catches render errors from the WebGL canvas, shows message + "Retry" (resets state). |
-| `Graph3DCanvas` | component | `next/dynamic` import of `react-force-graph-3d` with `ssr:false`; fixed prop set (`nodeRelSize=10`, `nodeResolution=18`, `linkWidth=2.8`, `linkOpacity=0.72`, `linkCurvature=0.1`, 2 directional particles, `enableNodeDrag=false`, `enableNavigationControls=false`, `cooldownTicks=0`, `warmupTicks=0`); colours links by **source** node type; `onEngineStop` calls `zoomToFit(400,120)` exactly once guarded by `hasFittedRef`/`userNavigatedRef`. |
+| `Graph3DCanvas` | component | `React.lazy` import of `react-force-graph-3d`; fixed prop set (`nodeRelSize=10`, `nodeResolution=18`, `linkWidth=2.8`, `linkOpacity=0.72`, `linkCurvature=0.1`, 2 directional particles, `enableNodeDrag=false`, `enableNavigationControls=false`, `cooldownTicks=0`, `warmupTicks=0`); colours links by **source** node type; `onEngineStop` calls `zoomToFit(400,120)` exactly once guarded by `hasFittedRef`/`userNavigatedRef`. |
 | `HUD` | component | Top-left node/edge counters; bottom-centre controls legend. Pure. |
 | `ProximityLabelLayer` | component | Absolutely-positioned DOM labels (`ProximityLabel{id,name,nodeType,sx,sy,opacity}`, `LinkLabel{id,label,sx,sy,opacity}`), `pointer-events:none`, z-20. |
 | `GraphSearchOverlay` | component | Top-right "Search /" button → input + up to 8 results; Enter flies to the first, click flies to that node, Escape/blur closes. Uses `onMouseDown preventDefault` on results so the input's blur does not close the list before click. |
@@ -524,7 +497,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 
 - **Dark only.** `<html class="dark">` is hard-coded; `globals.css` sets `--background:#000`, `--foreground:#fff` and maps them to Tailwind tokens `bg-background`/`text-foreground` via `@theme inline`. There is no light palette, no `prefers-color-scheme` handling, no theme toggle.
 - **Tailwind v4** via `@import "tailwindcss"` + `@plugin "@tailwindcss/typography"`; no `tailwind.config.js` — configuration is CSS-first. Utility naming follows v4 (`bg-linear-to-br` rather than v3's `bg-gradient-to-br`; both appear in the codebase because `bg-gradient-to-*` is still accepted).
-- **Font**: Inter from `next/font/google`, exposed as `--font-inter` and mapped to `--font-sans`, so `font-sans` = Inter. The graph3d components and HUD intentionally use inline `style={{fontFamily:"system-ui"}}` and inline CSS objects instead of Tailwind — they were written to be self-contained.
+- **Font**: Inter Variable from `@fontsource-variable/inter` (imported in `main.tsx`), set as `--font-sans` in `globals.css`, so `font-sans` = Inter. The graph3d components and HUD intentionally use inline `style={{fontFamily:"system-ui"}}` and inline CSS objects instead of Tailwind — they were written to be self-contained.
 - **Visual vocabulary** (repeat these for consistency): translucent panels `border border-white/10 bg-white/5 backdrop-blur-xl rounded-2xl`; brand gradient `from-purple-500 to-pink-500`; accent per feature — purple/pink (chat, notes), teal (wikilink/notes-graph, connected panel), blue (entities), amber (setup/AI warnings), red (destructive), emerald/violet/sky (status light).
 - **Prose**: `react-markdown` output is styled with typography `prose prose-invert …` class strings (`PROSE_CLASSNAME` in chat, `PREVIEW_PROSE` in notes-graph, an inline string for the chat note-preview modal). `not-prose` is applied to embedded media blocks and segment dividers so typography margins do not apply.
 - **Scrollbars**: global WebKit scrollbar styling (8 px, translucent thumb).
@@ -608,28 +581,27 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 | Refs mirroring state for rAF loops (`nodesRef`, `linksRef`, `controlsRef`) | graph3d hooks, notes-graph `paintNode` | Animation loops must not close over stale state or re-subscribe every render. |
 | Fit-once guards (`hasFittedRef`, `userNavigatedRef`, `fittingRef`) | both graph pages | `onEngineStop`/resize re-firing `zoomToFit` yanked the camera back to overview while the user was navigating. |
 | Throttled projection loop (100 ms) and hard label caps (16 nodes / 8 links) | `useProximityLabels` | Projecting every node every frame was too expensive on large graphs. |
-| Direct-to-API multipart uploads + 512 MB proxy limit | `api.upload`, `next.config.ts` | Next's proxy truncated large files. |
 | `keepalive` PUT on unload (< 60 KB) | `updateNoteOnUnload` | Autosave must survive window close. |
-| Dynamic import with `ssr:false` for WebGL/canvas libs | `Graph3DCanvas`, notes-graph | `react-force-graph-*` touch `window` at import time. |
-| `images.unoptimized`, `loading="eager"` logos | layout/sidebar/chat | No image optimiser in Electron; avoid layout shift on the rail. |
+| `React.lazy` import for WebGL/canvas libs | `Graph3DCanvas`, notes-graph | keeps `three` / `react-force-graph-*` out of the initial chunk. |
+| `loading="eager"` logos | sidebar/chat | Avoid layout shift on the rail. |
 
 ## 18. Lint and TypeScript configuration
 
-- `tsconfig.json`: `strict: true`, `target ES2017`, `module esnext`, `moduleResolution bundler`, `jsx react-jsx`, `allowJs`, `skipLibCheck`, `noEmit`, `incremental`, Next TS plugin, `@/* → ./src/*`. `next-env.d.ts` is gitignored and regenerated by `next dev/build`; a fresh clone type-checks only after one Next run.
-- `eslint.config.mjs` (flat config): `eslint-config-next/core-web-vitals` + `eslint-config-next/typescript`; ignores `.next/**`, `out/**`, `build/**`, `next-env.d.ts`; `@typescript-eslint/no-unused-vars` downgraded to **warn** with `argsIgnorePattern: "^_"` / `varsIgnorePattern: "^_"` (hence `_kb`, `_node`, `_m` in the code). `npm run lint` = `eslint` (no path args; relies on the flat config's defaults).
+- `tsconfig.json`: `strict: true`, `target ES2020`, `module esnext`, `moduleResolution bundler`, `jsx react-jsx`, `isolatedModules`, `allowJs`, `skipLibCheck`, `noEmit`, `types: ["vite/client"]`, `@/* → ./src/*`; includes `src` and `vite.config.ts`. `npm run build` runs `tsc --noEmit` first.
+- `eslint.config.mjs` (flat config): `@eslint/js` recommended + `typescript-eslint` recommended + `eslint-plugin-react-hooks` flat recommended; ignores `dist/**`; `@typescript-eslint/no-unused-vars` downgraded to **warn** with `argsIgnorePattern: "^_"` / `varsIgnorePattern: "^_"` (hence `_kb`, `_node`, `_m` in the code). `npm run lint` = `eslint` (no path args; relies on the flat config's defaults).
 - The graph3d code uses `any` for `react-force-graph-3d` objects (its types are loose) with per-line `@typescript-eslint/no-explicit-any` disables — accepted debt; do not widen it elsewhere.
 - No Prettier config is committed; formatting is whatever the editor produced (`kb/page.tsx`, `settings/page.tsx`, `kb-context.tsx`, `segmented-note-content.tsx` use 4-space indentation, the rest 2-space). Match the file you are editing.
 
 ## 19. How to add a page or an API call
 
 **New page**
-1. Create `src/app/<route>/page.tsx` starting with `"use client"`; export a default component.
+1. Create `src/app/<route>/page.tsx` exporting a default component, and add a lazy `<Route>` for it in `src/App.tsx`.
 2. Read the KB with `const { currentKB, isHydrated } = useKB()` and gate the first fetch on `isHydrated` (`if (!isHydrated) return;` inside the effect) so you do not fetch the default KB and then refetch.
-3. Put route-private pieces in `src/app/<route>/_components`, `_hooks`, `_lib` (underscore folders are not routable).
-4. Add a `ShaderBackground` + a `relative z-10` content wrapper if you want the house look; content must sit inside `<main class="ml-20">` automatically (the layout does it).
+3. Put route-private pieces in `src/app/<route>/_components`, `_hooks`, `_lib`.
+4. Add a `ShaderBackground` + a `relative z-10` content wrapper if you want the house look; content sits inside the flex `<main>` automatically (`App.tsx` does it).
 5. Register the route in the `navigation` array of `src/components/sidebar.tsx` (label, href, lucide icon). Active highlighting is exact-path.
 6. If the page shows KB-scoped data, pass `currentKB` to every `api.*` call — nothing does this for you.
-7. If the page uses a browser-only library, import it with `next/dynamic` and `ssr:false`.
+7. If the page pulls in a heavy library (three.js, force-graph), import it with `React.lazy` so it stays out of the initial chunk.
 
 **New API call**
 1. Add a method to the `api` object in `src/lib/api.ts` under the matching `// ── Domain ──` comment. Use `http.get(path, withKb(kb, params), opts)` for GETs with query params, and `` `${path}${kbQuery(kb)}` `` for POST/PUT/PATCH/DELETE. Give it `kb = "default"` as the last positional parameter unless the endpoint is global (setup, settings, kb list). Add `opts?: RequestOpts` if the call can be superseded.
@@ -637,30 +609,28 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 3. Document it in [07 §8](07-api-reference.md) (the frontend↔backend cross-check) so the mapping stays auditable.
 4. Never hardcode `/api/v1` or a port in a page; never call `axios` from a page.
 
-**New shared component**: `src/components/<kebab-name>.tsx` (or a feature folder with `index.ts`), `"use client"` at the top, props typed inline, KB passed explicitly (`kb`/`kbId` prop with `"default"` default), no context reads inside leaf components except `useKB` in navigation chrome.
+**New shared component**: `src/components/<kebab-name>.tsx` (or a feature folder with `index.ts`), props typed inline, KB passed explicitly (`kb`/`kbId` prop with `"default"` default), no context reads inside leaf components except `useKB` in navigation chrome.
 
 ## 20. Invariants, constraints, and locked decisions
 
-- **Client-only rendering.** No RSC data fetching, route handlers, or server actions. The backend must remain reachable from the browser at `/api/v1` (same-origin in packaged builds).
+- **Client-only rendering.** A static Vite build; no server code in `frontend/`. The backend must remain reachable from the browser at `/api/v1` (same origin: the API serves the build).
 - **`api.ts` is the single HTTP boundary** (two documented exceptions: keepalive PUT inside `api.ts`, blob fetch of `/vault-files` in `utils.ts`).
 - **`kb` is omitted for the default KB** (`withKb`/`kbQuery`); the backend interprets absence as default. Never introduce a global default header.
 - **KB slug in storage key `orb_current_kb`** as `{slug,name}` JSON; legacy keys are migrated once and deleted. Do not add a second source of truth for the active KB.
-- **Providers stay in the root layout** so chat polling and the KB survive navigation. Do not move `ChatProvider` into `/chat`.
+- **Providers stay in `App.tsx`** so chat polling and the KB survive navigation. Do not move `ChatProvider` into `/chat`.
 - **`isHydrated` gating** is the mechanism that prevents a default-KB fetch before storage is read; do not read `localStorage` during render.
-- **Uploads bypass the Next proxy in Electron** (`resolveApiBaseUrl`) — keep this even if the proxy limit is raised further, because the bridge origin also avoids double buffering.
-- **Rewrites are baked at build time** (`API_PROXY_TARGET` during `next build`). Changing the API port needs a frontend rebuild.
-- **`node_modules` → `node_deps` rename** in the packaged frontend is load-bearing (electron-builder drops `node_modules` from extraResources). `run-server.js` must remain the entry point.
+- **Every URL is relative** (`/api/v1`, `/vault-files`). Never hardcode a host or port in the frontend; the API port is the UI origin.
+- **The bridge stays minimal** (`isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`). Anything that can be an HTTP call must be one — the Tauri capability file grants the UI exactly those plugin commands.
 - **Entity links are `entity://<node_id>`** markdown links injected client-side; `urlTransform` must keep allowing that scheme and nothing else beyond `http(s)/irc(s)/mailto/xmpp` and relative URLs (XSS boundary for ingested web content).
-- **External links open outside the app** (`MarkdownAnchor` adds `target=_blank rel=noopener noreferrer`) so ingested content cannot navigate the Electron renderer away.
-- **`react-force-graph-*` must be dynamically imported** with `ssr:false`.
+- **External links open outside the app** (`MarkdownAnchor` adds `target=_blank rel=noopener noreferrer`) so ingested content cannot navigate the app window away (the Tauri navigation guard also sends foreign URLs to the system browser).
+- **`react-force-graph-*` are lazily imported** (`React.lazy`); keep them out of the initial chunk.
 - **Fit-once camera rule** on both graph pages; any new "auto-fit" must respect `userNavigatedRef`.
 - **No light theme.** Colour tokens assume a black background.
 
 ## 21. Gotchas and non-obvious behaviours
 
-- `npm run dev` outside the desktop shell proxies to `localhost:8700`, not 17401. Export `API_PROXY_TARGET=http://127.0.0.1:17401` (or run uvicorn on 8700) or every request 502s.
-- The `next.config.ts` comment "prepare-dist sets API_PROXY_TARGET=http://127.0.0.1:8000" is stale; the real value is `http://127.0.0.1:17401` and the script is `build-frontend.js`.
-- `FILES_PROXY_TARGET` / `/files/*` is a RustFS leftover; in desktop builds it proxies to a non-existent FastAPI path. Old notes that embed `/files/…` links will 404 unless migrated to `/vault-files/…`.
+- `npm run dev` proxies to `http://127.0.0.1:17401` by default; set `API_PROXY_TARGET` to point it at an API on another port, or every request 502s.
+- Old notes that embed `/files/…` links (RustFS era) will 404; `isAttachmentHref` still recognises the prefix but nothing serves it.
 - `getChatMessages`, `deleteChatConversation`, `getNoteStatus` never send `kb`, so they only resolve resources in the default KB (07 §8). `ChatProvider.selectConversation` takes a `_kb` argument it ignores — that is the visible symptom.
 - `KnowledgeBase.typesense_collection` is the historical field name; the value refers to the Meilisearch index.
 - The chat page passes the note-preview setter to message bodies through `window.__chatSetPreview` rather than props/context. It is installed in a mount effect and deleted on unmount; any second chat instance would clobber it.
@@ -669,18 +639,17 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 - `EntityDetailPanel` links to `/graph-3d` with a raw `<a>`, causing a full reload (state loss); `Link` was not used deliberately or otherwise — treat as low-priority.
 - `useProximityLabels` reads the **notes-graph** control key `orb:notes-graph-controls:<kb>` for `textFade`; adjusting "Text fade threshold" on `/notes-graph` also changes label fade on `/graph-3d`.
 - `KBProvider` initial value is `default` even when storage says otherwise — components that render KB-dependent UI on first paint (sidebar label) flash "default" briefly; this is expected.
-- `resolveApiBaseUrl` caches `null` permanently in a browser (no bridge). In Electron, if the very first upload happens before the preload has answered, the failure is *not* cached and later uploads go direct.
-- `class-variance-authority` is a declared dependency with zero imports; `sharp` is a dependency only because Next pulls it for image optimisation, which is disabled.
+- `class-variance-authority` is a declared dependency with zero imports.
 - `cooldownTicks={0}` / `warmupTicks={0}` on the 3D canvas mean the force engine does **not** run — positions come pre-computed from the backend (`x,y,z` pinned via `fx/fy/fz`). Removing `fx/fy/fz` would make the graph collapse to the origin.
-- The `Dockerfile` builds a working image but its defaults (`backend:8000`, `rustfs:9000`) match no current deployment.
 
 ## 22. History / rationale
 
-- `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" — introduced `proxyClientMaxBodySize`, the desktop bridge (`resolveApiBaseUrl`), the standalone build script, and the settings-page cleanup actions; the Docker `Dockerfile`/`rustfs` targets became legacy at this point.
+- `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" — introduced the desktop bridge, the (since removed) Next.js standalone build and proxy layer, and the settings-page cleanup actions; the container/`rustfs` targets became legacy at this point.
 - `2c10d8d` "Improve KB handling, Qdrant, LLM async, ingestion" — async chat (`/chat/async` + status polling) and the KB context.
-- `6162be2` "Rebrand LifeOS / LiveOS to Orb across product and docs" — storage key `orb_current_kb` with migration from `lifeos_current_kb`/`liveos_current_kb`; bridge name `orbDesktop` with `liveosDesktop` fallback.
+- `6162be2` "Rebrand LifeOS / LiveOS to Orb across product and docs" — storage key `orb_current_kb` with migration from `lifeos_current_kb`/`liveos_current_kb`; bridge name `orbDesktop` (the `liveosDesktop` fallback has since been dropped).
 - `6365686` "Add entity mention highlighting & editor" — `entity://` link injection and `EntityDetailPanel`.
 - `b84ca73` "Speed up chat, notes UI, and graph writes from deferred audit work" — `ENTITY_SCAN_RECENT_LIMIT`, `scanCache`, poll caps in `ChatProvider`, adaptive status polling.
 - `f8f527f` "Harden security and fix data-loss and perf issues from full-codebase audit" — `urlTransform` scheme allow-list, external-link hardening, fit-once camera guards, blob revoke on unmount.
 - `fbcafe7` "Align codebase with Orb desktop product and drop legacy Docker-era paths" — `graph3d` extraction into hooks/components, `SuppressThreeWarnings`.
-- Uncommitted (2026-09-02): per-KB LLM override (`EffectiveLLM`, `KBLLMConfig`, `api.getKBLLM/updateKBLLM`, `src/app/kb/_components/KBModelPanel.tsx`) — see [20 §7](20-frontend-chat-graph-and-pages.md).
+- 2026-09: per-KB LLM override (`EffectiveLLM`, `KBLLMConfig`, `api.getKBLLM/updateKBLLM`, `src/app/kb/_components/KBModelPanel.tsx`) — see [20 §7](20-frontend-chat-graph-and-pages.md).
+- Tauri migration (2026-09): Next.js replaced by Vite + react-router; the API serves `dist/`; the bridge shrank to pickers, restart and notifications; reveal-in-folder and credentials became API calls.

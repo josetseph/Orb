@@ -8,7 +8,7 @@
 
 ## 1. One-paragraph model
 
-Orb is a **local-first personal knowledge system** delivered as an Electron desktop app. The Electron main process is a **supervisor**: it spawns five local services and then loads the UI. Users write Markdown notes (plus images, audio, video, PDFs) into a **vault** on disk. Saving a note triggers an **ingestion pipeline** that enriches attachments with local vision/speech models, asks an LLM to extract entities and relationships, and writes the result into an embedded **Kuzu property graph**, a **Qdrant** vector store and a **Meilisearch** keyword index. **Chat** runs a multi-hop research loop across those three stores plus graph expansion and a cross-encoder reranker, then synthesises an answer with citations. All local models (chat, embedding, reranking, Florence-2, Whisper, Marlin) run **inside the API process**, one heavy model resident at a time. Everything is partitioned by **knowledge base (KB)**: each KB owns its own vault, graph, collections, index and Firefly III finance administration. SQLite holds only metadata.
+Orb is a **local-first personal knowledge system** delivered as a Tauri desktop app. The shell spawns one child, `python -m app.desktop_runtime`, which starts the API at once and boots the three sidecars behind it; the shell loads the UI as soon as `/health` answers. Users write Markdown notes (plus images, audio, video, PDFs) into a **vault** on disk. Saving a note triggers an **ingestion pipeline** that enriches attachments with local vision/speech models, asks an LLM to extract entities and relationships, and writes the result into an embedded **Kuzu property graph**, a **Qdrant** vector store and a **Meilisearch** keyword index. **Chat** runs a multi-hop research loop across those three stores plus graph expansion and a cross-encoder reranker, then synthesises an answer with citations. All local models (chat, embedding, reranking, Florence-2, Whisper, Marlin) run **inside the API process**, one heavy model resident at a time. Everything is partitioned by **knowledge base (KB)**: each KB owns its own vault, graph, collections, index and Firefly III finance administration. SQLite holds only metadata.
 
 ---
 
@@ -16,24 +16,21 @@ Orb is a **local-first personal knowledge system** delivered as an Electron desk
 
 ```mermaid
 flowchart TB
-  subgraph Electron["Electron (desktop/main.js)"]
-    MAIN[Main process<br/>windows · IPC · supervisor]
-    PRE[preload.js<br/>window.orbDesktop]
-    REN[Renderer<br/>BrowserWindow → http://127.0.0.1:17400]
+  subgraph Tauri["Tauri shell (desktop/src-tauri)"]
+    MAIN[main.rs / runtime.rs<br/>window · spawn/watch · save_setup]
+    PRE[init.js<br/>window.orbDesktop]
+    REN[WebView<br/>→ http://127.0.0.1:17401]
     MAIN --> PRE --> REN
   end
 
-  subgraph Children["Child processes spawned by supervisor.js (detached on POSIX)"]
+  subgraph Runtime["python -m app.desktop_runtime (own process group)"]
+    API[FastAPI / uvicorn<br/>backend/app :17401<br/>serves frontend/dist at /]
     QD[(Qdrant<br/>:17433)]
     ME[(Meilisearch<br/>:17470)]
     FF[Firefly III<br/>php artisan serve :17412]
-    API[FastAPI / uvicorn<br/>backend/app :17401]
-    UI[Next.js standalone<br/>node run-server.js :17400]
   end
 
-  REN -- "same-origin /api/v1/* (Next rewrite)" --> UI
-  UI -- "proxy → http://127.0.0.1:17401" --> API
-  REN -. "large uploads: direct http://127.0.0.1:17401/api/v1/upload" .-> API
+  REN -- "same-origin /api/v1/*" --> API
   API --> QD
   API --> ME
   API --> FF
@@ -41,21 +38,22 @@ flowchart TB
   API --> SQ[(SQLite orb.db)]
   API --> VA[(Vault .md + attachments)]
   API --> MD[(GGUF + HF models<br/>in-process)]
-  MAIN --> QD & ME & FF & API & UI
+  MAIN --> API
+  API -. boots in background .-> QD & ME & FF
 ```
 
 | Process | Binary / entry | Port (default) | Started by | Waits for | Log |
 |---|---|---|---|---|---|
-| Electron main | `desktop/main.js` | – | user | – | console |
-| Qdrant | `DATA_DIR/bin/<platform>/qdrant` (downloaded v1.18.2) | 17433 | supervisor | `GET /` < 500 | stdio ignored |
-| Meilisearch | `DATA_DIR/bin/<platform>/meilisearch` (v1.49.0) | 17470 | supervisor | `GET /health` | stdio ignored |
-| Firefly III | portable PHP 8.5 `artisan serve` in `DATA_DIR/firefly/app` | 17412 | supervisor | `GET /` | `logs/firefly.log` |
-| API | `python -m uvicorn app.main:app` | 17401 | supervisor (parallel with UI) | `GET /health` | `logs/backend.log` + component logs |
-| UI | `node run-server.js` (packaged) or `npm run dev` (dev) | 17400 | supervisor (parallel with API) | `GET /` | `logs/frontend.log` |
+| Tauri shell | `desktop/src-tauri` (`main.rs`, `runtime.rs`) | – | user | – | stderr |
+| Desktop runtime | `python -m app.desktop_runtime` | – | shell | – | `logs/backend.log` |
+| API | `uvicorn.run("app.main:app")` inside the runtime; serves the built UI at `/` | 17401 | runtime (immediately) | `GET /health` (shell polls, then shows the window) | `logs/backend.log` + component logs |
+| Qdrant | `DATA_DIR/bin/<platform>/qdrant` (downloaded v1.18.2) | 17433 | runtime (background thread) | `GET /` < 500 | `logs/qdrant.log` |
+| Meilisearch | `DATA_DIR/bin/<platform>/meilisearch` (v1.49.0) | 17470 | runtime (background thread) | `GET /health` | `logs/meilisearch.log` |
+| Firefly III | portable PHP 8.5 `artisan serve` in `DATA_DIR/firefly/app` | 17412 | runtime (background thread) | `GET /` | `logs/firefly.log` |
 
-Ports live in one place, `desktop/ports.js`, overridable with `ORB_UI_PORT`, `ORB_API_PORT`, `ORB_FIREFLY_PORT`, `ORB_QDRANT_PORT`, `ORB_MEILI_PORT` (legacy `LIVEOS_*` names accepted). The 174xx block was chosen to avoid colliding with typical 8000/3000/6333/7700 developer stacks.
+Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `ORB_FIREFLY_PORT`, `ORB_QDRANT_PORT`, `ORB_MEILI_PORT` (legacy `LIVEOS_*` names accepted). Port 3700 is only the Vite dev server. The 174xx block was chosen to avoid colliding with typical 8000/3000/6333/7700 developer stacks.
 
-Boot order in `Supervisor.startAll`: free stale listeners on the port block → wait 900 ms → Qdrant + Meilisearch (download binaries first if missing) → Firefly → API and UI in parallel → multimodal readiness check in the background (never blocks the first window). Details: [04-desktop-shell.md](04-desktop-shell.md).
+Boot order in `desktop_runtime.py`: free stale listeners on the port block → start uvicorn immediately → in a background thread, Qdrant + Meilisearch (download binaries first if missing) → Firefly install/migrate/boot → multimodal readiness check. Progress is written to `DATA_DIR/boot-status.json`, exposed by `/api/v1/admin/maintenance-status` and shown in the UI's status indicator; `QdrantService` / `MeilisearchService` reconnect on use once their sidecar is listening. Details: [04-desktop-shell.md](04-desktop-shell.md).
 
 There are **no model HTTP sidecars**. Florence, Whisper, Marlin, chat, embed and rerank all load in the uvicorn process. This is a locked decision ([26](26-decisions-and-constraints.md)).
 
@@ -65,8 +63,8 @@ There are **no model HTTP sidecars**. Florence, Whisper, Marlin, chat, embed and
 
 ```mermaid
 flowchart LR
-  W[Wizard window<br/>wizard.html] -->|IPC save-wizard| PJ[paths.json<br/>App Support/Orb/paths.json]
-  PJ --> SUP[supervisor.js loadPaths]
+  W[First-run setup page<br/>desktop/shell/index.html] -->|save_setup command| PJ[paths.json<br/>App Support/Orb/paths.json]
+  PJ --> SUP[desktop_runtime.py / app.core.paths]
   SUP -->|env: ORB_DATA_DIR, ORB_MODELS_DIR, ORB_PATHS_FILE,<br/>QDRANT_*, MEILI_*, FIREFLY_*, ORB_LLAMA_*| API[backend Settings]
   ENV[.env in backend/] --> API
   RC[DATA_DIR/runtime_config.json<br/>provider/model/ingestion_model/base_url/ai_setup_mode] -->|startup + PATCH /settings| API
@@ -214,13 +212,12 @@ Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructu
 
 ## 9. Frontend ↔ backend contract
 
-- The UI is a Next.js 16 app-router SPA, dark-only, with `KBProvider` and `ChatProvider` at the root.
-- All calls go through `frontend/src/lib/api.ts` (axios). In packaged mode `NEXT_PUBLIC_API_URL=/api/v1` and Next rewrites proxy to `http://127.0.0.1:17401`; in `next dev` the absolute API URL is used.
-- **Uploads bypass the Next proxy**: `resolveApiBaseUrl` asks the Electron bridge for the direct API URL so multi-hundred-MB media are not truncated (Next's default 10 MB proxy limit was the original bug; `proxyClientMaxBodySize: "512mb"` is the belt-and-braces setting).
+- The UI is a Vite + React SPA (react-router), dark-only, with `KBProvider` and `ChatProvider` at the root, served by the API at `/` from `FRONTEND_DIR` (default `frontend/dist`).
+- All calls go through `frontend/src/lib/api.ts` (axios) against same-origin `/api/v1`; in dev the Vite server on 3700 proxies `/api/v1`, `/vault-files` and `/health` to 17401. There is no separate UI server or proxy body limit: uploads go straight to FastAPI.
 - Long-running work is **polled**, not streamed: chat (`/chat/status/{request_id}`), note ingestion (`/notes/{id}/status`), model downloads and multimodal readiness (`/setup/*`), maintenance (`/admin/maintenance-status`).
 - Response shapes are hand-typed in `frontend/src/lib/types.ts`; there is no OpenAPI codegen.
 - Vault media URLs are `/vault-files/<kb>/<rel_path>`; the editor rewrites them for display and the backend enforces `safe_vault_join` on the way back.
-- The Electron bridge `window.orbDesktop` exposes only: `pickDirectory`, `getApiBaseUrl`, `revealInFolder` (allow-listed roots), `getDefaultPaths`, `getAppInfo`, `saveWizard` (wizard window only), `wizardDone`, `onStatus`.
+- The desktop bridge `window.orbDesktop` (injected by `src-tauri/src/init.js`) exposes only: `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`. Reveal-in-folder is `POST /api/v1/desktop/reveal`; cloud credentials go through `/api/v1/credentials` and are stored in the OS keychain by the backend.
 
 Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-reference.md](07-api-reference.md).
 
@@ -239,7 +236,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 9. **Trace IDs.** Every request gets `X-Request-Id` (incoming or generated) via a ContextVar; log lines from the same request can be correlated.
 10. **Community detection is idle-triggered and optional.** New ingestions pre-empt a running recompute; do not call it synchronously from a request. It is disabled unless `COMMUNITY_DETECTION_ENABLED=true`.
 11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`.
-12. **Legacy aliases are accepted, never emitted.** `LIVEOS_*`, `TYPESENSE_*`, `lifeos_current_kb`, `window.liveosDesktop` exist only to read old installs.
+12. **Legacy aliases are accepted, never emitted.** `LIVEOS_*` env names, `lifeos_current_kb` and the `typesense_collection` column name exist only to read old installs.
 
 ---
 
@@ -247,10 +244,9 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 
 | Mode | Who | How | Notes |
 |---|---|---|---|
-| Packaged desktop (product) | end users | `.dmg` / `.exe` / `.AppImage` from `desktop-v*` tags | bundles Python, Node, Next standalone, Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
-| Dev desktop | contributors | `cd desktop && npm start` | repo `backend/.venv` + `next dev`; same supervisor and ports |
-| Packaged-layout test | contributors | `npm run prepare-dist && ORB_RESOURCES=./resources npm start` | exercises bundled runtimes without an installer |
-| Bare API | contributors / benchmarks | `uvicorn app.main:app` with `.env` | ports 8000 / 3700; benchmark harness assumes `http://localhost:8000` |
-| Docker compose | contributors only | `docker compose up -d` | Postgres + Qdrant + Meili + API + UI; not the product path; no model sidecars |
+| Packaged desktop (product) | end users | `.dmg` / `.exe` / `.AppImage` from `desktop-v*` tags | bundles Python, the Vite build and the Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
+| Dev desktop | contributors | `npm run dev` in `frontend/` + `ORB_URL=http://127.0.0.1:3700 cargo tauri dev` in `desktop/src-tauri/` | repo `backend/.venv` + Vite dev server; same runtime and ports |
+| Packaged-layout test | contributors | `python3 desktop/build.py prepare && ORB_USE_RESOURCES=1 cargo tauri dev` | exercises bundled runtimes without an installer |
+| Bare API | contributors | `uvicorn app.main:app` with `.env` | ports 8000 / 3700 |
 
 Details: [05-packaging-build-and-release.md](05-packaging-build-and-release.md), [27-development-guide.md](27-development-guide.md).

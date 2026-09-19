@@ -2,7 +2,6 @@
 
 from pathlib import Path
 
-from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -38,6 +37,8 @@ class Settings(BaseSettings):
     )
 
     PROJECT_NAME: str = "Orb"
+    # Vite build to serve at "/" (desktop: the packaged UI). Unset -> ../frontend/dist if built.
+    FRONTEND_DIR: str | None = None
     API_V1_STR: str = "/api/v1"
     # Include 127.0.0.1 — Electron desktop loads that origin (≠ localhost for CORS)
     CORS_ORIGINS: str = (
@@ -50,8 +51,6 @@ class Settings(BaseSettings):
     # ── Desktop / path layout ─────────────────────────────────────────────────
     DATA_DIR: str = _default_data_dir()
     MODELS_DIR: str = _default_models_dir()
-    # "sqlite" (desktop default) | "postgres" (contributor docker)
-    DATABASE_BACKEND: str = "sqlite"
     # AI setup: "local" | "cloud" | "hybrid" | "none"
     AI_SETUP_MODE: str = "none"
 
@@ -91,11 +90,9 @@ class Settings(BaseSettings):
     GRAPH_EXPAND_TOP_NEIGHBORS: int = 10
     GRAPH_EXPAND_SCORE_THRESHOLD: float = 0
     MAX_POTENTIAL_QUESTIONS: int = 10
-    # Desktop UX: 3 is enough for most personal-KB questions; HotPotQA-style
-    # multi-hop rarely benefits past ~3 before KB-miss exhaustion (see Results/).
+    # 3 is enough for most personal-KB questions; multi-hop rarely benefits past ~3.
     MAX_LOOP_ITERATIONS: int = 3
     CHAT_HISTORY_MAX_MESSAGES: int = 24
-    BENCHMARK_MODE: bool = False
 
     QDRANT_HOST: str = "127.0.0.1"
     QDRANT_PORT: int = 6333
@@ -104,15 +101,11 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NODE_RELATIONSHIPS: str = "node_relationships"
     QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS: str = "node_isolated_contexts"
 
-    # Meilisearch (keyword / BM25). TYPESENSE_* kept as env aliases for older installs.
+    # Meilisearch (keyword / BM25)
     MEILI_HOST: str = "127.0.0.1"
     MEILI_PORT: int = 7700
     MEILI_MASTER_KEY: str = "orb-dev-key"
     MEILI_INDEX_NAME: str = "orb_nodes"
-    TYPESENSE_HOST: str = "127.0.0.1"
-    TYPESENSE_PORT: int = 7700
-    TYPESENSE_API_KEY: str = "orb-dev-key"
-    TYPESENSE_COLLECTION_NAME: str = "orb_nodes"
 
     # Transcription is Qwen3-ASR 1.7B: 5.6x realtime on Apple Silicon with no
     # repetition loops or dropped speech on a 76-min lecture where Whisper
@@ -160,9 +153,6 @@ class Settings(BaseSettings):
     HUGGINGFACE_MODEL: str | None = None
 
     # Contributor Postgres only — leave unset for Orb desktop (SQLite).
-    DATABASE_TRANSACTION_POOLER_URL: str | None = None
-    DATABASE_SESSION_POOLER_URL: str | None = None
-    DATABASE_DIRECT_CONNECTION_URL: str | None = None
 
     LOG_LEVEL: str = "INFO"
     INGESTION_AGENT_CONCURRENCY: int = 2
@@ -170,21 +160,6 @@ class Settings(BaseSettings):
     MULTIMEDIA_CONCURRENCY: int = 1
     USE_DYNAMIC_EMBEDDING_INSTRUCTION: bool = True
 
-    @model_validator(mode="after")
-    def _apply_typesense_aliases(self) -> "Settings":
-        """Copy legacy TYPESENSE_* onto MEILI_* when Meili still has defaults."""
-        if self.MEILI_HOST == "127.0.0.1" and self.TYPESENSE_HOST != "127.0.0.1":
-            self.MEILI_HOST = self.TYPESENSE_HOST
-        if self.MEILI_PORT == 7700 and self.TYPESENSE_PORT != 7700:
-            self.MEILI_PORT = self.TYPESENSE_PORT
-        if self.MEILI_MASTER_KEY == "orb-dev-key" and self.TYPESENSE_API_KEY != "orb-dev-key":
-            self.MEILI_MASTER_KEY = self.TYPESENSE_API_KEY
-        if (
-            self.MEILI_INDEX_NAME == "orb_nodes"
-            and self.TYPESENSE_COLLECTION_NAME != "orb_nodes"
-        ):
-            self.MEILI_INDEX_NAME = self.TYPESENSE_COLLECTION_NAME
-        return self
 
 
 settings = Settings()

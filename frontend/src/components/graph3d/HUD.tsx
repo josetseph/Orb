@@ -1,5 +1,3 @@
-"use client";
-
 /** Bottom-left stats + hint line shared by both graph screens. */
 export function HUD({
   stats,

@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, Maximize2 } from "lucide-react";
 import { useKB } from "@/lib/kb-context";
@@ -21,8 +19,6 @@ import {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyNode = any;
-
-const MAX_TYPE_FILTERS = 8;
 
 export default function Graph3DPage() {
   const { currentKB, isHydrated } = useKB();
@@ -172,25 +168,6 @@ export default function Graph3DPage() {
             onPick={pick}
           />
           <GraphModeSwitch mode="entities" />
-          {typeCounts.length > 0 && (
-            <div className="flex h-8 items-center gap-1 rounded-md bg-surface px-1.5 shadow-sm">
-              {typeCounts.slice(0, MAX_TYPE_FILTERS).map(([t, n]) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => toggleType(t)}
-                  className={cn(
-                    "flex h-[22px] items-center gap-1.5 rounded-[5px] px-2 text-[11.5px] text-n-300 hover:bg-n-900",
-                    hidden.has(t) && "opacity-40",
-                  )}
-                >
-                  <span className="dot" style={{ background: nodeColor(t) }} />
-                  {t}
-                  <span className="text-n-500">{n}</span>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="absolute right-5 top-4 z-10">
@@ -216,7 +193,7 @@ export default function Graph3DPage() {
             onSelectNodeId={pickById}
           />
         ) : (
-          <div className="flex flex-col gap-3.5 overflow-auto px-4 py-3.5">
+          <div className="flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto px-4 py-3.5">
             <div>
               <h5 className="mb-1 text-[15px] font-medium">Graph</h5>
               <div className="text-[12px] text-n-500">{stats}</div>

@@ -318,7 +318,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 8. **Frontend marker mismatch** (`[Video Transcript …]` vs `[Video Audio Transcript …]`, no Word/Spreadsheet segment types).
 9. **Image titles come from the chat LLM, not Florence**; if the LLM is down, image entities are named after their filenames.
 10. **`process_video()` is dead code** for the agent; do not "fix" ordering by calling it — it would load Whisper and Marlin back to back inside one handler.
-11. Remote downloads are limited to 512 MiB and public addresses; a Docker-internal or `localhost` media URL will fail with `Refusing to fetch non-public address`.
+11. Remote downloads are limited to 512 MiB and public addresses; a private-network or `localhost` media URL will fail with `Refusing to fetch non-public address`.
 12. `describe_image` swallows the local exception and only raises a generic `RuntimeError` after the cloud fallback — the real Florence error is at `WARNING` level (`Local image description failed: …`).
 13. Env-var frame-sampling knobs are read at import via `setdefault`; setting them in `.env`/`settings` has no effect unless exported into the process environment before `multimodal_runtime` is imported.
 

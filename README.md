@@ -157,11 +157,12 @@ open /Applications/Orb.app
 
 ## Build from source
 
-Prefer to run or package Orb yourself? Use the Electron shell under [`desktop/`](desktop/).
+Prefer to run or package Orb yourself? The Tauri shell and build script live under [`desktop/`](desktop/).
 
 ### Prerequisites
 
-- Node.js 20+
+- Rust (`brew install rust` or rustup) and `cargo install tauri-cli`
+- Node.js 20+ (only to build the UI)
 - Python 3.11+ (dev uses the repo `backend/.venv` when present)
 - macOS: Xcode CLT + `cmake` for Metal `llama-cpp-python` when packaging
 - ffmpeg (audio transcoding)
@@ -170,46 +171,29 @@ Prefer to run or package Orb yourself? Use the Electron shell under [`desktop/`]
 
 ```bash
 git clone https://github.com/josetseph/Orb.git
-cd Orb/desktop
-npm install
-npm start
+cd Orb/frontend && npm install && npm run dev            # UI with live reload on 3700
+cd Orb/desktop/src-tauri && ORB_URL=http://127.0.0.1:3700 cargo tauri dev   # the shell
 ```
 
-This starts the supervisor with the repo backend and `next dev` frontend. Ports: UI `17400`, API `17401`, Qdrant `17433`, Meilisearch `17470`.
+The shell spawns the Python runtime, which starts the API and then Qdrant, Meilisearch and Firefly behind it. Ports: API `17401` (serves the UI when packaged), Firefly `17412`, Qdrant `17433`, Meilisearch `17470`.
 
 More detail: [`desktop/README.md`](desktop/README.md).
 
 ### Package installers
 
 ```bash
-cd desktop
-npm install
-npm run prepare-dist   # bundle Python + Node + frontend (~10–20 min)
-npm run dist:mac       # or dist:win on Windows
+python3 desktop/build.py prepare   # bundle Python + UI + Firefly seed (~10–20 min)
+python3 desktop/build.py dist      # cargo tauri build → dmg / nsis / AppImage
 ```
 
 Full packaging notes: [`desktop/PACKAGING.md`](desktop/PACKAGING.md).
 
-### Contributors — optional Docker infra
-
-`docker-compose.yml` can still bring up Postgres, Qdrant, Meilisearch, API, and UI for contributor stacks. It is **not** the product install path and does **not** run model HTTP sidecars — multimodal and GGUF inference stay in-process in the API. The Electron app always supervises local binaries (`npm start` in `desktop/`); do not wire Docker through the desktop shell.
-
-```bash
-# Optional contributor path only
-docker compose up -d
-```
 
 ---
 
 ## Privacy
 
 Orb is local-first. Notes, vault files, vectors, and models live under the directories you chose (or Application Support / `%APPDATA%\Orb`). Nothing is uploaded unless you explicitly configure a cloud LLM provider.
-
----
-
-## Benchmarks
-
-Retrieval and HotPotQA evaluation reports live under [`Results/`](Results/). They document earlier pipeline experiments; the shipping product path is the desktop app above.
 
 ---
 

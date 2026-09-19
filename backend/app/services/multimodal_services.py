@@ -8,6 +8,9 @@ models load in-process.
 from __future__ import annotations
 
 import platform
+import importlib
+import os
+import site
 import subprocess
 import sys
 
@@ -84,13 +87,24 @@ def ensure_multimodal_python_deps(*, install: bool = False) -> dict:
                 "torch transformers librosa pydub."
             ),
         }
-    logger.info("Installing multimodal deps into %s …", sys.executable)
+    # The desktop runtime sets PYTHONUSERBASE under DATA_DIR: the packages land
+    # there, not inside the (signed, read-only) app bundle. A venv has no user
+    # site, so dev installs go into the venv as before.
+    user_site = bool(os.environ.get("PYTHONUSERBASE"))
+    logger.info(
+        "Installing multimodal deps %s …",
+        f"into {os.environ['PYTHONUSERBASE']}" if user_site else f"with {sys.executable}",
+    )
     try:
         subprocess.check_call(
-            [sys.executable, "-m", "pip", "install", "--upgrade", *_MULTIMODAL_PIP],
+            [sys.executable, "-m", "pip", "install", "--upgrade", *(["--user"] if user_site else []), *_MULTIMODAL_PIP],
         )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         return {"ok": False, "installed": False, "error": str(exc)}
+    if user_site:
+        # This process started before the directory had anything in it.
+        site.addsitedir(site.getusersitepackages())
+        importlib.invalidate_caches()
     ok, err = _deps_importable()
     return {"ok": ok, "installed": True, "error": None if ok else err}
 

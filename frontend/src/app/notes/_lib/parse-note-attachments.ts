@@ -7,7 +7,7 @@ import type { NoteAttachment } from "./types";
 const URL_PART = "(?:[^()\\n]|\\([^()\\n]*\\))+";
 const ATTACHMENT_REGEX = new RegExp(
   `(?:!\\[([^\\]]*)\\]\\((${URL_PART})\\)|\\[([📎🖇🎤][^\\]]+)\\]\\((${URL_PART})\\))`,
-  "g",
+  "gu",
 );
 
 export function parseNoteAttachments(content: string): NoteAttachment[] {

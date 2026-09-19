@@ -48,7 +48,7 @@
 | `frontend/src/components/markdown-editor/mediaEmbedExtension.ts` | Inline media embeds for attachment links | (regex accepting `📎`/`🖇`/`🎤`) |
 | `frontend/src/lib/utils.ts` | `/vault-files` URL helpers | `resolveFileUrl`, `encodeFileUrl`, `isImageUrl`, `isVideoUrl` |
 | `frontend/src/lib/api.ts` | Route wrappers (`createNote`, `updateNote`, `moveNote`, `moveVaultFile`, `deleteVaultFile`, `mkdirVaultFolder`, `listVaultFolders`, `resolveVaultLocalPath`, `deleteNote`, `batchDeleteNotes`, `getNotesGraph`, …) | `api` |
-| `frontend/next.config.ts` | Dev rewrite `/vault-files/:path*` → backend | — |
+| `frontend/vite.config.ts` | Dev proxy `/vault-files` → backend (17401) | — |
 
 ## 3. The note model and the file contract
 
@@ -249,7 +249,7 @@ Batch delete loops this per id, collecting `{id, error}` on exceptions.
 
 ### 8.1 Upload — `POST /api/v1/upload?kb=` (multipart `file`)
 
-1. Whole file read into memory (no server-side size limit; the Next dev proxy allows 512 MB; the desktop UI talks to the backend directly).
+1. Whole file read into memory (no server-side size limit; the desktop UI talks to the backend directly on the same origin).
 2. Audio normalisation: if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}` → `_transcode_to_m4a` (`ffmpeg -y -i in -c:a aac -b:a 128k out.m4a`, 60 s, thread). Success → bytes replaced, ext `m4a`, name hint `recording.m4a`; any failure → original bytes kept (name hint `recording.<ext>`). This is what the voice recorder relies on so Whisper and browsers get AAC.
 3. `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id)` → `save_attachment` (8.2) → returns `{url: "/vault-files/<kb_id>/<rel>", key: <rel>, filename}`.
 4. Response: `{filename (original), url, href (=url), rel_path (=key), local_path (=url), key, status:"success"}`.
@@ -278,7 +278,7 @@ Used by note delete (attachment discovery), `remove_upload`, `GET /api/v1/vault/
 
 ### 8.4 Serving — `GET /vault-files/{kb_id}/{file_path:path}` (`api_desktop.py`)
 
-- Not under `/api/v1`; in dev, `next.config.ts` rewrites `/vault-files/:path*` to the backend so relative markdown URLs work from the Next origin.
+- Not under `/api/v1`; in dev, `vite.config.ts` proxies `/vault-files` to the backend so relative markdown URLs work from the Vite origin. In the desktop app the API serves the UI, so the path is same-origin anyway.
 - KB resolved by `kb_registry.get_kb(kb_id)` then `get_kb_by_name(kb_id)`; 404 `"KB not found"` if none or no vault.
 - `safe_vault_join`; 404 `"File not found"` on escape or non-regular file.
 - `FileResponse(full)`: Starlette derives `Content-Type` from the extension (`mimetypes`), sets `Content-Length`, `Last-Modified`, `ETag`, and honours `Range` requests (needed for `<video>`/`<audio>` seeking). No cache headers beyond that; no auth; **any** file in the vault is served, including `.md` and dotfiles.

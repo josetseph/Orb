@@ -2,7 +2,7 @@
 
 **What this covers.** The two external index services every Knowledge Base owns beside its Kuzu graph: **Qdrant** (vector store; three collections per KB — node cores, relationship sentences, isolated contexts) and **Meilisearch** (keyword/BM25 index; one index per KB), plus the in-process `EmbeddingService` that produces every vector they hold. It documents client construction, per-KB naming, vector parameters, point-ID scheme, the exact payload/document schemas, every write/read/delete function and its callers, the embedding-dimension synchronisation and fail-closed rules, collection/index lifecycle on KB create/delete/reset, task-waiting semantics, key management, the legacy `TYPESENSE_*` aliases, what the contract unit tests pin, failure modes and gotchas. Retrieval *ranking* logic is out of scope (see [16](16-retrieval-and-chat.md)); only the store contracts retrieval relies on are described.
 
-**Related docs:** [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Local models and inference](12-local-models-and-inference.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Desktop shell](04-desktop-shell.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Testing and benchmarks](24-testing-and-benchmarks.md) · [Decisions and constraints](26-decisions-and-constraints.md)
+**Related docs:** [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Local models and inference](12-local-models-and-inference.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Desktop shell](04-desktop-shell.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Testing](24-testing.md) · [Decisions and constraints](26-decisions-and-constraints.md)
 
 ---
 
@@ -25,16 +25,16 @@
 | `backend/app/services/embedding.py` | `EmbeddingService`: provider validation, Qwen3 query instruction, `embed_query`/`embed_documents`/`get_dimension` | `EmbeddingService`, `embedding_service` |
 | `backend/app/services/local_models.py` | `LocalLlamaEmbeddings`, `sync_embedding_infrastructure`, `save_selection`, manifest `embedding_dims`, dimension probe after load | `sync_embedding_infrastructure`, `load_manifest`, `LocalLlamaEmbeddings` |
 | `backend/app/services/kb_registry.py` | Per-KB collection/index names, `QdrantService`/`MeilisearchService` construction, deletion cleanup | `KBRegistry.create_kb`, `_build_context`, `_cleanup_stores` |
-| `backend/app/core/config.py` | `QDRANT_*`, `MEILI_*`, `TYPESENSE_*` aliases, `EMBEDDING_*`, `VECTOR_*` | `settings`, `_apply_typesense_aliases` |
+| `backend/app/core/config.py` | `QDRANT_*`, `MEILI_*`, `EMBEDDING_*`, `VECTOR_*` | `settings` |
 | `backend/app/main.py` | Startup hook calling `sync_embedding_infrastructure()` | `startup_event` |
 | `backend/app/api/admin.py`, `backend/app/api/kb.py` | `reset_all` callers (reset-ingestion-data; KB empty) | — |
 | `backend/app/api/graph.py` | Meili consumers (`search_nodes`, `get_node`) | — |
 | `backend/app/workflows/ingestion.py` | All Qdrant/Meili **writes** | `_write_ontology`, `_update_node_summary`, `rebuild_leiden_communities`, `build_temporal_digests` |
 | `backend/app/services/retrieval.py` | Qdrant/Meili **reads** (`search_all_collections`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `search_nodes`) | — |
-| `desktop/supervisor.js`, `desktop/ports.js` | Spawns the binaries, chooses ports 17433/17470, generates/persists the Meili master key, passes env to the backend | `resolveMeiliMasterKey` |
+| `backend/app/desktop_runtime.py` | Downloads and spawns the binaries, chooses ports 17433/17470, generates/persists the Meili master key, sets env before the API imports `Settings` | `resolve_meili_master_key`, `boot_sidecars` |
 | `backend/tests/unit/test_qdrant_contract.py` | Pins `upsert_node_core` payload shape and `search_node_cores` filter construction | — |
 | `backend/tests/unit/test_meili_contract.py` | Pins that `update_node_community`/`index_node` documents always carry `node_id` (+`name`) and that errors are logged not raised | — |
-| `backend/requirements.txt` | `qdrant-client==1.17.1`, `meilisearch==0.34.1` (`typesense` commented out) | — |
+| `backend/requirements.txt` | `qdrant-client==1.17.1`, `meilisearch==0.34.1` | — |
 
 ## 3. Architecture / flow
 
@@ -87,7 +87,7 @@ Write ordering contract inside a note ingest: **Kuzu structural node → Qdrant 
 
 `is_available()` performs a live `client.get_collections()` round-trip every call (no caching); every public method calls it first, so each store operation costs one extra HTTP request.
 
-Desktop values are injected by `desktop/supervisor.js`: `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT=<PORTS.qdrant>` (default **17433**, overridable via `ORB_QDRANT_PORT`/`LIVEOS_QDRANT_PORT`), and the binary is started with `QDRANT__STORAGE__STORAGE_PATH=DATA_DIR/qdrant`, `QDRANT__SERVICE__HTTP_PORT`. `QDRANT_API_KEY` is `None` by default ("Only needed for Qdrant Cloud").
+Desktop values are injected by `desktop_runtime.py`: `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT=<PORTS.qdrant>` (default **17433**, overridable via `ORB_QDRANT_PORT`/`LIVEOS_QDRANT_PORT`), and the binary is started with `QDRANT__STORAGE__STORAGE_PATH=DATA_DIR/qdrant`, `QDRANT__SERVICE__HTTP_PORT`. `QDRANT_API_KEY` is `None` by default ("Only needed for Qdrant Cloud").
 
 ### 4.2 Per-KB collection naming
 
@@ -211,7 +211,7 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 
 | KB | Index uid | Decided in |
 |---|---|---|
-| default | `orb_nodes` (`settings.MEILI_INDEX_NAME`, or `TYPESENSE_COLLECTION_NAME` via alias) | `_ensure_default_row` stores `settings.MEILI_INDEX_NAME or settings.TYPESENSE_COLLECTION_NAME` into the SQLite column **`typesense_collection`** |
+| default | `orb_nodes` (`settings.MEILI_INDEX_NAME`) | `_ensure_default_row` stores `settings.MEILI_INDEX_NAME` into the SQLite column **`typesense_collection`** (the code still spells `or settings.TYPESENSE_COLLECTION_NAME`; that field no longer exists) |
 | other | `<slug>_nodes` | `KBRegistry.create_kb` (`f"{slug}_nodes"`), same column |
 
 The SQLite column name `typesense_collection` is historical and now holds the Meilisearch index uid.
@@ -265,14 +265,14 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 
 ### 5.6 Master key
 
-- Backend setting `MEILI_MASTER_KEY` (default `"orb-dev-key"`, also `.env.example`). Legacy alias `TYPESENSE_API_KEY`.
-- Desktop (`desktop/supervisor.js: resolveMeiliMasterKey(dataDir)`): precedence `process.env.MEILI_MASTER_KEY` → `DATA_DIR/meili_master_key` file → generate. Generation rule: if `DATA_DIR/meilisearch/` does not exist or is empty (fresh install) → `crypto.randomBytes(32).toString("base64url")`; otherwise (existing Meili data) → `"orb-dev-key"` for compatibility with data written before keys were randomised. The chosen key is persisted to `DATA_DIR/meili_master_key` (mode `0600`) and passed both as `--master-key` to the `meilisearch` binary (`--db-path DATA_DIR/meilisearch --http-addr 127.0.0.1:<port>`) and as env `MEILI_MASTER_KEY` (+ `MEILI_HOST`, `MEILI_PORT`) to uvicorn.
+- Backend setting `MEILI_MASTER_KEY` (default `"orb-dev-key"`, also `.env.example`).
+- Desktop (`desktop_runtime.py: resolve_meili_master_key(data_dir)`): precedence env `MEILI_MASTER_KEY` → `DATA_DIR/meili_master_key` file → generate. Generation rule: if `DATA_DIR/meilisearch/` does not exist or is empty (fresh install) → `secrets.token_urlsafe(32)`; otherwise (existing Meili data) → `"orb-dev-key"` for compatibility with data written before keys were randomised. The chosen key is persisted to `DATA_DIR/meili_master_key` (mode `0600`) and passed both as `--master-key` to the `meilisearch` binary (`--db-path DATA_DIR/meilisearch --http-addr 127.0.0.1:<port>`) and as env `MEILI_MASTER_KEY` (+ `MEILI_HOST`, `MEILI_PORT`) to uvicorn.
 - Ports: `PORTS.meilisearch` = `ORB_MEILI_PORT` / `LIVEOS_MEILI_PORT` / **17470**. Health check `GET /health`.
-- Consequence: a developer running the backend by hand against a desktop-started Meilisearch must read the key from `DATA_DIR/meili_master_key`; `orb-dev-key` only works for the docker/dev compose setup or pre-randomisation installs.
+- Consequence: a developer running the backend by hand against a desktop-started Meilisearch must read the key from `DATA_DIR/meili_master_key`; `orb-dev-key` only works for a hand-started Meilisearch or pre-randomisation installs.
 
-### 5.7 `TYPESENSE_*` aliases
+### 5.7 Legacy `TYPESENSE_*` names
 
-`Settings._apply_typesense_aliases` (pydantic `model_validator(mode="after")`) copies legacy values onto the Meili fields **only when the Meili field still has its default**: `TYPESENSE_HOST→MEILI_HOST` (if `MEILI_HOST=="127.0.0.1"`), `TYPESENSE_PORT→MEILI_PORT` (if 7700), `TYPESENSE_API_KEY→MEILI_MASTER_KEY` (if `"orb-dev-key"`), `TYPESENSE_COLLECTION_NAME→MEILI_INDEX_NAME` (if `"orb_nodes"`). `.env.example` documents them as "Legacy aliases (still accepted)". The unit-test fixture `mock_typesense_service` is an alias of `mock_meili_service`.
+The `TYPESENSE_*` settings and the `_apply_typesense_aliases` validator have been removed; only the `typesense_collection` column and the unit-test fixture alias `mock_typesense_service` (= `mock_meili_service`) remain.
 
 ## 6. EmbeddingService (`backend/app/services/embedding.py`)
 
@@ -369,7 +369,6 @@ Neither store has a notion of KB besides the name prefix; nothing prevents two K
 | `MEILI_HOST` / `MEILI_PORT` | `127.0.0.1` / `7700` | client URL; desktop injects port **17470** (`ORB_MEILI_PORT`, `LIVEOS_MEILI_PORT`) |
 | `MEILI_MASTER_KEY` | `orb-dev-key` | API key; desktop supplies the persisted/random key |
 | `MEILI_INDEX_NAME` | `orb_nodes` | default-KB index uid |
-| `TYPESENSE_HOST` / `TYPESENSE_PORT` / `TYPESENSE_API_KEY` / `TYPESENSE_COLLECTION_NAME` | `127.0.0.1` / `7700` / `orb-dev-key` / `orb_nodes` | legacy aliases copied onto `MEILI_*` when those are at defaults |
 | `RERANKER_ENABLED` | see [16](16-retrieval-and-chat.md) | selects which vector threshold applies |
 
 **Upsert batching.** `_upsert_batched(collection, points)` chunks every multi-point upsert at `_UPSERT_BATCH_SIZE` (default 128, `ORB_QDRANT_UPSERT_BATCH`). A point carrying a 2560-dim vector is roughly 27 KB as REST JSON, so a few hundred exceed Qdrant's request-size limit and the **entire** call is rejected with `400 (Bad Request)` — losing every point in it, not just the overflow. A note yielding 713 new entities failed exactly that way, and because the stubs are what keep Kuzu and Qdrant IDs aligned, the next pass logged `missing in Qdrant node_cores but present in Kuzu` for each one. `upsert_node_cores`, `upsert_node_relationships` and `upsert_node_items` all route through it; failures name the batch and how many points were written before it (`batch 3 of 6 (128 of 713 points)`), and `_last_upsert_error` carries the reason up so `ingestion` can report what Qdrant actually said instead of guessing at causes.
@@ -390,7 +389,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 | `api/graph.py` → Meili | `search_nodes` (autocomplete, scan-text), `get_node` (content fallback) |
 | `api/admin.py`, `api/kb.py` → both | `reset_all` |
 | `local_models` → Qdrant | `ensure_vector_size` on all KBs via `sync_embedding_infrastructure` |
-| Desktop supervisor → binaries/backend | spawns `qdrant` and `meilisearch` from `DATA_DIR`, waits on `/` and `/health`, injects `QDRANT_*`, `MEILI_*` env ([04](04-desktop-shell.md)) |
+| `desktop_runtime.py` → binaries/backend | injects `QDRANT_*`, `MEILI_*` env, starts the API, then spawns `qdrant` and `meilisearch` from `DATA_DIR/bin` in the background; both services reconnect on use (`_connect` retried every 5 s) once the binaries answer ([04](04-desktop-shell.md)) |
 
 ## 11. What the contract unit tests pin
 
@@ -457,7 +456,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 14. **Meili `type` filterability is configured but unused**; `community_level` is filterable and unused; there are no sortable attributes.
 15. **Community docs in Meili have no `isolated_contexts`/`relationship_natural_language`** — only `name`, `type`, `community_level` — so BM25 can only match communities by name.
 16. **`search_all_collections` with `day_only=True` skips cores and rels entirely**, so entity descriptions never match day-scoped queries.
-17. **The Typesense era is visible everywhere:** SQLite column `typesense_collection`, `self.collection`, `mock_typesense_service`, conftest docstring, `TYPESENSE_*` settings — all now mean Meilisearch.
+17. **The Typesense era is still visible:** SQLite column `typesense_collection`, `self.collection`, `mock_typesense_service`, conftest docstring — all now mean Meilisearch. The `TYPESENSE_*` settings aliases are gone.
 18. **`QdrantService.__init__` mutates global `settings.EMBEDDING_DIMENSIONS`** as a side effect of constructing any KB's service.
 19. **Meili master key differs between fresh desktop installs (random, in `DATA_DIR/meili_master_key`) and upgraded/dev installs (`orb-dev-key`)** — `curl` debugging must use the file's value.
 20. **Contract tests construct services via `__new__`** — they never exercise `_ensure_collections`, `_prepare_vector`, or task waiting; those paths are untested.
@@ -469,7 +468,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 - **Change vector params (HNSW/on-disk/quantization):** only in `_ensure_collections`' `create_collection`; existing collections are not migrated — document a reset requirement.
 - **Change the search threshold or fan-out:** `VECTOR_*` settings and `search_all_collections` callers in `retrieval.py`; keep `score_threshold` as the primary filter.
 - **Add a Meili searchable/filterable attribute:** extend `_SEARCHABLE`/`_FILTERABLE` (settings are re-applied on every construction, so existing indexes pick it up) and write the field in `index_node`/`update_nodes_community`; remember whole-document replace semantics.
-- **Change the master key scheme:** `desktop/supervisor.js resolveMeiliMasterKey` + `MEILI_MASTER_KEY` env; the backend needs no change.
+- **Change the master key scheme:** `desktop_runtime.py resolve_meili_master_key` + `MEILI_MASTER_KEY` env; the backend needs no change.
 - **Add an embedding provider:** `EmbeddingService.__init__/_configure_embeddings` (currently hard-wired to `LocalLlamaEmbeddings`), keep the query/document asymmetry configurable per model, and route dims through `sync_embedding_infrastructure` so collections follow.
 - **Rename a KB's collections:** not supported; slug is immutable. Implement as create-new + re-ingest.
 
@@ -479,10 +478,10 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 |---|---|---|
 | `6852528` | 2026-01-23 | Unified vector index for distilled knowledge nodes; embeddings for all node types during ingestion — origin of the cores collection. |
 | `68494b7` | 2026-05-07 | Elasticsearch → **Typesense** for keyword search; Kuzu replaces Neo4j; embedding/qdrant service rewrites; reset scripts. `TYPESENSE_*` settings date from here. |
-| `f28d205` | 2026-05-19 | Docker-first defaults (`qdrant`, `typesense` service hostnames); later reverted to `127.0.0.1` defaults for the desktop. |
+| `f28d205` | 2026-05-19 | Container-first defaults (`qdrant`, `typesense` service hostnames); later reverted to `127.0.0.1` defaults for the desktop. |
 | `2c10d8d` | 2026-05-19 | Per-KB `QdrantService`/Typesense instances; `_ensure_collections` on init; `VectorParams`/`Distance` usage; reset scripts iterate the KB registry. |
 | `da75dfc` | 2026-05-28 | Temporal digests: `scroll_all_isolated_contexts_with_dates`, `period_key` payload, digest cores. |
-| Typesense → **Meilisearch** (`meilisearch_service.py`; `# typesense==2.0.0 # replaced by Meilisearch` in requirements) | mid-2026 | Kept attribute/column names for compatibility; aliases added in `Settings._apply_typesense_aliases`; conftest gained `mock_meili_service` with the old fixture aliased. |
+| Typesense → **Meilisearch** (`meilisearch_service.py`; `# typesense==2.0.0 # replaced by Meilisearch` in requirements) | mid-2026 | Kept attribute/column names for compatibility; `TYPESENSE_*` aliases were added in `Settings._apply_typesense_aliases` (since removed with the Tauri migration); conftest gained `mock_meili_service` with the old fixture aliased. |
 | `f8f527f` | 2026-08-06 | Audit fixes: **fail-closed Qdrant** (`_prepare_vector` raises; no mid-ingest `ensure_vector_size`), KB slug sanitisation (collection names cannot escape), blocking store work moved to threads. |
 | `b84ca73` | 2026-08-06 | Batched Meili community updates (`update_nodes_community`) — one task wait instead of one per node. |
 | `8de5cda` | 2026-08-07 | Batched embeds/upserts (`upsert_node_cores`, `upsert_node_relationships`, `find_node_ids_by_names` paging), concurrent per-collection Qdrant search (`ThreadPoolExecutor`), concurrent Meili term fan-out in retrieval. |

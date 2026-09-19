@@ -10,9 +10,9 @@
 
 | Page | Route | File | Primary components | Endpoints called |
 |---|---|---|---|---|
-| Home | `/` | `src/app/page.tsx` | `ShaderBackground`, `framer-motion`, `next/link` cards | none |
+| Home | `/` | `src/App.tsx` | `<Navigate to="/notes" replace />` | none |
 | Chat | `/chat` | `src/app/chat/page.tsx` | `ChatProvider` (via `useChat`), `AssistantMessageBody`, `SegmentedNoteContent`, `EntityDetailPanel`, `BlobMediaPlayer`, `ShaderBackground` | `POST /chat/async`, `GET /chat/status/{id}`, `GET /chat/conversations`, `GET /chat/conversations/{id}/messages`, `DELETE /chat/conversations/{id}`, `GET /chat/conversations/{id}/export`, `GET /notes/{id}`, `POST /graph/entities/scan-text`, `GET /graph/3d/node/{id}`, `GET /vault/local-path` |
-| Graph (redirect) | `/graph` | `src/app/graph/page.tsx` | server `redirect("/graph-3d")` | none |
+| Graph (redirect) | `/graph` | `src/App.tsx` | `<Navigate to="/graph-3d" replace />` | none |
 | 3D entity graph | `/graph-3d` | `src/app/graph-3d/page.tsx` | `components/graph3d/*` (`Graph3DCanvas`, `HUD`, `ProximityLabelLayer`, `GraphSearchOverlay`, `NodeDetailModal`) + hooks | `GET /graph/3d/full`, `GET /graph/3d/node/{id}` |
 | Notes graph (2D) | `/notes-graph` | `src/app/notes-graph/page.tsx` | `react-force-graph-2d`, `ReactMarkdown` preview, `ShaderBackground` | `GET /graph/notes`, `POST /graph/notes/rebuild`, `GET /notes/{id}` |
 | Knowledge bases | `/kb` | `src/app/kb/page.tsx`, `src/app/kb/_components/KBModelPanel.tsx` | `KBModelPanel`, `ShaderBackground`, desktop `pickDirectory` | `GET /kb`, `POST /kb`, `PATCH /kb/{id}`, `DELETE /kb/{id}`, `POST /kb/empty`, `POST /kb/delete-non-default`, `GET /kb/{id}/llm`, `PATCH /kb/{id}/llm` |
@@ -21,14 +21,14 @@
 | Notes | `/notes` | see [19](19-frontend-notes-editor.md) | | |
 | Finance | `/finance` | see [17](17-finance-firefly.md) | | |
 
-All pages are `"use client"` except `/graph`. All KB-scoped pages read `currentKB` from `useKB()`; only `/chat` and `/graph-3d` also gate on `isHydrated`.
+All pages are lazy react-router routes registered in `src/App.tsx`. All KB-scoped pages read `currentKB` from `useKB()`; only `/chat` and `/graph-3d` also gate on `isHydrated`.
 
 ## 2. Home — `/`
 
 Static landing page. No state, no effects, no API calls.
 
 - Layout: full-screen `bg-black` with `ShaderBackground`, centred column (`max-w-4xl`), staggered `framer-motion` fade-ins (delays 0 → 0.8 s).
-- Content: logo (`/logo.png`, 96 px, `next/image` eager), gradient title "Orb", subtitle "Your multimodal, graph-based knowledge system", three `next/link` cards → `/chat` (Chat), `/notes` (Notes), `/graph-3d` (Graph), a tagline pill, and four stack pills (SQLite, Kuzu, Qdrant, Meilisearch).
+- (Historical — `src/app/page.tsx` no longer exists; `/` now redirects to `/notes`.) Content was: logo (`/logo.png`, 96 px), gradient title "Orb", subtitle "Your multimodal, graph-based knowledge system", three link cards → `/chat` (Chat), `/notes` (Notes), `/graph-3d` (Graph), a tagline pill, and four stack pills (SQLite, Kuzu, Qdrant, Meilisearch).
 - Gotcha: the "Graph" card links to `/graph-3d` directly, not `/graph`; both work because `/graph` redirects.
 
 ## 3. Chat — `/chat`
@@ -91,7 +91,7 @@ Everything about the conversation itself (`messages`, `conversations`, `activeCo
 ### 3.6 Previews and desktop integration
 
 - `handleFileClick(url, filename)`: `resolvedUrl = encodeFileUrl(resolveFileUrl(url, currentKB))`; classifies by extension on the URL **or filename** (`image` → `pdf` → `video` → `audio` → `other`); sets `filePreview`. Modal renders `<img>`, `<iframe>` (pdf), `BlobMediaPlayer` (video/audio, **without** `kbId` — safe because the URL is already resolved), or a "Preview not available" placeholder.
-- Reveal/Open button: `handleRevealPreviewFile` → `api.resolveVaultLocalPath(filePreview.url, currentKB)` → `revealInFolder(local_path)`; if the bridge is absent or returns false → `window.open(url, "_blank")`; on exception → `alert("Could not reveal this file on disk.")`. Label is `revealInFolderLabel()` in Electron, "Open"/"Open file" otherwise.
+- Reveal/Open button: `handleRevealPreviewFile` → `api.resolveVaultLocalPath(filePreview.url, currentKB)` → `revealInFolder(local_path)` (`POST /api/v1/desktop/reveal`); if it returns false → `window.open(url, "_blank")`; on exception → `alert("Could not reveal this file on disk: …")`. Label is `revealInFolderLabel()` in the desktop app, "Open"/"Open file" otherwise.
 - `handleNoteReference(noteId)` exists for direct note links (`GET /notes/{id}?kb=`) but the reference chips use the `window.__chatSetPreview` path instead.
 - Note preview modal uses `SegmentedNoteContent` with `onEntityClick` enabled, so opening a preview triggers a `scan-text` POST for the note body (uncached — `SegmentedNoteContent` does not pass `cacheKey`).
 
@@ -285,7 +285,7 @@ Rendered inside every KB card under the metadata with `kb`, `onSaved={fetchKBs}`
 - `emptyKB` is addressed by slug, `deleteKB`/`renameKB`/LLM routes by `id`.
 - Deleting the active KB resets to default but does not clear `ChatProvider` state until `/chat` re-initialises.
 - No `isHydrated` gating, but the page only *writes* the KB so it is harmless.
-- `window.confirm` dialogs are native; in Electron they render as OS dialogs.
+- `window.confirm` dialogs are native; in the Tauri WebView they render as OS dialogs.
 
 ## 7. Settings — `/settings`
 
@@ -301,7 +301,7 @@ The single page for every model decision, rendered from one `GET /api/v1/models`
 
 1. **This knowledge base** — the KB currently open (from `KBProvider`), with three choices: inherit the system model, a model on this device, or a cloud endpoint. Writes to `PATCH /api/v1/kb/{id}/llm`. Shows the resolved model and whether it is inherited or pinned.
 2. **Default for everything else** — the system model, written via `PATCH /api/v1/settings` (plus `POST /setup/select-chat-model` when a curated catalog id is chosen, since that also pairs embed/rerank).
-3. **Cloud endpoints** — URL + key, stored through the Electron keychain bridge. The URL is the credential identity.
+3. **Cloud endpoints** — URL + key, written with `PUT /api/v1/credentials/endpoint`; the backend stores the key in the OS keychain. The URL is the credential identity.
 4. **Download a model** — the curated catalog with sizes, "suggested" and "may be tight" badges, and an "on disk" state; `POST /setup/download-models`.
 5. **Search and media models** — embedding and reranker, read-only, with the reason they are not per-KB (embedding dimensions are shared by every KB's Qdrant collections).
 
@@ -342,7 +342,7 @@ Plus links to `/notes` (batch delete), `/kb`, `/finance`, and a static "Data gui
 
 ## 8. Setup — `/setup`
 
-First-run and re-configuration page for paths, AI mode and local model download. Mirrors the Electron wizard ([04](04-desktop-shell.md)) but talks to the backend, not the bridge, for persistence.
+First-run and re-configuration page for paths, AI mode and local model download. Mirrors the shell's first-run setup page ([04](04-desktop-shell.md)) but talks to the backend, not the bridge, for persistence.
 
 ### 8.1 State and load
 

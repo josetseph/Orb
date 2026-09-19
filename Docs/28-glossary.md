@@ -11,19 +11,18 @@
 | Term | Meaning | Where |
 |---|---|---|
 | **Orb** | The product name (since 2026-08-02, `6162be2`). Lineage: **LiveOS Brain** (Jan–Jul 2026) → **LifeOS** (`3f21e08`, desktop pivot) → **Orb** (same day). | everywhere |
-| **Desktop shell** | The Electron application in `desktop/` that supervises local services and hosts the UI. | [04](04-desktop-shell.md) |
-| **Supervisor** | `desktop/supervisor.js` — spawns and health-checks Qdrant, Meilisearch, Firefly, the API and the UI. | [04](04-desktop-shell.md) |
-| **Wizard** | First-run window (`wizard.html`) that collects data dir, models dir, optional default vault and AI mode, and writes `paths.json`. | [04](04-desktop-shell.md) |
-| **Splash** | Boot progress window (`splash.html`) fed by supervisor status messages. | [04](04-desktop-shell.md) |
+| **Desktop shell** | The Tauri (Rust) application in `desktop/src-tauri` that spawns the desktop runtime, owns the window and provides native pickers/notifications. | [04](04-desktop-shell.md) |
+| **Desktop runtime** | `backend/app/desktop_runtime.py` — the one child the shell spawns; sweeps ports, runs uvicorn, downloads and boots Qdrant, Meilisearch and Firefly. | [04](04-desktop-shell.md) |
+| **Setup page** | First-run page (`desktop/shell/index.html`) that collects data dir, models dir, optional default vault and AI mode, and writes `paths.json`. | [04](04-desktop-shell.md) |
+| **boot-status.json** | `DATA_DIR/boot-status.json`, the runtime's sidecar boot progress, surfaced by `/admin/maintenance-status` and the UI status indicator (there is no splash screen). | [04](04-desktop-shell.md) |
 | **paths.json** | Bootstrap file in the OS app-support dir: `data_dir`, `models_dir`, `default_vault_path?`, `ai_setup_mode?`. | [21](21-configuration-reference.md) |
 | **DATA_DIR** | Root for all mutable app data (SQLite, Kuzu, Qdrant, Meili, vaults, logs, binaries, Firefly). | [22](22-data-directory-layout.md) |
 | **MODELS_DIR** | Root for GGUF files, HF snapshots and the models manifest. | [22](22-data-directory-layout.md) |
 | **App Support root** | `~/Library/Application Support/Orb` (macOS), `%APPDATA%\Orb` (Windows), `~/.config/Orb` (Linux); LifeOS/LiveOS dirs are read as fallbacks. | [04](04-desktop-shell.md) |
-| **Port block** | 17400 UI · 17401 API · 17412 Firefly · 17433 Qdrant · 17470 Meilisearch. | [04](04-desktop-shell.md) |
-| **Packaged layout** | Runtime layout under `process.resourcesPath` (`backend/`, `frontend/`, `node/`, `firefly/`) produced by `prepare-dist`. | [05](05-packaging-build-and-release.md) |
-| **prepare-dist** | `npm run prepare-dist`: bundle Python, build frontend standalone, bundle Node, prefetch Firefly seed. | [05](05-packaging-build-and-release.md) |
-| **node_deps** | The frontend standalone's dependency folder, renamed from `node_modules` because electron-builder strips `node_modules` from `extraResources`. | [05](05-packaging-build-and-release.md) |
-| **orbDesktop bridge** | `window.orbDesktop`, the preload-exposed IPC surface for the renderer. | [18](18-frontend-architecture.md) |
+| **Port block** | 17401 API (serves the UI) · 17412 Firefly · 17433 Qdrant · 17470 Meilisearch; 3700 is the Vite dev server only. | [04](04-desktop-shell.md) |
+| **Packaged layout** | Tauri resource dir (`backend/`, `frontend/`, `firefly/`) produced by `desktop/build.py prepare`. | [05](05-packaging-build-and-release.md) |
+| **build.py** | `python3 desktop/build.py prepare` (bundle Python, Vite build, Firefly seed, source stamps) and `dist` (preflight + `cargo tauri build`). | [05](05-packaging-build-and-release.md) |
+| **orbDesktop bridge** | `window.orbDesktop`, injected by `src-tauri/src/init.js`: `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`. | [18](18-frontend-architecture.md) |
 | **AI setup mode** | `AI_SETUP_MODE` ∈ `none | local | cloud`. Historical: the backend derives readiness from actual configuration and no longer gates on this key; `ai_gate.derived_setup_mode()` reports it for display. | [13](13-llm-providers-and-prompting.md) |
 | **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`. | [21](21-configuration-reference.md) |
 
@@ -125,7 +124,7 @@
 | **Administration / user group** | Firefly's multi-tenant unit; Orb creates one per KB (`knowledge_bases.firefly_group_id`). | [17](17-finance-firefly.md) |
 | **runtime.json** | `DATA_DIR/firefly/runtime.json` written by the shell; contains the API token and URLs the backend uses. | [17](17-finance-firefly.md) |
 | **FinanceWorkspace** | Frontend/API readiness object (`exists`, `ready`, `status`, `detail`, group info). | [17](17-finance-firefly.md) |
-| **php-bin** | NativePHP's portable PHP builds downloaded by `firefly-runtime.js`. | [04](04-desktop-shell.md) |
+| **php-bin** | NativePHP's portable PHP builds downloaded by `desktop_runtime.py` (or seeded from the bundle). | [04](04-desktop-shell.md) |
 
 ## Observability and testing
 
@@ -133,18 +132,16 @@
 |---|---|---|
 | **Component log** | `DATA_DIR/logs/{api,ingestion,multimedia,chat,database,graph,llm,retrieval,finance,errors}.log` routed by logger name. | [23](23-logging-and-observability.md) |
 | **X-Request-Id / trace_id** | Per-request correlation id stored in a ContextVar. | [06](06-backend-core-and-configuration.md) |
-| **HotPotQA / MuSiQue** | Multi-hop QA datasets used by the benchmark harness. | [24](24-testing-and-benchmarks.md) |
-| **EM / F1 / fuzzy / contains** | Answer-quality metrics in `evaluate.py`. | [24](24-testing-and-benchmarks.md) |
-| **Results/** | Archived benchmark reports per approach and model. | [24](24-testing-and-benchmarks.md) |
 
 ## Legacy identifiers (read-only compatibility)
 
 | Identifier | Status |
 |---|---|
 | `LIVEOS_*` env vars, `LifeOS`/`LiveOS` app-support dirs | Accepted as fallbacks; never write them |
-| `TYPESENSE_*` env vars, `typesense_collection` column | Aliases for Meilisearch settings; column name kept for existing DBs (`meili_index` synonym) |
+| `typesense_collection` column | Column name kept for existing DBs; holds the Meilisearch index name (`meili_index` synonym). The `TYPESENSE_*` env aliases are gone. |
 | `notes.content` column | Deprecated fallback; body lives in vault |
-| `/files/*` rewrite to RustFS, `STORAGE_BACKEND` | Docker-era S3 storage; desktop uses vault files |
+| `/files/*` rewrite to RustFS, `STORAGE_BACKEND` | Container-era S3 storage; desktop uses vault files |
+| Electron shell (`main.js`, `preload.js`, `supervisor.js`), Next.js UI server, `prepare-dist`, `node_deps`, `credentials.enc` | Replaced by the Tauri shell + `desktop_runtime.py`, the API-served Vite build, `build.py`, and the OS keychain via `keyring` (2026-09) |
 | `LOCAL_MODELS_SERVICE_URL`, `MARLIN_SERVICE_URL`, `ollama`, `lm_studio` | Removed sidecar/provider paths; code warns and maps to `local` |
 | `lifeos_current_kb`, `liveos_current_kb`, `window.liveosDesktop` | Migrated on read by the frontend |
-| `POST /api/v1/ingest` | Legacy note-create + ingest route kept for the benchmark harness |
+| `POST /api/v1/ingest` | Legacy note-create + ingest route |

@@ -1,6 +1,6 @@
 # Frontend: Notes Page and Markdown Editor
 
-**What this covers.** The `/notes` route of the Next.js frontend: the three-region notes workspace (vault sidebar, editor column, side panels), the `useNotesPageController` hook hub and the nine hooks it composes (list, selection, autosave, ingest, vault tree, media, batch selection, wikilink preview, restore effects), the pure helpers in `frontend/src/app/notes/_lib/`, the CodeMirror 6 based `MarkdownNoteEditor` and its extensions (markdown highlighting, live-preview mark hiding, entity highlighting, `[[wikilink]]` autocomplete/hover/click, inline media embeds, toolbar commands), the read-only `SegmentedNoteContent` renderer, `ConnectedNotesPanel`, `EntityDetailPanel`, `BlobMediaPlayer`, and the notes/vault/graph-entity methods of the API client. It cross-checks every frontend call against the backend contracts in `backend/app/api/notes.py`, `backend/app/api/vault.py`, `backend/app/api/graph.py` and `backend/app/services/wikilinks.py`.
+**What this covers.** The `/notes` route of the Vite + React frontend: the three-region notes workspace (vault sidebar, editor column, side panels), the `useNotesPageController` hook hub and the nine hooks it composes (list, selection, autosave, ingest, vault tree, media, batch selection, wikilink preview, restore effects), the pure helpers in `frontend/src/app/notes/_lib/`, the CodeMirror 6 based `MarkdownNoteEditor` and its extensions (markdown highlighting, live-preview mark hiding, entity highlighting, `[[wikilink]]` autocomplete/hover/click, inline media embeds, toolbar commands), the read-only `SegmentedNoteContent` renderer, `ConnectedNotesPanel`, `EntityDetailPanel`, `BlobMediaPlayer`, and the notes/vault/graph-entity methods of the API client. It cross-checks every frontend call against the backend contracts in `backend/app/api/notes.py`, `backend/app/api/vault.py`, `backend/app/api/graph.py` and `backend/app/services/wikilinks.py`.
 
 Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, graph and other pages](20-frontend-chat-graph-and-pages.md) · [Notes, wikilinks and vault files (backend)](09-notes-wikilinks-and-vault-files.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [API reference](07-api-reference.md) · [Desktop shell](04-desktop-shell.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
 
@@ -77,7 +77,7 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 
 ## 3. Page composition and layout
 
-`frontend/src/app/notes/page.tsx` is a `"use client"` component that calls `useNotesPageController()` once and wires its return value into presentational components. It contains no state or effects of its own.
+`frontend/src/app/notes/page.tsx` is a component that calls `useNotesPageController()` once and wires its return value into presentational components. It contains no state or effects of its own.
 
 ```
 ┌────────────────────────────┬──────────────────────────────────────────────────────┐
@@ -481,7 +481,7 @@ One effect with deps `[isHydrated, currentKB, openNoteById, refreshSelectedNote]
 
 ### 11.1 Upload path
 
-`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${await resolveApiBaseUrl(API_BASE_URL)}/upload${kbQuery(kb)}` `` with a 10-minute timeout. In the desktop app `resolveApiBaseUrl` asks the Electron bridge (`window` bridge `getApiBaseUrl`) for the FastAPI origin (port 17401), bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response provides `url` (or legacy `href`) which is normalised with `encodeFileUrl`.
+`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload${kbQuery(kb)}` `` with a 10-minute timeout. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response provides `url` (or legacy `href`) which is normalised with `encodeFileUrl`.
 
 ### 11.2 `attachFiles(files)` and `handleFileAttach(e)`
 
@@ -498,7 +498,7 @@ All chunks are joined with newlines, wrapped in `\n…\n`, and inserted via `edi
 ### 11.3 Voice recording (`startRecording` / `stopRecording`, `media-recorder.ts`)
 
 - `navigator.mediaDevices.getUserMedia({audio: true})`.
-- `pickSupportedAudioMimeType()` tries, in order, `audio/mp4;codecs=aac`, `audio/mp4` (Safari/WebKit — relevant because Electron on macOS still reports these), `audio/webm;codecs=opus`, `audio/webm`; returns `""` if none, in which case `MediaRecorder` is constructed without options.
+- `pickSupportedAudioMimeType()` tries, in order, `audio/mp4;codecs=aac`, `audio/mp4` (Safari/WebKit — relevant because the Tauri WebView on macOS is WebKit), `audio/webm;codecs=opus`, `audio/webm`; returns `""` if none, in which case `MediaRecorder` is constructed without options.
 - `ondataavailable` accumulates chunks; `mediaRecorder.start()` with no timeslice, so a single chunk arrives on stop.
 - `onstop`: `actualMime = recorder.mimeType || mimeType || "audio/webm"`; extension `m4a` if it contains `mp4` else `webm`; file name `recording-<Date.now()>.<ext>`; upload; insert `[🎤 Voice Recording](url)` at cursor (or append); stop all tracks. Upload failure → `alert("Failed to upload recording")`.
 - `stopRecording` only acts when `isRecording` is true. Microphone failure → `alert("Failed to access microphone")`.
@@ -509,7 +509,7 @@ The backend transcodes/transcribes audio during ingestion (commit `acb19a5`, see
 
 - `handleFileClick(url, filename)` → `resolvedUrl = encodeFileUrl(resolveFileUrl(url, kb))`; type by `isImageUrl`/`isPdfUrl`/`isVideoUrl`/`isAudioUrl` tested on both the URL and the filename; `setFilePreview({url, filename, type})`. `resolveFileUrl` maps bare `attachments/...` to `/vault-files/<kb>/attachments/...`, leaves `/vault-files/...` alone, and repairs doubled `attachments/attachments/`.
 - `handleDeleteFile(fileUrl, _markdownText)` (from the attachments strip): confirm → derive vault-relative path (`/vault-files/<kb>/<path>` → decoded `<path>`; `attachments/...` kept; bare filename → `attachments/<name>`) → `POST /vault/delete` → `refreshSelectedNote` (server already stripped the markdown links across notes) → `fetchNotes`. The `_markdownText` argument is unused.
-- `handleRevealPreviewFile()` → `GET /vault/local-path?rel=<url>&kb=` → `{rel_path, local_path, vault_path, exists}` → `revealInFolder(local_path)` through the desktop bridge; if the bridge is absent, `window.open(url, "_blank")`. Errors → `alert("Could not reveal this file on disk.")`.
+- `handleRevealPreviewFile()` → `GET /vault/local-path?rel=<url>&kb=` → `{rel_path, local_path, vault_path, exists}` → `revealInFolder(local_path)` (`POST /api/v1/desktop/reveal`); outside the desktop app, `window.open(url, "_blank")`. Errors → `alert("Could not reveal this file on disk.")`.
 
 ### 11.5 Date picker (`created_at`)
 
@@ -700,7 +700,7 @@ Props: `content: string; onFileClick(url, filename); onEntityClick?(nodeId, name
 | `useScannedEntities(content, kb, {enabled?, cacheKey?})` | POSTs `scan-text` with an `AbortController`; results keyed by `kb\0(cacheKey ?? content)` so a KB/content switch never shows stale entities; optional bounded FIFO cache (200 entries) keyed by `kb:cacheKey` used by chat message ids. |
 | `flattenLinkText(children)` | Recursive text extraction from react-markdown children. |
 | `isAttachmentHref(href)` | `/files/`, `/uploads/`, `/vault-files/`, or leading `attachments/`. |
-| `MarkdownAnchor` | Plain `<a>`; external `http(s)` links get `target=_blank rel=noopener noreferrer` — *"web-ingested content must not be able to navigate the Electron renderer away from Orb."* |
+| `MarkdownAnchor` | Plain `<a>`; external `http(s)` links get `target=_blank rel=noopener noreferrer` — *"web-ingested content must not be able to navigate the app window away from Orb."* |
 
 ## 16. Side panels: `ConnectedNotesPanel`, `EntityDetailPanel`, `BlobMediaPlayer`
 
@@ -727,7 +727,7 @@ Props: `url; kbId?; kind: "video" | "audio"; className?`. YouTube/Vimeo URLs ren
 
 ## 17. API client methods and backend contracts
 
-All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL = NEXT_PUBLIC_API_URL ?? "/api/v1"`. `withKb(kb, params)` adds `kb` to query params and `kbQuery(kb)` appends `?kb=` — **both omit the param when `kb === "default"`**. Backend resolves the KB with `Depends(get_kb)`.
+All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL = import.meta.env.VITE_API_URL ?? "/api/v1"`. `withKb(kb, params)` adds `kb` to query params and `kbQuery(kb)` appends `?kb=` — **both omit the param when `kb === "default"`**. Backend resolves the KB with `Depends(get_kb)`.
 
 | Client method | HTTP | Body / params | Backend handler & notes | Response |
 |---|---|---|---|---|
@@ -795,7 +795,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 6. **Extension set must not depend on `notes` or `scannedEntities`.** Notes flow through `notesRef`; entities through a `Compartment`. Rebuilding the extension array resets the editor view.
 7. **Decoration scans are viewport-only and single-line** (`visibleLineChunks`). Multi-line patterns need a different strategy.
 8. **`LinkMark` is never hidden by live preview** (it would glue label and URL); attachments/images are handled exclusively by `mediaEmbedExtension`.
-9. **Uploads go straight to the FastAPI origin on desktop** (`resolveApiBaseUrl`) to avoid the Next proxy body limit. Do not route uploads through `http.post`.
+9. **Uploads use `api.upload`** (multipart, 10-minute timeout, same origin as the API). Do not route uploads through `http.post`.
 10. **Vault path rewrites are single-pass, longest-match-first, and only inside link targets** (`rewriteVaultPathsInContent`). The chained-`replaceAll` form is a known data corrupter.
 11. **`kb` is omitted from requests for the default KB** (`withKb`/`kbQuery`). Backend endpoints must therefore default to the default KB.
 12. **Client and backend wikilink resolvers must keep identical precedence** (exact path → suffix path → source-folder relative → basename by proximity) and identical normalisation; autocomplete `insert` targets are chosen so that both resolve to the selected note.
@@ -823,7 +823,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 - **Media widgets ignore events (`ignoreEvent → true`)**, so you cannot place the cursor by clicking on an embed; click the gutter or use arrows to reach the raw line.
 - **The "Saved" header label reflects `isSaving`, not dirtiness**; a note can be dirty for up to 1.5 s (or indefinitely after a failed PUT) while the header says "Saved".
 - **`updateNoteOnUnload` silently downgrades to a plain PUT above ~60 KB**, which the browser may kill; the unmount flush (route change) uses axios regardless.
-- **`FilePreviewModal` PDF/`<img>` load through the Next proxy** (`/vault-files/...`), whereas uploads bypass it — large files preview fine because responses are streamed.
+- **`FilePreviewModal` PDF/`<img>` load from `/vault-files/...`** on the same origin — large files preview fine because responses are streamed.
 - **`ConnectedNotesPanel.onSelectNote` only works for notes present in `list.notes`** (page does a `find`); a neighbour filtered out by the current search cannot be opened from the panel.
 - **`EntityDetailPanel` is positioned `absolute` inside the editor column** and overlays the Connected panel when both are open.
 

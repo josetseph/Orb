@@ -1,10 +1,7 @@
-"use client";
-
 import { useCallback, useEffect, useState } from "react";
 import { Cloud, Cpu, Download, Loader2, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api";
 import { useKB } from "@/lib/kb-context";
-import { getDesktopBridge } from "@/lib/desktop";
 import { cn } from "@/lib/utils";
 import { SettingRow, SettingsShell } from "@/components/settings-shell";
 import type { ModelsPageState } from "@/lib/models-types";
@@ -48,8 +45,6 @@ export default function ModelsPage() {
   // New endpoint
   const [newUrl, setNewUrl] = useState("");
   const [newKey, setNewKey] = useState("");
-
-  const bridge = getDesktopBridge();
 
   const load = useCallback(async () => {
     try {
@@ -163,7 +158,6 @@ export default function ModelsPage() {
   }
 
   async function removeEndpoint(url: string) {
-    if (!bridge?.deleteEndpointCredential) return;
     if (
       !confirm(
         `Remove ${endpointName(url)}?\n\n${url}\n\nIts key is forgotten. Any KB pinned to it stops working until you re-add it.`,
@@ -173,7 +167,7 @@ export default function ModelsPage() {
     setBusy("endpoint");
     setError(null);
     try {
-      await bridge.deleteEndpointCredential(url);
+      await api.deleteEndpointCredential(url);
       setEndpointName(url, "");
       await load();
     } catch (err) {
@@ -184,7 +178,7 @@ export default function ModelsPage() {
   }
 
   async function addEndpoint() {
-    if (!bridge?.setEndpointCredential || !newUrl.trim()) return;
+    if (!newUrl.trim()) return;
     setBusy("endpoint");
     setError(null);
     try {
@@ -192,8 +186,7 @@ export default function ModelsPage() {
       // server are two endpoints with two keys.
       const base = endpointRequestUrl(newUrl.trim());
       const url = newName.trim() ? `${base}#${newName.trim()}` : base;
-      const result = await bridge.setEndpointCredential(url, newKey.trim());
-      if (!result?.ok) throw new Error(result?.error || "Could not add the endpoint");
+      await api.setEndpointCredential(url, newKey.trim());
       if (!sysUrl) setSysUrl(url);
       if (!kbUrl) setKbUrl(url);
       setNewUrl("");
@@ -400,7 +393,7 @@ export default function ModelsPage() {
                   <button
                     type="button"
                     onClick={() => void removeEndpoint(e)}
-                    disabled={busy === "endpoint" || !bridge?.deleteEndpointCredential}
+                    disabled={busy === "endpoint"}
                     title="Remove this endpoint and forget its key"
                     className="btn btn-danger btn-sm"
                   >
@@ -437,16 +430,13 @@ export default function ModelsPage() {
               <button
                 type="button"
                 onClick={() => void addEndpoint()}
-                disabled={busy === "endpoint" || !newUrl.trim() || !bridge?.setEndpointCredential}
+                disabled={busy === "endpoint" || !newUrl.trim()}
                 className="btn btn-primary"
               >
                 {busy === "endpoint" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add endpoint"}
               </button>
               <SavedTick show={saved === "endpoint"} />
             </div>
-            {!bridge?.setEndpointCredential && (
-              <p className="text-[11px] text-n-500">Adding endpoints requires the Orb desktop app.</p>
-            )}
           </div>
         </Card>
 

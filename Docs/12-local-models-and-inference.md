@@ -27,7 +27,7 @@ It does **not** own:
 - Deciding *when* to caption/transcribe, temp-file handling, PDF page rendering — `multimedia.py` → [11-multimedia-enrichment.md](11-multimedia-enrichment.md). This doc covers the runtime it calls (`multimodal_runtime`).
 - Retrieval scoring policy (which candidates to rerank, thresholds, fusion) — [16-retrieval-and-chat.md](16-retrieval-and-chat.md). This doc covers the reranker *model call* and the settings it reads.
 - Qdrant collection schemas beyond `ensure_vector_size` — [15-search-indexes-qdrant-meilisearch.md](15-search-indexes-qdrant-meilisearch.md).
-- Qdrant/Meilisearch *binaries* (downloaded by the Electron supervisor into `DATA_DIR/bin/`) — [04-desktop-shell.md](04-desktop-shell.md).
+- Qdrant/Meilisearch *binaries* (downloaded by `desktop_runtime.py` into `DATA_DIR/bin/`) — [04-desktop-shell.md](04-desktop-shell.md).
 
 Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidecars (`local_models_service`, a Marlin service, Ollama / llama-server / LM Studio for chat). Commit `3f21e08` (2026-08-02, "Ship LifeOS as a Docker-free desktop app") replaced all of that with the in-process design documented here; `EMBEDDING_PROVIDER=ollama|lm_studio` are still accepted but coerced to `local` with a deprecation warning.
 
@@ -53,8 +53,8 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/requirements.txt` | `llama-cpp-python>=0.3.0`, `huggingface_hub>=0.34.0,<1.0`, `av` (video probing). | — |
 | `backend/requirements-multimodal.txt` | torch / `transformers>=5.7.0` / accelerate / einops / safetensors / librosa / pydub / timm / qwen-vl-utils / av — installed on demand, mirrors `_MULTIMODAL_PIP`. | — |
 | `desktop/binaries/README.md` | Operator notes on the in-process LLM and env overrides (Qdrant/Meili binaries are unrelated to this doc). | — |
-| `desktop/supervisor.js` | Passes `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `ORB_MODELS_DIR` to uvicorn. | — |
-| `frontend/src/app/setup/page.tsx` | Setup wizard: consumes `/setup/status`, `/setup/model-catalog`, `/setup/download-models`, `/setup/multimodal-status`, `/setup/paths`. | — |
+| `backend/app/desktop_runtime.py` | Sets defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER` (`os.environ.setdefault`) and `ORB_MODELS_DIR` before running uvicorn. | — |
+| `frontend/src/app/setup/page.tsx` | Setup page: consumes `/setup/status`, `/setup/model-catalog`, `/setup/download-models`, `/setup/multimodal-status`, `/setup/paths`. | — |
 
 ## 3. Architecture and flow
 
@@ -132,7 +132,7 @@ sequenceDiagram
   FE->>API: GET /setup/multimodal-status
 ```
 
-Key point: the frontend **never** calls `/setup/start-local-llm` or `/setup/start-multimodal-services` during the wizard (the source comment: "Florence/Whisper/Marlin must not block Setup / Chat"). Models are only loaded into memory on first use (chat, ingest, retrieval). Those two endpoints still exist and work (see §11) and are useful for scripts/tests.
+Key point: the frontend **never** calls `/setup/start-local-llm` or `/setup/start-multimodal-services` during Setup (the source comment: "Florence/Whisper/Marlin must not block Setup / Chat"). Models are only loaded into memory on first use (chat, ingest, retrieval). Those two endpoints still exist and work (see §11) and are useful for scripts/tests.
 
 ### 3.3 Who loads what, at runtime
 
@@ -252,7 +252,7 @@ Embed and reranker tiers are **not user-selectable**; they are derived from tota
 
 ## 5. `MODELS_DIR` layout and `manifest.json`
 
-`MODELS_DIR` is resolved by `app.core.paths.resolve_models_dir()`: `ORB_MODELS_DIR` / `LIVEOS_MODELS_DIR` / `MODELS_DIR` env → `paths.json["models_dir"]` → `backend/models` (dev fallback). The desktop supervisor always sets `ORB_MODELS_DIR`.
+`MODELS_DIR` is resolved by `app.core.paths.resolve_models_dir()`: `ORB_MODELS_DIR` / `LIVEOS_MODELS_DIR` / `MODELS_DIR` env → `paths.json["models_dir"]` → `backend/models` (dev fallback). `desktop_runtime.py` always sets `ORB_MODELS_DIR`.
 
 ```
 MODELS_DIR/
@@ -738,7 +738,7 @@ Both non-GGUF runtimes reuse the GGUF budgeting rules: the prompt is rendered wi
 - **Model refs** are stored `MODELS_DIR`-relative where possible (`gguf/My-Model.gguf`), so a KB's pin survives moving the models directory to a faster disk; files outside it use an absolute path. `LocalLlamaRuntime.resolve_chat_gguf` accepts a catalog id, a relative ref, or an absolute path, and **raises** rather than silently falling back to the Setup selection when a named model cannot be satisfied — a KB pinned to a deleted model must fail loudly, not answer with a different one.
 - **Context clamping.** `_clamp_ctx_to_model` lowers `n_ctx` to the model's trained window when it is smaller than the configured value; with arbitrary GGUFs the 16k default can exceed what a model supports.
 
-**No default output cap.** `_default_chat_max_tokens()` now returns `None` unless `ORB_LLAMA_MAX_TOKENS` / `LIVEOS_LLAMA_MAX_TOKENS` is set to a positive integer (garbage or `0` → `None`). Rationale (docstring): "a fixed cap silently truncates long extractions, so the runtime sizes `max_tokens` per call from `n_ctx - prompt_tokens` instead." The desktop supervisor no longer injects a default for this variable (it only forwards an explicit one). Consequently the `n_ctx` floor in `_chat_kwargs` (`max_tokens + ORB_LLAMA_PROMPT_RESERVE`) is applied only when a cap is set; by default `n_ctx = ORB_LLAMA_N_CTX = 16384` exactly.
+**No default output cap.** `_default_chat_max_tokens()` now returns `None` unless `ORB_LLAMA_MAX_TOKENS` / `LIVEOS_LLAMA_MAX_TOKENS` is set to a positive integer (garbage or `0` → `None`). Rationale (docstring): "a fixed cap silently truncates long extractions, so the runtime sizes `max_tokens` per call from `n_ctx - prompt_tokens` instead." `desktop_runtime.py` sets no default for this variable (it only inherits an explicit one). Consequently the `n_ctx` floor in `_chat_kwargs` (`max_tokens + ORB_LLAMA_PROMPT_RESERVE`) is applied only when a cap is set; by default `n_ctx = ORB_LLAMA_N_CTX = 16384` exactly.
 
 **Token counting.** `LocalLlamaRuntime.count_tokens(text)`: uses `tokenize(text.encode(), add_bos=False, special=True)` of whichever GGUF is resident (chat or embed); with nothing resident falls back to `len(text)//4 + 1`. It **never triggers a model load** ("chunk sizing must not trigger a disk read"). `LLMService.ingestion_count_tokens` delegates here for the local provider.
 
@@ -773,8 +773,8 @@ Every variable below is read through `_env_first(ORB_name, LIVEOS_name)` unless 
 | `ORB_LLAMA_N_GPU_LAYERS` | `-1` (GPU) / `0` (cpu) | same | layers offloaded; `-1` = all |
 | `ORB_LLAMA_N_CTX` | `16384` | `_chat_kwargs`, `LLMService.ingestion_context_tokens` | chat context window (KV size); also the "context" figure used for extraction chunk sizing |
 | `ORB_LLAMA_MAX_TOKENS` | **unset** (dynamic) | `_default_chat_max_tokens` | hard cap on generated tokens; when set also raises `n_ctx` to `cap + PROMPT_RESERVE` |
-| `ORB_LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | only used with `ORB_LLAMA_MAX_TOKENS` (floor for `n_ctx`); supervisor still passes it |
-| `ORB_LLAMA_SWA_FULL` | `true` (supervisor passes `"true"` explicitly) | `_llama_metal_safe_kwargs` | `swa_full` for every `Llama()`; `0/false/no` disables |
+| `ORB_LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | only used with `ORB_LLAMA_MAX_TOKENS` (floor for `n_ctx`); `desktop_runtime.py` still defaults it |
+| `ORB_LLAMA_SWA_FULL` | `true` (`desktop_runtime.py` defaults it to `"true"` explicitly) | `_llama_metal_safe_kwargs` | `swa_full` for every `Llama()`; `0/false/no` disables |
 | `ORB_LLAMA_FLASH_ATTN` | unset (off) | same | `1/true/yes` → `flash_attn=True` |
 | `ORB_LLAMA_REPEAT_PENALTY` | `1.12` | `_default_repeat_penalty` | chat sampling |
 | `ORB_LLAMA_N_THREADS` | unset (llama default) | `_chat_kwargs` | CPU threads for chat/embed |
@@ -798,7 +798,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `MODEL_FLORENCE_HF/LOCAL`, `MODEL_WHISPER_HF/LOCAL`, `MODEL_MARLIN_HF/LOCAL` | see §6.2 | repo ids and folder names |
 | `FLORENCE_MAX_IMAGE_PIXELS` | `1500000` | downscale threshold |
 | `LLM_MODEL` | `local-chat` | placeholder meaning "Setup selection"; set to the chat catalog id after a download |
-| `AI_SETUP_MODE` | `none` | Persisted for the shell wizard only; readiness is derived from GGUFs on disk, a cloud key, or `LLM_BASE_URL` |
+| `AI_SETUP_MODE` | `none` | Persisted for the first-run setup page only; readiness is derived from GGUFs on disk, a cloud key, or `LLM_BASE_URL` |
 | `MULTIMEDIA_CONCURRENCY` | `1` | semaphore around the multimodal node |
 | `USE_DYNAMIC_EMBEDDING_INSTRUCTION` | `True` | declared; not consulted by current code |
 
@@ -815,7 +815,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `main.startup_event` → `sync_embedding_infrastructure()` | after `runtime_config` overrides are applied; failures logged, never fatal. |
 | `ai_gate.provider_is_configured("local")` → `gguf_paths_if_present()` | "local AI is available" ⇔ chat+embed paths from the manifest exist. |
 | `kb_registry` / `api/kb.py` → `model_catalog.downloaded_chat_models`, `chat_model_downloaded`, `get_option` | only downloaded chat GGUFs may be pinned per KB. |
-| Desktop supervisor → env | passes `ORB_MODELS_DIR`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. |
+| `desktop_runtime.py` → env | sets `ORB_MODELS_DIR` and defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `AI_SETUP_MODE`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. |
 
 ## 16. Invariants, constraints and locked decisions
 
@@ -856,7 +856,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 ## 18. Gotchas (things an assistant would get wrong)
 
 - **`model` in a chat request is not a no-op for local any more.** It selects a GGUF via `resolve_chat_gguf`. Passing a catalog id that is not downloaded raises.
-- **`ORB_LLAMA_MAX_TOKENS` is unset by default**; older docs/README (`desktop/binaries/README.md`, `.env.example`) still show `10240`. The supervisor forwards it only if present.
+- **`ORB_LLAMA_MAX_TOKENS` is unset by default**; `.env.example` still shows `10240`. `desktop_runtime.py` sets no default for it.
 - **`EmbeddingService.is_qwen3` is computed at construction and in `reconfigure()` only.** Startup `sync_embedding_infrastructure` updates `settings.EMBEDDING_MODEL` *after* the service was constructed with `local-embed`, and nothing calls `reconfigure()` on the normal desktop path — so query-instruction prefixing may be off until `/setup/start-local-llm` is invoked. Retrieval still works (vectors are comparable either way, slightly lower quality). Treat this as a discrepancy worth fixing rather than a design.
 - `LocalLlamaRuntime.status()` exists but no endpoint exposes it; `/setup/status` reports *files on disk*, not what is resident.
 - `/setup/start-local-llm` ends with the **reranker** resident, not chat.

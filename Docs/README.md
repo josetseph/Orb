@@ -1,12 +1,12 @@
 # Orb Documentation
 
-Comprehensive, code-grounded documentation of the Orb repository: the Electron desktop shell, the FastAPI backend, the Next.js frontend, the embedded data stores, the local-model runtime, the ingestion and retrieval pipelines, the finance integration, build/release, testing, configuration, and the project's history and locked decisions.
+Comprehensive, code-grounded documentation of the Orb repository: the Tauri desktop shell and Python desktop runtime, the FastAPI backend, the Vite + React frontend, the embedded data stores, the local-model runtime, the ingestion and retrieval pipelines, the finance integration, build/release, testing, configuration, and the project's history and locked decisions.
 
 **Audience.** Engineers working on Orb and AI coding assistants using these files as context. Every document is written from the source code (tracked files only; `desktop/resources/` build output is excluded) and enumerates invariants, gotchas and extension points so that changes can be made safely.
 
 **Snapshot.** Written against the working tree on 2026-09-02, which is commit `02ac9d3` (v0.2.0) plus uncommitted work in progress: per-KB LLM overrides, chunked extraction, model-load instrumentation and five new unit tests. Where a doc describes uncommitted behaviour it says so. Docs cite file paths and symbol names, never line numbers.
 
-**Conventions.** Paths are repo-relative (`backend/app/services/graph.py`). `DATA_DIR` and `MODELS_DIR` refer to the directories chosen in the first-run wizard. `?kb=` means the knowledge-base query parameter. Mermaid diagrams render on GitHub and in most Markdown viewers.
+**Conventions.** Paths are repo-relative (`backend/app/services/graph.py`). `DATA_DIR` and `MODELS_DIR` refer to the directories chosen on the first-run setup page. `?kb=` means the knowledge-base query parameter. Mermaid diagrams render on GitHub and in most Markdown viewers.
 
 ---
 
@@ -28,8 +28,8 @@ Comprehensive, code-grounded documentation of the Orb repository: the Electron d
 | 01 | [Overview](01-overview.md) | Product scope, delivery model, locked product decisions, technology stack, versioning |
 | 02 | [System architecture](02-system-architecture.md) | Process topology, bootstrap layers, storage map, KB isolation, ingestion and retrieval flows, model layer, frontend↔backend contract, deployment modes |
 | 03 | [Repository layout](03-repository-layout.md) | Directory-by-directory map of `backend/`, `frontend/`, `desktop/`; git-ignored paths; where to look for a concern |
-| 04 | [Desktop shell](04-desktop-shell.md) | Electron main/preload/renderer, IPC surface and guards, window lifecycle, boot sequence, supervisor, path/port contracts, binary downloads, Firefly runtime bootstrap, wizard and splash, every `ORB_*` env read by the shell |
-| 05 | [Packaging, build and release](05-packaging-build-and-release.md) | `prepare-dist` pipeline, electron-builder config, packaged layout, CI matrix, signing/notarization state, versioning, Docker contributor stack, platform caveats |
+| 04 | [Desktop shell and runtime](04-desktop-shell.md) | Tauri shell responsibilities and files, boot sequence, `desktop_runtime.py` (ports, sidecar download/boot, Firefly bootstrap, `boot-status.json`), window guard and `window.orbDesktop` bridge, every `ORB_*` env read by the shell |
+| 05 | [Packaging, build and release](05-packaging-build-and-release.md) | `desktop/build.py prepare` / `dist` pipeline, source stamps, packaged layout per platform, build env vars, CI matrix, versioning, signing/notarization and auto-update state |
 | 06 | [Backend core and configuration](06-backend-core-and-configuration.md) | FastAPI app, middleware, startup hooks, `Settings`, path resolution, `runtime_config.json`, database layer, ORM models, Pydantic schemas, `get_kb`, health/settings routes, AI gate |
 | 07 | [API reference](07-api-reference.md) | Every HTTP route: params, bodies, responses, status codes, side effects, service calls; conventions; frontend cross-check |
 | 08 | [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) | KB model and isolation, `KBContext`, registry lifecycle, vault resolution, `vault_sync`, `vault_watcher`, per-KB store fan-out |
@@ -47,8 +47,8 @@ Comprehensive, code-grounded documentation of the Orb repository: the Electron d
 | 20 | [Frontend chat, graph and pages](20-frontend-chat-graph-and-pages.md) | Home, chat, 3D graph, 2D graph, notes graph, KB manager (incl. per-KB model panel), settings, setup |
 | 21 | [Configuration reference](21-configuration-reference.md) | Every env var and alias with default, reader and effect; `paths.json` and `runtime_config.json` schemas; precedence; provider fallback chains |
 | 22 | [Data directory layout](22-data-directory-layout.md) | On-disk trees for `DATA_DIR`, `MODELS_DIR`, app-support root, caches; owners; what is safe to delete |
-| 23 | [Logging and observability](23-logging-and-observability.md) | Log routing table, formats, rotation, trace ids, supervisor logs, status surfaces, debugging playbook |
-| 24 | [Testing and benchmarks](24-testing-and-benchmarks.md) | Unit tests and fixtures, lint tooling, benchmark harness and metrics, `Results/` archive and what it taught, gaps |
+| 23 | [Logging and observability](23-logging-and-observability.md) | Log routing table, formats, rotation, trace ids, runtime and sidecar logs, `boot-status.json`, status surfaces, debugging playbook |
+| 24 | [Testing](24-testing.md) | Unit tests and fixtures, lint tooling, gaps |
 | 25 | [Development history](25-development-history.md) | Commit timeline, era narratives, decision log with shas, removed/legacy paths, versions, uncommitted work in progress |
 | 26 | [Decisions and constraints](26-decisions-and-constraints.md) | Settled decisions with rejected alternatives, rationale and enforcement points; removed features |
 | 27 | [Development guide](27-development-guide.md) | Prerequisites, setup, run modes, commands, conventions, recipes, things never to do |
@@ -60,12 +60,12 @@ Comprehensive, code-grounded documentation of the Orb repository: the Electron d
 
 | | |
 |---|---|
-| Processes | Electron main → Qdrant 17433, Meilisearch 17470, Firefly III 17412, FastAPI 17401, Next.js 17400 |
+| Processes | Tauri shell → `python -m app.desktop_runtime` → FastAPI 17401 (serves the UI), Qdrant 17433, Meilisearch 17470, Firefly III 17412 |
 | Stores | vault `.md` + attachments (bodies), SQLite `orb.db` (metadata), Kuzu (graph), Qdrant (vectors, 3 collections/KB), Meilisearch (keyword, 1 index/KB), Firefly SQLite (finance) |
 | Models | GGUF chat/embed/rerank via llama-cpp-python; Florence-2, Whisper, Marlin via transformers; all in the API process, one resident at a time |
 | Isolation | `?kb=<slug>` on every data route → `KBContext` |
-| Bootstrap | `paths.json` (data dir, models dir, vault, AI mode) → supervisor env → `Settings` (+ `.env`, `runtime_config.json`) |
-| Version | 0.2.0 (`desktop/package.json`, `frontend/package.json`) |
+| Bootstrap | `paths.json` (data dir, models dir, vault, AI mode) → `desktop_runtime.py` env → `Settings` (+ `.env`, `runtime_config.json`) |
+| Version | 0.3.0 (`desktop/src-tauri/tauri.conf.json`, `Cargo.toml`); `frontend/package.json` still says 0.2.0 |
 
 ---
 
@@ -85,7 +85,7 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 | Area | Finding | Doc |
 |---|---|---|
 | Retrieval | The GGUF cross-encoder is the only ranking signal: with `RERANKER_ENABLED=false` or the reranker GGUF missing every candidate scores 0.0 < `RERANKER_SCORE_THRESHOLD`, so `hybrid_search` returns nothing and every answer is "couldn't find…". The docstring's keyword fallback does not exist. | 16 |
-| Retrieval | `MAX_LOOP_ITERATIONS=3` gives at most two actual retrievals (iteration 1 only plans). `MAX_POTENTIAL_QUESTIONS` is dead config; `BENCHMARK_MODE` is still branched on despite `8eba91d`. | 16, 24 |
+| Retrieval | `MAX_LOOP_ITERATIONS=3` gives at most two actual retrievals (iteration 1 only plans). `MAX_POTENTIAL_QUESTIONS` is dead config. | 16 |
 | Chat | `GET /api/v1/chat/conversations/{id}/export` calls a non-existent `chat_store.get_messages(db, id)` → 500. `_chat_status` is never evicted. | 16, 07 |
 | Ingestion | `edge_weight` is effectively constant (5.6) because the extraction prompt never asks for scores. Re-ingest never deletes prior graph/vector data; `mention_count` grows. `is_similarity` / `created_at` on `SEMANTIC_REL` are never set. | 10, 14 |
 | Ingestion | `mark_ingestion_complete()` is never called; `INGESTION_AGENT_CONCURRENCY`, `COMMUNITY_RECOMPUTE_BATCH_SIZE`, `USE_DYNAMIC_EMBEDDING_INSTRUCTION` are unused. L1 clustering threshold comment (0.50) disagrees with code (0.35). | 10, 21 |
@@ -96,8 +96,7 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 | Config | Anthropic call sites use `settings.ANTHROPIC_MODEL` directly, ignoring `CHAT_MODEL` / per-KB pins. `ai_is_configured()` returns `True` for `cloud` with no key because `LLM_BASE_URL` has a default. | 13, 06 |
 | Logging | `X-Request-Id` is captured but never written to log lines; `EmbeddingService` logger is not routed to a file; Qdrant/Meilisearch run with stdio ignored. | 23 |
 | Finance | `_filter_summary_basic` reads `type` but accounts expose `account_type`, so `report().basic["balance-in-vault"]` is always 0. Cash accounts are never listed. No link-out to the Firefly UI exists although `POST /finance/open` and `firefly_url` do. Recurrences never fire (no cron). | 17 |
-| Frontend | `/files/*` rewrite still targets RustFS (dead on desktop). `getChatMessages`, `deleteChatConversation`, `getNoteStatus` never send `kb`. `next.config.ts` comment cites port 8000; actual desktop target is 17401. Chat footer model names are hard-coded. | 18, 20, 07 |
+| Frontend | `getChatMessages`, `deleteChatConversation`, `getNoteStatus` never send `kb`. Chat footer model names are hard-coded. | 18, 20, 07 |
 | Tests | No CI test job. `pytest` is not in `requirements.txt`. `test_relationships.py` imports a module deleted in `da75dfc`; half of `test_graph_queries.py` targets removed APIs; one `test_chat_context.py` assertion is stale; `conftest` pins `LLM_PROVIDER="lm_studio"`. | 24, 27 |
-| Benchmarks | Harness defaults to port 8000 and sends no `?kb=`; it has never been run against the current Kuzu + Meilisearch + SQLite + llama.cpp stack. | 24 |
 | Versioning | `FastAPI(version="0.1.0")` while packages say `0.2.0`. `.cursor/rules/architecture-decisions.mdc` is deleted in the working tree but is the only in-repo locked-decisions file. | 01, 25 |
-| Packaging | `requirements.txt` still pins `asyncpg`, `boto3`/`aioboto3`/`aiobotocore`/`botocore` and `langchain-openai` with no remaining code path; `class-variance-authority` has zero imports. | 05, 18 |
+| Packaging | `requirements.txt` still pins `langchain-openai` with no remaining code path; `class-variance-authority` has zero imports. | 05, 18 |

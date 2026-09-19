@@ -15,6 +15,7 @@ from app.api.deps import get_finance_kb, get_kb
 from app.core.database import get_db
 from app.core.paths import (
     resolve_data_dir,
+    resolve_default_vault_path,
     resolve_models_dir,
     save_paths_file,
 )
@@ -75,7 +76,7 @@ async def setup_status():
         "local_models_ready": local_models_ready,
         "multimodal_ready": multimodal_ready,
         "needs_model_download": mode == "local" and not local_models_ready,
-        "database_backend": settings.DATABASE_BACKEND,
+        "database_backend": "sqlite",
         "llm_provider": settings.LLM_PROVIDER,
     }
 
@@ -1047,3 +1048,45 @@ async def serve_vault_file(kb_id: str, file_path: str):
     # Range requests let a player seek without downloading the whole file;
     # FileResponse handles them, but only the browser will ask.
     return FileResponse(full, media_type=media_type) if media_type else FileResponse(full)
+
+
+class RevealInput(BaseModel):
+    path: str = Field(min_length=1, max_length=4096)
+
+
+@router.post("/api/v1/desktop/reveal")
+async def reveal_in_folder(body: RevealInput):
+    """Show a file in Finder / Explorer / the file manager.
+
+    Only paths under Orb's own roots (data, models, every workspace's vault) —
+    the UI renders user note content, so it must not be able to open anything.
+    """
+    import subprocess
+    import sys
+
+    target = Path(body.path).expanduser()
+    if not target.is_absolute():
+        raise HTTPException(status_code=400, detail="Path must be absolute")
+    resolved = target.resolve()
+    roots = [resolve_data_dir(), resolve_models_dir(), resolve_default_vault_path()]
+    roots += [Path(kb["vault_path"]) for kb in kb_registry.list_kbs() if kb.get("vault_path")]
+    allowed = False
+    for root in roots:
+        try:
+            resolved.relative_to(Path(root).expanduser().resolve())
+            allowed = True
+            break
+        except (ValueError, OSError):
+            continue
+    if not allowed:
+        raise HTTPException(status_code=403, detail="Path is outside Orb data / vault / models")
+    if not resolved.exists():
+        raise HTTPException(status_code=404, detail="Path does not exist")
+    if sys.platform == "darwin":
+        cmd = ["open", "-R", str(resolved)]
+    elif sys.platform == "win32":
+        cmd = ["explorer", f"/select,{resolved}"]
+    else:
+        cmd = ["xdg-open", str(resolved if resolved.is_dir() else resolved.parent)]
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)  # noqa: S603
+    return {"ok": True}

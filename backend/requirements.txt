@@ -7,18 +7,12 @@ pydantic-settings==2.12.0
 
 # Database & Storage
 sqlalchemy==2.0.45
-asyncpg==0.31.0
 aiosqlite==0.20.0
 greenlet>=3.0.0
 watchdog==6.0.0
 kuzu==0.11.3
 qdrant-client==1.17.1
-# typesense==2.0.0  # replaced by Meilisearch
 meilisearch==0.34.1
-boto3==1.40.61
-aioboto3==15.5.0
-aiobotocore==2.25.1
-botocore==1.40.61
 
 # LLM & AI Libraries
 openai==2.15.0
@@ -53,6 +47,7 @@ tenacity==9.1.2
 httpx==0.28.1
 requests==2.32.5
 python-dotenv==1.2.1
+keyring>=25.0
 huggingface_hub>=0.34.0
 
 # Data Processing

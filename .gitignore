@@ -37,19 +37,13 @@ __pycache__/
 /frontend/node_modules
 /frontend/out/
 /frontend/build/
-/desktop/node_modules
-/desktop/dist
 /desktop/resources
+/desktop/src-tauri/target
+/desktop/src-tauri/gen
 .tmp/
 .env
 .env.local
 
-# Benchmark run artifacts (regenerated locally)
-backend/tests/benchmark/.cache/
-backend/tests/benchmark/.prepare_progress.json
-backend/tests/benchmark/results/
-backend/tests/benchmark/hotpotqa_notes/
-backend/tests/benchmark/musique_notes/
 /batch-note-processing/notes
 /.context
 /.github/agents

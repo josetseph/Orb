@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_kb
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.log import get_logger
 from app.models.note import Note
@@ -22,8 +26,16 @@ router = APIRouter()
 
 @router.get("/api/v1/admin/maintenance-status")
 async def get_maintenance_status(kb: KBContext = Depends(get_kb)):
-    """Return the running state of background maintenance jobs."""
-    return kb.get_ingestion_workflow().get_maintenance_status()
+    """Return the running state of background maintenance jobs (+ desktop boot progress)."""
+    status = kb.get_ingestion_workflow().get_maintenance_status()
+    try:
+        # Written by app.desktop_runtime while sidecars download/start behind the API.
+        boot = json.loads((Path(settings.DATA_DIR) / "boot-status.json").read_text("utf-8"))
+        if boot.get("status") != "Ready":
+            status["boot"] = boot
+    except (OSError, ValueError):
+        pass
+    return status
 
 
 @router.post("/api/v1/admin/rebuild-communities")
@@ -113,6 +125,12 @@ async def reset_ingestion_data(
         "status": "started",
         "message": "Ingestion data cleared. Notes marked as unprocessed. Store wipes running in background.",
     }
+
+
+@router.post("/api/v1/admin/prune-contexts")
+async def prune_contexts(kb: KBContext = Depends(get_kb)):
+    """Rebuild entity contexts that hold an entire note (see prune_whole_note_contexts)."""
+    return await kb.get_ingestion_workflow().prune_whole_note_contexts()
 
 
 @router.post("/api/v1/admin/reingest-all")

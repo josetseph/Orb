@@ -1,5 +1,3 @@
-"use client";
-
 import { createExtractMarkerDecorations } from "./extractMarkerExtension";
 import {
   forwardRef,

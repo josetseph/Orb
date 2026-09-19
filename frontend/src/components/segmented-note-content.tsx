@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -156,7 +154,6 @@ function makeLinkComponent(
             if (isImageUrl(href) || isImageUrl(resolvedUrl)) {
                 return (
                     <span className="not-prose my-4 block">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                             src={resolvedUrl}
                             alt={filename}

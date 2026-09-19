@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine — SQLite (desktop) or PostgreSQL (contributor Docker)."""
+"""Async SQLAlchemy engine over the desktop SQLite database."""
 
 from __future__ import annotations
 
@@ -15,41 +15,24 @@ logger = get_logger("DatabaseService")
 
 ensure_data_layout()
 
-_backend = (settings.DATABASE_BACKEND or "sqlite").lower()
-if _backend == "postgres" and settings.DATABASE_TRANSACTION_POOLER_URL:
-    DATABASE_URL = settings.DATABASE_TRANSACTION_POOLER_URL
-    if DATABASE_URL.startswith("postgresql://"):
-        DATABASE_URL = DATABASE_URL.replace(
-            "postgresql://", "postgresql+asyncpg://", 1
-        )
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        future=True,
-        pool_size=10,
-        max_overflow=20,
-        pool_timeout=30,
-        pool_pre_ping=True,
-        connect_args={"statement_cache_size": 0},
-    )
-    logger.info("Using PostgreSQL database backend")
-else:
-    DATABASE_URL = sqlite_url()
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        future=True,
-        poolclass=NullPool,
-        connect_args={"check_same_thread": False},
-    )
+DATABASE_URL = sqlite_url()
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},
+)
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
 
-    logger.info("Using SQLite database at %s", DATABASE_URL)
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+logger.info("Using SQLite database at %s", DATABASE_URL)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False

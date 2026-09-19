@@ -1,5 +1,3 @@
-"use client";
-
 import type { WikilinkPreviewState } from "../_lib/types";
 
 type WikilinkHoverCardProps = {

@@ -305,7 +305,12 @@ const inlinePlugin = ViewPlugin.fromClass(
       this.decorations = buildInline(view);
     }
     update(update: ViewUpdate) {
-      if (update.docChanged || update.selectionSet || update.viewportChanged) {
+      if (
+        update.docChanged ||
+        update.selectionSet ||
+        update.viewportChanged ||
+        syntaxTree(update.state) !== syntaxTree(update.startState)
+      ) {
         this.decorations = buildInline(update.view);
       }
     }
@@ -407,7 +412,10 @@ function buildTables(state: EditorState): DecorationSet {
 const tableField = StateField.define<DecorationSet>({
   create: buildTables,
   update(value, tr) {
-    return tr.docChanged || tr.selection ? buildTables(tr.state) : value;
+    // The parser runs async, so the Table node may not exist yet when the
+    // field is created; rebuild once the tree advances.
+    const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
+    return tr.docChanged || tr.selection || treeChanged ? buildTables(tr.state) : value;
   },
   provide: (f) => EditorView.decorations.from(f),
 });

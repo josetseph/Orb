@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, type RefObject } from "react";
 import { Search } from "lucide-react";
 import { nodeColor } from "@/components/graph3d/nodeColors";

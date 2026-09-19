@@ -1,5 +1,3 @@
-"use client";
-
 import {
   useCallback,
   useEffect,
@@ -9,6 +7,7 @@ import {
   type SetStateAction,
 } from "react";
 import { api, isRequestCancelled } from "@/lib/api";
+import { notifyIfUnfocused } from "@/lib/desktop";
 import type { Note } from "@/lib/types";
 import { isActiveProcessingNote } from "../_lib/processing-status";
 import type { ProcessedFilter, VaultFileEntry } from "../_lib/types";
@@ -106,6 +105,9 @@ export function useNotesList({
           for (const id of prev) {
             const note = data.find((n: Note) => n.id === id);
             if (note && isActiveProcessingNote(note)) next.add(id);
+            else if (note) {
+              notifyIfUnfocused(note.failed ? "Ingestion failed" : "Note ingested", note.title || "Untitled");
+            }
           }
           return next;
         });

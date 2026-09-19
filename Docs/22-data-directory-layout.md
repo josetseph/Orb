@@ -2,26 +2,26 @@
 
 **What this covers.** Everything Orb writes outside the application bundle: the exact on-disk tree of `DATA_DIR` (SQLite `orb.db`, `runtime_config.json`, `meili_master_key`, per-KB Kuzu files, Qdrant and Meilisearch storage, vaults, logs, downloaded engine binaries, the embedded Firefly III PHP runtime and app), the tree of `MODELS_DIR` (GGUFs, `manifest.json` and its schema, the Florence/Whisper/Marlin snapshots), the Application Support root and `paths.json`, the local download staging/cache directories, the dev fallbacks (`<repo>/data`, `backend/models`), which files are safe to delete and what each admin/reset endpoint removes, and the legacy LifeOS/LiveOS locations still honoured.
 
-**Related docs.** [Desktop shell](04-desktop-shell.md) (who creates binaries, Firefly, logs, `paths.json` on the Electron side) · [Backend core and configuration](06-backend-core-and-configuration.md) (`core/paths.py`) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Notes and vault files](09-notes-wikilinks-and-vault-files.md) · [Local models and inference](12-local-models-and-inference.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Graph storage](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Logging](23-logging-and-observability.md) · [Configuration reference](21-configuration-reference.md) · [Packaging](05-packaging-build-and-release.md) · [Development guide](27-development-guide.md).
+**Related docs.** [Desktop shell](04-desktop-shell.md) (who creates binaries, Firefly, logs, `paths.json` on the shell/runtime side) · [Backend core and configuration](06-backend-core-and-configuration.md) (`core/paths.py`) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Notes and vault files](09-notes-wikilinks-and-vault-files.md) · [Local models and inference](12-local-models-and-inference.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Graph storage](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Logging](23-logging-and-observability.md) · [Configuration reference](21-configuration-reference.md) · [Packaging](05-packaging-build-and-release.md) · [Development guide](27-development-guide.md).
 
 ## 1. Roots and how they are resolved
 
-Orb has three writable roots plus one bootstrap file. Resolution order is implemented in `backend/app/core/paths.py` (backend) and `desktop/paths.js` / `desktop/supervisor.js` (shell); they agree on the defaults.
+Orb has three writable roots plus one bootstrap file. Resolution order is implemented in `backend/app/core/paths.py` (backend and desktop runtime) and `desktop/src-tauri/src/runtime.rs` (shell); they agree on the defaults.
 
-| Root | Backend resolution (`core/paths.py`) | Shell default (`desktop/paths.js`) | Typical macOS value |
+| Root | Backend resolution (`core/paths.py`) | Shell default (`src-tauri/src/runtime.rs`) | Typical macOS value |
 |---|---|---|---|
-| **App Support root** | `_default_app_support()`: first of `[Orb, LifeOS, LiveOS]` under the OS base that already contains `paths.json`, else `Orb` | `appSupportRoot()` — same rule | `~/Library/Application Support/Orb/` |
-| **`paths.json`** | `ORB_PATHS_FILE` / `LIVEOS_PATHS_FILE` env, else `<AppSupport>/paths.json` | `defaultPathsFile()` = `<AppSupport>/paths.json` | `~/Library/Application Support/Orb/paths.json` |
-| **`DATA_DIR`** | `ORB_DATA_DIR` / `LIVEOS_DATA_DIR` / `DATA_DIR` env → `paths.json.data_dir` → `<repo>/data` | `paths.json.data_dir` → `<AppSupport>/data` (wizard default `defaultDataDir()`) | `~/Library/Application Support/Orb/data/` |
-| **`MODELS_DIR`** | `ORB_MODELS_DIR` / `LIVEOS_MODELS_DIR` / `MODELS_DIR` env → `paths.json.models_dir` → `<repo>/backend/models` | `paths.json.models_dir` → `<AppSupport>/models` | `~/Library/Application Support/Orb/models/` |
-| **Default vault** | `paths.json.default_vault_path` → `ORB_DEFAULT_VAULT` / `LIVEOS_DEFAULT_VAULT` → (registry) `DATA_DIR/vaults/default` | wizard "Notes folder" | user-chosen, e.g. `~/Documents/Orb Notes/` |
+| **App Support root** | `_default_app_support()`: first of `[Orb, LifeOS, LiveOS]` under the OS base that already contains `paths.json`, else `Orb` | `app_support_root()` — same rule | `~/Library/Application Support/Orb/` |
+| **`paths.json`** | `ORB_PATHS_FILE` / `LIVEOS_PATHS_FILE` env, else `<AppSupport>/paths.json` | `paths_file()` = `ORB_PATHS_FILE` or `<AppSupport>/paths.json` | `~/Library/Application Support/Orb/paths.json` |
+| **`DATA_DIR`** | `ORB_DATA_DIR` / `LIVEOS_DATA_DIR` / `DATA_DIR` env → `paths.json.data_dir` → `<repo>/data` | `paths.json.data_dir` → `<AppSupport>/data` (setup default `data_dir()`) | `~/Library/Application Support/Orb/data/` |
+| **`MODELS_DIR`** | `ORB_MODELS_DIR` / `LIVEOS_MODELS_DIR` / `MODELS_DIR` env → `paths.json.models_dir` → `<repo>/backend/models` | `paths.json.models_dir` → `<AppSupport>/models` (`default_models_dir()`) | `~/Library/Application Support/Orb/models/` |
+| **Default vault** | `paths.json.default_vault_path` → `ORB_DEFAULT_VAULT` / `LIVEOS_DEFAULT_VAULT` → (registry) `DATA_DIR/vaults/default` | setup page "Notes folder" | user-chosen, e.g. `~/Documents/Orb Notes/` |
 | **Download staging** | `local_download_staging_dir()`: `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` / `LIVEOS_*` env → per-OS cache dir | — | `~/Library/Caches/Orb/model-downloads/` |
 
 OS bases: macOS `~/Library/Application Support`; Windows `%APPDATA%` (fallback `~/AppData/Roaming`); Linux `~/.config`. Staging: macOS `~/Library/Caches/Orb`, Windows `%LOCALAPPDATA%\Orb`, Linux `~/.cache/orb`.
 
-Under the desktop app the supervisor injects `ORB_DATA_DIR`, `ORB_MODELS_DIR` and `ORB_PATHS_FILE` into the backend process, so the env branch always wins there; the `paths.json` branch serves a hand-started `uvicorn`. `settings.DATA_DIR` / `settings.MODELS_DIR` are snapshots taken at import; code that must see a Setup-time change calls `resolve_data_dir()` / `resolve_models_dir()` directly (registry, runtime config, manifest, logs via `resolve_logs_dir()` after `sync_settings_paths` + `reconfigure_logging`).
+Under the desktop app nothing injects `ORB_DATA_DIR`/`ORB_MODELS_DIR`: the runtime and the API resolve `paths.json` themselves through `core/paths.py` (the shell only reads it for the log directory and `ai_setup_mode`), so the `paths.json` branch is the normal desktop path and env overrides are for dev. `settings.DATA_DIR` / `settings.MODELS_DIR` are snapshots taken at import; code that must see a Setup-time change calls `resolve_data_dir()` / `resolve_models_dir()` directly (registry, runtime config, manifest, logs via `resolve_logs_dir()` after `sync_settings_paths` + `reconfigure_logging`).
 
-`ensure_data_layout()` (called on every registry connect, by `core/database.py` at import, and by `sync_settings_paths`) creates `kuzu/ qdrant/ meilisearch/ logs/ vaults/ bin/` under `DATA_DIR`. The shell additionally `mkdir`s `qdrant/`, `meilisearch/`, `bin/<triple>/`, `bin/.tmp/`, `firefly/…`, `logs/`.
+`ensure_data_layout()` (called on every registry connect, by `core/database.py` at import, and by `sync_settings_paths`) creates `kuzu/ qdrant/ meilisearch/ logs/ vaults/ bin/` under `DATA_DIR`. `desktop_runtime.py` additionally `mkdir`s `qdrant/`, `meilisearch/`, `bin/<triple>/`, `bin/.tmp/`, `firefly/…`, `logs/`.
 
 ## 2. `DATA_DIR` tree
 
@@ -49,7 +49,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 ├── logs/
 │   ├── api.log            errors.log        ingestion.log     multimedia.log   chat.log      (backend, RotatingFileHandler 10 MB × 5)
 │   ├── database.log       graph.log         llm.log           retrieval.log    finance.log
-│   ├── backend.log        frontend.log      firefly.log                                     (shell-captured stdio, append-only, unrotated)
+│   ├── backend.log        qdrant.log        meilisearch.log   firefly.log      multimodal.log (process stdio, append-only, unrotated; backend.log = runtime + API)
 │   └── *.log.1 … *.log.5                                                                  (rotated backups)
 ├── bin/
 │   ├── .tmp/                               download scratch (archives, extracted trees) — transient
@@ -71,7 +71,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
     └── .tmp/                               Firefly/PHP archive download + extract scratch — transient
 ```
 
-Not present under `DATA_DIR` (by design): model weights (`MODELS_DIR`), the app bundle, Node/Python runtimes, and **any secret at all**. `credentials.enc` lives in the app's own `userData` directory (`app.getPath("userData")` — `~/Library/Application Support/Orb`, `%APPDATA%\\Orb`), which is always local to the machine. `DATA_DIR` is commonly a synced folder (OneDrive/NAS), and uploading ciphertext only this machine can decrypt serves no purpose. `migrateLegacyStore()` moves the file out of `DATA_DIR` on first launch for installs created before this change.
+Not present under `DATA_DIR` (by design): model weights (`MODELS_DIR`), the app bundle, the Python runtime, and **cloud API keys** — those live in the OS keychain (`keyring`, service `Orb`), never on disk under Orb's control. `DATA_DIR` is commonly a synced folder (OneDrive/NAS). The exceptions are the Meili master key and Firefly's `runtime.json`/`.env`, which are per-install secrets written owner-only.
 
 ## 3. Path-by-path reference
 
@@ -79,25 +79,26 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 
 | Path | Owner subsystem | Created when | Safe to delete? |
 |---|---|---|---|
-| `paths.json` (App Support) | wizard (`desktop/main.js`, atomic write) / `POST /api/v1/setup/paths` (`save_paths_file`, non-atomic) | first run (wizard) or Setup page | Yes (loses chosen dirs) — next launch shows the wizard again; data is still on disk but you must re-enter the same `data_dir`/`models_dir` to find it |
+| `paths.json` (App Support) | first-run setup page (`save_setup` in `src-tauri/src/commands.rs`, atomic write) / `POST /api/v1/setup/paths` (`save_paths_file`, non-atomic) | first run or Setup page | Yes (loses chosen dirs) — next launch shows the setup page again; data is still on disk but you must re-enter the same `data_dir`/`models_dir` to find it |
 | `DATA_DIR/orb.db` | `core/database.py` (`create_all`), `kb_registry._connect` (DDL), `vault_watcher` engine | first backend start | **No** — loses all note metadata (ids, titles, dates, processing flags), KB registry rows (non-default KBs become unreachable even though their folders remain), wikilink edges, chat history. Vault `.md` files survive; a fresh DB re-adopts them as new notes via `sync_vault_notes` (default KB only) |
-| `DATA_DIR/runtime_config.json` | `core/runtime_config.py`; wizard merges `ai_setup_mode` | first Settings/Setup save or wizard | Yes — falls back to `.env`/defaults (provider/model/ai_setup_mode revert) |
-| `DATA_DIR/meili_master_key` | `desktop/supervisor.js resolveMeiliMasterKey` | first supervised launch | Yes **only together with `meilisearch/`** — deleting the key alone on an install with existing Meili data reverts to `orb-dev-key`, which will not open indexes created under the random key |
+| `DATA_DIR/runtime_config.json` | `core/runtime_config.py`; `save_setup` merges `ai_setup_mode` | first Settings/Setup save or first-run setup | Yes — falls back to `.env`/defaults (provider/model/ai_setup_mode revert) |
+| `DATA_DIR/meili_master_key` | `desktop_runtime.resolve_meili_master_key` | first desktop launch | Yes **only together with `meilisearch/`** — deleting the key alone on an install with existing Meili data reverts to `orb-dev-key`, which will not open indexes created under the random key |
 | `DATA_DIR/kuzu/kuzu_graph[.wal]` | `GraphService` (default KB) | first `.graph` access (any graph/ingest/chat route or admin reset) | Yes (loses the default KB's entity graph) — recreated empty with schema; re-ingest all notes to rebuild. Delete only while the backend is stopped |
 | `DATA_DIR/kuzu/<slug>/` | `kb_registry.create_kb` (dir) / `GraphService` (file) | KB creation / first graph access | Yes (loses that KB's graph) — same caveats; the registry row keeps pointing at it and Kuzu recreates the file |
-| `DATA_DIR/qdrant/` | Qdrant process (spawned by the shell) | first supervised launch | Yes (loses all vectors for all KBs) — `QdrantService._ensure_collections` recreates empty collections at boot; re-ingest to repopulate. Backend must be restarted so per-KB services re-run `_ensure_collections` |
-| `DATA_DIR/meilisearch/` | Meilisearch process | first supervised launch | Yes (loses keyword indexes for all KBs) — recreated on boot; delete `meili_master_key` at the same time so a fresh random key is generated (see above) |
+| `DATA_DIR/qdrant/` | Qdrant process (spawned by the runtime) | first desktop launch | Yes (loses all vectors for all KBs) — `QdrantService._ensure_collections` recreates empty collections at boot; re-ingest to repopulate. Backend must be restarted so per-KB services re-run `_ensure_collections` |
+| `DATA_DIR/meilisearch/` | Meilisearch process | first desktop launch | Yes (loses keyword indexes for all KBs) — recreated on boot; delete `meili_master_key` at the same time so a fresh random key is generated (see above) |
 | `DATA_DIR/vaults/<slug>/` | `ensure_vault` via `create_kb`/legacy migration/default fallback | KB creation | **No** unless you mean to delete the notes — this *is* the user's content for that KB. Deleting the KB via the API removes it; deleting by hand leaves an orphan registry row |
 | `<vault>/attachments/` | `ensure_vault`, uploads | vault creation | No (loses uploaded files; markdown links dangle) |
 | `<vault>/**/.keep` | `POST /api/v1/vault/mkdir` | folder creation | Yes — only keeps empty folders alive |
-| `DATA_DIR/logs/*.log` | backend `core/log.py` (rotating), shell `serviceLogPath` (append) | first start | Yes — recreated; the shell's `backend.log`/`frontend.log`/`firefly.log` grow unbounded, so periodic deletion is reasonable |
-| `DATA_DIR/bin/<triple>/{qdrant,meilisearch}` | `desktop/download-binaries.js ensureBinaries` | first launch (splash "Downloading…"), or `npm run prefetch-binaries` | Yes — re-downloaded from GitHub releases on next launch (needs network); fallback lookup also checks `<repo>/desktop/binaries/<triple>/` |
-| `DATA_DIR/bin/.tmp/` | `ensureBinaries` | during downloads | Yes — scratch |
-| `DATA_DIR/firefly/php/` | `firefly-runtime.js ensurePhpRuntime` | first launch | Yes — re-downloaded/re-seeded from bundled resources or GitHub (static-php-cli `PHP_BIN_VERSION`) |
-| `DATA_DIR/firefly/app/` (except `storage/`) | `ensureFireflyApp` | first launch / version change (`.orb-firefly-version`) | Yes — re-seeded; `storage/` is stashed and restored across upgrades |
+| `DATA_DIR/logs/*.log` | backend `core/log.py` (rotating); shell (`backend.log`) and `desktop_runtime._spawn` (`qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) append | first start | Yes — recreated; the stdio logs grow unbounded, so periodic deletion is reasonable |
+| `DATA_DIR/boot-status.json` | `desktop_runtime.status()` (atomic rewrite) | every desktop launch | Yes — rewritten on next launch; `/admin/maintenance-status` surfaces it while not `Ready` |
+| `DATA_DIR/bin/<triple>/{qdrant,meilisearch}` | `desktop_runtime.ensure_binaries` | first launch (status indicator "Downloading…") | Yes — re-downloaded from GitHub releases on next launch (needs network) |
+| `DATA_DIR/bin/.tmp/` | `ensure_binaries` | during downloads | Yes — scratch |
+| `DATA_DIR/firefly/php/` | `desktop_runtime.ensure_php_runtime` | first launch | Yes — re-downloaded/re-seeded from bundled resources or GitHub (static-php-cli `PHP_BIN_VERSION`) |
+| `DATA_DIR/firefly/app/` (except `storage/`) | `desktop_runtime.ensure_firefly_app` | first launch / version change (`.orb-firefly-version`) | Yes — re-seeded; `storage/` is stashed and restored across upgrades |
 | `DATA_DIR/firefly/app/storage/database/firefly.sqlite`, `storage/upload/`, `oauth-*.key` | Firefly III (migrations, `db:seed`, Passport) | first launch | **No** — all finance data for every KB. The KB↔group mapping in `orb.db` (`firefly_group_id`) would then point at missing groups |
-| `DATA_DIR/firefly/app/.env`, `DATA_DIR/firefly/runtime.json` | `firefly-runtime.js` | first launch | Partially — `.env` is regenerated from `runtime.json`; deleting `runtime.json` loses the API token and `APP_KEY` (encrypted Firefly columns become unreadable) → treat as **No** unless `firefly.sqlite` is deleted too |
-| `DATA_DIR/firefly/.tmp/`, `.app-state-stash/` | `firefly-runtime.js` | during install/upgrade | Yes when no upgrade is in progress |
+| `DATA_DIR/firefly/app/.env`, `DATA_DIR/firefly/runtime.json` | `desktop_runtime.ensure_firefly_runtime` | first launch | Partially — `.env` is regenerated from `runtime.json`; deleting `runtime.json` loses the API token and `APP_KEY` (encrypted Firefly columns become unreadable) → treat as **No** unless `firefly.sqlite` is deleted too |
+| `DATA_DIR/firefly/.tmp/`, `.app-state-stash/` | `desktop_runtime.py` | during install/upgrade | Yes when no upgrade is in progress |
 | `MODELS_DIR/manifest.json` | `local_models.save_manifest` | first GGUF download / model selection | Yes (loses selection) — `gguf_paths_if_present` falls back to the pinned default filenames under `gguf/`; Setup must re-select; `runtime` section is rewritten on next load |
 | `MODELS_DIR/gguf/*.gguf` | `local_models.ensure_gguf` | Setup "Download models" | Yes — re-downloaded (multi-GB) |
 | `MODELS_DIR/florence-2-large/`, `whisper-large-v3-turbo/`, `marlin-2b/` | `multimodal_models.ensure_hf_snapshot` | Setup / `start-multimodal-services` | Yes — re-downloaded (Marlin may be skipped if gated) |
@@ -162,8 +163,8 @@ If `selection` is missing/broken, the code falls back to the pinned default file
 ```
 ~/Library/Application Support/Orb/          (Windows: %APPDATA%\Orb ; Linux: ~/.config/Orb)
 ├── paths.json                              bootstrap: where everything else is
-├── data/                                   default DATA_DIR (wizard default; user may choose elsewhere)
-└── models/                                 default MODELS_DIR (wizard default; often moved to an external disk)
+├── data/                                   default DATA_DIR (setup default; user may choose elsewhere)
+└── models/                                 default MODELS_DIR (setup default; often moved to an external disk)
 ```
 
 `paths.json`:
@@ -177,9 +178,9 @@ If `selection` is missing/broken, the code falls back to the pinned default file
 }
 ```
 
-- Written by the wizard (`desktop/main.js`, atomic `paths.json.tmp` → rename; validates absolute paths) and by `POST /api/v1/setup/paths` (`core/paths.save_paths_file`, plain `write_text`, `expanduser().resolve()`, preserves omitted `default_vault_path`/`ai_setup_mode`).
-- Read by the shell at every launch (`needsWizard` when missing or invalid) and by the backend via `load_paths_file()` (cached in `_PATHS_CACHE` until `clear_paths_cache()`/`save_paths_file`).
-- Electron's own `userData` (`app.getPath("userData")`, Chromium caches, window state) also lives in this App Support folder, alongside `paths.json`; those files are Electron-managed and safe to delete.
+- Written by the first-run setup page (`save_setup` in `src-tauri/src/commands.rs`, atomic tmp → rename; validates absolute paths) and by `POST /api/v1/setup/paths` (`core/paths.save_paths_file`, plain `write_text`, `expanduser().resolve()`, preserves omitted `default_vault_path`/`ai_setup_mode`).
+- Read by the shell at every launch (`first_run()` when missing or invalid, unless `ORB_SKIP_WIZARD`) and by the backend via `load_paths_file()` (cached in `_PATHS_CACHE` until `clear_paths_cache()`/`save_paths_file`).
+- Tauri's WebView data (`com.orb.app` under the OS app-data dir: WebKit/WebView2 caches, `localStorage` for the UI origin) lives beside this folder; those files are WebView-managed and safe to delete (the UI loses `orb_current_kb` and similar conveniences).
 - The `[Orb, LifeOS, LiveOS]` candidate list means an old install's `paths.json` under `LifeOS/` keeps being used (and written) until it is moved; there is no automatic migration of the folder itself.
 
 ## 6. Caches and staging directories
@@ -190,10 +191,8 @@ If `selection` is missing/broken, the code falls back to the pinned default file
 | `DATA_DIR/bin/.tmp/` | engine archive download + extraction scratch | removed per download; safe to delete |
 | `DATA_DIR/firefly/.tmp/` | PHP runtime and Firefly release archives + extraction | safe to delete when not installing |
 | `DATA_DIR/firefly/.app-state-stash/` | copy of `storage/{database,upload,oauth-*.key}` while the Firefly app dir is rebuilt on upgrade | exists only mid-upgrade; if present after a crash it may be the *only* copy of finance data — restore before deleting |
-| `<repo>/desktop/data/` | `prefetch-binaries.js` default `ORB_DATA_DIR` for CI warm-ups | dev only |
-| `<repo>/backend/tests/benchmark/.cache/`, `results/`, `*_notes/` | benchmark artefacts (gitignored) | dev only |
 | Hugging Face hub cache (`~/.cache/huggingface/`) | not used for model files (Orb passes `local_dir`), but `huggingface_hub` may still write token/metadata there | external |
-| `~/Library/Caches/Orb` on the Electron side (`app.getPath("cache")`) | Chromium cache | Electron-managed |
+| WebView cache for `com.orb.app` (OS-managed location) | WebKit / WebView2 cache | WebView-managed |
 
 ## 7. Dev fallbacks and repo-relative artefacts
 
@@ -206,11 +205,11 @@ When neither env vars nor `paths.json` exist (e.g. `uvicorn app.main:app` in `ba
 | `runtime_config.json` | `<repo>/data/runtime_config.json` (explicit fallback in `runtime_config._data_path`) | |
 | Legacy registry | `<repo>/data/kb_registry.json` → renamed `.json.migrated` after import | always repo-relative, even in packaged builds |
 | Legacy Kuzu | `<repo>/data/kuzu_graph[.wal]` → moved to `<DATA_DIR>/kuzu/kuzu_graph` by `GraphService._migrate_legacy_db_path` when the target does not exist | |
-| Engine binaries | `<repo>/desktop/binaries/<triple>/` or `<repo>/desktop/binaries/` (fallback lookup in `supervisor.resolveBinary`) | `desktop/binaries/README.md` |
-| Firefly seed | `<repo>/desktop/resources/firefly/` (gitignored build output) | used by `firefly-runtime.js` as `bundledRoot` in dev |
+| Engine binaries | none in the repo; always `DATA_DIR/bin/<triple>/` | downloaded by `desktop_runtime.ensure_binaries` |
+| Firefly seed | `<repo>/desktop/resources/firefly/` (gitignored `build.py` output) | used by `desktop_runtime._bundled_firefly_root()` when `ORB_RESOURCES_ROOT` is set (packaged, or `ORB_USE_RESOURCES=1` in dev) |
 | Backend logs (legacy) | `backend/logs/` is gitignored but no longer written; logs go to `DATA_DIR/logs` | |
 | `.env` | `<repo>/backend/.env` — ports and provider defaults for contributors; API keys here are only a **seed** for non-desktop runs (end users set keys in Settings). **Never copied into `DATA_DIR`** | `runtime_config.json` intentionally excludes secrets |
-| `credentials.enc` | `<userData>/credentials.enc` — keychain-encrypted cloud API keys, `0600` (**not** under `DATA_DIR`; migrated out of it automatically) | written by the shell, never by the backend |
+| Cloud API keys | OS keychain (`keyring`, service `Orb`, entries per provider/endpoint plus `__index__`) — never a file under `DATA_DIR` | written by `services/credentials.CredentialStore` via `/api/v1/credentials` |
 
 Because `settings.DATA_DIR` is evaluated at import, importing `app.core.config` (or any service) in a test without `ORB_DATA_DIR` creates `<repo>/data/` and `orb.db` as a side effect.
 
@@ -228,25 +227,26 @@ Because `settings.DATA_DIR` is evaluated at import, importing `app.core.config` 
 | `POST /api/v1/setup/paths` | (may re-point default KB `vault_path`) | — | — | — | — | — | rewrites `paths.json`; merges `ai_setup_mode` into `runtime_config.json`; re-targets `settings.*` and logs |
 | Settings "runtime LLM" save (`api/settings.py`) | — | — | — | — | — | — | `runtime_config.json` |
 | Setup model selection | — | — | — | Qdrant collections may be recreated if empty and dims changed | — | — | `manifest.json.selection` |
-| Wizard re-run (delete `paths.json`) | — | — | — | — | — | — | new `paths.json`; existing dirs untouched |
+| Setup re-run (delete `paths.json`) | — | — | — | — | — | — | new `paths.json`; existing dirs untouched |
 
 Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch/` storage roots, `bin/`, `firefly/php`, `firefly/app`, or `MODELS_DIR` contents; those are manual operations (§3 for safety).
 
-## 9. Legacy locations and migrations (LifeOS / LiveOS / Docker era)
+## 9. Legacy locations and migrations (LifeOS / LiveOS / Electron era)
 
 | Legacy artefact | Current handling |
 |---|---|
 | App Support `LifeOS/` or `LiveOS/` with `paths.json` | still selected by both shell and backend if `Orb/paths.json` does not exist; `data/`, `models/` inside it keep working. No rename is performed. |
-| Env vars `LIVEOS_DATA_DIR`, `LIVEOS_MODELS_DIR`, `LIVEOS_PATHS_FILE`, `LIVEOS_DEFAULT_VAULT`, `LIVEOS_HF_STAGING`, `LIVEOS_DOWNLOAD_STAGING`, `LIVEOS_PACKAGED`, `LIVEOS_RESOURCES`, `LIVEOS_ROOT`, `LIVEOS_PYTHON`, `LIVEOS_NODE`, `LIVEOS_FRONTEND_DEV` | accepted as second-priority aliases of the `ORB_*` names (`_env_first` / `envFirst`). |
-| `DATA_DIR` env (bare) / `MODELS_DIR` env (bare) | third-priority aliases (Docker-era). |
+| Env vars `LIVEOS_DATA_DIR`, `LIVEOS_MODELS_DIR`, `LIVEOS_PATHS_FILE`, `LIVEOS_DEFAULT_VAULT`, `LIVEOS_HF_STAGING`, `LIVEOS_DOWNLOAD_STAGING`, `LIVEOS_*_PORT`, `LIVEOS_LLAMA_*` | accepted as second-priority aliases of the `ORB_*` names (`_env_first` / `envFirst`). |
+| `DATA_DIR` env (bare) / `MODELS_DIR` env (bare) | third-priority aliases (container era). |
 | `<repo>/data/kb_registry.json` | migrated into `knowledge_bases` once, renamed `.migrated`. |
 | `<repo>/data/kuzu_graph` (Kuzu file at data root) | moved to `<DATA_DIR>/kuzu/kuzu_graph` by `GraphService`. |
 | `…/kuzu/<slug>` stored as a **directory** path | healed to `…/kuzu/<slug>/kuzu_graph` by `normalize_kuzu_path` (registry load, `get_kb`, cleanup). |
 | `notes.content` bodies in SQLite | still read as fallback when the vault file is missing/empty; never written. |
-| `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; ORM synonym `meili_index`). `TYPESENSE_*` env vars alias `MEILI_*`. |
+| `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; ORM synonym `meili_index`). The `TYPESENSE_*` env aliases are gone. |
 | Meili master key `orb-dev-key` | used automatically when `meilisearch/` already has data but no `meili_master_key` file exists. |
 | `localStorage` keys `lifeos_current_kb` / `liveos_current_kb` | migrated to `orb_current_kb` on first read. |
-| `DATABASE_BACKEND=postgres` + `DATABASE_TRANSACTION_POOLER_URL` | contributor/Docker path for the async ORM only; `knowledge_bases`, the watcher and `sqlite_url()` remain on `orb.db`. |
+| `DATABASE_BACKEND=postgres` + `DATABASE_*_URL` | removed; SQLite `orb.db` is the only database. `.env.example` still lists them commented out. |
+| `credentials.enc` (Electron `safeStorage` file in the App Support folder) | no longer read or written; keys now live in the OS keychain via `keyring`. Delete it by hand if present. |
 | Alembic migrations (`backend/alembic/versions/d4f891a2b5c3_add_kb_id_to_notes.py`) | removed; schema is `create_all` + ad-hoc `ALTER TABLE … ADD COLUMN` (`_ensure_firefly_columns`, LLM override columns) + `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path`. |
 | RustFS / S3 uploads | replaced by `local_storage` → `<vault>/attachments/`; `vault_rel_from_url` still maps any `…/attachments/<name>` URL for old bodies. |
 
@@ -254,22 +254,27 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 
 - **Minimal backup of user content**: every vault folder (default vault path from `GET /api/v1/setup/status.active_vault_path` or `GET /api/v1/kb[].vault_path`) + `DATA_DIR/orb.db` + `DATA_DIR/firefly/app/storage/` + `DATA_DIR/firefly/runtime.json` + `paths.json`. Graph/vector/keyword stores and models are reproducible (re-ingest / re-download).
 - **Full cold backup**: stop Orb, copy `DATA_DIR`, `MODELS_DIR`, `paths.json`, and any external vault folders. Qdrant/Meili/Kuzu files are not safe to copy while running.
-- **Moving `DATA_DIR`**: quit Orb, move the folder, edit `paths.json.data_dir` (or delete `paths.json` and re-run the wizard pointing at the new location). `knowledge_bases.vault_path`/`kuzu_path` are **absolute**, so vaults/Kuzu under the old `DATA_DIR/vaults` and `DATA_DIR/kuzu` must be re-pointed (no tool for this; edit the rows, or use `POST /api/v1/setup/paths` for the default vault only). Bodies use relative `rel_path`, so moving a vault folder as a whole preserves notes.
+- **Moving `DATA_DIR`**: quit Orb, move the folder, edit `paths.json.data_dir` (or delete `paths.json` and re-run setup pointing at the new location). `knowledge_bases.vault_path`/`kuzu_path` are **absolute**, so vaults/Kuzu under the old `DATA_DIR/vaults` and `DATA_DIR/kuzu` must be re-pointed (no tool for this; edit the rows, or use `POST /api/v1/setup/paths` for the default vault only). Bodies use relative `rel_path`, so moving a vault folder as a whole preserves notes.
 - **Moving `MODELS_DIR`**: move the folder and update `paths.json.models_dir`; `manifest.json.selection.*_path` and `runtime.*` hold absolute paths and will fail `gguf_paths_if_present` until Setup re-selects (the fallback by default filename still works when the defaults were chosen).
 - **Recovering from a lost `orb.db`**: start Orb; the default KB re-adopts its vault's `.md` files (new ids, `created_at` = now, titles from filenames). Non-default KBs must be re-created via `POST /api/v1/kb` with the same `vault_path` (a new slug/id means new Kuzu/Qdrant/Meili names; the old stores are orphaned). Chat history and Firefly mappings are lost; Firefly groups still exist inside `firefly.sqlite` but are no longer attached.
 - **Recovering indexes**: `POST /api/v1/admin/reset-ingestion-data?kb=` then `POST /api/v1/admin/reingest-all` (or `reingest-vault`) per KB.
 
 ## 11. Gotchas
 
-- `paths.json` is *not* inside `DATA_DIR`; wiping `DATA_DIR` leaves the app pointing at an empty folder that it silently recreates (no wizard) — it looks like data loss but the wizard-chosen vault outside `DATA_DIR` is intact.
+- `paths.json` is *not* inside `DATA_DIR`; wiping `DATA_DIR` leaves the app pointing at an empty folder that it silently recreates (no setup page) — it looks like data loss but the vault chosen at setup outside `DATA_DIR` is intact.
 - The default KB's vault is usually **outside** `DATA_DIR/vaults/`; only non-default/legacy KBs live there. Do not assume all notes are under `DATA_DIR`.
 - `kuzu_graph` is a **file**; `kuzu/<slug>/` is a folder containing that file. Tools that expect a directory database (older Kuzu) will misread it.
 - Qdrant and Meilisearch are single servers for all KBs; per-KB isolation is by collection/index *name*. Deleting `qdrant/` or `meilisearch/` affects every KB.
 - `meili_master_key` and `meilisearch/` must be deleted **together**; deleting only the key on an old install falls back to `orb-dev-key`, deleting only the data keeps a random key that then opens an empty store (fine).
-- Shell-captured logs (`backend.log`, `frontend.log`, `firefly.log`) are never rotated; backend component logs are (10 MB × 5). `errors.log` aggregates ERROR+ from all components.
+- Process stdio logs (`backend.log`, `qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) are never rotated; backend component logs are (10 MB × 5). `errors.log` aggregates ERROR+ from all components.
 - `runtime_config.json` holds only `provider`, `model`, `ingestion_model`, `base_url`, `ai_setup_mode`; unknown keys are dropped on load and save.
 - `firefly/runtime.json` and `firefly/app/.env` contain secrets (API token, `APP_KEY`, password) and are written owner-only; `paths.json` and `orb.db` contain absolute paths and Firefly group ids but no secrets.
 - `MODELS_DIR` on SMB/NAS triggers staging; the staging dir is created eagerly (`mkdir`) even when unused.
 - `ensure_data_layout` is called at import of `core/database.py`, so simply importing the backend creates the `DATA_DIR` skeleton.
 - `DATA_DIR/vaults/<slug>` is created even when `POST /api/v1/kb` was given an explicit `vault_path`? **No** — only when no path is supplied (route requires one), or during legacy JSON migration; an empty `vaults/` folder is therefore normal.
 - `manifest.json.gguf` entries are never pruned when files are deleted; treat it as informational.
+
+
+### On-demand Python packages
+
+`DATA_DIR/python-user/` is the interpreter's user-site (`PYTHONUSERBASE`, set by `desktop_runtime.py`, which re-execs once so the directory is on `sys.path`). The multimodal stack (torch, transformers, mlx, …) is installed there with `pip install --user` on first use, so the app bundle is never written to. Delete the folder to force a reinstall.

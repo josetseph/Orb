@@ -45,8 +45,8 @@ There is **no authentication or authorization** on any route. The API binds to l
 | `backend/app/schemas/__init__.py` | Re-exports the above | — |
 | `frontend/src/lib/api.ts` | The only frontend HTTP client (axios); one method per backend call | `api`, `isRequestCancelled`, `RequestOpts` |
 | `frontend/src/lib/types.ts` | TypeScript shapes the frontend expects from responses | `Note`, `NoteStatus`, `ChatStatus`, `KnowledgeBase`, `Finance*`, `NotesGraphPayload`, `SetupStatus` |
-| `frontend/src/lib/desktop.ts` | Electron bridge; `resolveApiBaseUrl` returns the direct API origin for uploads | `resolveApiBaseUrl`, `getDesktopBridge` |
-| `frontend/next.config.ts` | Next rewrites that proxy `/api/v1/*`, `/vault-files/*`, `/health`, `/files/*` to the backend | `rewrites()` |
+| `frontend/src/lib/desktop.ts` | Tauri bridge helpers (pickers, `restartBackend`, `notifyIfUnfocused`); `revealInFolder` calls `POST /api/v1/desktop/reveal` | `getDesktopBridge`, `revealInFolder` |
+| `frontend/vite.config.ts` | Dev-only proxy of `/api/v1`, `/vault-files`, `/health` to `API_PROXY_TARGET` (default `http://127.0.0.1:17401`) | `server.proxy` |
 
 ---
 
@@ -62,13 +62,11 @@ There is **no authentication or authorization** on any route. The API binds to l
 
 | Prefix | Routes | Reached from the browser via |
 |---|---|---|
-| `/api/v1/…` | Everything except the two below | Next rewrite `/api/v1/:path*` → `API_PROXY_TARGET/api/v1/:path*` (production desktop), or directly (dev, `NEXT_PUBLIC_API_URL` absolute) |
-| `/vault-files/{kb_id}/{path}` | Static vault attachment serving (`api_desktop.serve_vault_file`) | Next rewrite `/vault-files/:path*` → backend |
-| `/` and `/health` | Liveness | Next rewrite `/health` → backend; `/` is not proxied |
+| `/api/v1/…` | Everything except the two below | Same origin: the API serves the built UI at `/` (desktop); the Vite dev server proxies `/api/v1` to 17401 |
+| `/vault-files/{kb_id}/{path}` | Static vault attachment serving (`api_desktop.serve_vault_file`) | Same origin; Vite dev proxy |
+| `/` and `/health` | Liveness | `/health` same origin / Vite proxy; `/` is shadowed by the UI mount when `frontend/dist` exists |
 
 `settings.API_V1_STR = "/api/v1"` exists in `backend/app/core/config.py` but **no router reads it** — paths are hard-coded strings. Changing the constant does nothing.
-
-The Next config also rewrites `/files/:path*` → `FILES_PROXY_TARGET/:path*`. This is a leftover from the RustFS/S3 era; the desktop supervisor sets `FILES_PROXY_TARGET` to the API origin, so `/files/x` would hit `http://127.0.0.1:17401/x`, which no route serves. Nothing in the frontend uses `/files/`.
 
 ### 3.3 `?kb=` resolution (`api/deps.py:get_kb`)
 
@@ -90,7 +88,7 @@ Notes:
 
 ### 3.5 CORS
 
-`CORSMiddleware` with `allow_origins = settings.CORS_ORIGINS.split(",")` (default `http://localhost:3700, http://localhost:3701, http://127.0.0.1:3700, http://127.0.0.1:3701`; the desktop supervisor overrides with the UI port 17400 via `ports.corsOrigins()`), optional `allow_origin_regex = settings.CORS_ALLOW_ORIGIN_REGEX`, `allow_credentials=True`, all methods and headers. CORS only matters when the browser calls the API origin directly (dev mode, and the desktop upload path — see 3.9).
+`CORSMiddleware` with `allow_origins = settings.CORS_ORIGINS.split(",")` (default: ports 3700/3701 and the legacy 17400 on `localhost` and `127.0.0.1`), optional `allow_origin_regex = settings.CORS_ALLOW_ORIGIN_REGEX`, `allow_credentials=True`, all methods and headers. CORS only matters when a browser calls the API origin directly; the desktop app and the Vite dev proxy are same-origin (see 3.9).
 
 ### 3.6 Error envelope
 
@@ -117,12 +115,11 @@ There is **no streaming (SSE/WebSocket)** anywhere. "Streaming" chat in the UI i
 
 ### 3.9 How the frontend reaches the API
 
-- `frontend/src/lib/api.ts` builds every URL as `${API_BASE_URL}${path}` where `API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "/api/v1")`.
-- **Production desktop** (`desktop/supervisor.js startFrontend`, `desktop/scripts/build-frontend.js`): `NEXT_PUBLIC_API_URL="/api/v1"` (same-origin) and `API_PROXY_TARGET=http://127.0.0.1:17401`, so Next's rewrites proxy `/api/v1/*`, `/vault-files/*`, `/health` to the backend. `experimental.proxyClientMaxBodySize` is raised to `512mb` because the default 10 MB proxy limit truncated uploads.
-- **Desktop dev** (`next dev`): supervisor passes the absolute `apiV1Url()` (`http://127.0.0.1:17401/api/v1`) so the browser talks to the API directly (CORS applies).
-- **Plain `npm run dev` without the desktop shell**: rewrites fall back to `http://localhost:8700` (the comment in `next.config.ts` mentions `8000`; the code says `8700`).
-- **Uploads bypass the proxy**: `api.upload()` calls `resolveApiBaseUrl()` (`frontend/src/lib/desktop.ts`), which asks the Electron preload bridge (`window.orbDesktop.getApiBaseUrl` → IPC `get-api-base-url` → `ports.apiV1Url()`) for the direct API origin and POSTs multipart to `http://127.0.0.1:17401/api/v1/upload` with a 10-minute timeout. If the bridge is absent it falls back to the proxied base.
-- Media (`<img>`, `<video>`, `fetchMediaObjectUrl` in `frontend/src/lib/utils.ts`) loads `/vault-files/<kb>/<rel>` through the Next rewrite.
+- `frontend/src/lib/api.ts` builds every URL as `${API_BASE_URL}${path}` where `API_BASE_URL = (import.meta.env.VITE_API_URL ?? "/api/v1")`.
+- **Desktop**: the API serves the Vite build at `/` (`FRONTEND_DIR`, default `frontend/dist`), so every call — uploads included — is same-origin with no proxy or body limit in between. `api.upload()` POSTs multipart to `/api/v1/upload` with a 10-minute timeout.
+- **Dev** (`npm run dev`, Vite on 3700, or `ORB_URL=http://127.0.0.1:3700 cargo tauri dev`): `vite.config.ts` proxies `/api/v1`, `/vault-files` and `/health` to `API_PROXY_TARGET` (default `http://127.0.0.1:17401`), so the browser still sees one origin.
+- Media (`<img>`, `<video>`, `fetchMediaObjectUrl` in `frontend/src/lib/utils.ts`) loads `/vault-files/<kb>/<rel>` from the same origin.
+- Reveal-in-folder is an API call (`POST /api/v1/desktop/reveal`, `api_desktop.reveal_in_folder`): the path must be absolute and inside `DATA_DIR`, `MODELS_DIR` or a KB vault (400 / 403 / 404 otherwise); it runs `open -R` / `explorer /select,` / `xdg-open`.
 
 ### 3.10 Startup / shutdown side effects
 
@@ -140,6 +137,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 |---|---|---|---|---|
 | GET | `/` | – | Greeting `{"message","status"}` | [#](#get-) |
 | GET | `/health` | – | Liveness `{"status":"healthy"}` | [#](#get-health) |
+| POST | `/api/v1/desktop/reveal` | – | Show a path in Finder / Explorer (allow-listed roots, see 3.9) | – |
 
 ### Setup / paths / models
 
@@ -354,7 +352,7 @@ Returns `{"message": "Orb is online", "status": "active"}`. Logs at debug. No de
 
 #### GET /health
 
-Returns `{"status": "healthy"}`. Deliberately touches no KB, DB, or graph so it stays fast during heavy ingestion. Docstring says it is the desktop supervisor's liveness probe; Next rewrites `/health` to it.
+Returns `{"status": "healthy"}`. Deliberately touches no KB, DB, or graph so it stays fast during heavy ingestion. It is the liveness probe the Tauri shell polls before showing the window; in dev the Vite server proxies `/health` to it.
 
 ---
 
@@ -742,7 +740,7 @@ Multipart form, field `file` (required). **400** `"No vault configured for this 
  "local_path": "<same as url>", "key": "<same as rel_path>", "status": "success"}
 ```
 
-`url`/`href`/`local_path` are identical; `rel_path`/`key` are identical. The `/vault-files/<kb_id>/` prefix uses `kb.kb_id` (`default` or a UUID), which is why `vault_rel_from_url` strips any KB segment. No size limit server-side; the Next proxy limit is 512 MB and the desktop UI bypasses the proxy anyway (3.9).
+`url`/`href`/`local_path` are identical; `rel_path`/`key` are identical. The `/vault-files/<kb_id>/` prefix uses `kb.kb_id` (`default` or a UUID), which is why `vault_rel_from_url` strips any KB segment. No size limit server-side and no proxy in the desktop path (3.9).
 
 #### DELETE /api/v1/files/{file_key:path}
 
@@ -1163,9 +1161,8 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 13. `/vault-files/{kb}/…` serves any regular file in the vault, notes included, with no auth.
 14. `DELETE /api/v1/files/{key}` always returns 200 even when nothing was deleted.
 15. `POST /api/v1/kb` returns **201**; `DELETE /api/v1/kb/{id}` returns **204** with no body — axios callers must not expect JSON.
-16. `next.config.ts` comment says the desktop proxy target is `:8000`; the supervisor actually passes `:17401`.
-17. `download-models`, `start-local-llm`, `start-multimodal-services` are long blocking requests; `start-multimodal-services` can `pip install` into the running interpreter.
-18. Finance list routes are unwrapped: Firefly errors there produce plain-text 500s, not the `{"detail": …}` envelope.
+16. `download-models`, `start-local-llm`, `start-multimodal-services` are long blocking requests; `start-multimodal-services` can `pip install` into the running interpreter.
+17. Finance list routes are unwrapped: Firefly errors there produce plain-text 500s, not the `{"detail": …}` envelope.
 19. `list_transactions`' limit (40) and `summary`'s 100-group window are hard-coded; totals are approximate for busy ledgers.
 20. Unknown `note_id` on `/graph/notes/{id}/neighbors` returns an empty graph, not 404.
 
@@ -1187,7 +1184,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 - `68494b7` ("Kuzu/Typesense migration") introduced the `X-Request-Id` trace middleware alongside structured logging.
 - `3f21e08` shipped the Docker-free desktop app and created `api_desktop.py` for setup/finance/notes-graph routes; `fbcafe7` ("Align codebase with Orb desktop product…") split the former monolithic `api.py` into `backend/app/api/*.py`, added `register_all_routers`, and introduced the serialised async chat job (`_chat_job_lock`) so chat runs on the app loop that owns `AsyncSessionLocal`.
 - `f8f527f` ("Harden security and fix data-loss and perf issues…") added `safe_vault_join` enforcement on `/vault-files`, restricted Kuzu/vault cleanup to `DATA_DIR`, moved per-note vault reads off the event loop (`asyncio.to_thread` in `GET /notes`, `reingest-vault`, `kb/empty`), and slug-sanitised KB names.
-- The upload path bypassing Next (`resolveApiBaseUrl`) and `proxyClientMaxBodySize: "512mb"` exist because the Next rewrite proxy's 10 MB default truncated large uploads (socket hang up / 500).
+- The API serves the UI itself since the Tauri migration; the earlier Next.js proxy (and its upload-size workarounds) is gone.
 - `GET /api/v1/graph/notes` rebuilds by default because vault-imported notes never pass through the create/update routes; the neighbours endpoint defaults to no rebuild because it is called on every editor navigation (comment in `api_desktop.py`).
 
 ---
@@ -1263,11 +1260,11 @@ Key material is **write-only** across this API: nothing here ever returns a key.
 
 | Method | Path | Body / query | Notes |
 |---|---|---|---|
-| `GET` | `/api/v1/credentials` | — | `{providers: {name: {configured, source}}, known: [...], endpoints: [url, ...]}`. `source` is `"keychain"` (pushed by the shell) or `"env"` (seeded from the environment for contributors). |
+| `GET` | `/api/v1/credentials` | — | `{providers: {name: {configured, source}}, known: [...], endpoints: [url, ...]}`. `source` is `"keychain"` (persisted by the backend via `keyring`) or `"env"` (seeded from the environment for contributors). |
 | `PUT` | `/api/v1/credentials/{provider}` | `{api_key, source?}` | One of `CLOUD_PROVIDERS`; 400 for anything else, 422 for an empty key. Rebuilds LLM clients so the change applies without a restart. |
-| `DELETE` | `/api/v1/credentials/{provider}` | — | Forgets the key for this session. |
+| `DELETE` | `/api/v1/credentials/{provider}` | — | Removes the key from the keychain. |
 | `PUT` | `/api/v1/credentials/endpoint` | `{base_url, api_key?}` | OpenAI-compatible endpoint. The **URL is the credential id**, so no name is invented and two servers cannot share a key; `api_key` defaults to `not-needed` for local servers. |
-| `DELETE` | `/api/v1/credentials/endpoint` | `?base_url=` | Forgets one endpoint's key. |
+| `DELETE` | `/api/v1/credentials/endpoint` | `?base_url=` | Removes one endpoint's key. |
 | `GET` | `/api/v1/llm/endpoint-models` | `?base_url=` | Proxies `GET {base_url}/models` using the stored key and returns `{base_url, models: [...]}`. 502 when the server is unreachable or does not implement it — callers fall back to a free-text model field rather than blocking.
 5. The route then constructs `KBContext.llm` immediately; if construction raises, the override is rolled back to inherit and a 400 "Could not initialise that model: …" is returned, so a bad pin surfaces here rather than in the next chat.
 

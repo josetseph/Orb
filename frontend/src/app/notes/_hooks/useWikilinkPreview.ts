@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { Note } from "@/lib/types";
 import { api } from "@/lib/api";

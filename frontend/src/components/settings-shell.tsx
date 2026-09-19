@@ -1,7 +1,5 @@
-"use client";
-
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { Link } from "react-router-dom";
+import { useLocation } from "react-router-dom";
 import { Cpu, FolderOpen, HardDrive, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +23,7 @@ export function SettingsShell({
   intro?: string;
   children: React.ReactNode;
 }) {
-  const pathname = usePathname();
+  const { pathname } = useLocation();
   return (
     <div className="screen items-start justify-center overflow-auto p-6">
       <div className="flex min-h-[600px] w-full max-w-[920px] overflow-hidden rounded-lg bg-surface shadow-lg">
@@ -37,7 +35,7 @@ export function SettingsShell({
             return (
               <Link
                 key={t.href}
-                href={t.href}
+                to={t.href}
                 className={cn(
                   "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] no-underline hover:bg-n-900",
                   active ? "bg-n-900 text-text" : "text-n-400",

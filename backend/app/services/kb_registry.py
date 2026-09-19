@@ -367,8 +367,7 @@ class KBRegistry:
                         "qdrant_col_cores": settings.QDRANT_COLLECTION_NODE_CORES,
                         "qdrant_col_rels": settings.QDRANT_COLLECTION_NODE_RELATIONSHIPS,
                         "qdrant_col_contexts": settings.QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS,
-                        "typesense_collection": settings.MEILI_INDEX_NAME
-                        or settings.TYPESENSE_COLLECTION_NAME,
+                        "typesense_collection": settings.MEILI_INDEX_NAME,
                         "created_at": datetime.utcnow().isoformat(),
                     }
                     conn.execute(

@@ -34,7 +34,7 @@
   --color-n-800: #3f424d;
   --color-n-900: #292b31;
 
-  --font-sans: var(--font-inter), "Inter", system-ui, sans-serif;
+  --font-sans: "Inter Variable", "Inter", system-ui, sans-serif;
   --font-mono: ui-monospace, Menlo, monospace;
 
   --radius-sm: 4px;

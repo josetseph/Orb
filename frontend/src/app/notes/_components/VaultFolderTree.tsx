@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo, useState, type DragEvent, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {

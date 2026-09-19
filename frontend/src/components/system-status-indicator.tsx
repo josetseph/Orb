@@ -1,5 +1,3 @@
-"use client";
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isAxiosError } from "axios";
 import { CheckCircle2, CircleDashed, Clock, Cpu, Eye, Loader2, AudioLines, RotateCw } from "lucide-react";
@@ -22,6 +20,15 @@ interface StatusView {
 function buildStatus(payload: Payload | null): StatusView {
   if (!payload) {
     return { tone: "idle", label: "Checking…", meta: "", detail: "Waiting for backend status.", busy: false };
+  }
+  if (payload.boot?.status) {
+    return {
+      tone: "idle",
+      label: payload.boot.status,
+      meta: "starting",
+      detail: "Local services are still starting. Notes work now; search and ingestion join as they come up.",
+      busy: true,
+    };
   }
   const ingestActive = Number(payload.ingestion?.active || 0);
   if (ingestActive > 0) {

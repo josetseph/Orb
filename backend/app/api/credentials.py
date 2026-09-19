@@ -1,8 +1,7 @@
 """Cloud provider API-key endpoints.
 
-The desktop shell owns the secrets: it encrypts them with the OS keychain and
-pushes them here at boot and whenever the user edits one. The backend holds
-them in memory only.
+Keys are persisted in the OS keychain by ``CredentialStore`` and loaded on first
+use; the UI sets and clears them through these endpoints.
 
 Key material is write-only across this API — nothing here ever returns a key.
 """

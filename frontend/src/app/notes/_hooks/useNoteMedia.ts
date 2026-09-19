@@ -1,5 +1,3 @@
-"use client";
-
 import {
   useCallback,
   useRef,
@@ -281,7 +279,7 @@ export function useNoteMedia({
       }
     } catch (error) {
       console.error("Reveal failed:", error);
-      alert("Could not reveal this file on disk.");
+      alert(`Could not reveal this file on disk: ${error instanceof Error ? error.message : "unknown error"}`);
     }
   }, [filePreview, currentKB]);
 

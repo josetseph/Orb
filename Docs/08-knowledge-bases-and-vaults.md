@@ -141,7 +141,7 @@ In-memory state (guarded by `self._lock = threading.RLock()`):
 - `ensure_vault(vault_str)` (creates dir + `attachments/`).
 - Returns `KBContext(kb_id="default", name="default", qdrant=qdrant_service, meili=meilisearch_service, vault_path=…, _graph=graph_service, _kuzu_path=settings.KUZU_DB_PATH)`. `settings.KUZU_DB_PATH` is forced to `DATA_DIR/kuzu/kuzu_graph` at the bottom of `core/config.py`.
 
-`_ensure_default_row()` inserts the default row only if absent, with `qdrant_col_* = settings.QDRANT_COLLECTION_NODE_*` (`node_cores`, `node_relationships`, `node_isolated_contexts`), `typesense_collection = settings.MEILI_INDEX_NAME or settings.TYPESENSE_COLLECTION_NAME` (`orb_nodes`), and `vault_path = ctx.vault_path`.
+`_ensure_default_row()` inserts the default row only if absent, with `qdrant_col_* = settings.QDRANT_COLLECTION_NODE_*` (`node_cores`, `node_relationships`, `node_isolated_contexts`), `typesense_collection = settings.MEILI_INDEX_NAME` (`orb_nodes`; the code still spells `or settings.TYPESENSE_COLLECTION_NAME`, a field that no longer exists), and `vault_path = ctx.vault_path`.
 
 Consequence: once the default row exists, **the DB row's `vault_path` wins over `paths.json`** on subsequent boots (`_load` rebuilds the default context from `meta["vault_path"]`). `POST /api/v1/setup/paths` keeps them aligned by calling `set_vault_path("default", …)` whenever `default_vault_path` is supplied. Editing `paths.json` by hand does not move the default vault until the row is updated (see Gotchas).
 
@@ -201,7 +201,7 @@ Applied in `_load`, `get_kb`, `_build_context`, `KBContext.graph`, and `_cleanup
 
 | KB | Vault path |
 |---|---|
-| default, fresh install, `paths.json.default_vault_path` set (wizard "Notes folder") | that path |
+| default, fresh install, `paths.json.default_vault_path` set (first-run setup "Notes folder") | that path |
 | default, `default_vault_path` unset | `DATA_DIR/vaults/default` |
 | default, after first boot | whatever is in the `knowledge_bases` row (`set_vault_path` keeps it in sync with Setup) |
 | non-default via `POST /api/v1/kb` | `body.vault_path` — **required** by the route (400 otherwise), although `create_kb` itself would default to `DATA_DIR/vaults/<slug>` |
@@ -221,7 +221,7 @@ Iterates the vault's direct children and `rmtree`s directories / unlinks files (
 
 ### 6.4 Vault-provisioned vs external vaults
 
-`delete_kb` distinguishes: `vp = Path(meta["vault_path"]).resolve()`, `app_vaults = (DATA_DIR/"vaults").resolve()`. Only when `vp == app_vaults or app_vaults in vp.parents` is `shutil.rmtree(vp)` executed; otherwise `Keeping external vault folder …` is logged. This is the definition of "Orb-provisioned": *under `DATA_DIR/vaults/`*. The default KB's vault chosen in the wizard is usually outside that tree and is therefore never deleted by the registry (the default KB cannot be deleted anyway).
+`delete_kb` distinguishes: `vp = Path(meta["vault_path"]).resolve()`, `app_vaults = (DATA_DIR/"vaults").resolve()`. Only when `vp == app_vaults or app_vaults in vp.parents` is `shutil.rmtree(vp)` executed; otherwise `Keeping external vault folder …` is logged. This is the definition of "Orb-provisioned": *under `DATA_DIR/vaults/`*. The default KB's vault chosen at first-run setup is usually outside that tree and is therefore never deleted by the registry (the default KB cannot be deleted anyway).
 
 Similarly Kuzu cleanup only deletes under `(DATA_DIR/"kuzu").resolve()`.
 
@@ -390,15 +390,14 @@ Blocking work moved off the event loop (rationale comments in code): `GET /api/v
 
 | Key | Source | Default | Effect here |
 |---|---|---|---|
-| `ORB_DATA_DIR` / `LIVEOS_DATA_DIR` / `DATA_DIR` | env (desktop supervisor injects `ORB_DATA_DIR`) | `paths.json.data_dir`, else `<repo>/data` | Root for `orb.db`, `vaults/`, `kuzu/`; registry uses `resolve_data_dir()` at call time (not the cached `settings.DATA_DIR`) |
+| `ORB_DATA_DIR` / `LIVEOS_DATA_DIR` / `DATA_DIR` | env (`desktop_runtime.py` injects `ORB_DATA_DIR`) | `paths.json.data_dir`, else `<repo>/data` | Root for `orb.db`, `vaults/`, `kuzu/`; registry uses `resolve_data_dir()` at call time (not the cached `settings.DATA_DIR`) |
 | `paths.json.default_vault_path` / `ORB_DEFAULT_VAULT` / `LIVEOS_DEFAULT_VAULT` | paths.json first, then env | none → `DATA_DIR/vaults/default` | Default KB vault on first boot only (row wins afterwards) |
 | `ORB_PATHS_FILE` / `LIVEOS_PATHS_FILE` | env | `<AppSupport>/Orb/paths.json` | where `default_vault_path` is read from |
 | `settings.KUZU_DB_PATH` | forced in `core/config.py` to `DATA_DIR/kuzu/kuzu_graph` (env value ignored) | — | default KB Kuzu file; `sync_settings_paths` re-derives it after Setup |
 | `QDRANT_COLLECTION_NODE_CORES` / `…_RELATIONSHIPS` / `…_ISOLATED_CONTEXTS` | env/.env | `node_cores`, `node_relationships`, `node_isolated_contexts` | default KB collection names (baked into the default row at first boot) |
-| `MEILI_INDEX_NAME` (alias `TYPESENSE_COLLECTION_NAME`) | env/.env | `orb_nodes` | default KB Meili index name (baked into row) |
-| `QDRANT_HOST/PORT/API_KEY`, `MEILI_HOST/PORT/MASTER_KEY` | env (supervisor injects) | see [21](21-configuration-reference.md) | every `KBContext` uses the same servers; KBs are separated by collection/index *names*, not by server |
+| `MEILI_INDEX_NAME` | env/.env | `orb_nodes` | default KB Meili index name (baked into row) |
+| `QDRANT_HOST/PORT/API_KEY`, `MEILI_HOST/PORT/MASTER_KEY` | env (`desktop_runtime.py` injects) | see [21](21-configuration-reference.md) | every `KBContext` uses the same servers; KBs are separated by collection/index *names*, not by server |
 | `EMBEDDING_DIMENSIONS` (+ `manifest.json.selection.embedding_dims`) | settings / models manifest | 1024 | `QdrantService._ensure_collections` creates per-KB collections at this size; changing embed model with non-empty collections is refused (see [15](15-search-indexes-qdrant-meilisearch.md)) |
-| `DATABASE_BACKEND` | env | `sqlite` | `postgres` switches the async engine only; **the registry and watcher always use SQLite `orb.db`** regardless (see Gotchas) |
 
 Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` via ORM, then the registry's own DDL is idempotent) → runtime config → embedding infra sync → `start_vault_watchers()`.
 
@@ -414,7 +413,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 | `IngestionWorkflow` → registry | `_persist_note_body` re-resolves `kb_registry.get_kb(note.kb_id)` to find the vault; raises if the KB has no vault (bodies are never written to SQLite). |
 | `vault_ops` / `note_files` / `wikilinks` / `vault_sync` → `KBContext` | Only use `kb.kb_id` and `kb.vault_path`. They import `KBContext` from `kb_registry` (so `kb_registry` must import none of them — it doesn't; `vault.py` is the shared leaf). |
 | Frontend `kb-context.tsx` → API | Sends the **slug** as `?kb=`; `GET /api/v1/kb` returns `slug` and `name`; the KB page's create response includes `name` and `vault_path` but not `slug` (clients re-list to get it). |
-| Desktop wizard / Setup page → `paths.json` → registry | `default_vault_path` seeds the default row once; later changes must go through `POST /api/v1/setup/paths`. |
+| First-run setup page / Setup page → `paths.json` → registry | `default_vault_path` seeds the default row once; later changes must go through `POST /api/v1/setup/paths`. |
 | `main.py` → watcher | start after `init_db()` (tables must exist); stop on shutdown. |
 
 ## 14. Invariants and locked decisions
@@ -458,7 +457,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 - **External renames duplicate notes** (`on_moved` = new row + old row marked deleted). Only in-app moves keep the row.
 - **12-second self-write TTL is keyed by resolved path**, so a vault reached via a symlink still works, but an external edit within 12 s of an in-app save of the same file is ignored.
 - **`iter_vault_md_files` skips any folder named `attachments` at any depth**, so a user folder `Projects/attachments/notes.md` is invisible as a note (but visible as a media file? no — `.md` is excluded from media too). It is simply not indexed.
-- **`DATABASE_BACKEND=postgres` does not move the registry.** `knowledge_bases` (raw sqlite3), the watcher engine (`sqlite://`), and `sqlite_url()` all stay on `orb.db`; only the async ORM engine moves. Mixed-backend deployments would split `notes` (Postgres) from `knowledge_bases` (SQLite).
+- **Everything is on `orb.db`.** The async ORM engine, the registry (raw sqlite3) and the watcher engine all use `sqlite_url()`; there is no other database backend.
 - **`created_at` for KBs is a naive-UTC ISO string**; for notes it is a tz-aware datetime. Don't compare them directly.
 - **Registry import has side effects** (opens SQLite, creates tables, may connect to Qdrant/Meili for every KB, `ensure_vault` mkdirs). Importing `app.services.kb_registry` in a test without `ORB_DATA_DIR` set writes into `<repo>/data/`.
 - `list_kbs()` exposes absolute paths and Firefly ids to any caller of `GET /api/v1/kb` (local-only app, but note it if adding remote access).

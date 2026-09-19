@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Shared markdown entity-link pipeline used by chat messages and note
  * rendering. This module is the single source of truth for:

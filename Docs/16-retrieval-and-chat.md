@@ -2,7 +2,7 @@
 
 **What this covers.** The question-answering half of Orb: how a chat request enters the FastAPI backend (`POST /api/v1/chat` synchronously, or `POST /api/v1/chat/async` + `GET /api/v1/chat/status/{request_id}` polling), how conversations and messages are persisted in SQLite (`chat_conversations`, `chat_messages`), how follow-up questions are rewritten against history, and — in most depth — the multi-hop **iterative research loop** in `backend/app/services/retrieval.py` that combines LLM query analysis, Kuzu entity lookup, Meilisearch BM25, Qdrant vector search across three collections, 1-hop graph expansion, in-process GGUF cross-encoder reranking and a per-iteration LLM reasoning step to produce a final answer with note citations. It also documents the wire shapes the Next.js chat page consumes, every configuration key that influences retrieval, the log files to read when debugging, failure modes, and how to tune retrieval safely.
 
-**Related docs:** [System architecture](02-system-architecture.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Local models & inference](12-local-models-and-inference.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Frontend chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Logging & observability](23-logging-and-observability.md) · [Testing & benchmarks](24-testing-and-benchmarks.md) · [Decisions & constraints](26-decisions-and-constraints.md)
+**Related docs:** [System architecture](02-system-architecture.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Local models & inference](12-local-models-and-inference.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Frontend chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Logging & observability](23-logging-and-observability.md) · [Testing](24-testing.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
 ---
 
@@ -47,7 +47,6 @@ This slice does **not** own (only consumes):
 | `frontend/src/lib/chat-context.tsx` | React context: conversations, messages, `sendMessage` (async start + 1 s polling), optimistic UI | `ChatProvider`, `useChat`, `Message` |
 | `frontend/src/app/chat/page.tsx` | Chat page: renders messages, stage/model bubble, `### References` → note-preview buttons, "Model thinking" dropdown, export button, entity highlighting | `ChatPage`, `AssistantMessageBody` |
 | `frontend/src/lib/api.ts` / `frontend/src/lib/types.ts` | `startChat`, `getChatStatus`, `listChatConversations`, `getChatMessages`, `deleteChatConversation`, `exportChat`; `ChatStatus`, `ChatConversation`, `ChatMessageRecord` | — |
-| `Results/**/*.md` | Historical HotPotQA benchmark reports for each pipeline generation (Sub-Questions → Looping → Joint → Final → After Optimizations) | — |
 
 ## 3. Architecture and flow
 
@@ -574,7 +573,7 @@ Reply:
 `task_instructions` has two shapes:
 
 - **Planning turn** (`search_query` is None **or** `docs` is empty): `Output the first search query needed to start answering this question:\nNEXT_QUERY: <one specific search query>` — note this same instruction is used on *any* iteration whose retrieval returned nothing, so the model is never told "the last search found nothing"; it only sees the query in the tried list.
-- **Assessment turn** (docs present), general-KB mode (`BENCHMARK_MODE=False`, the default):
+- **Assessment turn** (docs present):
   ```
   Assess the current results:
   REASONING: <how these documents relate to the question and what you have found so far>
@@ -590,7 +589,6 @@ Reply:
   {_REASONING_RULES_GENERAL}   ← trace step by step, cover all aspects, synthesise across searches
   {_OUTPUT_RULES_GENERAL}      ← complete natural-language answer, thorough, organised, stick to documents, acknowledge gaps, no filler, "If you cannot answer yet → output NEXT_QUERY, not ANSWER"
   ```
-  With `BENCHMARK_MODE=True` the HotPotQA-style `_REASONING_RULES`/`_OUTPUT_RULES` are used instead (bare answer phrase, YES/NO discipline, exact extraction). `BENCHMARK_MODE` is still a live setting in `core/config.py` and `iterative_step` despite commit `8eba91d` "Remove benchmark mode" — that commit removed it from ingestion and docs only.
 
 The system prompt for this call (via `_reason_step`) is `"You are a deep reasoning engine. Analyze the input carefully. Detect conflicts, subtleties, or hidden connections."` on local/OpenAI; Gemini and Anthropic receive the prompt as a single user message with no system prompt.
 
@@ -660,7 +658,6 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 
 | Key | Default | Where read | Effect |
 |---|---|---|---|
-| `MAX_LOOP_ITERATIONS` | `3` | `retrieve_with_iterative_loop` | LLM steps per turn; retrievals = iterations − 1. Comment in config: 3 is enough for personal KBs; HotPotQA gains little past ~3 before KB-miss exhaustion |
 | `RERANKER_ENABLED` | `True` | `_apply_reranker_logging`, `_expand_relevant_neighbors`, `_search_qdrant_multi_collection` | Off ⇒ all `rerank_score = 0.0`, vector threshold switches to `VECTOR_SIMILARITY_THRESHOLD`, per-pair expansion rerank skipped. **Off with default `RERANKER_SCORE_THRESHOLD` ⇒ empty retrieval** (§8.3) |
 | `RERANKER_TOP_K` | `10` | `hybrid_search`, loop expansion rerank | Docs kept per rerank pass (both passes) |
 | `RERANKER_SCORE_THRESHOLD` | `0.05` | `hybrid_search` only | Drop candidates below this yes-probability after the top-K cut |
@@ -670,7 +667,6 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | `0` | same | If > 0, drop pairs scoring below it after the top-N cut |
 | `CHAT_HISTORY_MAX_MESSAGES` | `24` | `chat_store.get_recent_history`, `rewrite_follow_up_query`, loop context | Messages (not turns) of history fetched and prompted |
 | `MAX_POTENTIAL_QUESTIONS` | `10` | **nothing** | Dead setting from the Sub-Questions approach |
-| `BENCHMARK_MODE` | `False` | `LLMService.iterative_step` | Switches to bare-answer HotPotQA rules; still functional despite "removal" commit |
 | `CHAT_MODEL` | `None` | `get_chat_model` | Global chat model override (set by `PATCH /api/v1/settings` / runtime_config); beaten only by a per-KB `llm_model` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `local` / `local-chat` | `LLMService.__init__`, `get_chat_model` | Provider for analysis/reasoning/rewrite; `ollama`/`lm_studio` map to `local` |
 | `LLM_FALLBACK_PROVIDER` | `None` | `LLMService` | Secondary provider used by `extract_structured` fallbacks (see doc 13) — affects `analyze_query` robustness |
@@ -813,9 +809,8 @@ Work from the logs (§15.1) before touching knobs: `retrieval.log` tells you whi
 | Month/day questions miss ordinary entities | Month mode restricts `node_cores` to `period_key` matches; day mode searches contexts only | Enable temporal digests/communities at ingestion, or rephrase without the date; there is no config knob for this behaviour |
 | Slow turns | Model swaps | Read the `[Timing] chat … model_load=… loads=…` line; raise `ORB_MODEL_IDLE_SECONDS`/set 0 to avoid cold loads, use a cloud chat provider to remove chat-model swaps, reduce `RERANKER_TOP_K` to shorten reranker passes |
 | Follow-ups lose context | History window | `CHAT_HISTORY_MAX_MESSAGES` (also increases rewrite prompt size) |
-| Answers in the wrong style (too terse) | `BENCHMARK_MODE` accidentally on | Ensure `BENCHMARK_MODE=false` |
 
-Changing thresholds requires a backend restart (settings are read at import; `runtime_config.json` covers provider/model keys only). Benchmarking harness: `backend/tests/benchmark/` (see [Testing & benchmarks](24-testing-and-benchmarks.md)) — `BENCHMARK_MODE=true` plus higher `MAX_LOOP_ITERATIONS` reproduces the `Results/` configuration.
+Changing thresholds requires a backend restart (settings are read at import; `runtime_config.json` covers provider/model keys only). The benchmark harness and `Results/` archive live on the `orb-testing` branch.
 
 ## 15. Timing, logging, and failure modes
 
@@ -832,7 +827,6 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | `api.log` | `API`, uvicorn | Request lines, `[Chat] Async chat job failed` tracebacks |
 | `errors.log` | root ≥ ERROR | Everything at ERROR from all components |
 
-Historical benchmark runs under `Results/**/…Logs/` also contain a `reranker.log`; in the current code the reranker logs into `retrieval.log`.
 
 ### 15.2 Failure modes
 
@@ -885,7 +879,7 @@ Historical benchmark runs under `Results/**/…Logs/` also contain a `reranker.l
 - `RERANKER_ENABLED=false` (or a missing reranker) empties retrieval because of `RERANKER_SCORE_THRESHOLD`; the "keyword-overlap heuristic" in the docstring does not exist.
 - `reranker_rank` is the pre-sort index, not the final rank.
 - `hybrid_search(top_k)` and `retrieve_with_iterative_loop(top_k)` ignore `top_k`.
-- `MAX_POTENTIAL_QUESTIONS` is dead; `BENCHMARK_MODE` is alive (in `iterative_step` only).
+- `MAX_POTENTIAL_QUESTIONS` is dead.
 - `MODEL_RERANKER_LOCAL` is a display string; the reranker file is chosen by the models manifest.
 - The `"Gemma4"` model label in stages and the "Gemma3 4B" footer are hard-coded.
 - `_chat_status` grows unbounded (each entry keeps the full `result.context`).
@@ -926,7 +920,7 @@ Historical benchmark runs under `Results/**/…Logs/` also contain a `reranker.l
 | 2026-04-19 `097c822` | Reranker runs early, cut to top-20; handles v2/v3 response formats | Reduce LLM input size |
 | 2026-05-07 `68494b7` | **Final Implementation**: Kuzu + Typesense migration; loop ≤ 10 iterations | Gemma 4 E4B: EM 58 %, Fuzzy 81 %, 212 s/question (`Results (Final Implementation)`) |
 | 2026-05-17 | "After Optimizations" run | EM 62 %, 231 s/question, wall clock −26 % (`Results (After Optimizations)`) |
-| 2026-05-18 `8eba91d` | Benchmark mode removed from ingestion/docs; chat fallback message updated | (`BENCHMARK_MODE` survives in `iterative_step`) |
+| 2026-05-18 `8eba91d` | Benchmark mode removed from ingestion/docs; chat fallback message updated | prompt branch fully removed later, with the harness moving to `orb-testing` |
 | 2026-05-18 `d37abd6` | Multi-KB: per-KB `RetrievalService`/`ChatWorkflow` via `KBContext` | KB isolation |
 | 2026-06-12 `4408a72` | Async chat + polling (`/chat/async`, `/chat/status`), NEXT_QUERY cleaning, unlabeled-query fallback, Qdrant per-collection filters + `day_only` | Long local turns exceeded browser/proxy timeouts |
 | 2026-07-02 `ac7f4e4` | Persistent conversations (then Postgres, now SQLite) + follow-up rewrite using recent history | Multi-turn chat |
@@ -934,4 +928,4 @@ Historical benchmark runs under `Results/**/…Logs/` also contain a `reranker.l
 | 2026-08-06/07 `b84ca73`, `8de5cda` | Concurrent entity/BM25/vector search, batched Kuzu/Qdrant lookups, `analyze_query` day-cache; frontend scans only the 5 most recent messages with id-keyed cache and abortable requests | Fewer round trips and model swaps |
 | working tree (2026-09) | Per-KB LLM override (provider + chat/ingestion model), `model_load_clock` timing line, dynamic output budget / `PromptTooLongError`, per-KB chat GGUF switching, `require_ai(kb)` | Attribute wall time to loads vs inference; let a KB pin a stronger/cloud model |
 
-Open discrepancies noted while writing (also listed in the report): dead `MAX_POTENTIAL_QUESTIONS`; live `BENCHMARK_MODE`; docstring-only keyword fallback in `_apply_reranker_logging`; unused `_get_node_relationships`; `neighbor_node` type in logs; "person entities" comment on the untyped vector-variant expansion; `retrieve_with_self_correction` docstring referencing removed sub-question functions; broken chat export; hard-coded "Gemma4"/"Gemma3 4B" labels; `rewrite_follow_up_query` lacking Gemini/Anthropic branches.
+Open discrepancies noted while writing (also listed in the report): dead `MAX_POTENTIAL_QUESTIONS`; docstring-only keyword fallback in `_apply_reranker_logging`; unused `_get_node_relationships`; `neighbor_node` type in logs; "person entities" comment on the untyped vector-variant expansion; `retrieve_with_self_correction` docstring referencing removed sub-question functions; broken chat export; hard-coded "Gemma4"/"Gemma3 4B" labels; `rewrite_follow_up_query` lacking Gemini/Anthropic branches.

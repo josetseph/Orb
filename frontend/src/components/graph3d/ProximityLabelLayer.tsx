@@ -1,5 +1,3 @@
-"use client";
-
 export type ProximityLabel = {
   id: string;
   name: string;

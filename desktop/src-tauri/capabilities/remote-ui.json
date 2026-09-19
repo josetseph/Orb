@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "remote-ui",
+  "description": "The Orb UI is served by the local API over loopback. It renders user note content, so it gets only the native pickers and 'open in browser' — everything else it needs is an HTTP call to the API.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["http://127.0.0.1:17401/*", "http://127.0.0.1:17400/*"]
+  },
+  "permissions": ["core:event:default", "dialog:allow-open", "opener:allow-open-url", "notification:default"]
+}

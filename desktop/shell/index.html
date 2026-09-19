@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Orb</title>
+    <style>
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+        background: #0a0a0f;
+        color: #f5f5f5;
+      }
+      #setup { display: none; max-width: 640px; margin: 0 auto; padding: 28px; }
+      h1 { font-size: 1.4rem; margin: 0 0 6px; }
+      .brand-row { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+      .brand-row img { width: 40px; height: 40px; border-radius: 10px; object-fit: cover; }
+      p.sub { color: #999; font-size: 0.85rem; margin: 0 0 24px; }
+      label { display: block; font-size: 0.75rem; color: #aaa; margin-bottom: 4px; }
+      .row { margin-bottom: 14px; }
+      input[type="text"] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid #333;
+        background: #15151c;
+        color: #fff;
+        font-family: ui-monospace, monospace;
+        font-size: 0.8rem;
+      }
+      .btn-row { display: flex; gap: 8px; margin-top: 6px; }
+      button { border: none; border-radius: 10px; padding: 10px 14px; cursor: pointer; font-size: 0.85rem; }
+      button.secondary { background: #222; color: #ccc; }
+      button.primary { background: #b45309; color: #fff; width: 100%; margin-top: 18px; }
+      button:disabled { opacity: 0.6; cursor: default; }
+      .modes { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+      .mode { border: 1px solid #333; border-radius: 12px; padding: 12px; cursor: pointer; background: #121218; }
+      .mode.active { border-color: #d97706; background: #1c1408; }
+      .mode strong { display: block; margin-bottom: 2px; }
+      .mode span { font-size: 0.75rem; color: #888; }
+      .warn { font-size: 0.75rem; color: #fbbf24; margin-top: 8px; }
+      .err { font-size: 0.75rem; color: #f87171; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <!-- Hidden unless this is the first run; otherwise the window navigates to the app. -->
+    <div id="setup">
+      <div class="brand-row">
+        <img src="logo.png" alt="" />
+        <h1>Welcome to Orb</h1>
+      </div>
+      <p class="sub">Choose your notes folder, data/models locations, then pick an AI path (or skip).</p>
+      <div class="row">
+        <label>Notes vault folder (markdown notes — required for Notes)</label>
+        <input id="vaultPath" type="text" placeholder="e.g. OneDrive/KB or Documents/Orb Vault" />
+        <div class="btn-row">
+          <button type="button" class="secondary" data-pick="vaultPath" data-pick-title="Choose notes vault folder">Browse…</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Data directory (SQLite, indexes)</label>
+        <input id="dataDir" type="text" />
+        <div class="btn-row">
+          <button type="button" class="secondary" data-pick="dataDir" data-pick-title="Choose data directory">Browse…</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>Models directory (local ML weights)</label>
+        <input id="modelsDir" type="text" />
+        <div class="btn-row">
+          <button type="button" class="secondary" data-pick="modelsDir" data-pick-title="Choose models directory">Browse…</button>
+        </div>
+      </div>
+      <label>AI setup</label>
+      <div class="modes">
+        <div class="mode" data-mode="local">
+          <strong>Full local</strong>
+          <span>Pick a chat GGUF (Gemma 4 / Qwen 3.5 / 3.6). Qwen3 embed + reranker size to your RAM.</span>
+        </div>
+        <div class="mode" data-mode="cloud">
+          <strong>Cloud or hybrid</strong>
+          <span>Provider keys and model names in Settings after launch.</span>
+        </div>
+        <div class="mode active" data-mode="none">
+          <strong>Skip for now</strong>
+          <span>Obsidian-like notes &amp; wikilinks without AI until you configure it.</span>
+        </div>
+      </div>
+      <p class="warn" id="localWarn" style="display:none">
+        Setup downloads chat/embed/rerank GGUFs plus Qwen3-ASR and Marlin (many GB) after launch. Stay online.
+      </p>
+      <p class="err" id="formError" style="display:none"></p>
+      <button class="primary" id="continue">Continue</button>
+    </div>
+    <script>
+      const { invoke } = window.__TAURI__.core;
+      const $ = (id) => document.getElementById(id);
+      const showError = (msg) => { $("formError").textContent = msg; $("formError").style.display = "block"; };
+      let aiMode = "none";
+
+      (async () => {
+        const state = await invoke("app_state");
+        if (!state.first_run) return; // the shell navigates to the app when it is up
+        $("dataDir").value = state.data_dir || "";
+        $("modelsDir").value = state.models_dir || "";
+        $("setup").style.display = "block";
+      })();
+
+      document.querySelectorAll(".mode").forEach((el) => {
+        el.addEventListener("click", () => {
+          document.querySelectorAll(".mode").forEach((m) => m.classList.remove("active"));
+          el.classList.add("active");
+          aiMode = el.dataset.mode;
+          $("localWarn").style.display = aiMode === "local" ? "block" : "none";
+        });
+      });
+      document.querySelectorAll("[data-pick]").forEach((btn) => {
+        btn.addEventListener("click", async () => {
+          const input = $(btn.getAttribute("data-pick"));
+          const dir = await window.orbDesktop.pickDirectory({
+            title: btn.getAttribute("data-pick-title"),
+            defaultPath: input.value.trim() || undefined,
+          });
+          if (dir) input.value = dir;
+        });
+      });
+      $("continue").addEventListener("click", async () => {
+        $("formError").style.display = "none";
+        const vault = $("vaultPath").value.trim();
+        const dataDir = $("dataDir").value.trim();
+        const modelsDir = $("modelsDir").value.trim();
+        if (!dataDir || !modelsDir) return showError("Please set both the data and models directories.");
+        if (!vault && !confirm("No notes vault folder selected. Notes will use a default folder under data.\n\nContinue anyway?")) return;
+        $("continue").disabled = true;
+        $("continue").textContent = "Starting Orb…";
+        try {
+          await invoke("save_setup", {
+            payload: { data_dir: dataDir, models_dir: modelsDir, default_vault_path: vault || null, ai_setup_mode: aiMode },
+          });
+        } catch (err) {
+          $("continue").disabled = false;
+          $("continue").textContent = "Continue";
+          showError(String(err));
+        }
+      });
+    </script>
+  </body>
+</html>

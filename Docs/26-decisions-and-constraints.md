@@ -10,24 +10,24 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ## A. Product and delivery
 
-### A1. Orb is an Electron desktop app; end users never run Docker
-- Rejected: browser-only setup, `docker compose` as the install path, a hosted service.
+### A1. Orb is a Tauri desktop app over a Python runtime; end users never run Docker
+- Rejected: browser-only setup, `docker compose` as the install path, a hosted service, an Electron shell (replaced 2026-09: it shipped a Node runtime and a second UI server for no benefit).
 - Rationale: the target user has personal notes, voice memos and finances on one machine; Docker was the biggest onboarding obstacle in the LifeOS era (README history, commit `3f21e08` "Ship LifeOS as a Docker-free desktop app").
-- Enforced: `desktop/supervisor.js` spawns local binaries; `docker-compose.yml` header says "Contributor / optional infra stack only"; README section "Contributors — optional Docker infra".
+- Enforced: `desktop/src-tauri` spawns `python -m app.desktop_runtime`, which spawns the local binaries; no Docker files exist in the repo.
 
-### A2. First-run wizard collects only data dir, models dir, optional vault, AI mode
+### A2. First-run setup collects only data dir, models dir, optional vault, AI mode
 - Rejected: a full settings UI at first launch; auto-choosing directories.
-- Rationale: users keep models on NAS/OneDrive; the bootstrap file must be tiny and robust. A truncated `paths.json` once looked like total data loss, hence atomic writes and "corrupt file → wizard".
-- Enforced: `main.js::save-wizard` (atomic tmp+rename), `supervisor.js::needsWizard`, `core/paths.py::save_paths_file`.
+- Rationale: users keep models on NAS/OneDrive; the bootstrap file must be tiny and robust. A truncated `paths.json` once looked like total data loss, hence atomic writes and "corrupt file → setup page".
+- Enforced: `src-tauri/src/commands.rs::save_setup` (atomic tmp+rename, absolute paths only), `runtime.rs::first_run`, `core/paths.py::save_paths_file`.
 
-### A3. Dedicated port block 17400–17470
+### A3. Dedicated port block 17401–17470
 - Rejected: 3000/8000/6333/7700 defaults.
 - Rationale: coexist with the developer stacks most users of this app already run.
-- Enforced: `desktop/ports.js` is the single source; everything else derives from it.
+- Enforced: `desktop_runtime.py` `PORTS` (`ORB_*_PORT`) is the single source; the shell only reads `ORB_API_PORT` for the window URL. The API serves the UI, so there is no separate UI port (3700 is the Vite dev server only).
 
 ### A4. Unsigned builds do not auto-update
 - Rationale: an unsigned app must not silently pull binaries from GitHub Releases.
-- Enforced: `main.js::setupAutoUpdater` requires packaged + `ORB_ENABLE_UPDATER=1`.
+- Enforced: no updater is wired today; when added it is `tauri-plugin-updater`, gated by `ORB_ENABLE_UPDATER=1` and never active on unsigned builds ([05](05-packaging-build-and-release.md) §5).
 
 ### A5. Rename LifeOS/LiveOS → Orb, keep read-compatibility aliases
 - Rationale: existing installs must keep working after the rename (`6162be2`).
@@ -40,7 +40,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### B1. Every local model runs in-process in the API
 - Rejected: Ollama, LM Studio, `llama-server`, a "local-models" HTTP service, a separate Marlin service (`LOCAL_MODELS_SERVICE_URL`, `MARLIN_SERVICE_URL`, `POST …/image/describe|/audio/transcribe|/caption|/rerank`).
 - Rationale: one process to supervise, no port juggling, no network hop for embeddings, easier packaging (`fbcafe7`, rules file).
-- Enforced: `services/local_models.py`, `multimodal_runtime.py`; `EmbeddingService` maps `ollama`/`lm_studio` to `local` with a warning; supervisor has no sidecar ports.
+- Enforced: `services/local_models.py`, `multimodal_runtime.py`; `EmbeddingService` maps `ollama`/`lm_studio` to `local` with a warning; the runtime has no model sidecar ports.
 
 ### B2. Exclusive residency: one heavy model at a time
 - Rejected: keeping chat + embed + rerank resident; separate processes per model.
@@ -49,7 +49,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B3. Chat GGUF defaults: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`, flash-attention opt-in, no fixed output cap
 - Rejected: 32k context (OOMs with full SWA on ~24 GB Metal); compact SWA (causes Gemma 4 "ordinal loops" / "or the" repetition cascades); a fixed `ORB_LLAMA_MAX_TOKENS=10240` (silently truncated long extractions — removed as a default in the current working tree, the runtime now sizes `max_tokens` from the context left after the prompt).
-- Enforced: `local_models.py` defaults + repetition-cascade detector with abort/retry; `desktop/supervisor.js` env block; `desktop/binaries/README.md`.
+- Enforced: `local_models.py` defaults + repetition-cascade detector with abort/retry; the `os.environ.setdefault` block in `desktop_runtime.main()`.
 
 ### B4. GGUF selection lives in the models manifest; embed dims must match Qdrant
 - Rationale: switching embedding model changes vector size; collections must be resized deliberately.
@@ -81,9 +81,10 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: Obsidian compatibility, user ownership, cloud-sync friendliness, "your knowledge on your machine".
 - Enforced: `note_files.persist_note_body/note_body`, `vault.py`, `vault_sync.py`; `notes.content` kept empty by `persist_note_body`.
 
-### C2. SQLite (`DATA_DIR/orb.db`) is the desktop metadata store; Postgres is contributor-only
-- Rationale: zero-install; a single file to back up.
-- Enforced: `core/database.py` picks Postgres only when `DATABASE_BACKEND=postgres` and a URL is set.
+### C2. SQLite (`DATA_DIR/orb.db`) is the only metadata store
+- Rejected: Postgres (was contributor-only; removed with the Tauri migration along with `asyncpg`).
+- Rationale: zero-install; a single file to back up; one code path.
+- Enforced: `core/database.py` builds the engine from `paths.sqlite_url()` unconditionally.
 
 ### C3. Embedded Kuzu replaced Neo4j
 - Rationale: no server process, embeddable in the desktop bundle, Cypher-compatible enough (`68494b7`). Labels became a `kind` property (`note | indexable | community | temporal_digest`) because Kuzu tables are static.
@@ -91,7 +92,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### C4. Meilisearch replaced Typesense
 - Rationale: native Windows binary and simpler packaging (`f28d205`, `d37abd6` era).
-- Enforced: `services/meilisearch_service.py`; `TYPESENSE_*` accepted as aliases; DB column `typesense_collection` retained with `meili_index` synonym.
+- Enforced: `services/meilisearch_service.py`; DB column `typesense_collection` retained with `meili_index` synonym (the `TYPESENSE_*` env aliases were dropped).
 
 ### C5. Qdrant is the source of truth for vectors and long descriptive text; fail-closed on dimension mismatch
 - Rejected: silently recreating a collection when the embedding model changes.
@@ -108,7 +109,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### C8. Cleanup and deletion are contained to `DATA_DIR`
 - Rationale: audit finding — a mis-set path could delete arbitrary folders.
-- Enforced: KB delete / reset paths check containment before `rmtree`; `safe_vault_join` for every vault-relative path; `reveal-in-folder` allow-list in `main.js`.
+- Enforced: KB delete / reset paths check containment before `rmtree`; `safe_vault_join` for every vault-relative path; `POST /api/v1/desktop/reveal` allow-lists `DATA_DIR`, `MODELS_DIR` and KB vaults.
 
 ---
 
@@ -168,36 +169,36 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ## E. Desktop shell and security
 
-### E1. Renderer isolation and navigation lockdown
-- Rationale: the renderer displays user note content and, potentially, remote images/links (`f8f527f` audit).
-- Enforced: `contextIsolation`, `sandbox`, `nodeIntegration:false`; `setWindowOpenHandler` deny + `shell.openExternal`; `will-navigate` restricted to the app origin and packaged `file://` pages.
+### E1. Minimal bridge, navigation lockdown
+- Rationale: the WebView displays user note content and, potentially, remote images/links (`f8f527f` audit). The UI is a remote origin to Tauri and gets only the plugin commands it needs.
+- Enforced: `capabilities/remote-ui.json` grants dialog open, opener and notifications only; `init.js` exposes `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify` and nothing else; the window may only navigate to the app origin or the bundled page — anything else (and `window.open` / `target=_blank`) opens in the system browser.
 
-### E2. Only the wizard window may save paths
-- Rationale: a compromised note renderer could otherwise repoint `DATA_DIR` and make the supervisor execute binaries from an arbitrary folder.
-- Enforced: `isWizardSender` on `save-wizard` and `wizard-done`.
+### E2. Only the bundled setup page may save paths
+- Rationale: a compromised note renderer could otherwise repoint `DATA_DIR` and make the runtime execute binaries from an arbitrary folder.
+- Enforced: `commands.rs::save_setup` refuses calls from any page that is not the bundled one; `capabilities/shell.json` vs `remote-ui.json`.
 
-### E3. Children are spawned detached, with log-file fds, and reaped on quit and on next launch
-- Rationale: Electron hard-exits left orphaned uvicorn/node/qdrant holding the ports; `before-quit` now awaits SIGTERM→SIGKILL and startup sweeps the port block.
-- Enforced: `Supervisor._spawn`, `stopAllAsync`, `freeDesktopPorts`.
+### E3. One child process group, reaped on quit, on crash, and on next launch
+- Rationale: hard exits used to leave orphaned uvicorn/qdrant holding the ports. The runtime owns every sidecar and stops them when the API exits; it also watches the shell's pid and shuts everything down if the shell disappears.
+- Enforced: `runtime.rs` (own process group, SIGTERM → SIGKILL after 4 s, respawn cap of three per minute), `desktop_runtime.py` (`free_ports` sweep at boot, `stop_sidecars`, `_exit_with_parent`).
 
-### E4. Downloads open the write stream only after HTTP 200 and verify content-length
-- Rationale: GitHub → Azure redirects raced an async unlink and truncated Firefly archives mid-extract (`02ac9d3`); https→http redirects are refused for executables.
-- Enforced: `download-binaries.js::downloadFile`, `firefly-runtime.js`.
+### E4. Downloads are verified before use
+- Rationale: truncated Firefly archives once broke installs mid-extract (`02ac9d3`).
+- Enforced: `desktop_runtime._download` (via `local_models.download_file`), optional `ORB_SHA256_<ASSET>` pins for Qdrant/Meilisearch, extraction of an empty tree raises before the swap.
 
 ### E5. Random Meilisearch master key per fresh install, file mode 0600
 - Rationale: `orb-dev-key` was a shared default; kept only for installs that already have Meili data.
-- Enforced: `supervisor.js::resolveMeiliMasterKey`.
+- Enforced: `desktop_runtime.py::resolve_meili_master_key`.
 
-### E6. Same-origin `/api/v1` rewrites for the UI, but uploads go straight to the API port
-- Rationale: Next's proxy truncated large uploads at 10 MB; same-origin avoids CORS for everything else.
-- Enforced: `next.config.ts` rewrites + `proxyClientMaxBodySize`, `desktop.ts::resolveApiBaseUrl`, `api.upload`.
+### E6. The API serves the UI; there is no UI server or proxy
+- Rationale: the Next.js proxy truncated large uploads and needed a Node runtime in the bundle; one origin means no CORS, no body limits and no second process.
+- Enforced: `backend/app/main.py` `_SpaFiles` mount of `FRONTEND_DIR`; `api.ts` uses relative `/api/v1` URLs; `vite.config.ts` proxy exists for dev only.
 
-### E7. Frontend standalone deps ship as `node_deps/`
-- Rationale: electron-builder strips any folder named `node_modules` from `extraResources`.
-- Enforced: `scripts/build-frontend.js`, `run-server.js`, `check-resources.js`.
+### E7. Nothing Node ships
+- Rationale: Node was only ever needed to build the UI; shipping it doubled the bundle and caused the v0.1.0 symlink breakage.
+- Enforced: `desktop/build.py` copies `frontend/dist` only; `cargo tauri build` bundles Python, the UI and the Firefly seed.
 
 ### E8. Native wheels are built on the target OS in CI (no cross-compiling)
-- Rationale: `llama-cpp-python` Metal/CPU builds are platform-specific; v0.1.0 Mac builds shipped broken Node helper symlinks from a mismatched runner.
+- Rationale: `llama-cpp-python` Metal/CPU builds are platform-specific; v0.1.0 Mac builds shipped broken helper symlinks from a mismatched runner.
 - Enforced: `.github/workflows/desktop-release.yml` matrix (macos-14 arm64, macos-15-intel x64, windows-latest, ubuntu-latest).
 
 ---
@@ -207,11 +208,11 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### F1. Firefly III embedded via portable PHP, one administration per KB
 - Rejected: building a bespoke ledger; a shared Firefly instance across KBs.
 - Rationale: mature double-entry accounting for free; per-KB scoping keeps vaults independent.
-- Enforced: `firefly-runtime.js` (seed → `DATA_DIR/firefly`, `.env`, migrations, token), `firefly_service._run_scoped` (switches the single Orb user's active `user_group_id`, stamps `user_group_id` on every request, allow-lists ids for user-wide endpoints), `knowledge_bases.firefly_group_id`. The administration is created lazily on the first scoped finance call for a KB, not at KB creation; all finance calls are serialised by one global `asyncio.Lock` and each list spawns at least one `php -r` subprocess (~1 s Laravel boot).
+- Enforced: `desktop_runtime.py` (seed → `DATA_DIR/firefly`, `.env`, migrations, token), `firefly_service._run_scoped` (switches the single Orb user's active `user_group_id`, stamps `user_group_id` on every request, allow-lists ids for user-wide endpoints), `knowledge_bases.firefly_group_id`. The administration is created lazily on the first scoped finance call for a KB, not at KB creation; all finance calls are serialised by one global `asyncio.Lock` and each list spawns at least one `php -r` subprocess (~1 s Laravel boot).
 
 ### F2. Firefly's writable state lives under `DATA_DIR/firefly`, never inside the app bundle
 - Rationale: bundles are read-only and replaced on upgrade; upgrades stash-and-swap the app dir while preserving the SQLite DB.
-- Enforced: `firefly-runtime.js` upgrade path.
+- Enforced: `desktop_runtime.py` upgrade path (`_stash_app_state` / `_swap_in_app_tree` / `_restore_app_state`).
 
 ---
 
@@ -223,10 +224,12 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 | Refiner + benchmark mode | `8eba91d` | no measurable gain; complexity |
 | Neo4j | `68494b7` | server dependency |
 | Typesense | `f28d205` era | packaging; Windows |
-| RustFS / S3 attachments, `/files` proxy | `3f21e08` / `fbcafe7` | vault files instead (compose keeps a `legacy-s3` profile) |
+| RustFS / S3 attachments, `/files` proxy | `3f21e08` / `fbcafe7` | vault files instead |
 | Model HTTP sidecars (local-models, Marlin services) | `fbcafe7` | in-process runtime |
 | `docker-compose.prod.yml` | Jan 2026 era | not the product path |
 | Postgres as default | `3f21e08` | SQLite for desktop |
+| Docker files, Postgres/`asyncpg`, `boto3`, `TYPESENSE_*` aliases | Tauri migration (2026-09) | one code path; SQLite + Meilisearch only |
+| Electron shell, Next.js UI server, bundled Node | Tauri migration (2026-09) | Tauri + `desktop_runtime.py`; API serves the Vite build |
 
 See [25-development-history.md](25-development-history.md) for the full chronology.
 
@@ -236,7 +239,7 @@ See [25-development-history.md](25-development-history.md) for the full chronolo
 - **Never infer a model's role from its chat template.** Embedding and reranker GGUFs derived from instruct models carry one. Use `<arch>.pooling_type` to exclude embedders; a reranker cannot be distinguished from a chat model by metadata, so warn rather than block.
 - **Never `rglob` MODELS_DIR.** It descended into a virtualenv and took minutes on an external disk. Walk with pruning and a depth cap.
 - **A pin that cannot be satisfied raises.** A KB pointing at a deleted or unusable model must fail loudly; silently falling back to the Setup selection would answer with a different model than the user chose.
-- **API keys never touch `DATA_DIR` in plaintext.** It is commonly a synced folder. Keys live in the OS keychain (`safeStorage` → `credentials.enc`) and in backend memory; `desktop/credentials.js` refuses to store rather than degrade to plaintext when no keychain is available.
+- **API keys never touch `DATA_DIR` in plaintext.** It is commonly a synced folder. Keys live in the OS keychain (Python `keyring`, service `Orb`) and in backend memory; when no keychain backend is usable the key works for the session only and is never written to disk.
 - **No endpoint ever returns key material.** `GET /api/v1/credentials` reports `configured` and `source` only.
-- **An OpenAI-compatible endpoint is identified by its URL**, not a user-chosen name — so two servers can never share a key by accident. `normalize_base_url` is duplicated in Python and JS by necessity; the two implementations must stay in lockstep and are tested against the same corpus.
+- **An OpenAI-compatible endpoint is identified by its URL**, not a user-chosen name — so two servers can never share a key by accident. `normalize_base_url` lives only in Python (`services/credentials.py`); the UI sends the raw URL.
 - **`.env` is a contributor fallback, not the product path.** End users cannot edit it; keys are entered in Settings.

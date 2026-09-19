@@ -1,8 +1,6 @@
-"use client";
-
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Building2,
@@ -46,7 +44,7 @@ export function NodeDetailModal({
   /** Select a connected node by id, when the graph has it. */
   onSelectNodeId?: (nodeId: string) => void;
 }) {
-  const router = useRouter();
+  const navigate = useNavigate();
   const color = nodeColor(node.node_type);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [fetching, setFetching] = useState(true);
@@ -162,7 +160,7 @@ export function NodeDetailModal({
             {d.related_notes.map((n) => (
               <Link
                 key={n.note_id}
-                href={`/notes?note=${encodeURIComponent(n.note_id)}`}
+                to={`/notes?note=${encodeURIComponent(n.note_id)}`}
                 className="row -mx-2 py-1.5 text-text no-underline"
               >
                 {n.name}
@@ -183,7 +181,7 @@ export function NodeDetailModal({
             type="button"
             className="btn btn-primary flex-1"
             onClick={() =>
-              router.push(
+              navigate(
                 `/chat?q=${encodeURIComponent(`Tell me everything I know about ${d.name}`)}`,
               )
             }
@@ -192,7 +190,7 @@ export function NodeDetailModal({
           </button>
           {firstNote && (
             <Link
-              href={`/notes?note=${encodeURIComponent(firstNote.note_id)}`}
+              to={`/notes?note=${encodeURIComponent(firstNote.note_id)}`}
               className="btn btn-secondary no-underline"
             >
               Open note

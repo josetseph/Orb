@@ -1,5 +1,3 @@
-"use client";
-
 import type { RenameDialogState } from "../_lib/types";
 
 type RenameDialogProps = {

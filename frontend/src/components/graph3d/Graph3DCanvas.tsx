@@ -1,14 +1,9 @@
-"use client";
-
 import type { MutableRefObject, RefObject } from "react";
-import dynamic from "next/dynamic";
+import { lazy } from "react";
 import { nodeColor } from "@/components/graph3d/nodeColors";
 import { ErrorBoundary } from "@/components/graph3d/ErrorBoundary";
 
-// ForceGraph3D relies on browser APIs — must be dynamically imported (no SSR)
-const ForceGraph3D = dynamic(() => import("react-force-graph-3d"), {
-  ssr: false,
-});
+const ForceGraph3D = lazy(() => import("react-force-graph-3d"));
 
 export function Graph3DCanvas({
   graphRef,

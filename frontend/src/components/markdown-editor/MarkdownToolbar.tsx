@@ -1,5 +1,3 @@
-"use client";
-
 import type { ComponentType, ChangeEvent, ReactNode } from "react";
 import type { EditorView } from "@codemirror/view";
 import {

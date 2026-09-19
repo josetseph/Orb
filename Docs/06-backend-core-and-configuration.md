@@ -11,7 +11,7 @@
 - Process bootstrap: logging initialisation before any other import, `Settings` construction, engine creation, table creation, applying persisted runtime overrides, starting background vault watchers.
 - The global mutable `settings` singleton (`app.core.config.settings`) that every service reads at call time.
 - Path bootstrap (`paths.json`) and the derived `DATA_DIR` / `MODELS_DIR` / `KUZU_DB_PATH` / `MODELS_PATH` values.
-- The SQLite (or Postgres) metadata schema: `notes`, `knowledge_bases`, `chat_conversations`, `chat_messages`, `note_links`.
+- The SQLite metadata schema: `notes`, `knowledge_bases`, `chat_conversations`, `chat_messages`, `note_links`.
 - Wire-level request/response schema definitions that are shared between routers and workflows (`schemas/`).
 - The `?kb=` contract (`get_kb`) and the AI gating contract (`require_ai`).
 
@@ -31,7 +31,7 @@
 | `backend/app/core/config.py` | pydantic-settings `Settings` class; global `settings` singleton; post-construction path mutation | `Settings`, `settings`, `BACKEND_DIR`, `REPO_ROOT`, `DEFAULT_KUZU_DB_PATH` |
 | `backend/app/core/paths.py` | `paths.json` bootstrap; env > file > repo fallback resolution of data/models/vault dirs; download staging dir; data layout creation | `paths_json_location`, `load_paths_file`, `save_paths_file`, `resolve_data_dir`, `resolve_models_dir`, `resolve_default_vault_path`, `looks_like_network_volume`, `local_download_staging_dir`, `ensure_data_layout`, `sqlite_url`, `clear_paths_cache`, `sync_settings_paths` |
 | `backend/app/core/runtime_config.py` | `DATA_DIR/runtime_config.json` load/save/apply of the five mutable provider keys | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
-| `backend/app/core/database.py` | Async engine (SQLite/aiosqlite NullPool or Postgres/asyncpg pool), session factory, declarative `Base`, `init_db` | `engine`, `DATABASE_URL`, `AsyncSessionLocal`, `Base`, `get_db`, `init_db` |
+| `backend/app/core/database.py` | Async engine (SQLite/aiosqlite, NullPool), session factory, declarative `Base`, `init_db` | `engine`, `DATABASE_URL`, `AsyncSessionLocal`, `Base`, `get_db`, `init_db` |
 | `backend/app/core/log.py` | Component-routed rotating file logging (full detail in [23](23-logging-and-observability.md)) | `setup_logging`, `reconfigure_logging`, `get_logger`, `resolve_logs_dir`, `COMPONENT_LOG_FILES` |
 | `backend/app/core/inference_device.py` | Torch device/dtype selection and Qwen3.5 fast-path shim | `resolve_torch_device`, `resolve_torch_dtype`, `prepare_qwen3_5_inference` |
 | `backend/app/models/__init__.py` | Re-exports all ORM classes | `ChatConversation`, `ChatMessage`, `KnowledgeBase`, `Note`, `NoteLink` |
@@ -51,7 +51,7 @@
 | `backend/app/services/local_storage.py` | Vault attachment upload/remove and URL→rel-path mapping | `vault_rel_from_url`, `store_upload`, `remove_upload` |
 | `backend/.env.example` | Documented example of every env var | — |
 | `backend/requirements.txt`, `backend/requirements-multimodal.txt` | Python dependencies (core / optional multimodal) | — |
-| `backend/Dockerfile`, `docker-compose.yml` | Contributor container setup | — |
+| `backend/app/desktop_runtime.py` | The process the Tauri shell spawns: port sweep, uvicorn, sidecar boot ([04](04-desktop-shell.md)) | `main`, `status` |
 | `backend/.pylintrc` | Lint configuration | — |
 
 ## 3. Module layering
@@ -112,7 +112,7 @@ Import-time ordering inside `core/` matters and is enforced by which module impo
 | `config.py` | `paths` (function-local, inside `_default_data_dir` / `_default_models_dir`) | env, `backend/.env`, `paths.json` via `paths` | constructs `settings`; mutates `settings.KUZU_DB_PATH` and `settings.MODELS_PATH` |
 | `log.py` | `config.settings` | `settings.DATA_DIR`, `settings.LOG_LEVEL` | `LOGS_DIR = resolve_logs_dir()` creates `DATA_DIR/logs` |
 | `runtime_config.py` | `config`, `log` | — | none (file read only in `load()`) |
-| `database.py` | `config`, `log`, `paths` | `settings.DATABASE_BACKEND`, `settings.DATABASE_TRANSACTION_POOLER_URL` | `ensure_data_layout()` creates the `DATA_DIR` subdirs; **creates the SQLAlchemy engine** (so `DATA_DIR` is frozen for the engine from this moment) |
+| `database.py` | `config`, `log`, `paths` | `paths.sqlite_url()` | `ensure_data_layout()` creates the `DATA_DIR` subdirs; **creates the SQLAlchemy engine** (so `DATA_DIR` is frozen for the engine from this moment) |
 | `inference_device.py` | `log` | — | `import torch` (heavy; only imported by multimodal code paths) |
 
 ### 3.1 Module dependency table (who imports the core)
@@ -175,9 +175,9 @@ app.add_middleware(CORSMiddleware, allow_origins=cors_origins,
                    allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 ```
 
-- `CORS_ORIGINS` is a comma-separated string, not a list. The `Settings` default lists ports 3700/3701 on both `localhost` and `127.0.0.1` (the comment explains Electron loads the `127.0.0.1` origin, which is a different origin from `localhost`). The desktop supervisor overrides it with `ports.corsOrigins()` = `http://127.0.0.1:17400,http://localhost:17400` unless the parent process already exports `CORS_ORIGINS`.
-- In the packaged desktop the Next.js server proxies `/api/v1` and `/vault-files` to the backend (same origin), so CORS is effectively unused; it matters only for `next dev` pointing at an absolute API URL or for browser-based contributors.
-- `CORSMiddleware` is added *after* `register_all_routers` but *before* the `@app.middleware("http")` decorator below. Starlette wraps middleware in reverse order of addition, so at request time the trace-id middleware runs **outside** CORS (it sees every request first and sets the response header last). Consequence: the `X-Request-Id` response header is present on CORS preflight responses too, but it is not listed in `Access-Control-Expose-Headers`, so browser JS on a cross-origin page cannot read it (same-origin/Electron proxied requests can).
+- `CORS_ORIGINS` is a comma-separated string, not a list. The `Settings` default lists ports 3700/3701 on both `localhost` and `127.0.0.1` plus the legacy `17400` UI port (the comment about Electron loading the `127.0.0.1` origin is stale).
+- In the desktop app the API serves the UI itself, so every call is same-origin and CORS is effectively unused; in dev the Vite server proxies `/api/v1`, `/vault-files` and `/health` to 17401, so CORS matters only for a browser hitting the API origin directly.
+- `CORSMiddleware` is added *after* `register_all_routers` but *before* the `@app.middleware("http")` decorator below. Starlette wraps middleware in reverse order of addition, so at request time the trace-id middleware runs **outside** CORS (it sees every request first and sets the response header last). Consequence: the `X-Request-Id` response header is present on CORS preflight responses too, but it is not listed in `Access-Control-Expose-Headers`, so browser JS on a cross-origin page cannot read it (same-origin requests can).
 
 ### 4.4 Trace-id middleware
 
@@ -208,17 +208,16 @@ No Qdrant/Meili/Kuzu connectivity check happens at startup; those clients are cr
 
 ### 4.6 Shutdown hook
 
-`shutdown_event` calls `stop_vault_watchers()` inside a bare `try/except Exception: pass`. Nothing else is torn down explicitly: the SQLite engine uses `NullPool` (no pooled connections to close), and GGUF models are released by the idle-unload watcher or by process exit. The desktop supervisor kills the uvicorn process tree on quit ([04](04-desktop-shell.md)).
+`shutdown_event` calls `stop_vault_watchers()` inside a bare `try/except Exception: pass`. Nothing else is torn down explicitly: the SQLite engine uses `NullPool` (no pooled connections to close), and GGUF models are released by the idle-unload watcher or by process exit. The desktop runtime stops the sidecars when the API exits, and the shell SIGTERMs the runtime's process group on quit ([04](04-desktop-shell.md)).
 
 ### 4.7 How the process is launched
 
 | Context | Command | cwd | Notes |
 |---|---|---|---|
-| Desktop supervisor | `<python> -m uvicorn app.main:app --host 127.0.0.1 --port 17401` | `backend/` (or bundled backend dir) | env injected by `desktop/supervisor.js` (see [21](21-configuration-reference.md) §"Layers"); stdout/stderr → `DATA_DIR/logs/backend.log` |
-| Docker (`backend/Dockerfile`) | `uvicorn app.main:app --host 0.0.0.0 --port 8000` | `/app` | compose maps `8700:8000`; `env_file: ./backend/.env` plus service-name overrides |
+| Desktop runtime | `python -m app.desktop_runtime` → `uvicorn.run("app.main:app", host="127.0.0.1", port=17401)` in-process | `backend/` (or bundled backend dir) | env set by the shell and `desktop_runtime.py` (see [21](21-configuration-reference.md) §"Layers"); stdout/stderr → `DATA_DIR/logs/backend.log` |
 | Bare dev | `cd backend && uvicorn app.main:app --reload --port 17401` (any port) | `backend/` | `.env` at `backend/.env` is picked up by pydantic-settings; without `paths.json`/env, data goes to `<repo>/data`, models to `backend/models` |
 
-`PYTHONPATH` must resolve the `app` package from `backend/`; the supervisor sets `PYTHONPATH=<backendDir>` explicitly, `.pylintrc` does the equivalent with `init-hook='import sys; sys.path.insert(0, ".")'`.
+`PYTHONPATH` must resolve the `app` package from `backend/`; the shell runs the runtime with `backend/` (or the bundled backend dir) as cwd, `.pylintrc` does the equivalent with `init-hook='import sys; sys.path.insert(0, ".")'`.
 
 ## 5. `backend/app/core/config.py` — the `Settings` class
 
@@ -231,8 +230,8 @@ class Settings(BaseSettings):
 ```
 
 - `BACKEND_DIR = Path(__file__).resolve().parents[2]` → `backend/`; `REPO_ROOT = BACKEND_DIR.parent`.
-- `env_file` is an **absolute** path to `backend/.env`, so the file is found regardless of the process cwd (desktop supervisor, Docker `/app/.env` via the same relative layout, tests).
-- `extra="ignore"`: unknown env vars and unknown `.env` keys are silently dropped. This is why `STORAGE_BACKEND`, `FILES_URL`, `VIDEO_MAX_PIXELS`, `FPS*`, `ORB_*` etc. can appear in the supervisor env / compose / `.env.example` without being `Settings` fields — they are read elsewhere (or nowhere).
+- `env_file` is an **absolute** path to `backend/.env`, so the file is found regardless of the process cwd (desktop runtime, tests).
+- `extra="ignore"`: unknown env vars and unknown `.env` keys are silently dropped. This is why `STORAGE_BACKEND`, `FILES_URL`, `VIDEO_MAX_PIXELS`, `FPS*`, `ORB_*` etc. can appear in the runtime env / `.env.example` without being `Settings` fields — they are read elsewhere (or nowhere).
 - pydantic-settings precedence (highest first): explicit constructor kwargs (unused) → **process environment** → `.env` file → field defaults. Env var names are matched case-insensitively to field names; there is no `env_prefix`, so `LLM_PROVIDER` (not `ORB_LLM_PROVIDER`) is the variable name. The `ORB_*`/`LIVEOS_*` names are handled only by `paths.py` and `local_models.py`, not by `Settings`.
 - `settings = Settings()` is created at import; it is a plain mutable object. Many places assign to it (`settings.X = ...`) at runtime — see §5.4.
 
@@ -260,8 +259,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `DATA_DIR` | str | `_default_data_dir()` | `log.resolve_logs_dir`, `config.py` bottom (derives `KUZU_DB_PATH`); everything else goes through `paths.resolve_data_dir()` |
 | `MODELS_DIR` | str | `_default_models_dir()` | `config.py` bottom (copied to `MODELS_PATH`), `paths.sync_settings_paths` |
 | `MODELS_PATH` | str | `"models"` then **overwritten** with `MODELS_DIR` | not read by name anywhere else (legacy; kept in sync) |
-| `DATABASE_BACKEND` | str | `"sqlite"` | `database.py`, `api_desktop.setup_status` |
-| `AI_SETUP_MODE` | str | `"none"` | **No longer read by `ai_gate` or `multimedia.py`** (both derive from actual configuration). Still persisted by `runtime_config.apply_to_settings` and the shell wizard; `api_desktop.setup_status` reports `ai_gate.derived_setup_mode()` instead. |
+| `AI_SETUP_MODE` | str | `"none"` | **No longer read by `ai_gate` or `multimedia.py`** (both derive from actual configuration). Still persisted by `runtime_config.apply_to_settings` and the shell's `save_setup`; `api_desktop.setup_status` reports `ai_gate.derived_setup_mode()` instead. |
 | `KUZU_DB_PATH` | str | `DEFAULT_KUZU_DB_PATH` then **overwritten** with `<DATA_DIR>/kuzu/kuzu_graph` | `kb_registry` (default KB), `graph.GraphService` default |
 
 **LLM — chat axis**
@@ -311,9 +309,8 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int | `10` | Cap on relationship entries kept per expansion; reranking of neighbours only if more than this many |
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | float | `0` | Applied to neighbour scores only when `> 0` |
 | `MAX_POTENTIAL_QUESTIONS` | int | `10` | **unused** |
-| `MAX_LOOP_ITERATIONS` | int | `3` | Iterations of the multi-hop retrieval loop (comment: 3 is enough for personal KBs; HotPotQA rarely benefits past ~3) |
+| `MAX_LOOP_ITERATIONS` | int | `3` | Iterations of the multi-hop retrieval loop  |
 | `CHAT_HISTORY_MAX_MESSAGES` | int | `24` | `chat_store.recent_turns` default limit; `llm.py`/`retrieval.py` slice history to the last N turns when building prompts |
-| `BENCHMARK_MODE` | bool | `False` | `llm.py`: swaps the answer-task instructions for a benchmark-style short-answer variant |
 | `COMMUNITY_RECOMPUTE_BATCH_SIZE` | int | `100` | **unused** |
 
 **Feature switches** (ingestion side)
@@ -335,17 +332,16 @@ Note `.env.example` sets both switches to `true` and describes `true` as if it w
 | `QDRANT_API_KEY` | str \| None | `None` | same |
 | `QDRANT_COLLECTION_NODE_CORES` / `_RELATIONSHIPS` / `_ISOLATED_CONTEXTS` | str | `node_cores` / `node_relationships` / `node_isolated_contexts` | `qdrant_service` defaults; `kb_registry` uses them for the **default KB row** only — non-default KBs get `<slug>_node_cores` etc. |
 
-**Meilisearch (+ legacy Typesense aliases)**
+**Meilisearch**
 
 | Field | Type | Default | Consumer |
 |---|---|---|---|
 | `MEILI_HOST` | str | `127.0.0.1` | `meilisearch_service` (`http://{host}:{port}`) |
 | `MEILI_PORT` | int | `7700` | same (desktop injects `17470`) |
 | `MEILI_MASTER_KEY` | str | `orb-dev-key` | same (desktop injects the per-install key from `DATA_DIR/meili_master_key`) |
-| `MEILI_INDEX_NAME` | str | `orb_nodes` | `meilisearch_service` default index; `kb_registry` default-KB row (`MEILI_INDEX_NAME or TYPESENSE_COLLECTION_NAME`) |
-| `TYPESENSE_HOST`, `TYPESENSE_PORT`, `TYPESENSE_API_KEY`, `TYPESENSE_COLLECTION_NAME` | str/int/str/str | `127.0.0.1` / `7700` / `orb-dev-key` / `orb_nodes` | only via the validator below (+ `kb_registry` fallback) |
+| `MEILI_INDEX_NAME` | str | `orb_nodes` | `meilisearch_service` default index; `kb_registry` default-KB row (still spelled `MEILI_INDEX_NAME or settings.TYPESENSE_COLLECTION_NAME` — the latter field no longer exists, harmless while `MEILI_INDEX_NAME` is non-empty) |
 
-Validator `_apply_typesense_aliases` (`@model_validator(mode="after")`): for each of the four pairs, **if the MEILI field still equals its default and the TYPESENSE field does not**, copy TYPESENSE → MEILI. So `TYPESENSE_PORT=17470` alone works; `MEILI_PORT=17470 TYPESENSE_PORT=9999` keeps 17470 (an explicitly set MEILI value that happens to equal the default, e.g. `MEILI_PORT=7700`, is indistinguishable from "unset" and will be overridden by a non-default TYPESENSE value). History: added in `fbcafe7` (2026-08-03) when Typesense was replaced by Meilisearch so older `.env` files kept working.
+The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-03, when Typesense was replaced by Meilisearch) have been removed; only the `typesense_collection` column name survives (§ORM).
 
 **Multimodal / local models**
 
@@ -368,13 +364,6 @@ Validator `_apply_typesense_aliases` (`@model_validator(mode="after")`): for eac
 | `FIREFLY_BASE_URL` | str \| None | `None` | `firefly_service.FireflyService.__init__` (`base_url`) |
 | `FIREFLY_RUNTIME_FILE` | str \| None | `None` | same (`runtime.json` with `apiToken`, php path, etc.) |
 | `FIREFLY_API_TOKEN` | str \| None | `None` | `firefly_service._token` — env token wins over `runtime.json` |
-
-**Database (Postgres only)**
-
-| Field | Type | Default | Consumer |
-|---|---|---|---|
-| `DATABASE_TRANSACTION_POOLER_URL` | str \| None | `None` | `database.py` when `DATABASE_BACKEND=postgres` |
-| `DATABASE_SESSION_POOLER_URL`, `DATABASE_DIRECT_CONNECTION_URL` | str \| None | `None` | **unused** |
 
 **Logging / concurrency**
 
@@ -464,7 +453,7 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 }
 ```
 
-`data_dir` and `models_dir` are always written; the other two only when non-empty. The Electron shell writes the same file from the wizard (`desktop/main.js` `save-wizard`), and `desktop/supervisor.js loadPaths()` reads the same three path keys; `ai_setup_mode` from this file is what the shell exports as `AI_SETUP_MODE` to the backend ([04](04-desktop-shell.md) §7.3). The backend reads `ai_setup_mode` **only indirectly**: `Settings.AI_SETUP_MODE` comes from the env var (set by the shell from the file) and from `runtime_config.json`; `paths.py` never surfaces the key.
+`data_dir` and `models_dir` are always written; the other two only when non-empty. The Tauri shell writes the same file from the first-run setup page (`save_setup` in `src-tauri/src/commands.rs`), which also writes `ai_setup_mode` into `runtime_config.json`; `desktop_runtime.py` exports `AI_SETUP_MODE` (default `none`) to the backend ([04](04-desktop-shell.md) §3). The backend reads `ai_setup_mode` **only indirectly**: `Settings.AI_SETUP_MODE` comes from the env var (set by the shell from the file) and from `runtime_config.json`; `paths.py` never surfaces the key.
 
 ## 7. `backend/app/core/runtime_config.py`
 
@@ -494,21 +483,14 @@ There is no schema validation of values (e.g. an unknown provider string is appl
 ### 8.1 Engine selection (import time)
 
 ```python
-_backend = (settings.DATABASE_BACKEND or "sqlite").lower()
-if _backend == "postgres" and settings.DATABASE_TRANSACTION_POOLER_URL:
-    # postgresql:// → postgresql+asyncpg://
-    engine = create_async_engine(url, echo=False, future=True, pool_size=10, max_overflow=20,
-                                 pool_timeout=30, pool_pre_ping=True,
-                                 connect_args={"statement_cache_size": 0})
-else:
-    engine = create_async_engine(sqlite_url(), echo=False, future=True,
-                                 poolclass=NullPool, connect_args={"check_same_thread": False})
+DATABASE_URL = sqlite_url()
+engine = create_async_engine(DATABASE_URL, echo=False, future=True,
+                             poolclass=NullPool, connect_args={"check_same_thread": False})
 ```
 
-- Postgres is selected only if **both** `DATABASE_BACKEND=postgres` and a transaction-pooler URL are set; otherwise SQLite silently. `statement_cache_size=0` is the asyncpg setting required behind PgBouncer transaction pooling.
 - SQLite uses `aiosqlite` with `NullPool`: every session opens a fresh connection and closes it. Rationale (history `3f21e08`, `2655bb8`): SQLite + async + multiple threads (vault watcher, ingestion tracker, `kb_registry` raw `sqlite3`) behave best without a shared pool; `check_same_thread=False` is required because aiosqlite runs the connection in a worker thread.
 - `ensure_data_layout()` runs before engine creation so the directory for `orb.db` exists.
-- No WAL/PRAGMA setup is performed here; SQLite defaults apply. Under concurrent writers (`vault_watcher` sync engine + async API), callers can hit `database is locked`; `GET /notes/{id}/status` maps that to `503 "Database temporarily unavailable, retry shortly"`.
+- A `connect` listener sets `PRAGMA foreign_keys=ON` per connection; no WAL/other PRAGMA setup is performed. Under concurrent writers (`vault_watcher` sync engine + async API), callers can hit `database is locked`; `GET /notes/{id}/status` maps that to `503 "Database temporarily unavailable, retry shortly"`.
 
 ### 8.2 Session factory and dependency
 
@@ -705,9 +687,9 @@ def get_kb(kb: str = Query(default="default", description="Knowledge base name o
 | Method/path | Response | Notes |
 |---|---|---|
 | `GET /` | `{"message": "Orb is online", "status": "active"}` | logs at DEBUG (`"Health check hit"`, logger `API`) |
-| `GET /health` | `{"status": "healthy"}` | Liveness only — no DB, KB, Qdrant, Meili or Kuzu access. This is the URL `desktop/supervisor.js` polls (`waitHttp(apiUrl()/health, 120000)`) before declaring the backend up, and the Next.js dev proxy target check. |
+| `GET /health` | `{"status": "healthy"}` | Liveness only — no DB, KB, Qdrant, Meili or Kuzu access. This is the URL the Tauri shell polls (`runtime.rs`) before navigating the window to the UI. |
 
-Neither endpoint is under `/api/v1`; in the packaged desktop the Next server only proxies `/api/v1` and `/vault-files`, so `/health` is reachable from the shell (direct `127.0.0.1:17401`) but not through the UI origin. Readiness-style information lives in `GET /api/v1/setup/status` (§15) and `GET /api/v1/admin/maintenance-status` (see [23](23-logging-and-observability.md)).
+Neither endpoint is under `/api/v1`. `GET /` is shadowed in the desktop app: the built UI is mounted at `/` (`_SpaFiles`, history-API fallback to `index.html`) when `FRONTEND_DIR` (default `frontend/dist`) contains an `index.html`; `/health` stays reachable because real routes are registered before the mount. Readiness-style information lives in `GET /api/v1/setup/status` (§15) and `GET /api/v1/admin/maintenance-status` (see [23](23-logging-and-observability.md)).
 
 ## 13. Runtime LLM settings endpoints (`backend/app/api/settings.py`)
 
@@ -737,7 +719,7 @@ Algorithm:
 5. If provider or base_url changed: `llm_service.provider = settings.LLM_PROVIDER.lower()` then `llm_service.init_clients()` and log `"LLM clients reinitialized"`. **Only `init_clients()` is re-run, not `_init_ingestion_clients()`**, so after a provider switch the ingestion clients (`i_chat_client` etc.) still point at the previous provider until restart, unless `INGESTION_PROVIDER` was unset (in which case they were aliases of the *old* chat clients — still stale). Per-KB pinned services (`KBContext.llm`) are rebuilt independently because their cache key includes the inherited provider.
 6. Returns `{provider, model: CHAT_MODEL or LLM_MODEL, ingestion_model: INGESTION_MODEL or LLM_MODEL, base_url}` (note: computed from `settings`, not from `get_chat_model()`, so for a cloud provider with only `GEMINI_MODEL` set this response shows `local-chat` while `GET` shows the Gemini model).
 
-What it never does: accept API keys (those go to `PUT /api/v1/credentials`, which stores them in memory only — see [13](13-llm-providers-and-prompting.md)), validate the provider string, change `AI_SETUP_MODE` (that goes through `POST /api/v1/setup/paths`), or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
+What it never does: accept API keys (those go to `PUT /api/v1/credentials`, which stores them in the OS keychain — see [13](13-llm-providers-and-prompting.md)), validate the provider string, change `AI_SETUP_MODE` (that goes through `POST /api/v1/setup/paths`), or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
 
 What needs a restart regardless: anything captured at import (`DATA_DIR`-derived engine URL, semaphores), `EMBEDDING_DIMENSIONS` changes that require Qdrant collection recreation (handled by `sync_embedding_infrastructure`, not by this endpoint), and `.env` edits (pydantic-settings reads the file once).
 
@@ -758,7 +740,7 @@ Purpose: let Orb run in an "Obsidian-like limited mode" (notes, wikilinks, vault
 
 1. **Per-KB short-circuit:** if `kb` has a truthy `llm_provider`, return `provider_is_configured(kb.llm_provider, kb.llm_base_url)` — the pin is judged against its own endpoint, not the system one.
 2. `_local_models_present()` → `local_models.gguf_paths_if_present() is not None`.
-3. Any provider in `credentials.CLOUD_PROVIDERS` holding a key (keychain-pushed or env-seeded; includes `huggingface`).
+3. Any provider in `credentials.CLOUD_PROVIDERS` holding a key (keychain or env-seeded; includes `huggingface`).
 4. `_endpoint_is_configured()` → a non-empty `LLM_BASE_URL`. No key is required: llama-server and LM Studio need none, and a remote endpoint missing its key fails loudly on first call, which is a better error than "AI is not configured".
 5. Otherwise `False`.
 
@@ -797,7 +779,7 @@ This module is distinct from GGUF backend detection (`local_models.detect_llama_
 
 ## 16. `local_storage.py` — vault attachments
 
-Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` profile that nothing uses). Attachments live at `<vault_path>/attachments/<file>` and are served by `api/files.py` under `/vault-files/<kb>/<rel>`.
+Replaces the former RustFS/S3 object store. Attachments live at `<vault_path>/attachments/<file>` and are served by `api/files.py` under `/vault-files/<kb>/<rel>`.
 
 | Function | Behaviour |
 |---|---|
@@ -815,7 +797,7 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 | services → core (writes) | `runtime_config.save`, `paths.save_paths_file`/`sync_settings_paths`, `log.reconfigure_logging`, direct `settings.X = ...` assignments listed in §5.4. |
 | `kb_registry` ↔ `orb.db` | Raw `sqlite3` DDL/upserts on `knowledge_bases`; must mirror `models/kb.py`. |
 | `vault_watcher` ↔ `orb.db` | Separate sync engine (`paths.sqlite_url`), updates `notes` rows (stale marking) outside the async session factory. |
-| Firefly | `FIREFLY_BASE_URL` + `runtime.json` (`FIREFLY_RUNTIME_FILE`) written by `desktop/firefly-runtime.js`; `firefly_group_id` per KB row. |
+| Firefly | `FIREFLY_BASE_URL` + `runtime.json` (`FIREFLY_RUNTIME_FILE`) written by `desktop_runtime.py`; `firefly_group_id` per KB row. |
 
 ## 18. Invariants and locked decisions
 
@@ -823,14 +805,14 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 2. **`settings` is a mutable process-global.** Read fields at call time; do not copy them into module constants unless the value is genuinely import-time-only (engine URL, semaphores) — and if you do, document that a restart is needed.
 3. **`core/` never imports `services/` at module scope.** Function-local imports only (`config._default_data_dir`, `runtime_config._data_path`, `main.startup_event`).
 4. **`KUZU_DB_PATH` is derived, not configured.** Always `<DATA_DIR>/kuzu/kuzu_graph` for the default KB; per-KB paths come from `kb_registry`.
-5. **`DATA_DIR` is frozen for the SQLite engine at import.** `sync_settings_paths` updates `settings` and logging, but the engine, Qdrant/Meili clients and Kuzu handles need a process restart (the desktop shell restarts the backend after the wizard).
-6. **API keys live only in memory, and on disk only as keychain ciphertext.** The desktop shell owns them (`desktop/credentials.js`, Electron `safeStorage` → `DATA_DIR/credentials.enc`) and pushes them to `PUT /api/v1/credentials`; `CredentialStore` never writes to disk, because `DATA_DIR` is frequently a synced folder. `runtime_config.json` and `PATCH /settings` never carry them, and no endpoint ever returns key material. Environment variables still seed the store for contributors running the backend outside the shell.
+5. **`DATA_DIR` is frozen for the SQLite engine at import.** `sync_settings_paths` updates `settings` and logging, but the engine, Qdrant/Meili clients and Kuzu handles need a process restart (`window.orbDesktop.restartBackend` relaunches the runtime after the paths change).
+6. **API keys live in the OS keychain, never in `DATA_DIR`.** `CredentialStore` (`services/credentials.py`) persists them through the Python `keyring` package (service entry + a JSON index of ids) and caches them in memory; nothing is written under `DATA_DIR`, which is frequently a synced folder. `PUT`/`DELETE /api/v1/credentials/{provider}` and `/credentials/endpoint` are the only write paths; `runtime_config.json` and `PATCH /settings` never carry keys, and no endpoint ever returns key material. Environment variables still seed the store for contributors running the backend outside the shell.
 7. **Router order is significant** — the desktop router must stay first (§4.2).
 8. **`extra="ignore"` on `Settings`** — unknown env keys are silently dropped; a typo in a variable name is not an error.
 9. **No migrations.** Schema changes on existing installs need an explicit `ALTER TABLE` path (pattern: `kb_registry._ensure_optional_columns`) or an `init_db` addition like the manual index.
-10. **`/health` must stay dependency-free** — the supervisor's 120 s boot gate relies on it answering before models, indexes or the DB are healthy.
+10. **`/health` must stay dependency-free** — the shell shows the window as soon as it answers, before models, indexes or the sidecars are up.
 11. **`llm_service` stays lazy** so `runtime_config` overrides applied in `startup_event` are honoured by `LLMService.__init__`.
-12. **Legacy aliases are kept on purpose** (`LIVEOS_*` env, `TYPESENSE_*` fields, `typesense_collection` column, `LifeOS`/`LiveOS` app-support folders) so pre-rename installs upgrade in place.
+12. **Legacy aliases are kept on purpose** (`LIVEOS_*` env, `typesense_collection` column, `LifeOS`/`LiveOS` app-support folders) so pre-rename installs upgrade in place.
 
 ## 19. Failure modes and edge cases
 
@@ -838,7 +820,6 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 |---|---|
 | `paths.json` unreadable / invalid JSON | `load_paths_file` caches `{}`; data dir falls back to `<repo>/data` (bare) — in the desktop the env vars still point at the right place, so only the `default_vault_path` is lost. |
 | `.env` missing | Fine; pydantic-settings ignores a missing `env_file`. |
-| `DATABASE_BACKEND=postgres` without pooler URL | Silent fall back to SQLite (log line "Using SQLite database at …"). |
 | `runtime_config.json` corrupt | Warning in `api.log`, overrides ignored; next `PATCH /settings` overwrites it. |
 | `sync_embedding_infrastructure` raises (Qdrant down, manifest missing) | Warning `"Embedding infrastructure sync skipped"`; startup continues; embedding dims stay at the `Settings` default (`1024`) until the next successful sync. |
 | `start_vault_watchers` raises (watchdog missing, vault path unreadable) | Warning `"Vault watcher not started"`; external edits are not detected until restart. |
@@ -863,7 +844,7 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 - `resolve_default_vault_path()` prefers `paths.json` over env — the opposite of `resolve_data_dir()`.
 - `get_kb_by_name` treats an empty `?kb=` as default; `"Default"` (any case) also resolves to default, but a KB *named* "default" cannot be created distinctly.
 - `store_upload` builds URLs with the KB **id**, while `?kb=` accepts name **or slug**; the `files` router resolves both.
-- `LOGS_DIR` in `log.py` is a snapshot; use `resolve_logs_dir()` after the wizard changes `DATA_DIR`.
+- `LOGS_DIR` in `log.py` is a snapshot; use `resolve_logs_dir()` after setup changes `DATA_DIR`.
 - Unit tests (`backend/tests/unit/conftest.py`) monkeypatch `settings.LLM_PROVIDER="lm_studio"` (a deprecated alias) — keep the alias mapping in `LLMService.__init__` or the suite breaks.
 - The FastAPI `version="0.1.0"` string is stale relative to the `0.2.0` app version.
 
@@ -890,5 +871,5 @@ Replaces the former RustFS/S3 object store (compose still ships a `legacy-s3` pr
 - `72413b9` — note title ↔ vault filename sync; `b35d612` — wikilink autocomplete; `8de5cda`/`e14dc67` (0.2.0) — ingestion/retrieval batching.
 - `b4d14cd` / `34b00b3` / `019fd13` (2026-09) — per-KB LLM overrides (`knowledge_bases.llm_*`, `KBContext.llm`, `require_ai(kb)`), chunked extraction (`workflows/extraction_chunking.py`, `ORB_EXTRACTION_CHUNK_TOKENS`), no-default `ORB_LLAMA_MAX_TOKENS`, `ModelLoadClock`, and the finance-chat `time` import fix.
 - `2c122cd` (2026-09) — bring-your-own local GGUFs: `services/gguf_metadata.py` + `services/model_discovery.py`; the curated catalog stops gating selection.
-- `1c4c69d` (2026-09) — cloud API keys moved out of `.env` into the OS keychain: `services/credentials.py`, `api/credentials.py`, `desktop/credentials.js`.
+- `1c4c69d` (2026-09) — cloud API keys moved out of `.env` into the OS keychain: `services/credentials.py`, `api/credentials.py` (the shell-side store that existed then is gone; the backend now talks to the keychain directly via `keyring`).
 - Working tree — `openai_compat` provider: any OpenAI-compatible URL + key + model name, with the endpoint URL as the credential identity (`knowledge_bases.llm_base_url`).

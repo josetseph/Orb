@@ -2,7 +2,7 @@
 
 **What this covers.** A chronological reconstruction of how Orb evolved from its first commit (2026-01-17, "Working Version 1", a Docker-composed research prototype called LifeOS) to the current Docker-free Electron desktop product (0.2.0, 2026-08-07). It is built entirely from the git history of `/Users/josetseph/Projects/Technical/personal/Orb` (70 commits on `main`): commit messages, per-commit file stats, key diffs, and the histories of `README.md`, `docker-compose*.yml`, `backend/requirements.txt`, and the deleted `.cursor/rules/architecture-decisions.mdc`. It records every architectural decision point (what was chosen, what was rejected, and the evidence at the time), the subsystems that were removed, and the legacy aliases/dead paths still visible in the code so that engineers and AI assistants do not resurrect them.
 
-**Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Local models and inference](12-local-models-and-inference.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Finance (Firefly)](17-finance-firefly.md) · [Testing and benchmarks](24-testing-and-benchmarks.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
+**Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Local models and inference](12-local-models-and-inference.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Finance (Firefly)](17-finance-firefly.md) · [Testing](24-testing.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
 
 ## How to read this document
 
@@ -274,7 +274,7 @@ Do **not** resurrect any of these. They are listed so an assistant reading an al
 | Ollama / LM Studio / `llama-server` as local providers | `6fd0224` → `3f21e08` | `3f21e08` | `ollama`/`lm_studio` remain as deprecated aliases (4.2). |
 | `docker-compose.prod.yml` | `6fd0224` → `f28d205` | `f28d205` | |
 | `batch-note-processing/` scripts, `backend/scripts/init_*.py` / `reset_*.py`, `init_local.py`, `init.sh` | Era 1–4 | `2655bb8`, `fbcafe7` | Replaced by in-app admin endpoints and wizard. |
-| HotPotQA/MuSiQue note corpora and per-run result JSONs | Era 2–3 | `fbcafe7` (1,516 files) | Benchmark harness itself remains under `backend/tests/benchmark/` — see [Testing and benchmarks](24-testing-and-benchmarks.md). |
+| HotPotQA/MuSiQue note corpora and per-run result JSONs | Era 2–3 | `fbcafe7` (1,516 files) | Harness and `Results/` now live on the `orb-testing` branch. |
 | `entity-mention-editor.tsx`, `model-settings-modal.tsx`, `service-badge.tsx`, `custom-cursor.tsx`, `grain-overlay.tsx`, `graph3d/{GraphScene,CameraRig,CommunityCluster,NodeDetailPanel}.tsx` | Era 1–4 | `68494b7`, `3f21e08`, `fbcafe7` | Replaced by CodeMirror editor, settings page, componentised graph-3d. |
 | `development_process.md`, `MULTI_PROVIDER.md`, `RETRIEVAL_FAQ.md`, research `*.md` reports | Era 1–3 | `8c133f4`, `24459f8`, `3ab4f9d`, `6ed2eb0` | The current `Docs/` set supersedes them. |
 
@@ -291,7 +291,6 @@ Do **not** resurrect any of these. They are listed so an assistant reading an al
 | `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `backend/.dockerignore` | Postgres, RustFS (`legacy-s3` profile), Qdrant, Meilisearch, backend, frontend services | Header states "Contributor / optional infra stack only. End users run the Orb desktop app". Not used by packaging or CI. |
 | `backend/requirements.txt` | `asyncpg`, `boto3`, `aioboto3`, `aiobotocore`, `botocore`, `langchain-openai` | Left over from Postgres/S3 era; `bucket_storage.py` is gone. |
 | `Results/…` directories, `Platform Images/` | Benchmark reports from Eras 2–3, screenshots | Historical artefacts; reports still reference "LiveOS Brain". |
-| `backend/tests/benchmark/` | HotPotQA/MuSiQue harness (`prepare_dataset.py`, `evaluate.py`, manifests) | Live but research-only; corpora removed. |
 
 ## 5. Version history
 
@@ -337,4 +336,3 @@ The working tree diverges from `02ac9d3`. This section summarises `git status` /
 - `backend/app/models/note.py` still has a `content` column although note bodies are vault files (D-29). Whether it is written anywhere is a question for [Notes and vault files](09-notes-wikilinks-and-vault-files.md).
 - `backend/requirements.txt` still pins `asyncpg`, `boto3`/`aioboto3`/`aiobotocore`/`botocore` and `langchain-openai` although the S3 path is gone and Postgres is contributor-only.
 - The README pins the retrieval reranker as "symbolic" nowhere today, but D-04 → D-26 shows reranking flipped symbolic → neural → GGUF cross-encoder; docs on retrieval should describe only the current GGUF cross-encoder.
-- The 1,516 benchmark corpus notes were deleted in `fbcafe7`, yet `backend/tests/benchmark/prepare_dataset.py` still exists; running the harness now requires regenerating the corpus.

@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState, type MutableRefObject, type RefObject } from "react";
 import * as THREE from "three";
 import type {
