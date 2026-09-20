@@ -316,7 +316,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 8. **Image titles are a second LLM call** (`_batch_image_titles`); if it fails, image entities are named after their filenames.
 9. **Speaker labels need two extra downloads** (aligner + diarizer) and run on the CPU; without them the transcript is plain and a single line in the log says why.
 10. Remote downloads are limited to 512 MiB and public addresses; a private-network or `localhost` media URL will fail with `Refusing to fetch non-public address`.
-11. Env-var frame-sampling knobs are read at import via `setdefault`; setting them in `.env`/`settings` has no effect unless exported into the process environment before `multimodal_runtime` is imported.
+11. Env-var frame-sampling knobs are read at import via `setdefault`; setting them in `settings` has no effect unless exported into the process environment before `multimodal_runtime` is imported.
 12. **Embedded `.docx` images are keyed by position** (`<docx link>#<index>`), not content: if the document's images are reordered or one is inserted, later indices shift and those images are described again once.
 
 ### 8.2 Extension points

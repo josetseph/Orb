@@ -1,20 +1,10 @@
-"""In-memory API-key store for cloud providers.
+"""Cloud-provider API keys, persisted in the OS keychain via ``keyring``.
 
-Keys reach the backend one of two ways:
-
-* **Desktop (the product path).** The Electron shell owns the secrets: it
-  encrypts them with the OS keychain (``safeStorage``) into
-  ``DATA_DIR/credentials.enc`` and pushes them into the running API over
-  localhost. The backend keeps them in memory only and never writes them to
-  disk — ``DATA_DIR`` is frequently a synced folder (OneDrive/NAS), so a
-  plaintext secret there would leave the machine.
-
-* **Contributors / Docker.** Environment variables (optionally via
-  ``backend/.env``) seed the store at first use. End users never edit ``.env``;
-  this path exists so a checkout keeps working.
-
-Key material is never returned by the API — only whether a provider is
-configured, and where its key came from.
+The user enters keys in Settings; the backend stores them in the keychain
+(macOS Keychain, Windows Credential Manager, Secret Service) and keeps them
+in memory for the session. They are never written under ``DATA_DIR`` — that
+is frequently a synced folder — and never returned by the API, which only
+reports whether a provider is configured.
 """
 
 from __future__ import annotations
@@ -31,15 +21,6 @@ logger = get_logger("Credentials")
 CLOUD_PROVIDERS: tuple[str, ...] = ("openai", "gemini", "anthropic", "huggingface")
 
 SOURCE_KEYCHAIN = "keychain"
-SOURCE_ENV = "env"
-
-# settings attribute that seeds each provider (legacy .env / env var path).
-_ENV_SETTING = {
-    "openai": "OPENAI_API_KEY",
-    "gemini": "GEMINI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "huggingface": "HUGGINGFACE_API_KEY",
-}
 
 
 # OpenAI-compatible endpoints are identified by their URL rather than a name the
@@ -119,8 +100,7 @@ class CredentialStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._keys: dict[str, str] = {}
-        self._sources: dict[str, str] = {}
-        self._seeded = False
+        self._loaded = False
         # Bumped on every change so cached LLM clients can notice a new key.
         self._version = 0
 
@@ -129,11 +109,11 @@ class CredentialStore:
         with self._lock:
             return self._version
 
-    def _seed_from_env_unlocked(self) -> None:
-        """Load keychain keys once, then env/.env keys without overwriting them."""
-        if self._seeded:
+    def _load_unlocked(self) -> None:
+        """Load the keychain keys once."""
+        if self._loaded:
             return
-        self._seeded = True
+        self._loaded = True
         try:
             import keyring
 
@@ -142,44 +122,30 @@ class CredentialStore:
                 value = keyring.get_password(_KEYRING_SERVICE, name)
                 if value:
                     self._keys[name] = value
-                    self._sources[name] = SOURCE_KEYCHAIN
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Keychain unavailable, credentials are session-only: %s", exc)
-        from app.core.config import settings
-
-        for provider, attr in _ENV_SETTING.items():
-            if provider in self._keys:
-                continue
-            value = (getattr(settings, attr, None) or "").strip()
-            if value:
-                self._keys[provider] = value
-                self._sources[provider] = SOURCE_ENV
-        seeded = sorted(k for k, v in self._sources.items() if v == SOURCE_ENV)
-        if seeded:
-            logger.info("Seeded credentials from environment for: %s", ", ".join(seeded))
 
     def get(self, provider: str) -> str | None:
         name = normalize_provider(provider)
         with self._lock:
-            self._seed_from_env_unlocked()
+            self._load_unlocked()
             return self._keys.get(name)
 
     def has(self, provider: str) -> bool:
         return bool(self.get(provider))
 
-    def set(self, provider: str, api_key: str, *, source: str = SOURCE_KEYCHAIN) -> None:
+    def set(self, provider: str, api_key: str) -> None:
         name = normalize_provider(provider)
         value = (api_key or "").strip()
         if not value:
             raise ValueError("API key must not be empty")
         with self._lock:
-            self._seed_from_env_unlocked()
+            self._load_unlocked()
             self._keys[name] = value
-            self._sources[name] = source
             self._version += 1
             self._persist_unlocked(name, value)
         # Length only — never the key itself.
-        logger.info("Credential set for %s (%s, %d chars)", name, source, len(value))
+        logger.info("Credential set for %s (%d chars)", name, len(value))
 
     def _persist_unlocked(self, name: str, value: str | None) -> None:
         """Write (or delete, when value is None) one key and keep the index in step."""
@@ -193,17 +159,15 @@ class CredentialStore:
                     pass
             else:
                 keyring.set_password(_KEYRING_SERVICE, name, value)
-            stored = sorted(k for k, s in self._sources.items() if s == SOURCE_KEYCHAIN)
-            keyring.set_password(_KEYRING_SERVICE, _KEYRING_INDEX, json.dumps(stored))
+            keyring.set_password(_KEYRING_SERVICE, _KEYRING_INDEX, json.dumps(sorted(self._keys)))
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Could not update the keychain (key kept for this session): %s", exc)
 
     def clear(self, provider: str) -> bool:
         name = normalize_provider(provider)
         with self._lock:
-            self._seed_from_env_unlocked()
+            self._load_unlocked()
             existed = self._keys.pop(name, None) is not None
-            self._sources.pop(name, None)
             if existed:
                 self._version += 1
                 self._persist_unlocked(name, None)
@@ -211,16 +175,10 @@ class CredentialStore:
             logger.info("Credential cleared for %s", name)
         return existed
 
-    def source(self, provider: str) -> str | None:
-        name = normalize_provider(provider)
-        with self._lock:
-            self._seed_from_env_unlocked()
-            return self._sources.get(name)
-
     def endpoints(self) -> list[str]:
         """Base URLs that currently have a stored key."""
         with self._lock:
-            self._seed_from_env_unlocked()
+            self._load_unlocked()
             return sorted(
                 name[len(ENDPOINT_PREFIX) :]
                 for name in self._keys
@@ -230,22 +188,21 @@ class CredentialStore:
     def status(self) -> dict[str, dict]:
         """Per-provider configuration state. Never includes key material."""
         with self._lock:
-            self._seed_from_env_unlocked()
+            self._load_unlocked()
             known = set(CLOUD_PROVIDERS) | set(self._keys)
             return {
                 name: {
                     "configured": bool(self._keys.get(name)),
-                    "source": self._sources.get(name),
+                    "source": SOURCE_KEYCHAIN if self._keys.get(name) else None,
                 }
                 for name in sorted(known)
             }
 
     def reset(self) -> None:
-        """Drop everything, including the env seed (tests)."""
+        """Drop everything (tests)."""
         with self._lock:
             self._keys.clear()
-            self._sources.clear()
-            self._seeded = False
+            self._loaded = False
             self._version += 1
 
 

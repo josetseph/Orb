@@ -48,7 +48,6 @@
 | `backend/app/api/settings.py` | `GET/PATCH /api/v1/settings` runtime LLM settings | `router`, `LLMSettings` |
 | `backend/app/services/ai_gate.py` | AI readiness derived from real configuration | `ai_is_configured`, `require_ai`, `chat_is_local_only` |
 | `backend/app/services/local_storage.py` | Vault attachment upload/remove and link ↔ serving-URL mapping | `vault_rel_from_url`, `vault_file_url`, `store_upload`, `remove_upload` |
-| `backend/.env.example` | Documented example of every env var | — |
 | `backend/requirements.txt`, `backend/requirements-multimodal.txt` | Python dependencies (core / optional multimodal) | — |
 | `backend/app/desktop_runtime.py` | The process the Tauri shell spawns: port sweep, uvicorn, sidecar boot ([04](04-desktop-shell.md)) | `main`, `status` |
 | `backend/.pylintrc` | Lint configuration | — |
@@ -108,7 +107,7 @@ Import-time ordering inside `core/` matters and is enforced by which module impo
 | Module | Imports from `core` | Reads at import time | Side effects at import time |
 |---|---|---|---|
 | `paths.py` | nothing (comment: "Avoid importing settings here (circular with config.py)") | `os.environ`, `paths.json` (lazily, cached) | none |
-| `config.py` | `paths` (function-local, inside `_default_data_dir` / `_default_models_dir`) | env, `backend/.env`, `paths.json` via `paths` | constructs `settings`; mutates `settings.MODELS_PATH` |
+| `config.py` | `paths` (function-local, inside `_default_data_dir` / `_default_models_dir`) | env, `paths.json` via `paths` | constructs `settings`; mutates `settings.MODELS_PATH` |
 | `log.py` | `config.settings` | `settings.DATA_DIR`, `settings.LOG_LEVEL` | `resolve_logs_dir()` creates `DATA_DIR/logs` (called where needed; there is no module-level `LOGS_DIR` snapshot) |
 | `runtime_config.py` | `config`, `log` | — | none (file read only in `load()`) |
 | `database.py` | `config`, `log`, `paths` | `paths.sqlite_url()` | `ensure_data_layout()` creates the `DATA_DIR` subdirs; **creates the SQLAlchemy engine** (so `DATA_DIR` is frozen for the engine from this moment) |
@@ -144,7 +143,7 @@ from app.core.config import settings
 from app.core.database import init_db
 ```
 
-`setup_logging()` runs **before** `app.api` is imported. Importing `app.api` transitively imports every service module, and most of them call `get_logger("<Name>")` at module scope. Because `setup_logging()` attaches handlers to the named loggers in `COMPONENT_LOG_FILES` and sets `propagate = False`, the order only affects whether early import-time log lines are routed; `get_logger` is just `logging.getLogger(name)`, so late-created loggers still pick up the handlers. The file carries `# pylint: disable=wrong-import-order,wrong-import-position,import-outside-toplevel` for this reason. Note that importing `app.core.log` already imports `app.core.config`, so `settings` is constructed (env + `.env` + `paths.json` read) as the very first thing the process does.
+`setup_logging()` runs **before** `app.api` is imported. Importing `app.api` transitively imports every service module, and most of them call `get_logger("<Name>")` at module scope. Because `setup_logging()` attaches handlers to the named loggers in `COMPONENT_LOG_FILES` and sets `propagate = False`, the order only affects whether early import-time log lines are routed; `get_logger` is just `logging.getLogger(name)`, so late-created loggers still pick up the handlers. The file carries `# pylint: disable=wrong-import-order,wrong-import-position,import-outside-toplevel` for this reason. Note that importing `app.core.log` already imports `app.core.config`, so `settings` is constructed (env + `paths.json` read) as the very first thing the process does.
 
 ### 4.2 App object and routers
 
@@ -199,7 +198,7 @@ Registered with the deprecated `@app.on_event("startup")` (not a lifespan contex
 
 1. `logger.info("Application startup: Orb API online")` (logger `"API"` → `api.log`).
 2. `await init_db()` — `Base.metadata.create_all` + manual SQLite index (see §8).
-3. `runtime_config.load()`; if non-empty, `runtime_config.apply_to_settings(overrides)` and log `"Runtime config overrides applied"` with `extra={"overrides": [...keys]}`. This is what makes `DATA_DIR/runtime_config.json` win over `.env` for `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`. **Important ordering consequence:** the `llm_service` singleton is a lazy proxy (`_LazyLLMService` in `services/llm.py`) that constructs `LLMService` on first attribute access. Nothing in startup touches it, so the provider read by `LLMService.__init__` is the post-override value. If any import-time code ever forces construction earlier, runtime overrides would be silently ignored for the provider — keep it lazy.
+3. `runtime_config.load()`; if non-empty, `runtime_config.apply_to_settings(overrides)` and log `"Runtime config overrides applied"` with `extra={"overrides": [...keys]}`. This is what makes `DATA_DIR/runtime_config.json` win over the environment for `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`. **Important ordering consequence:** the `llm_service` singleton is a lazy proxy (`_LazyLLMService` in `services/llm.py`) that constructs `LLMService` on first attribute access. Nothing in startup touches it, so the provider read by `LLMService.__init__` is the post-override value. If any import-time code ever forces construction earlier, runtime overrides would be silently ignored for the provider — keep it lazy.
 4. `sync_embedding_infrastructure()` from `services/local_models.py`, wrapped in `try/except Exception` → `logger.warning("Embedding infrastructure sync skipped: ...")`. It reads `MODELS_DIR/models_manifest.json` selection, sets `settings.EMBEDDING_DIMENSIONS`, `settings.EMBEDDING_MODEL`, `settings.MODEL_RERANKER_LOCAL` from the manifest/catalog, and makes every KB's Qdrant collections match the embedding dimension (details in [12](12-local-models-and-inference.md) and [15](15-search-indexes-qdrant-meilisearch.md)). This is the third and last place at boot that mutates `settings` (after `config.py` bottom and `apply_to_settings`).
 5. `start_vault_watchers()` from `services/vault_watcher.py`, also `try/except` → `logger.warning("Vault watcher not started: ...")`. Starts a daemon thread with a watchdog observer per KB vault; it marks notes stale on external `.md` edits, never auto-ingests ([09](09-notes-wikilinks-and-vault-files.md)).
 
@@ -214,7 +213,7 @@ No Qdrant/Meili/Kuzu connectivity check happens at startup; those clients are cr
 | Context | Command | cwd | Notes |
 |---|---|---|---|
 | Desktop runtime | `python -m app.desktop_runtime` → `uvicorn.run("app.main:app", host="127.0.0.1", port=17401)` in-process | `backend/` (or bundled backend dir) | env set by the shell and `desktop_runtime.py` (see [21](21-configuration-reference.md) §"Layers"); stdout/stderr → `DATA_DIR/logs/backend.log` |
-| Bare dev | `cd backend && uvicorn app.main:app --reload --port 17401` (any port) | `backend/` | `.env` at `backend/.env` is picked up by pydantic-settings; without `paths.json`/env, data goes to `<repo>/data`, models to `backend/models` |
+| Bare dev | `cd backend && uvicorn app.main:app --reload --port 17401` (any port) | `backend/` | settings come from the process environment only; without `paths.json`/env, data goes to `<repo>/data`, models to `backend/models` |
 
 `PYTHONPATH` must resolve the `app` package from `backend/`; the shell runs the runtime with `backend/` (or the bundled backend dir) as cwd, `.pylintrc` does the equivalent with `init-hook='import sys; sys.path.insert(0, ".")'`.
 
@@ -224,19 +223,17 @@ No Qdrant/Meili/Kuzu connectivity check happens at startup; those clients are cr
 
 ```python
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=str(BACKEND_DIR / ".env"),
-                                      env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(extra="ignore")
 ```
 
 - `BACKEND_DIR = Path(__file__).resolve().parents[2]` → `backend/`; `REPO_ROOT = BACKEND_DIR.parent`.
-- `env_file` is an **absolute** path to `backend/.env`, so the file is found regardless of the process cwd (desktop runtime, tests).
-- `extra="ignore"`: unknown env vars and unknown `.env` keys are silently dropped. This is why `STORAGE_BACKEND`, `FILES_URL`, `VIDEO_MAX_PIXELS`, `FPS*`, `ORB_*` etc. can appear in the runtime env / `.env.example` without being `Settings` fields — they are read elsewhere (or nowhere).
-- pydantic-settings precedence (highest first): explicit constructor kwargs (unused) → **process environment** → `.env` file → field defaults. Env var names are matched case-insensitively to field names; there is no `env_prefix`, so `LLM_PROVIDER` (not `ORB_LLM_PROVIDER`) is the variable name. The `ORB_*` names are handled only by `paths.py` and `local_models.py`, not by `Settings`.
+- `extra="ignore"`: unknown env vars are silently dropped. This is why `ORB_*` etc. can appear in the runtime env without being `Settings` fields — they are read elsewhere.
+- pydantic-settings precedence (highest first): explicit constructor kwargs (unused) → **process environment** → field defaults. There is no `.env` file: every user-facing value is set in the app (Settings, Models page, keychain) and the desktop runtime passes the rest as environment variables. Env var names are matched case-insensitively to field names; there is no `env_prefix`, so `LLM_PROVIDER` (not `ORB_LLM_PROVIDER`) is the variable name. The `ORB_*` names are handled only by `paths.py` and `local_models.py`, not by `Settings`.
 - `settings = Settings()` is created at import; it is a plain mutable object. Many places assign to it (`settings.X = ...`) at runtime — see §5.4.
 
 ### 5.2 Defaults that are computed before the class body runs
 
-`_default_data_dir()` and `_default_models_dir()` call `paths.resolve_data_dir()` / `resolve_models_dir()` (env `ORB_DATA_DIR`/`DATA_DIR` > `paths.json` > `<repo>/data`; env `ORB_MODELS_DIR`/`MODELS_DIR` > `paths.json` > `backend/models`). Any exception falls back to `<repo>/data` / `backend/models`. Because these are evaluated as class-attribute defaults, the *field default* for `DATA_DIR` already includes `paths.json`; then pydantic still lets a plain `DATA_DIR` env var or `.env` entry override it (which is consistent, since `resolve_data_dir` also honours `DATA_DIR`).
+`_default_data_dir()` and `_default_models_dir()` call `paths.resolve_data_dir()` / `resolve_models_dir()` (env `ORB_DATA_DIR`/`DATA_DIR` > `paths.json` > `<repo>/data`; env `ORB_MODELS_DIR`/`MODELS_DIR` > `paths.json` > `backend/models`). Any exception falls back to `<repo>/data` / `backend/models`. Because these are evaluated as class-attribute defaults, the *field default* for `DATA_DIR` already includes `paths.json`; then pydantic still lets a plain `DATA_DIR` env var override it (which is consistent, since `resolve_data_dir` also honours `DATA_DIR`).
 
 ### 5.3 Fields, grouped (type / default / consumer)
 
@@ -256,7 +253,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `DATA_DIR` | str | `_default_data_dir()` | `log.resolve_logs_dir`, the `KUZU_DB_PATH` property; everything else goes through `paths.resolve_data_dir()` |
 | `MODELS_DIR` | str | `_default_models_dir()` | `config.py` bottom (copied to `MODELS_PATH`), `paths.sync_settings_paths` |
 | `MODELS_PATH` | str | `"models"` then **overwritten** with `MODELS_DIR` | not read by name anywhere else (legacy; kept in sync) |
-| `KUZU_DB_PATH` | read-only `@property` | `<DATA_DIR>/kuzu/kuzu_graph` — not a field, so env/`.env` cannot set it | `kb_registry` (default KB), `graph.GraphService` default |
+| `KUZU_DB_PATH` | read-only `@property` | `<DATA_DIR>/kuzu/kuzu_graph` — not a field, so env cannot set it | `kb_registry` (default KB), `graph.GraphService` default |
 
 **LLM — chat axis**
 
@@ -268,7 +265,6 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `LLM_MODEL` | str | `"local-chat"` | `llm.get_chat_model` (local provider / fallback), `local_models` (model id label; `ensure_chat_and_embed_models` sets it to the selected chat id), `api/settings.py` fallback |
 | `CHAT_MODEL` | str \| None | `None` | `llm.get_chat_model` (wins over everything), `api/settings.py`, `runtime_config` |
 | `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL` | str \| None | `None` | `llm.py` per-provider fallback + `init_clients` log lines; `multimedia.py` cloud image captions (`OPENAI_MODEL or "gpt-4o-mini"`, `GEMINI_MODEL or "gemini-2.0-flash"`) |
-| `OPENAI_API_KEY`, `GEMINI_API_KEY`, `ANTHROPIC_API_KEY`, `HUGGINGFACE_API_KEY` | str \| None | `None` | **Seed only.** Read once by `services/credentials.CredentialStore._seed_from_env_unlocked` for contributors running outside the desktop shell. Runtime reads go through `credentials.get()` — see [13 §Credentials](13-llm-providers-and-prompting.md). |
 
 **LLM — ingestion axis**
 
@@ -291,9 +287,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 
 | Field | Type | Default | Effect |
 |---|---|---|---|
-| `VECTOR_SIMILARITY_THRESHOLD` | float | `0.50` | Qdrant score cut-off when the reranker is **disabled** |
 | `VECTOR_PRE_RERANK_THRESHOLD` | float | `0.45` | Qdrant score cut-off when the reranker is **enabled** (looser; reranker prunes) |
-| `RERANKER_ENABLED` | bool | `True` | Use GGUF cross-encoder (`local_gguf_reranker`) vs keyword-overlap heuristic; also gates graph-neighbour reranking |
 | `RERANKER_TOP_K` | int | `10` | `top_n` passed to the reranker (final and graph-expansion passes) |
 | `RERANKER_SCORE_THRESHOLD` | float | `0.05` | Drop reranked candidates below this |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int | `10` | Cap on relationship entries kept per expansion; reranking of neighbours only if more than this many |
@@ -305,11 +299,9 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 
 | Field | Type | Default | Consumer |
 |---|---|---|---|
-| `COMMUNITY_DETECTION_ENABLED` | bool | `False` | `workflows/ingestion.py` (post-ingest community pass), `ingestion_tracker` (idle-timer auto-recompute) |
-| `TEMPORAL_DIGESTS_ENABLED` | bool | `False` | `workflows/ingestion.py` (debounced rebuild after ingest; `build_temporal_digests` no-ops when false) |
 | `TEMPORAL_DIGEST_PERIOD` | str | `"month"` | default period for digest builds (`admin.py`, `ingestion.py`) |
 
-Note `.env.example` sets both switches to `true` and describes `true` as if it were the default; the code default is `False`.
+Community detection and temporal digests always run after ingestion (idle-triggered) and on demand from the admin endpoints; there are no feature switches.
 
 **Qdrant**
 
@@ -442,7 +434,7 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 
 ## 7. `backend/app/core/runtime_config.py`
 
-Persistent, user-mutable overrides for the provider settings, kept out of `.env` so the UI can change them. API keys are deliberately never stored here.
+Persistent, user-mutable overrides for the provider settings, so the UI can change them. API keys are deliberately never stored here.
 
 - `MUTABLE_KEYS = frozenset({"provider", "model", "ingestion_model", "base_url"})`.
 - `_data_path()` → `resolve_data_dir() / "runtime_config.json"`, falling back to `<repo>/data/runtime_config.json` if `paths` import fails.
@@ -694,7 +686,7 @@ Algorithm:
 
 What it never does: accept API keys (those go to `PUT /api/v1/credentials`, which stores them in the OS keychain — see [13](13-llm-providers-and-prompting.md)), validate the provider string, or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
 
-What needs a restart regardless: anything captured at import (`DATA_DIR`-derived engine URL, semaphores), `EMBEDDING_DIMENSIONS` changes that require Qdrant collection recreation (handled by `sync_embedding_infrastructure`, not by this endpoint), and `.env` edits (pydantic-settings reads the file once).
+What needs a restart regardless: anything captured at import (`DATA_DIR`-derived engine URL, semaphores), `EMBEDDING_DIMENSIONS` changes that require Qdrant collection recreation (handled by `sync_embedding_infrastructure`, not by this endpoint), and environment changes (read once at import).
 
 ## 14. AI gate (`backend/app/services/ai_gate.py`)
 
@@ -793,7 +785,6 @@ Replaces the former RustFS/S3 object store. Attachments live only under `<vault_
 | Situation | Behaviour |
 |---|---|
 | `paths.json` unreadable / invalid JSON | `load_paths_file` caches `{}`; data dir falls back to `<repo>/data` (bare) — in the desktop the env vars still point at the right place, so only the `default_vault_path` is lost. |
-| `.env` missing | Fine; pydantic-settings ignores a missing `env_file`. |
 | `runtime_config.json` corrupt | Warning in `api.log`, overrides ignored; next `PATCH /settings` overwrites it. |
 | `sync_embedding_infrastructure` raises (Qdrant down, manifest missing) | Warning `"Embedding infrastructure sync skipped"`; startup continues; embedding dims stay at the `Settings` default (`1024`) until the next successful sync. |
 | `start_vault_watchers` raises (watchdog missing, vault path unreadable) | Warning `"Vault watcher not started"`; external edits are not detected until restart. |
@@ -803,12 +794,11 @@ Replaces the former RustFS/S3 object store. Attachments live only under `<vault_
 | SQLite `database is locked` during status polling | `GET /notes/{id}/status` returns 503 with retry hint; other routes surface a 500. |
 | `PATCH /settings` with unsupported provider | Persisted and applied; `init_clients()` raises `ValueError("Unsupported LLM provider")` → 500, and the bad value remains in `runtime_config.json` until patched again. |
 | `X-Request-Id` supplied by client | Echoed verbatim (no length/charset validation). |
-| `EMBEDDING_PROVIDER=openai` (as `.env.example` suggests) | `EmbeddingService.__init__` raises `ValueError("Unsupported EMBEDDING_PROVIDER … Orb uses in-process GGUF embeddings only")` on first embed. |
+| `EMBEDDING_PROVIDER=openai` | `EmbeddingService.__init__` raises `ValueError("Unsupported EMBEDDING_PROVIDER … Orb uses in-process GGUF embeddings only")` on first embed. |
 
 ## 20. Gotchas (things an assistant would get wrong)
 
-- `settings.MODELS_PATH` from the environment is **overwritten** at the bottom of `config.py`; setting it in `.env` does nothing. `KUZU_DB_PATH` is a property and not a setting at all.
-- `.env.example` documents `EMBEDDING_PROVIDER=openai`, `COMMUNITY_DETECTION_ENABLED=true` "defaults", `VIDEO_MAX_PIXELS`/`FPS*`, `MODELS_PATH=models` — several of these are unused or overridden by code (see §5.3 "unused" markers and [21](21-configuration-reference.md)).
+- `settings.MODELS_PATH` from the environment is **overwritten** at the bottom of `config.py`. `KUZU_DB_PATH` is a property and not a setting at all.
 - `IMAGE_DESCRIBE_MAX_PIXELS=0` does **not** disable the cap (`or 1_500_000`).
 - `ai_is_configured()` returns `True` for `cloud`/`hybrid` even with no key because `LLM_BASE_URL` has a non-empty default.
 - `GET /api/v1/settings` forces construction of `LLMService` (and accel detection); calling it in a tight loop is cheap after the first call but the first call can take a moment and logs "Primary LLM Provider: …".
@@ -824,7 +814,7 @@ Replaces the former RustFS/S3 object store. Attachments live only under `<vault_
 
 | Task | Touch |
 |---|---|
-| Add a new env-configurable knob | `Settings` field in `core/config.py` (+ `.env.example` line) → read `settings.X` where needed → document in [21](21-configuration-reference.md). If it must be user-mutable at runtime, add it to `runtime_config.MUTABLE_KEYS`, `apply_to_settings`, and `api/settings.LLMSettings`/`update_runtime_settings`. |
+| Add a new env-configurable knob | `Settings` field in `core/config.py` → read `settings.X` where needed → document in [21](21-configuration-reference.md). If it must be user-mutable at runtime, add it to `runtime_config.MUTABLE_KEYS`, `apply_to_settings`, and `api/settings.LLMSettings`/`update_runtime_settings`. |
 | Add a new SQLite table | ORM class under `models/`, import it in `models/__init__.py` **and** in `database.init_db` (the import list there is what populates `Base.metadata`). |
 | Add a column to an existing table | ORM column + an `ALTER TABLE … IF NOT EXISTS`-style step (`init_db` for ORM tables; `kb_registry._ensure_optional_columns` for `knowledge_bases`). |
 | Add a router | New module under `api/`, include it in `register_all_routers` **after** the desktop router; use `Depends(get_kb)` and filter by `kb.kb_id`. |
@@ -843,5 +833,5 @@ Replaces the former RustFS/S3 object store. Attachments live only under `<vault_
 - `72413b9` — note title ↔ vault filename sync; `b35d612` — wikilink autocomplete; `8de5cda`/`e14dc67` (0.2.0) — ingestion/retrieval batching.
 - `b4d14cd` / `34b00b3` / `019fd13` (2026-09) — per-KB LLM overrides (`knowledge_bases.llm_*`, `KBContext.llm`, `require_ai(kb)`), chunked extraction (`workflows/extraction_chunking.py`, `ORB_EXTRACTION_CHUNK_TOKENS`), no-default `ORB_LLAMA_MAX_TOKENS`, `ModelLoadClock`, and the finance-chat `time` import fix.
 - `2c122cd` (2026-09) — bring-your-own local GGUFs: `services/gguf_metadata.py` + `services/model_discovery.py`; the curated catalog stops gating selection.
-- `1c4c69d` (2026-09) — cloud API keys moved out of `.env` into the OS keychain: `services/credentials.py`, `api/credentials.py` (the shell-side store that existed then is gone; the backend now talks to the keychain directly via `keyring`).
+- `1c4c69d` (2026-09) — cloud API keys moved into the OS keychain: `services/credentials.py`, `api/credentials.py` (the shell-side store that existed then is gone; the backend now talks to the keychain directly via `keyring`).
 - Working tree — `openai_compat` provider: any OpenAI-compatible URL + key + model name, with the endpoint URL as the credential identity (`knowledge_bases.llm_base_url`).

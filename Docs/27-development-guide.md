@@ -35,7 +35,6 @@ pip install -r requirements.txt -r requirements-dev.txt   # -dev = pytest, pytes
 # Metal build of llama-cpp-python on Apple Silicon:
 CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
 # (multimodal deps in requirements-multimodal.txt are installed on demand by Setup)
-cp .env.example .env                  # optional: cloud API keys, overrides
 cd ..
 
 # Frontend
@@ -45,7 +44,7 @@ cd frontend && npm install && cd ..
 cargo install tauri-cli --version "^2" --locked
 ```
 
-`backend/.env.example` is the annotated reference for every setting; for a pure-local desktop run you can leave `.env` empty. Cloud API keys are **not** set there any more — enter them in Settings → Cloud API keys (the backend stores them in the OS keychain via `keyring`). Values in `.env` still seed the credential store when you run the backend outside the desktop shell.
+There is no `.env`: [21](21-configuration-reference.md) lists every setting and its env var name for a bare-uvicorn run; a pure-local run needs none of them. Cloud API keys are entered in Settings → Cloud API keys (the backend stores them in the OS keychain via `keyring`).
 
 ---
 
@@ -146,7 +145,7 @@ Because the bootstrap file is shared, a dev session can silently pick up your re
 - **Every KB-scoped route** declares `kb: KBContext = Depends(get_kb)` and uses `kb.graph`, `kb.qdrant`, `kb.meili`, `kb.retrieval_service`, `kb.ingestion_workflow`, `kb.chat_workflow`. Never import a global graph/qdrant instance for user data.
 - **Blocking I/O off the event loop**: wrap Kuzu, filesystem and llama.cpp calls in `asyncio.to_thread` (see `api/notes.py`, `workflows/ingestion.py`).
 - **Loggers**: `logger = get_logger("<Component>")` with a name present in `core/log.py::COMPONENT_LOG_FILES`; otherwise lines land in the default file. Use `extra={...}` for structured fields.
-- **Settings**: add new knobs to `core/config.py::Settings` with a default, document them in `.env.example`, and list them in [21](21-configuration-reference.md). Read `settings.X`, not `os.environ`, except for the `ORB_LLAMA_*`-style runtime knobs that are deliberately env-only.
+- **Settings**: add new knobs to `core/config.py::Settings` with a default and list them in [21](21-configuration-reference.md). Read `settings.X`, not `os.environ`, except for the `ORB_LLAMA_*`-style runtime knobs that are deliberately env-only.
 - **Runtime-mutable settings** go through `core/runtime_config.py::MUTABLE_KEYS`; never persist secrets there.
 - **LLM output** is untrusted: parse through the Pydantic schemas in `schemas/extraction.py` (alias-tolerant validators) and the JSON-cleaning helpers in `services/llm.py`.
 - **Style**: pylint config in `backend/.pylintrc`; long modules carry `# pylint: disable=too-many-lines`. Imports are absolute (`from app.services...`). Type hints everywhere; `from __future__ import annotations` in new modules.
@@ -185,7 +184,7 @@ Recent history uses one-line imperative subjects with a long explanatory body fo
 
 ### Add a configuration knob
 
-`core/config.py` → `.env.example` → (if the desktop needs a default) the `setdefault` block in `desktop_runtime.main()` → [21](21-configuration-reference.md). If it must be changeable at runtime, add it to `runtime_config.MUTABLE_KEYS`, `apply_to_settings` and the settings API.
+`core/config.py` → (if the desktop needs a default) the `setdefault` block in `desktop_runtime.main()` → [21](21-configuration-reference.md). If it must be changeable at runtime, add it to `runtime_config.MUTABLE_KEYS`, `apply_to_settings` and the settings API.
 
 ### Add a local model to the catalogue
 
@@ -195,7 +194,7 @@ Add a `ModelOption` in `services/model_catalog.py` (id, role, family, HF repo/fi
 
 First ask whether you need one: **`openai_compat` already covers every OpenAI-shaped API** (OpenRouter, Groq, Together, vLLM, LM Studio, llama-server, Ollama) — the user supplies a URL, a key and a model name, with no code change. A new provider is only warranted for a genuinely different wire protocol (as with Gemini and Anthropic).
 
-If it is: `services/llm.py` (client construction in `_build_clients`, a `_chat` branch if the SDK is not OpenAI-shaped, model resolution), `services/credentials.py::CLOUD_PROVIDERS` (+ `_ENV_SETTING` for the contributor seed), `core/config.py` (model field), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
+If it is: `services/llm.py` (client construction in `_build_clients`, a `_chat` branch if the SDK is not OpenAI-shaped, model resolution), `services/credentials.py::CLOUD_PROVIDERS`, `core/config.py` (model field), `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
 
 ### Change the graph schema
 

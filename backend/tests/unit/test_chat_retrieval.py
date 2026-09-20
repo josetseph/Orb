@@ -1,4 +1,4 @@
-"""Reranker-off ranking keeps hybrid order; expansion notes stay citable; runtime errors surface."""
+"""The reranker is mandatory and its failure surfaces; expansion notes stay citable; runtime errors surface."""
 
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -26,19 +26,19 @@ def _rank(svc, cands, rerank_result):
         return asyncio.run(svc._apply_reranker_logging("q", cands, top_n=2, score_threshold=0.05))
 
 
-class TestRerankerFallback:
-    def test_disabled_keeps_hybrid_order_and_skips_threshold(self, svc, monkeypatch):
-        monkeypatch.setattr(settings, "RERANKER_ENABLED", False)
-        got = _rank(svc, [_cand("a"), _cand("b"), _cand("c")], None)
-        assert [c["text"] for c in got] == ["a", "b"]
+class TestRerankerMandatory:
+    def test_no_scores_raises(self, svc):
+        with pytest.raises(RuntimeError, match="no scores"):
+            _rank(svc, [_cand("a"), _cand("b")], [])
 
-    def test_missing_reranker_keeps_hybrid_order_and_skips_threshold(self, svc, monkeypatch):
-        monkeypatch.setattr(settings, "RERANKER_ENABLED", True)
-        got = _rank(svc, [_cand("a"), _cand("b"), _cand("c")], [])  # no GGUF → []
-        assert [c["text"] for c in got] == ["a", "b"]
+    def test_missing_gguf_raises_through_service(self, svc, monkeypatch):
+        from app.services import local_models
 
-    def test_model_scores_rank_and_threshold(self, svc, monkeypatch):
-        monkeypatch.setattr(settings, "RERANKER_ENABLED", True)
+        monkeypatch.setattr(local_models, "reranker_gguf_path", lambda: None)
+        with pytest.raises(RuntimeError, match="No reranker GGUF"):
+            asyncio.run(svc._apply_reranker_logging("q", [_cand("a")], top_n=1))
+
+    def test_model_scores_rank_and_threshold(self, svc):
         scores = [{"index": 0, "relevance_score": 0.01}, {"index": 1, "relevance_score": 0.9}, {"index": 2, "relevance_score": 0.5}]
         got = _rank(svc, [_cand("a"), _cand("b"), _cand("c")], scores)
         assert [c["text"] for c in got] == ["b", "c"]

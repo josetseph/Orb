@@ -85,7 +85,7 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 |---|---|---|---|
 | `paths.json` (App Support) | first-run setup page (`save_setup` in `src-tauri/src/commands.rs`, atomic write) / `POST /api/v1/setup/paths` (`save_paths_file`, non-atomic) | first run or Setup page | Yes (loses chosen dirs) — next launch shows the setup page again; data is still on disk but you must re-enter the same `data_dir`/`models_dir` to find it |
 | `DATA_DIR/orb.db` | `core/database.py` (`create_all`), `kb_registry._connect` (DDL), `vault_watcher` engine | first backend start | **No** — loses all note metadata (ids, titles, dates, processing flags), KB registry rows (non-default KBs become unreachable even though their folders remain), wikilink edges, chat history. Vault `.md` files survive; a fresh DB re-adopts them as new notes via `sync_vault_notes` (default KB only) |
-| `DATA_DIR/runtime_config.json` | `core/runtime_config.py` | first Settings save | Yes — falls back to `.env`/defaults (provider/model revert) |
+| `DATA_DIR/runtime_config.json` | `core/runtime_config.py` | first Settings save | Yes — falls back to defaults (provider/model revert) |
 | `DATA_DIR/meili_master_key` | `desktop_runtime.resolve_meili_master_key` | first desktop launch | Yes **only together with `meilisearch/`** — deleting the key alone on an install with existing Meili data reverts to `orb-dev-key`, which will not open indexes created under the random key |
 | `DATA_DIR/kuzu/kuzu_graph[.wal]` | `GraphService` (default KB) | first `.graph` access (any graph/ingest/chat route or admin reset) | Yes (loses the default KB's entity graph) — recreated empty with schema; re-ingest all notes to rebuild. Delete only while the backend is stopped |
 | `DATA_DIR/kuzu/<slug>/` | `kb_registry.create_kb` (dir) / `GraphService` (file) | KB creation / first graph access | Yes (loses that KB's graph) — same caveats; the registry row keeps pointing at it and Kuzu recreates the file |
@@ -208,7 +208,6 @@ When neither env vars nor `paths.json` exist (e.g. `uvicorn app.main:app` in `ba
 | Engine binaries | none in the repo; always `DATA_DIR/bin/<triple>/` | downloaded by `desktop_runtime.ensure_binaries` |
 | Firefly seed | `<repo>/desktop/resources/firefly/` (gitignored `build.py` output) | used by `desktop_runtime._bundled_firefly_root()` when `ORB_RESOURCES_ROOT` is set (packaged, or `ORB_USE_RESOURCES=1` in dev) |
 | Backend logs (legacy) | `backend/logs/` is gitignored but no longer written; logs go to `DATA_DIR/logs` | |
-| `.env` | `<repo>/backend/.env` — ports and provider defaults for contributors; API keys here are only a **seed** for non-desktop runs (end users set keys in Settings). **Never copied into `DATA_DIR`** | `runtime_config.json` intentionally excludes secrets |
 | Cloud API keys | OS keychain (`keyring`, service `Orb`, entries per provider/endpoint plus `__index__`) — never a file under `DATA_DIR` | written by `services/credentials.CredentialStore` via `/api/v1/credentials` |
 
 Because `settings.DATA_DIR` is evaluated at import, importing `app.core.config` (or any service) in a test without `ORB_DATA_DIR` creates `<repo>/data/` and `orb.db` as a side effect.
@@ -246,7 +245,7 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 | `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; raw `sqlite3` in `kb_registry`, no ORM class). The `TYPESENSE_*` env aliases are gone. |
 | Meili master key `orb-dev-key` | used automatically when `meilisearch/` already has data but no `meili_master_key` file exists. |
 | `localStorage` keys `lifeos_current_kb` / `liveos_current_kb` | migrated to `orb_current_kb` on first read. |
-| `DATABASE_BACKEND=postgres` + `DATABASE_*_URL` | removed; SQLite `orb.db` is the only database. `.env.example` still lists them commented out. |
+| `DATABASE_BACKEND=postgres` + `DATABASE_*_URL` | removed; SQLite `orb.db` is the only database. |
 | `credentials.enc` (Electron `safeStorage` file in the App Support folder) | no longer read or written; keys now live in the OS keychain via `keyring`. Delete it by hand if present. |
 | Alembic migrations (`backend/alembic/versions/d4f891a2b5c3_add_kb_id_to_notes.py`) | removed; schema is `create_all` + ad-hoc `ALTER TABLE … ADD COLUMN` (`kb_registry._ensure_optional_columns`: Firefly and LLM override columns) + `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path`. |
 | RustFS / S3 uploads | replaced by `local_storage` → `<vault>/attachments/`; `vault_rel_from_url` still maps any `…/attachments/<name>` URL for old bodies. |

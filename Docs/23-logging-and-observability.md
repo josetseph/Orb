@@ -162,7 +162,7 @@ All paths relative to `DATA_DIR/logs/` (desktop: `~/Library/Application Support/
 |---|---|---|
 | App shows "Orb failed to start … /health was ready" | `backend.log` (tail is in the dialog) | `Traceback`, `ModuleNotFoundError`, `Address already in use`, `Using SQLite database at` (confirms DATA_DIR) |
 | Backend up but every AI call returns 503 `ai_not_configured` | `api.log` | `Runtime config overrides applied`, then check `GET /setup/status` (`local_models_ready`, `ai_configured`) |
-| `GET /settings` or chat 500 with "API_KEY not set" / "Unsupported LLM provider" | `llm.log` | `Primary LLM Provider:`, `Initializing`, `Unsupported`; fix `.env` or `runtime_config.json` |
+| `GET /settings` or chat 500 with "API_KEY not set" / "Unsupported LLM provider" | `llm.log` | `Primary LLM Provider:`, `Initializing`, `Unsupported`; fix the provider/model in Settings |
 | Chat slow on first message | `llm.log` | `[ModelLoad] chat loaded in`, `Loading reranker GGUF (exclusive)`, `Raising chat n_ctx` — model swap costs; consider `ORB_MODEL_IDLE_SECONDS=0` |
 | Chat answer empty / "Local LLM returned empty content" | `llm.log`, `backend.log` | `empty content (0 output tokens)`, `PromptTooLongError`, `RepetitionLoopError`; Metal OOM lines only appear in `backend.log` (llama.cpp stderr) |
 | Extraction truncated / JSON repair loops | `ingestion.log` | `Extraction output truncated`, `chunk i/n`, `extraction_chunks`; tune `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_N_CTX` |

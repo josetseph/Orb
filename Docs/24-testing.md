@@ -47,9 +47,9 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_gguf_metadata.py` | GGUF header parsing against **synthesised** fixtures (`build_gguf` writes spec-conformant bytes), including the guards for corrupt/hostile headers and the `pooling_type` vs `chat_template` role distinction. | 24 tests |
 | `backend/tests/unit/test_model_discovery.py` | Disk scanning: shard grouping, AppleDouble/partial/dotfile filtering, venv + depth pruning, `MODELS_DIR`-relative refs, the metadata cache, `inspect_chat_model`. | 31 tests |
 | `backend/tests/unit/test_byo_model_selection.py` | End-to-end bring-your-own model: `resolve_chat_gguf` for catalog ids / relative refs / absolute paths, loud failure for missing or unusable files, `n_ctx` clamping, KB-API validation, payload listing. | 18 tests |
-| `backend/tests/unit/test_credentials.py` | `CredentialStore` semantics, env seeding and precedence, version bumps, endpoint URL identity, and the invariant that **no status output contains key material**. | 24 tests |
+| `backend/tests/unit/test_credentials.py` | `CredentialStore` semantics, version bumps, endpoint URL identity, and the invariant that **no status output contains key material**. | 24 tests |
 | `backend/tests/unit/test_finance_chat_llm.py` | Finance synthesis routes through the KB's own LLM and runs off the event loop (a concurrent poller must keep ticking). | 6 async tests |
-| `backend/tests/unit/test_credentials.py`, `test_credentials_keyring.py` | `CredentialStore`: endpoint URL normalisation, env seeding, keychain persistence through `keyring` (mocked), session-only fallback when no backend is usable. | — |
+| `backend/tests/unit/test_credentials.py`, `test_credentials_keyring.py` | `CredentialStore`: endpoint URL normalisation, keychain persistence through `keyring` (mocked), session-only fallback when no backend is usable. | — |
 | `backend/.pylintrc` | Backend lint policy. | see §6 |
 | `frontend/eslint.config.mjs`, `frontend/tsconfig.json` | Frontend lint + TS strictness. | see §6 |
 | `Results/…` (branch `orb-testing`) | The Feb–May 2026 benchmark reports and logs (Sub Questions, Looping, Joint, Final Implementation, After Optimizations) — moved off `main` with the harness (`49bfedd`); the `.gitignore` force-track rule for `Results*/` remains. | — |
@@ -90,7 +90,7 @@ In short: the unit tests need the **full** backend environment installed, even t
 
 ### 3.3 Environment and settings
 
-- `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "local"` for every test, so no `.env` is required. Importing `app.core.config` still evaluates `Settings()` once: it reads `backend/.env` **if present** (`env_file` in `model_config`, `extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). If you have a real `.env` in `backend/`, its values leak into the tests except for the keys individual tests monkeypatch.
+- `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "local"` for every test, regardless of the shell environment. Importing `app.core.config` still evaluates `Settings()` once from the process environment (`extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). Exported `Settings` variables in your shell leak into the tests except for the keys individual tests monkeypatch.
 - `test_kb_llm_config.py` has its own autouse fixture that overrides `LLM_PROVIDER` to `"local"` and pins `LLM_MODEL`, `CHAT_MODEL`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL`, `GEMINI_MODEL`, `OPENAI_MODEL` — it runs after `patch_settings` and wins.
 - `normalize_base_url` lives only in `backend/app/services/credentials.py` (the UI sends the raw URL); `test_credentials.py` covers the URL corpus and `test_credentials_keyring.py` the keychain persistence with `keyring` mocked.
 - Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder before running the suite: `app/services/graph.py` opens the configured Kuzu file at import and the running desktop app holds a lock on the real one.
@@ -108,7 +108,7 @@ Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing
 
 | Fixture | Scope | What it does |
 |---|---|---|
-| `patch_settings` | function, **autouse** | `monkeypatch.setattr(config.settings, "LLM_PROVIDER", "local", raising=False)` — removes the need for a `.env`; `test_kb_llm_config.py` overrides it with its own autouse fixture. |
+| `patch_settings` | function, **autouse** | `monkeypatch.setattr(config.settings, "LLM_PROVIDER", "local", raising=False)` — pins the provider; `test_kb_llm_config.py` overrides it with its own autouse fixture. |
 
 The Joint-Approach-era `mock_llm_service` / `mock_graph_service` / `mock_meili_service` / `mock_typesense_service` / `mock_qdrant_service` fixtures and the `make_node` / `make_relationship` helpers stubbed methods that no longer existed and were used by no test; they and the redundant `event_loop_policy` override were deleted on 2026-09-20.
 
@@ -370,7 +370,7 @@ Follow the idioms the passing modules use.
    If the module builds a singleton at import time (like `app.services.graph`), import it under `patch(...)` and pop it from `sys.modules` first (see `_get_graph_service_class`).
 3. **Cut the next layer with `patch.object`** (`_reason_step_sync`, `execute_query`, `resolve_node_id`) rather than mocking HTTP libraries; assert on the *arguments* passed downward (query text, payload dict, filter object) — that is the contract worth pinning.
 4. **Async code**: use `@pytest.mark.asyncio` on `async def` tests (strict mode; no ini file sets `asyncio_mode=auto`). For LLM-driven code, write a small duck-typed stub class (see `_StubLLM`) implementing only the methods the code calls — and update it when the `LLMService` protocol changes.
-5. **Settings and env**: use `monkeypatch.setattr(config.settings, "KEY", value, raising=False)` and `monkeypatch.setenv/delenv`; never write `.env`. `patch_settings` already pins `LLM_PROVIDER="local"`.
+5. **Settings and env**: use `monkeypatch.setattr(config.settings, "KEY", value, raising=False)` and `monkeypatch.setenv/delenv`. `patch_settings` already pins `LLM_PROVIDER="local"`.
 6. **Filesystem**: `tmp_path`, and patch resolver functions (`resolve_models_dir`, `_gguf_looks_complete`) instead of touching `DATA_DIR`.
 7. **Determinism**: no wall-clock, no randomness (see `graph_layout` tests), no sleeps (patch `asyncio.sleep` and assert it was not called, as the chunking test does).
 8. **Run it**: `cd backend && python -m pytest tests/unit/test_<area>.py -q`.

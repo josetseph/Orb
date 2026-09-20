@@ -1799,18 +1799,20 @@ class LocalGgufReranker:
     def loaded(self) -> bool:
         return self._model is not None
 
-    def ensure_loaded(self) -> bool:
+    def ensure_loaded(self) -> None:
+        """Load the selected reranker GGUF; raises when there is none to load."""
         path = reranker_gguf_path()
         if not path:
-            return False
+            raise RuntimeError(
+                "No reranker GGUF installed — download one on the Models page"
+            )
         if self._model is not None and self._path == path:
             self._last_used = time.monotonic()
-            return True
+            return
         try:
             from llama_cpp import Llama  # type: ignore
-        except ImportError:
-            logger.warning("llama-cpp-python missing; cannot load GGUF reranker")
-            return False
+        except ImportError as exc:
+            raise RuntimeError("llama-cpp-python missing; cannot load GGUF reranker") from exc
         accel = detect_llama_backend()
         with self._lock:
             # Exclusive: drop chat/embed + multimodal before loading reranker.
@@ -1845,7 +1847,6 @@ class LocalGgufReranker:
                 self._no_id = None
             self._last_used = time.monotonic()
             local_llama_runtime._ensure_idle_watcher()  # pylint: disable=protected-access
-        return True
 
     def unload(self) -> None:
         with self._lock:
@@ -1927,8 +1928,7 @@ class LocalGgufReranker:
     ) -> list[dict]:
         if not documents:
             return []
-        if not self.ensure_loaded():
-            return []
+        self.ensure_loaded()
         scored = []
         for i, doc in enumerate(documents):
             scored.append(

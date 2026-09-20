@@ -1,7 +1,7 @@
 """Persistent runtime configuration overrides.
 
 Stored under DATA_DIR/runtime_config.json (desktop) with a repo data/ fallback.
-API keys are never stored here — those stay in ``.env``.
+API keys are never stored here — those live in the OS keychain.
 """
 
 from __future__ import annotations

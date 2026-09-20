@@ -564,7 +564,6 @@ Note that only the two exact token strings are looked up; a leading-space varian
 
 | Setting | Default | Use |
 |---|---|---|
-| `RERANKER_ENABLED` | `True` | gate around every `reranker_service.rerank` call |
 | `RERANKER_TOP_K` | `10` | `top_n` for `_apply_reranker_logging` |
 | `RERANKER_SCORE_THRESHOLD` | `0.05` | minimum `rerank_score` to keep a candidate |
 | `MODEL_RERANKER_LOCAL` | `"qwen3-reranker-0.6b"` (overwritten with the catalog id by sync) | log label only |
@@ -742,7 +741,7 @@ These live in `local_models.py` and are covered by `backend/tests/unit/test_loca
 
 ## 14. Configuration and environment variables
 
-Every variable below is read with `os.environ.get("ORB_…")` at call time (the pre-rename `LIVEOS_*` aliases were removed). Settings-object fields (from `.env`) are listed separately.
+Every variable below is read with `os.environ.get("ORB_…")` at call time (the pre-rename `LIVEOS_*` aliases were removed). Settings-object fields are listed separately.
 
 | Variable | Default | Read by | Effect |
 |---|---|---|---|
@@ -767,7 +766,7 @@ Every variable below is read with `os.environ.get("ORB_…")` at call time (the 
 | `HF_TOKEN`, `HF_HUB_*` | — | `huggingface_hub.snapshot_download` (HF snapshots only) | auth / mirrors for Qwen3-ASR / aligner / diarizer / Marlin; GGUF and projector downloads ignore them |
 | `FORCE_QWENVL_VIDEO_READER`, `VIDEO_MAX_PIXELS`, `FPS`, `FPS_MAX_FRAMES`, `FPS_MIN_FRAMES` | `pyav`, `200704`, `2.0`, `240`, `4` (setdefault) | qwen-vl-utils via Marlin | video frame sampling |
 
-Settings fields (`app/core/config.py`, `.env`) touched by this layer:
+Settings fields (`app/core/config.py`) touched by this layer:
 
 | Field | Default | Notes |
 |---|---|---|
@@ -775,7 +774,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 | `EMBEDDING_MODEL` | `local-embed` | overwritten at runtime with the catalog id; drives `is_qwen3` |
 | `EMBEDDING_DIMENSIONS` | `1024` | overwritten by `sync_embedding_infrastructure`; enforced on every Qdrant upsert |
 | `MODEL_RERANKER_LOCAL` | `qwen3-reranker-0.6b` | overwritten with the catalog id; label only |
-| `RERANKER_ENABLED`, `RERANKER_TOP_K`, `RERANKER_SCORE_THRESHOLD` | `True`, `10`, `0.05` | retrieval policy |
+| `RERANKER_TOP_K`, `RERANKER_SCORE_THRESHOLD` | `10`, `0.05` | retrieval policy |
 | `MODEL_ASR_HF/LOCAL` (empty = per-platform default), `ASR_ENGINE` (`auto`), `ASR_LANGUAGE` (`en`), `ASR_SPEAKERS` (`True`), `ASR_DIARIZE_STEP` (`2.0`), `ASR_MAX_SPEAKERS` (`None`), `MODEL_MARLIN_HF/LOCAL` | see §6.2, §12.4 | repo ids, folder names, transcription engine and speaker-label knobs |
 | `IMAGE_DESCRIBE_MAX_PIXELS` | `1500000` | downscale threshold before any image model (local projector or cloud) |
 | `LLM_MODEL` | `local-chat` | placeholder meaning "Setup selection"; set to the chat catalog id after a download |
@@ -837,7 +836,7 @@ Settings fields (`app/core/config.py`, `.env`) touched by this layer:
 ## 18. Gotchas (things an assistant would get wrong)
 
 - **`model` in a chat request is not a no-op for local any more.** It selects a GGUF via `resolve_chat_gguf`. Passing a catalog id that is not downloaded raises.
-- **`ORB_LLAMA_MAX_TOKENS` is unset by default**; `.env.example` still shows `10240`. `desktop_runtime.py` sets no default for it.
+- **`ORB_LLAMA_MAX_TOKENS` is unset by default**; `desktop_runtime.py` sets no default for it (per-call sizing).
 - **`EmbeddingService.is_qwen3` is computed at construction and in `reconfigure()` only.** `sync_embedding_infrastructure` (startup, `save_selection`, `ensure_chat_and_embed_models`) therefore calls `reconfigure()` at its end; any new code path that sets `settings.EMBEDDING_MODEL` must do the same or query-instruction prefixing stays off.
 - `/setup/status` reports *files on disk*; what is resident is `local.runtime` in `GET /api/v1/models` (`LocalLlamaRuntime.status()`).
 - `/setup/start-local-llm` ends with the **reranker** resident, not chat.

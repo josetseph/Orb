@@ -66,11 +66,10 @@ flowchart LR
   W[First-run setup page<br/>desktop/shell/index.html] -->|save_setup command| PJ[paths.json<br/>App Support/Orb/paths.json]
   PJ --> SUP[desktop_runtime.py / app.core.paths]
   SUP -->|env: ORB_DATA_DIR, ORB_MODELS_DIR, ORB_PATHS_FILE,<br/>QDRANT_*, MEILI_*, FIREFLY_*, ORB_LLAMA_*| API[backend Settings]
-  ENV[.env in backend/] --> API
   RC[DATA_DIR/runtime_config.json<br/>provider/model/ingestion_model/base_url] -->|startup + PATCH /settings| API
 ```
 
-Precedence for paths: environment variable (`ORB_DATA_DIR` / `DATA_DIR`) → `paths.json` → repo fallback (`<repo>/data`, `backend/models`). `paths.json` is deliberately tiny (`data_dir`, `models_dir`, optional `default_vault_path`) and is written atomically. `runtime_config.json` only ever holds the four mutable keys in `runtime_config.MUTABLE_KEYS`; API keys stay in `.env`. Full tables: [21-configuration-reference.md](21-configuration-reference.md).
+Precedence for paths: environment variable (`ORB_DATA_DIR` / `DATA_DIR`) → `paths.json` → repo fallback (`<repo>/data`, `backend/models`). `paths.json` is deliberately tiny (`data_dir`, `models_dir`, optional `default_vault_path`) and is written atomically. `runtime_config.json` only ever holds the four mutable keys in `runtime_config.MUTABLE_KEYS`; API keys live in the OS keychain. Full tables: [21-configuration-reference.md](21-configuration-reference.md).
 
 ---
 
@@ -236,7 +235,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 7. **Enrichment blocks are idempotent.** Ingestion strips previous enrichment blocks before appending new ones so transcripts are not duplicated on re-ingest.
 8. **Finance requests are scoped to the KB's Firefly administration.** No list endpoint may return rows from another administration.
 9. **Trace IDs.** Every request gets `X-Request-Id` (incoming or generated) via a ContextVar; log lines from the same request can be correlated.
-10. **Community detection is idle-triggered and optional.** New ingestions pre-empt a running recompute; do not call it synchronously from a request. It is disabled unless `COMMUNITY_DETECTION_ENABLED=true`.
+10. **Community detection is idle-triggered and optional.** New ingestions pre-empt a running recompute; do not call it synchronously from a request. It always runs after the ingestion queue drains, and `POST /admin/rebuild-communities` runs it on demand.
 11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`.
 12. **Legacy names are read, never emitted.** The `typesense_collection` column name exists only to read old installs; the `LIVEOS_*` env aliases and the `lifeos_current_kb`/`liveos_current_kb` browser-storage fallbacks were removed.
 
@@ -249,6 +248,6 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 | Packaged desktop (product) | end users | `.dmg` (written by `hdiutil`) / `.exe` / `.AppImage` + `.deb` from `desktop-v*` tags, drafted as a GitHub Release by CI | bundles Python, the Vite build and the Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
 | Dev desktop | contributors | `npm run dev` in `frontend/` + `ORB_URL=http://127.0.0.1:3700 cargo tauri dev` in `desktop/src-tauri/` | repo `backend/.venv` + Vite dev server; same runtime and ports |
 | Packaged-layout test | contributors | `python3 desktop/build.py prepare && ORB_USE_RESOURCES=1 cargo tauri dev` | exercises bundled runtimes without an installer |
-| Bare API | contributors | `uvicorn app.main:app` with `.env` | ports 8000 / 3700 |
+| Bare API | contributors | `uvicorn app.main:app` with env vars | ports 8000 / 3700 |
 
 Details: [05-packaging-build-and-release.md](05-packaging-build-and-release.md), [27-development-guide.md](27-development-guide.md).

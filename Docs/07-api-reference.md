@@ -885,13 +885,13 @@ Runs `rebuild_kb_note_links` and returns `{"notes": N, "links": M}`.
 
 #### POST /api/v1/admin/rebuild-communities
 
-No body. `BackgroundTasks.add_task(wf.rebuild_leiden_communities)` (sync function → threadpool after the response). Always allowed regardless of `COMMUNITY_DETECTION_ENABLED` (that flag only gates the automatic post-ingestion trigger). A new request while a run is active signals the active run to cancel and takes over. Response `{"status": "started", "message": "Leiden community recompute triggered. Check server logs for progress."}`. Progress: `maintenance-status`.
+No body. `BackgroundTasks.add_task(wf.rebuild_leiden_communities)` (sync function → threadpool after the response). A new request while a run is active signals the active run to cancel and takes over. Response `{"status": "started", "message": "Leiden community recompute triggered. Check server logs for progress."}`. Progress: `maintenance-status`.
 
 #### POST /api/v1/admin/build-temporal-digests
 
 Body optional (`TemporalDigestInput`): `period: "month" | "week" | "year" | null` (default `settings.TEMPORAL_DIGEST_PERIOD`, `"month"`). Queues `wf.build_temporal_digests(period)`. Response `{"status": "started", "message": "Temporal digest build triggered (period=month). …"}`.
 
-**409** with a clear `detail` when the job would be a no-op: `settings.TEMPORAL_DIGESTS_ENABLED` is `False` (the default — `IngestionWorkflow.build_temporal_digests` returns `0` immediately; the flag gates the manual run too, unlike `rebuild-communities`) or an ingestion is active for this KB (`ingestion_tracker.has_active_ingestions`). The route never answers `"started"` for a run that will do nothing.
+**409** with a clear `detail` when an ingestion is active for this KB (`ingestion_tracker.has_active_ingestions`) — `IngestionWorkflow.build_temporal_digests` would return `0` immediately, so the route never answers `"started"` for a run that will do nothing.
 
 #### POST /api/v1/admin/reset-ingestion-data
 
@@ -1099,7 +1099,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 6. `POST /api/v1/ingest` ignores `title` for the row/filename; the note is created as `Untitled.md`.
 7. `_chat_status` keeps full results in memory until `_prune()` evicts them (more than 200 entries, or older than 1800 s) — a finished job's result can disappear from `chat/status` after 30 minutes.
 8. `maintenance-status.ingestion` and community timer fields are process-wide, not per KB.
-9. `build-temporal-digests` answers **409** (not `"started"`) when `TEMPORAL_DIGESTS_ENABLED=false` or an ingestion is running; `rebuild-communities` runs regardless of `COMMUNITY_DETECTION_ENABLED`.
+9. `build-temporal-digests` answers **409** (not `"started"`) while an ingestion is running.
 10. Every frontend method that addresses a KB-scoped resource sends `kb`; omission means the default KB on purpose.
 11. `PUT /notes/{id}` with a new title rewrites **every** note body in the KB (reads + conditional writes) — O(vault) per rename.
 12. `POST /vault/move` may return a different `to` than requested (uniquified); clients must use the returned value.
@@ -1205,7 +1205,7 @@ Key material is **write-only** across this API: nothing here ever returns a key.
 
 | Method | Path | Body / query | Notes |
 |---|---|---|---|
-| `GET` | `/api/v1/credentials` | — | `{providers: {name: {configured, source}}, known: [...], endpoints: [url, ...]}`. `source` is `"keychain"` (persisted by the backend via `keyring`) or `"env"` (seeded from the environment for contributors). |
+| `GET` | `/api/v1/credentials` | — | `{providers: {name: {configured, source}}, known: [...], endpoints: [url, ...]}`. `source` is `"keychain"` for a configured provider (persisted by the backend via `keyring`), else `null`. |
 | `PUT` | `/api/v1/credentials/{provider}` | `{api_key, source?}` | One of `CLOUD_PROVIDERS`; 400 for anything else, 422 for an empty key. Rebuilds LLM clients so the change applies without a restart. |
 | `DELETE` | `/api/v1/credentials/{provider}` | — | Removes the key from the keychain. |
 | `PUT` | `/api/v1/credentials/endpoint` | `{base_url, api_key?}` | OpenAI-compatible endpoint. The **URL is the credential id**, so no name is invented and two servers cannot share a key; `api_key` defaults to `not-needed` for local servers. |

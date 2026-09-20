@@ -27,11 +27,9 @@ def _default_models_dir() -> str:
 
 
 class Settings(BaseSettings):
-    """Pydantic settings that load all configuration from environment variables and .env files."""
+    """Pydantic settings loaded from environment variables (the desktop runtime sets them)."""
 
-    model_config = SettingsConfigDict(
-        env_file=str(BACKEND_DIR / ".env"), env_file_encoding="utf-8", extra="ignore"
-    )
+    model_config = SettingsConfigDict(extra="ignore")
 
     # Vite build to serve at "/" (desktop: the packaged UI). Unset -> ../frontend/dist if built.
     FRONTEND_DIR: str | None = None
@@ -68,12 +66,8 @@ class Settings(BaseSettings):
     EMBEDDING_MODEL: str = "local-embed"
     EMBEDDING_DIMENSIONS: int = 1024
 
-    VECTOR_SIMILARITY_THRESHOLD: float = 0.50
     VECTOR_PRE_RERANK_THRESHOLD: float = 0.45
-    COMMUNITY_DETECTION_ENABLED: bool = False
-    TEMPORAL_DIGESTS_ENABLED: bool = False
     TEMPORAL_DIGEST_PERIOD: str = "month"
-    RERANKER_ENABLED: bool = True
     RERANKER_TOP_K: int = 10
     RERANKER_SCORE_THRESHOLD: float = 0.05
     GRAPH_EXPAND_TOP_NEIGHBORS: int = 10
@@ -131,13 +125,9 @@ class Settings(BaseSettings):
     PDF_VISUAL_RENDER_DPI: int = 144
     PDF_VISUAL_TEXT_THRESHOLD: int = 80
 
-    OPENAI_API_KEY: str | None = None
     OPENAI_MODEL: str | None = None
-    GEMINI_API_KEY: str | None = None
     GEMINI_MODEL: str | None = None
-    ANTHROPIC_API_KEY: str | None = None
     ANTHROPIC_MODEL: str | None = None
-    HUGGINGFACE_API_KEY: str | None = None
     HUGGINGFACE_MODEL: str | None = None
 
     # Contributor Postgres only — leave unset for Orb desktop (SQLite).

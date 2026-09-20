@@ -1,6 +1,6 @@
 # Configuration reference
 
-**What this covers.** Every configuration knob the Orb backend and desktop shell read: pydantic `Settings` fields (env vars / `backend/.env`), the `ORB_*` environment variables read directly via `os.environ`, the two JSON bootstrap files (`paths.json`, `DATA_DIR/runtime_config.json`), the per-KB LLM override columns, the desktop port variables, and the layer that sets each value (first-run setup, desktop runtime, `.env`, runtime config, or hard-coded). It also states the precedence rules and the differences between desktop and bare-uvicorn runs. The narrative explanation of how `Settings` is built lives in [Backend core](06-backend-core-and-configuration.md); this file is the lookup table.
+**What this covers.** Every configuration knob the Orb backend and desktop shell read: pydantic `Settings` fields (env vars), the `ORB_*` environment variables read directly via `os.environ`, the two JSON bootstrap files (`paths.json`, `DATA_DIR/runtime_config.json`), the per-KB LLM override columns, the desktop port variables, and the layer that sets each value (first-run setup, desktop runtime, runtime config, or hard-coded). It also states the precedence rules and the differences between desktop and bare-uvicorn runs. The narrative explanation of how `Settings` is built lives in [Backend core](06-backend-core-and-configuration.md); this file is the lookup table.
 
 **Related docs:** [Backend core and configuration](06-backend-core-and-configuration.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Local models and inference](12-local-models-and-inference.md) · [LLM providers and prompting](13-llm-providers-and-prompting.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Finance / Firefly](17-finance-firefly.md) · [Frontend architecture](18-frontend-architecture.md) · [Data directory layout](22-data-directory-layout.md) · [Logging and observability](23-logging-and-observability.md) · [Development guide](27-development-guide.md)
 
@@ -9,10 +9,10 @@
 | Column | Meaning |
 |---|---|
 | Name | Environment variable / `Settings` field. Legacy aliases in parentheses. |
-| Type / default | Python type as declared, and the code default (not the `.env.example` value when they differ). |
+| Type / default | Python type as declared, and the code default. |
 | Read in | File and function that consumes the value. "`Settings`" means it is a pydantic field on `backend/app/core/config.py::Settings`; "env" means read directly with `os.environ` / `_env_first`. |
 | Effect | What changes. |
-| Set by | Which layer normally provides the value: **setup** (`paths.json` written by the shell's first-run setup page or `POST /api/v1/setup/paths`), **runtime** (`backend/app/desktop_runtime.py` sets it in its own environment before running uvicorn; "shell" where the Tauri shell sets it on the runtime process), **.env** (`backend/.env`), **runtime** (`DATA_DIR/runtime_config.json` via `PATCH /api/v1/settings` / Setup), **manifest** (`MODELS_DIR/models_manifest.json` selection written by Setup), **code** (hard-coded default; not normally overridden). |
+| Set by | Which layer normally provides the value: **setup** (`paths.json` written by the shell's first-run setup page or `POST /api/v1/setup/paths`), **runtime** (`backend/app/desktop_runtime.py` sets it in its own environment before running uvicorn; "shell" where the Tauri shell sets it on the runtime process), **env** (any process environment variable, e.g. a contributor's shell), **runtime** (`DATA_DIR/runtime_config.json` via `PATCH /api/v1/settings` / Setup), **manifest** (`MODELS_DIR/models_manifest.json` selection written by Setup), **code** (hard-coded default; not normally overridden). |
 
 Markers: **unused** = declared but never read in `backend/app`; **overridden** = whatever you set is replaced by code.
 
@@ -20,14 +20,14 @@ Markers: **unused** = declared but never read in `backend/app`; **overridden** =
 
 ### 2.1 For `Settings` fields
 
-pydantic-settings resolves each field as: **process environment** > `backend/.env` (absolute path `BACKEND_DIR / ".env"`, `extra="ignore"`) > **field default** (some defaults are themselves computed from `paths.json`). Then, in this order, code mutates the live object:
+pydantic-settings resolves each field as: **process environment** > **field default** (`extra="ignore"`; there is no `.env` file) (some defaults are themselves computed from `paths.json`). Then, in this order, code mutates the live object:
 
 1. `config.py` bottom: `MODELS_PATH := MODELS_DIR` (always). `KUZU_DB_PATH` is a read-only property, `<DATA_DIR>/kuzu/kuzu_graph`, not a setting.
-2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` from `runtime_config.json` **win over env/.env**.
-3. `main.startup_event`: `local_models.sync_embedding_infrastructure()` — `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` from the models manifest **win over env/.env**.
+2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` from `runtime_config.json` **win over env**.
+3. `main.startup_event`: `local_models.sync_embedding_infrastructure()` — `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` from the models manifest **win over env**.
 4. Later, at user action: `PATCH /api/v1/settings`, `POST /api/v1/setup/paths`, Setup model selection (`ensure_chat_and_embed_models` also sets `LLM_MODEL`).
 
-So for the provider/model axis the effective order is: **per-KB override (row in `knowledge_bases`) > `runtime_config.json` > env > `.env` > default**; for embedding dims/model: **manifest > env > `.env` > default**; for paths: **env > `paths.json` > repo fallback**.
+So for the provider/model axis the effective order is: **per-KB override (row in `knowledge_bases`) > `runtime_config.json` > env > default**; for embedding dims/model: **manifest > env > default**; for paths: **env > `paths.json` > repo fallback**.
 
 ### 2.2 For directly-read env vars
 
@@ -42,11 +42,9 @@ flowchart LR
         S --> U[uvicorn app.main:app :17401, in-process]
         RC[DATA_DIR/runtime_config.json] --> U
         MF[MODELS_DIR/models_manifest.json] --> U
-        ENV[backend/.env - optional, for API keys] --> U
     end
     subgraph bare["bare uvicorn (dev)"]
         SH[shell env] --> D[uvicorn any port]
-        E2[backend/.env] --> D
         PJ[paths.json in App Support, if present] --> D
     end
 ```
@@ -85,41 +83,40 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| (none) | — | `database.py` always uses `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (`paths.sqlite_url()`; `sqlite_url(driver="pysqlite")` gives the vault watcher its sync engine URL) with `NullPool`, `check_same_thread=False`, `PRAGMA foreign_keys=ON` | The `DATABASE_BACKEND` / `DATABASE_*_URL` (Postgres) settings were removed with the Tauri migration; `.env.example` still shows them commented out | code |
+| (none) | — | `database.py` always uses `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (`paths.sqlite_url()`; `sqlite_url(driver="pysqlite")` gives the vault watcher its sync engine URL) with `NullPool`, `check_same_thread=False`, `PRAGMA foreign_keys=ON` | The `DATABASE_BACKEND` / `DATABASE_*_URL` (Postgres) settings were removed with the Tauri migration | code |
 | `STORAGE_BACKEND`, `FILES_URL` | not `Settings` fields | nowhere in backend (`extra="ignore"`) | none; legacy (S3 vs local) | — |
 
 ### 3.3 LLM — chat/retrieval axis
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `LLM_PROVIDER` | str / `"local"` | `Settings`; `llm.LLMService.__init__` (`ollama`/`lm_studio` → `local` + warning), `ai_gate`, `api/settings.py`, `api_desktop.setup_status`, `kb_registry.effective_llm_config` | Primary provider: `local` (in-process GGUF), `openai`, `gemini`, `anthropic`, `huggingface`; other strings → `ValueError("Unsupported LLM provider")` on first use | runtime (`provider`) > supervisor (`process.env.LLM_PROVIDER \|\| "local"`) > .env |
-| `CHAT_MODEL` | str \| None / `None` | `Settings`; `llm.get_chat_model` | Provider-agnostic chat model id; wins over the provider-specific keys | runtime (`model`), .env |
-| `LLM_MODEL` | str / `"local-chat"` | `Settings`; `llm.get_chat_model` (local + final fallback), `local_models` (label; set to the selected catalog id by `ensure_chat_and_embed_models`), `api/settings.py` | Local model id / placeholder; `"local-chat"` resolves to the manifest selection at runtime | manifest, .env |
-| `OPENAI_MODEL` / `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `HUGGINGFACE_MODEL` | str \| None / `None` | `Settings`; `llm.get_chat_model`, `get_ingestion_model`, provider call sites (`_anthropic_*` always use `ANTHROPIC_MODEL`), `multimedia.py` image captions | Per-provider fallback model when `CHAT_MODEL` unset. `HUGGINGFACE_MODEL` is **required** for `huggingface` (`init_clients` raises) | .env |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `HUGGINGFACE_API_KEY` | str \| None / `None` | **Seed only** — read once by `credentials.CredentialStore._seed_from_env_unlocked`. Runtime reads (`llm.py`, `ai_gate`, `multimedia.py`) all go through `credentials.get()` | Cloud credentials for contributors running outside the desktop shell; report `source: "env"`. End users set keys in **Settings → Cloud API keys**, which the shell encrypts to `DATA_DIR/credentials.enc` and pushes to `PUT /api/v1/credentials` (memory-only in the backend) | keychain; .env as fallback |
-| `LLM_BASE_URL` | str / `http://127.0.0.1:8080` | `Settings`; `llm.get_base_url()` (system default endpoint for `openai_compat`), `ai_gate` (cloud heuristics), `api/settings.py`, `runtime_config` | The endpoint used when `LLM_PROVIDER=openai_compat` and no per-KB `llm_base_url` is set. Normalised by `credentials.normalize_base_url`; a malformed value is ignored with a warning rather than crashing | runtime (`base_url`), .env |
-| `LLM_API_KEY` | str / `"local"` | `Settings`; `ai_gate` only | Treated as "real" when not `local`/`lm-studio`/`ollama` | .env |
-| `CHAT_HISTORY_MAX_MESSAGES` | int / `24` | `Settings`; `chat_store.recent_turns` limit, `llm.py` + `retrieval.py` history slicing | Max prior turns loaded/injected | .env |
+| `LLM_PROVIDER` | str / `"local"` | `Settings`; `llm.LLMService.__init__` (`ollama`/`lm_studio` → `local` + warning), `ai_gate`, `api/settings.py`, `api_desktop.setup_status`, `kb_registry.effective_llm_config` | Primary provider: `local` (in-process GGUF), `openai`, `gemini`, `anthropic`, `huggingface`; other strings → `ValueError("Unsupported LLM provider")` on first use | runtime (`provider`) > supervisor (`process.env.LLM_PROVIDER \|\| "local"`) > env |
+| `CHAT_MODEL` | str \| None / `None` | `Settings`; `llm.get_chat_model` | Provider-agnostic chat model id; wins over the provider-specific keys | runtime (`model`), env |
+| `LLM_MODEL` | str / `"local-chat"` | `Settings`; `llm.get_chat_model` (local + final fallback), `local_models` (label; set to the selected catalog id by `ensure_chat_and_embed_models`), `api/settings.py` | Local model id / placeholder; `"local-chat"` resolves to the manifest selection at runtime | manifest, env |
+| `OPENAI_MODEL` / `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `HUGGINGFACE_MODEL` | str \| None / `None` | `Settings`; `llm.get_chat_model`, `get_ingestion_model`, provider call sites (`_anthropic_*` always use `ANTHROPIC_MODEL`), `multimedia.py` image captions | Per-provider fallback model when `CHAT_MODEL` unset. `HUGGINGFACE_MODEL` is **required** for `huggingface` (`init_clients` raises) | env |
+| `LLM_BASE_URL` | str / `http://127.0.0.1:8080` | `Settings`; `llm.get_base_url()` (system default endpoint for `openai_compat`), `ai_gate` (cloud heuristics), `api/settings.py`, `runtime_config` | The endpoint used when `LLM_PROVIDER=openai_compat` and no per-KB `llm_base_url` is set. Normalised by `credentials.normalize_base_url`; a malformed value is ignored with a warning rather than crashing | runtime (`base_url`), env |
+| `LLM_API_KEY` | str / `"local"` | `Settings`; `ai_gate` only | Treated as "real" when not `local`/`lm-studio`/`ollama` | env |
+| `CHAT_HISTORY_MAX_MESSAGES` | int / `24` | `Settings`; `chat_store.recent_turns` limit, `llm.py` + `retrieval.py` history slicing | Max prior turns loaded/injected | env |
 
 ### 3.4 LLM — ingestion axis
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `INGESTION_PROVIDER` | str \| None / `None` | `Settings`; `llm.init_clients` builds the ingestion client set (per-KB `ingestion_provider` ctor arg overrides it) | Blank → ingestion aliases the chat clients; set → separate clients for `local`/`gemini`/`openai`/`anthropic`/`huggingface` (keys required) | .env |
-| `INGESTION_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model`, `api/settings.py`, `kb_registry._system_model_for` | Provider-agnostic ingestion model; wins over fallbacks | runtime (`ingestion_model`), .env |
-| `INGESTION_LLM_MODEL` | str \| None / `"local-chat"` | `Settings`; `llm.get_ingestion_model` (local branch), `kb_registry._system_model_for` (ignored when equal to the placeholder) | Local ingestion model fallback | .env |
-| `INGESTION_GEMINI_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model` (gemini branch) | Gemini ingestion fallback before `GEMINI_MODEL` | .env |
+| `INGESTION_PROVIDER` | str \| None / `None` | `Settings`; `llm.init_clients` builds the ingestion client set (per-KB `ingestion_provider` ctor arg overrides it) | Blank → ingestion aliases the chat clients; set → separate clients for `local`/`gemini`/`openai`/`anthropic`/`huggingface` (keys required) | env |
+| `INGESTION_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model`, `api/settings.py`, `kb_registry._system_model_for` | Provider-agnostic ingestion model; wins over fallbacks | runtime (`ingestion_model`), env |
+| `INGESTION_LLM_MODEL` | str \| None / `"local-chat"` | `Settings`; `llm.get_ingestion_model` (local branch), `kb_registry._system_model_for` (ignored when equal to the placeholder) | Local ingestion model fallback | env |
+| `INGESTION_GEMINI_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model` (gemini branch) | Gemini ingestion fallback before `GEMINI_MODEL` | env |
 | `ORB_EXTRACTION_CHUNK_TOKENS` (working tree) | int / `4000` ceiling | env — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
-| `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | .env |
-| `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | .env |
+| `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | env |
+| `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | env |
 
 ### 3.5 Embeddings axis
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `EMBEDDING_PROVIDER` | str / `"local"` | `Settings`; `embedding.EmbeddingService.__init__` | Accepted: `local`, `auto`, `""` (and deprecated `ollama`/`lm_studio` → local). **Anything else raises** `ValueError` — `openai` in `.env.example` does not work | runtime (`local`), .env |
-| `EMBEDDING_MODEL` | str / `"local-embed"` | `Settings`; `embedding.py` (`is_qwen3` substring check → query instruction), overwritten by `sync_embedding_infrastructure`/`ensure_chat_and_embed_models` | Embedding model id (catalog id from manifest) | manifest > .env |
-| `EMBEDDING_DIMENSIONS` | int / `1024` | `Settings`; `qdrant_service` (vector size for collection create), `local_models` (manifest sync) | Must match the GGUF's output; changed dims trigger Qdrant collection recreation in `sync_embedding_infrastructure` | manifest > .env |
+| `EMBEDDING_PROVIDER` | str / `"local"` | `Settings`; `embedding.EmbeddingService.__init__` | Accepted: `local`, `auto`, `""` (and deprecated `ollama`/`lm_studio` → local). **Anything else raises** `ValueError` | runtime (`local`), env |
+| `EMBEDDING_MODEL` | str / `"local-embed"` | `Settings`; `embedding.py` (`is_qwen3` substring check → query instruction), overwritten by `sync_embedding_infrastructure`/`ensure_chat_and_embed_models` | Embedding model id (catalog id from manifest) | manifest > env |
+| `EMBEDDING_DIMENSIONS` | int / `1024` | `Settings`; `qdrant_service` (vector size for collection create), `local_models` (manifest sync) | Must match the GGUF's output; changed dims trigger Qdrant collection recreation in `sync_embedding_infrastructure` | manifest > env |
 | `ORB_EMBED_GGUF` | str / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | env (import-time constant `local_models.EMBED_MODEL_ID`) | Legacy default GGUF id used when the manifest has no selection (`gguf_paths_if_present` fallback) | rarely |
 | `ORB_EMBED_N_CTX` | int / `8192` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked` | `n_ctx` for the embed GGUF | runtime (`8192`) |
 
@@ -129,7 +126,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 |---|---|---|---|---|
 | `QDRANT_HOST` | str / `127.0.0.1` | `Settings`; `qdrant_service.QdrantService.__init__` (captured per KB context) | `QdrantClient(host=…)` | runtime |
 | `QDRANT_PORT` | int / `6333` | same | HTTP port (desktop `17433`) | runtime (`PORTS["qdrant"]`) |
-| `QDRANT_API_KEY` | str \| None / `None` | same | Only for Qdrant Cloud | .env |
+| `QDRANT_API_KEY` | str \| None / `None` | same | Only for Qdrant Cloud | env |
 | `QDRANT_COLLECTION_NODE_CORES` / `QDRANT_COLLECTION_NODE_RELATIONSHIPS` / `QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS` | str / `node_cores` / `node_relationships` / `node_isolated_contexts` | `Settings`; `qdrant_service` defaults, `kb_registry._ensure_default_row` | Collection names for the **default KB**; other KBs use `<slug>_node_cores` etc. | code |
 | `QDRANT__STORAGE__STORAGE_PATH`, `QDRANT__SERVICE__HTTP_PORT` | Qdrant's own env | Qdrant binary | `DATA_DIR/qdrant`, `17433` | runtime |
 
@@ -173,7 +170,7 @@ All read in `backend/app/services/local_models.py` (and `model_catalog.py` for t
 | `ORB_EMBED_GGUF` | / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | `EMBED_MODEL_ID` | Legacy default embed GGUF | rarely |
 | `ORB_RERANK_GGUF` | / `mradermacher/Qwen3-Reranker-0.6B-GGUF/Qwen3-Reranker-0.6B.Q4_K_M.gguf` | `RERANK_MODEL_ID` → `reranker_gguf_path` fallback | Legacy default reranker GGUF | rarely |
 | `ORB_RAM_GB` | float / detected (`os.sysconf`; ctypes on Windows) | `model_catalog.total_ram_gb` | Fakes installed RAM for catalog filtering (which chat GGUFs Setup offers) | tests / rarely |
-| `MODEL_RERANKER_LOCAL` | str / `qwen3-reranker-0.6b` | `Settings`; `retrieval.py` (labels only), overwritten from manifest | Display name of the reranker in logs/progress | manifest > .env |
+| `MODEL_RERANKER_LOCAL` | str / `qwen3-reranker-0.6b` | `Settings`; `retrieval.py` (labels only), overwritten from manifest | Display name of the reranker in logs/progress | manifest > env |
 
 The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_manifest.json` (`selection.chat_path`, `embed_path`, `reranker_path`, `embedding_dims`, ids), written by Setup — not from env. See [12](12-local-models-and-inference.md).
 
@@ -182,11 +179,11 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
 | `MODEL_ASR_HF` / `MODEL_ASR_LOCAL` | str / `""` / `""` | `Settings`; `multimodal_models._asr_repo_and_dir` | Qwen3-ASR repo and `MODELS_DIR` folder. Empty = `asr_engine` picks per platform: `qwen3-asr-1.7b` (MLX, Apple Silicon) or `qwen3-asr-1.7b-hf` (transformers); an explicit value pins it | code |
-| `ASR_ENGINE` | `auto` \| `mlx` \| `transformers` / `auto` | `Settings`; `multimodal_models`, `multimodal_runtime` | Transcription backend; an explicit engine is never substituted | .env |
-| `ASR_LANGUAGE` | str \| None / `"en"` | `Settings`; `multimodal_runtime` | Language hint; `None` lets the model detect it | .env |
-| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None — `True` / `2.0` / `None` | `Settings`; `multimodal_runtime` | Speaker labels via pyannote community-1 (CPU), its segmentation step, optional speaker cap | .env |
+| `ASR_ENGINE` | `auto` \| `mlx` \| `transformers` / `auto` | `Settings`; `multimodal_models`, `multimodal_runtime` | Transcription backend; an explicit engine is never substituted | env |
+| `ASR_LANGUAGE` | str \| None / `"en"` | `Settings`; `multimodal_runtime` | Language hint; `None` lets the model detect it | env |
+| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None — `True` / `2.0` / `None` | `Settings`; `multimodal_runtime` | Speaker labels via pyannote community-1 (CPU), its segmentation step, optional speaker cap | env |
 | `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `Settings`; `multimodal_models.model_ids("marlin")` | Video understanding model (Qwen3.5-based) | code |
-| `IMAGE_DESCRIBE_MAX_PIXELS` | int / `1500000` | `Settings`; `multimedia.py` via `getattr(..., 0) or 1_500_000` | Downscale images above this many pixels before any model (local vision projector or cloud) sees them. **`0` is not "unlimited"** — it falls back to 1.5 MP | .env |
+| `IMAGE_DESCRIBE_MAX_PIXELS` | int / `1500000` | `Settings`; `multimedia.py` via `getattr(..., 0) or 1_500_000` | Downscale images above this many pixels before any model (local vision projector or cloud) sees them. **`0` is not "unlimited"** — it falls back to 1.5 MP | env |
 | `FORCE_QWENVL_VIDEO_READER` | str / `pyav` | `multimodal_runtime` `os.environ.setdefault` (consumed by `qwen-vl-utils`) | Video decoder backend | code (`setdefault` — env wins if pre-set) |
 | `VIDEO_MAX_PIXELS` | int / `200704` | same `setdefault` (qwen-vl-utils) | Per-frame pixel budget for Marlin | code / env |
 | `FPS` / `FPS_MAX_FRAMES` / `FPS_MIN_FRAMES` | `2.0` / `240` / `4` | same | Frame sampling for Marlin | code / env |
@@ -205,9 +202,7 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 
 | Name | Type / default | Effect |
 |---|---|---|
-| `VECTOR_SIMILARITY_THRESHOLD` | float / `0.50` | Qdrant min score when `RERANKER_ENABLED=false` |
 | `VECTOR_PRE_RERANK_THRESHOLD` | float / `0.45` | Qdrant min score when the reranker is on |
-| `RERANKER_ENABLED` | bool / `True` | GGUF cross-encoder vs keyword-overlap heuristic; also gates neighbour reranking |
 | `RERANKER_TOP_K` | int / `10` | Candidates kept after rerank (both passes) |
 | `RERANKER_SCORE_THRESHOLD` | float / `0.05` | Drop reranked candidates below |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int / `10` | Relationship entries kept per graph expansion |
@@ -218,8 +213,6 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 
 | Name | Type / default | Read in | Effect |
 |---|---|---|---|
-| `COMMUNITY_DETECTION_ENABLED` | bool / **`False`** (`.env.example` says `true`) | `workflows/ingestion.py`, `services/ingestion_tracker.py` | Post-ingest community detection and the idle-timer auto-recompute; `POST /admin/rebuild-communities` still works manually |
-| `TEMPORAL_DIGESTS_ENABLED` | bool / **`False`** | `workflows/ingestion.py` | Debounced digest rebuild after ingest; `build_temporal_digests` no-ops when false |
 | `TEMPORAL_DIGEST_PERIOD` | str / `"month"` (`week`/`year` accepted) | `workflows/ingestion.py`, `api/admin.py` | Default granularity |
 
 ### 3.14 Firefly III
@@ -236,9 +229,9 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `CORS_ORIGINS` | CSV str / `http://localhost:3700,http://localhost:3701,http://127.0.0.1:3700,http://127.0.0.1:3701,http://localhost:17400,http://127.0.0.1:17400` | `main.py` | `allow_origins` list; unused in the desktop app (UI is same-origin) | .env |
-| `CORS_ALLOW_ORIGIN_REGEX` | str \| None / `None` | `main.py` | `allow_origin_regex` | .env |
-| `LOG_LEVEL` | str / `INFO` | `Settings`; `log.setup_logging` (`getattr(logging, X.upper(), INFO)` — invalid names silently become INFO) | Root + component logger level; `errors.log` always ERROR | .env |
+| `CORS_ORIGINS` | CSV str / `http://localhost:3700,http://localhost:3701,http://127.0.0.1:3700,http://127.0.0.1:3701,http://localhost:17400,http://127.0.0.1:17400` | `main.py` | `allow_origins` list; unused in the desktop app (UI is same-origin) | env |
+| `CORS_ALLOW_ORIGIN_REGEX` | str \| None / `None` | `main.py` | `allow_origin_regex` | env |
+| `LOG_LEVEL` | str / `INFO` | `Settings`; `log.setup_logging` (`getattr(logging, X.upper(), INFO)` — invalid names silently become INFO) | Root + component logger level; `errors.log` always ERROR | env |
 
 ### 3.16 Desktop shell and runtime: ports and process env (`desktop/src-tauri/src/runtime.rs`, `backend/app/desktop_runtime.py`)
 
@@ -317,7 +310,7 @@ Stored in `knowledge_bases.llm_provider / llm_model / llm_ingestion_model` (SQLi
 
 ## 5. The three provider axes and model-key fallback chains
 
-`.env.example` and `LLMService` define three independent axes:
+`LLMService` defines three independent axes:
 
 | Axis | Provider key | Model key (generic) | Provider-specific fallbacks |
 |---|---|---|---|
@@ -381,18 +374,15 @@ else {"local": LLM_MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL,
 
 | Key | Status |
 |---|---|
-| `DATABASE_*` (commented out in `.env.example`) | no longer `Settings` fields; SQLite only |
 | `MODELS_PATH` | read but overwritten by code |
 | `LLM_BASE_URL`, `LLM_API_KEY` | only affect `ai_is_configured()`; no HTTP client uses them |
 | `STORAGE_BACKEND`, `FILES_URL` | not `Settings` fields; ignored by the backend |
-| `EMBEDDING_PROVIDER=openai` (from `.env.example` Option C) | raises `ValueError` |
+| `EMBEDDING_PROVIDER=openai` | raises `ValueError` |
 | `IMAGE_DESCRIBE_MAX_PIXELS=0` | not "full resolution"; falls back to 1.5 MP |
-| `COMMUNITY_DETECTION_ENABLED` / `TEMPORAL_DIGESTS_ENABLED` | `.env.example` implies default `true`; code default `False` |
-| `ORB_LLAMA_MAX_TOKENS=10240` comment in `.env.example` | the old shell injected it; `desktop_runtime.py` sets no default (per-call sizing) |
 
 ## 7. Adding a knob (checklist)
 
-1. Decide the layer: import-time constant (needs restart), `Settings` field (env/.env), runtime-mutable (`runtime_config.MUTABLE_KEYS` + `apply_to_settings` + `api/settings.LLMSettings`), per-KB (column in `knowledge_bases` + `kb_registry` DDL/`_ensure_optional_columns` + `KBContext`), or `ORB_*` env read at call time (`os.environ.get("ORB_X")`).
-2. Add the field/env read, a line in `backend/.env.example`, and — for desktop-relevant values — the default in `desktop_runtime.main()` (`os.environ.setdefault` block or the sidecar `os.environ.update`).
+1. Decide the layer: import-time constant (needs restart), `Settings` field (env), runtime-mutable (`runtime_config.MUTABLE_KEYS` + `apply_to_settings` + `api/settings.LLMSettings`), per-KB (column in `knowledge_bases` + `kb_registry` DDL/`_ensure_optional_columns` + `KBContext`), or `ORB_*` env read at call time (`os.environ.get("ORB_X")`).
+2. Add the field/env read and — for desktop-relevant values — the default in `desktop_runtime.main()` (`os.environ.setdefault` block or the sidecar `os.environ.update`).
 3. Read it where used via `settings.X` at call time; if it must be captured at import, note the restart requirement in the docstring.
 4. Update this file and [06](06-backend-core-and-configuration.md) §5.3.

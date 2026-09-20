@@ -429,7 +429,7 @@ The caller (`rebuild_leiden_communities`) then calls `qdrant.delete_node(id)` an
 
 | Trigger | Path | Gate |
 |---|---|---|
-| **Idle after ingestion** | `process_note` `finally:` → `IngestionTrackerService.end_ingestion(self.rebuild_leiden_communities)`; when the active-ingestion counter reaches 0 → `schedule_recompute` → `_debounce_recompute` sleeps `COMMUNITY_IDLE_SECONDS = 120` (module constant in `ingestion_tracker.py`, **not** a setting) then `asyncio.to_thread(callback)` if there are pending node ids **or** `_recompute_needed` | `settings.COMMUNITY_DETECTION_ENABLED` (default **False** in `config.py`; `.env.example` ships `true`) |
+| **Idle after ingestion** | `process_note` `finally:` → `IngestionTrackerService.end_ingestion(self.rebuild_leiden_communities)`; when the active-ingestion counter reaches 0 → `schedule_recompute` → `_debounce_recompute` sleeps `COMMUNITY_IDLE_SECONDS = 120` (module constant in `ingestion_tracker.py`, **not** a setting) then `asyncio.to_thread(callback)` if there are pending node ids **or** `_recompute_needed` | always on |
 | **Admin** | `POST /api/v1/admin/rebuild-communities` → `BackgroundTasks.add_task(kb.get_ingestion_workflow().rebuild_leiden_communities)` | none — works even when the flag is off |
 
 The pending count comes from `_queue_leiden_recompute_if_due(note_id)`: the number of the note's 1-hop `indexable` neighbours is added to the tracker's per-KB `_pending_counts[kb_id]` (`queue_nodes_for_community_recompute(count, kb_id=…)` returns the new queue size). It is only a *trigger and a status number*; the rebuild is always full-graph.
@@ -457,8 +457,8 @@ The pending count comes from `_queue_leiden_recompute_if_due(note_id)`: the numb
 | Qdrant | same method: `upsert_node_core(node_id, name, node_type="temporal_digest", description=summary, description_vector=embed(summary), extra_payload={"period_key": key})` — `period_key` is what retrieval filters on (`search_all_collections(period_key_filter=…)`) |
 | Meilisearch | `index_node(node_id, name, node_type="temporal_digest", isolated_contexts=[summary])` |
 | Clearing | `GraphService.clear_all_temporal_digests()` (`MATCH (d:Node) WHERE d.kind='temporal_digest' RETURN d.id` then `DETACH DELETE`) → caller deletes each id from Qdrant/Meili. Runs **after** bucketing succeeds, so an empty KB does not wipe existing digests. |
-| Triggers | (a) debounced per-workflow `threading.Timer(COMMUNITY_IDLE_SECONDS, self.build_temporal_digests)` restarted by every `_queue_leiden_recompute_if_due` when `TEMPORAL_DIGESTS_ENABLED`; (b) `POST /api/v1/admin/build-temporal-digests` `{period?}`. |
-| Gates | The method itself returns 0 when `settings.TEMPORAL_DIGESTS_ENABLED` is False (default False) — so, contrary to the admin endpoint's docstring ("this manual endpoint is always available"), the endpoint returns `started` but the job no-ops when the flag is off. Also returns 0 (and relies on the timer restarting later) if `_tracker.has_active_ingestions()`. |
+| Triggers | (a) debounced per-workflow `threading.Timer(COMMUNITY_IDLE_SECONDS, self.build_temporal_digests)` restarted by every `_queue_leiden_recompute_if_due`; (b) `POST /api/v1/admin/build-temporal-digests` `{period?}`. |
+| Gates | Returns 0 (and relies on the timer restarting later) if `_tracker.has_active_ingestions()`; the admin endpoint answers 409 in that case. |
 | Cancellation | `_tracker.cancel_temporal` checked between buckets; on cancel, reschedules itself via a fresh timer if no ingestion is active. |
 | Status | `get_maintenance_status()["temporal_digests"]["running"]` (`_temporal_digest_running` flag; not reset on unexpected exceptions — a crash mid-run leaves it `True` until the next successful run). |
 | Visibility | Not part of `get_full_3d_graph` (filters `kind IN ['indexable','note','community']`), not returned by `get_node_detail`. Only retrieval sees them (via Qdrant cores / Meili). |
@@ -602,8 +602,8 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 | Method & path | Body | Response | Side effects |
 |---|---|---|---|
 | `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running", "pending_nodes", "needed", "timer_armed", "idle_seconds"}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}` | none; combines the per-KB workflow flags with the tracker's snapshot for that KB (`get_status_snapshot(kb_id)`) |
-| `POST /api/v1/admin/rebuild-communities` | — | `{"status":"started","message":…}` | `BackgroundTasks` → `rebuild_leiden_communities()` for the KB; ignores `COMMUNITY_DETECTION_ENABLED` |
-| `POST /api/v1/admin/build-temporal-digests` | `{"period": "month"|"week"|"year"|null}` | `{"status":"started","message":"… (period=…)"}` | `BackgroundTasks` → `build_temporal_digests(period)`; **no-ops if `TEMPORAL_DIGESTS_ENABLED` is False** |
+| `POST /api/v1/admin/rebuild-communities` | — | `{"status":"started","message":…}` | `BackgroundTasks` → `rebuild_leiden_communities()` for the KB |
+| `POST /api/v1/admin/build-temporal-digests` | `{"period": "month"|"week"|"year"|null}` | `{"status":"started","message":"… (period=…)"}` | `BackgroundTasks` → `build_temporal_digests(period)`; 409 while an ingestion is active |
 | `POST /api/v1/admin/reset-ingestion-data` | — | `{"status":"started",…}` | Synchronously `UPDATE notes SET processed=false, failed=false WHERE kb_id=…` and commit; then in background `kb.graph.wipe_all_nodes()`, `kb.qdrant.reset_all()`, `kb.meili.reset_all()`. Tables/collections/indexes are recreated empty; Kuzu tables are **not** dropped (schema stays). |
 | `POST /api/v1/admin/reingest-all` | — | `{"status":"queued","notes_queued":n,…}` | `require_ai()`; for every note in the KB with `processed=false OR failed=true`, `BackgroundTasks.add_task(wf.process_note, NoteInput(content=note_body, created_at, title), note.id)` |
 
@@ -612,9 +612,7 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 | Key | Where | Default | Effect on the graph subsystem |
 |---|---|---|---|
 | `DATA_DIR` | `Settings` (from `paths.json`) | platform app-support dir | Root for `kuzu/` — the only input that actually determines Kuzu file locations |
-| `KUZU_DB_PATH` | `Settings` | `DATA_DIR/kuzu/kuzu_graph` | Default-KB DB file. **Env/.env values are ignored**: `config.py` overwrites `settings.KUZU_DB_PATH` after construction. `.env.example`'s `KUZU_DB_PATH=data/kuzu/kuzu_graph` is therefore documentation only. |
-| `COMMUNITY_DETECTION_ENABLED` | `Settings` | `False` (code) / `true` (`.env.example`) | Gates the *automatic* idle-triggered rebuild only |
-| `TEMPORAL_DIGESTS_ENABLED` | `Settings` | `False` (code) / `true` (`.env.example`) | Gates both the automatic timer **and** the body of `build_temporal_digests` (admin trigger no-ops when off) |
+| `KUZU_DB_PATH` | `Settings` (read-only property) | `DATA_DIR/kuzu/kuzu_graph` | Default-KB DB file, derived from `DATA_DIR`; not settable. |
 | `TEMPORAL_DIGEST_PERIOD` | `Settings` | `"month"` | Default bucket granularity (`month`/`week`/`year`) |
 | `COMMUNITY_IDLE_SECONDS` | module constant `ingestion_tracker.py` | `120` | Idle debounce for community rebuild and temporal digests; not configurable via env |
 | `INGESTION_PIPELINE_CONCURRENCY` | `Settings` | `1` | Per-KB semaphore around `process_note`; with 1, graph writes for a KB never interleave between notes |
@@ -675,8 +673,8 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 1. **"Leiden" is not Leiden.** It is a greedy cosine-threshold merge over embeddings (plain numpy); SEMANTIC_REL topology is ignored by community detection.
 2. **`KUZU_DB_PATH` from env is ignored**; only `DATA_DIR` matters.
 3. **No layout is persisted.** `/graph/3d/full` computes a solar layout per request; the write-only spring layout (`pos_x/pos_y/pos_z`, `compute_spring_layout_3d`, `store_node_positions`) was removed.
-4. **Feature flags default to `False` in code but `true` in `.env.example`.** Desktop builds without a `.env` get no automatic community detection or digests unless `runtime_config.json` sets them.
-5. **`POST /admin/build-temporal-digests` returns `started` but does nothing when `TEMPORAL_DIGESTS_ENABLED` is False**, contradicting its docstring. `rebuild-communities` really does ignore its flag.
+4. **Community detection and digests always run** after the ingestion queue has been idle for `COMMUNITY_IDLE_SECONDS`; there are no feature flags.
+5. **`POST /admin/build-temporal-digests` answers 409 while an ingestion is active** instead of a `started` that would no-op.
 6. **`COMMUNITY_IDLE_SECONDS=120` is a constant.**
 7. **Unit tests.** `backend/tests/unit/test_graph_queries.py` covers `get_related_nodes` (depth 1 and the depth>1 Cypher shape); the tests for `find_paths_between_nodes` / `min_confidence` (removed in da75dfc) were deleted on 2026-09-19. `test_graph_layout.py` is current.
 8. **`get_related_nodes` depth>1 is undirected, unfiltered and has no `edge_direction`**; the "Confidence filtering is done in Python below" comment describes removed code. Depth 1 returns `coalesce(confidence,1.0)`, depth>1 `coalesce(confidence,0.0)`.

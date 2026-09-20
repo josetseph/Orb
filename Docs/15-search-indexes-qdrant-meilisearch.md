@@ -195,7 +195,7 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 | `get_relationships_for_node_ids` | `(node_ids) -> list[{relationship_id, natural_language, source_node_id, target_node_id}]` | two scrolls (`source_node_id` in ids, `target_node_id` in ids), paged 500, deduplicated by `relationship_id` (falling back to the sentence for points written before the id was stored) | retrieval, `_update_node_summary` (Meili NL), `rebuild_leiden_communities` (Meili refresh), `GraphService.get_node_storage_payload` |
 | `scroll_all_isolated_contexts_with_dates` | `() -> list[payload]` | full unfiltered scroll of contexts (500/page) keeping payloads with `note_created_at` | `build_temporal_digests` |
 
-**Score semantics and thresholds.** Scores are raw cosine similarities from Qdrant. Retrieval passes `limit=500` per collection ("a large ceiling … the score_threshold is the only real filter") and `min_score` = `settings.VECTOR_PRE_RERANK_THRESHOLD` (**0.45**) when `RERANKER_ENABLED`, else `settings.VECTOR_SIMILARITY_THRESHOLD` (**0.50**). Every collection is queried with the same vector and threshold, so a context sentence, a relationship sentence and a merged-core passage compete on equal footing; retrieval then maps each hit to a node via `node_id` / `parent_node_id` / `source_node_id` / `target_node_id` and de-duplicates. `isolated_contexts` strings returned by the content getters have the note date appended as `" - <date>"` when present — consumers that display or re-embed them see that suffix.
+**Score semantics and thresholds.** Scores are raw cosine similarities from Qdrant. Retrieval passes `limit=500` per collection ("a large ceiling … the score_threshold is the only real filter") and `min_score` = `settings.VECTOR_PRE_RERANK_THRESHOLD` (**0.45**). Every collection is queried with the same vector and threshold, so a context sentence, a relationship sentence and a merged-core passage compete on equal footing; retrieval then maps each hit to a node via `node_id` / `parent_node_id` / `source_node_id` / `target_node_id` and de-duplicates. `isolated_contexts` strings returned by the content getters have the note date appended as `" - <date>"` when present — consumers that display or re-embed them see that suffix.
 
 ## 5. Meilisearch
 
@@ -266,7 +266,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 
 ### 5.6 Master key
 
-- Backend setting `MEILI_MASTER_KEY` (default `"orb-dev-key"`, also `.env.example`).
+- Backend setting `MEILI_MASTER_KEY` (default `"orb-dev-key"`).
 - Desktop (`desktop_runtime.py: resolve_meili_master_key(data_dir)`): precedence env `MEILI_MASTER_KEY` → `DATA_DIR/meili_master_key` file → generate. Generation rule: if `DATA_DIR/meilisearch/` does not exist or is empty (fresh install) → `secrets.token_urlsafe(32)`; otherwise (existing Meili data) → `"orb-dev-key"` for compatibility with data written before keys were randomised. The chosen key is persisted to `DATA_DIR/meili_master_key` (mode `0600`) and passed both as `--master-key` to the `meilisearch` binary (`--db-path DATA_DIR/meilisearch --http-addr 127.0.0.1:<port>`) and as env `MEILI_MASTER_KEY` (+ `MEILI_HOST`, `MEILI_PORT`) to uvicorn.
 - Ports: `PORTS.meilisearch` = `ORB_MEILI_PORT` / **17470**. Health check `GET /health`.
 - Consequence: a developer running the backend by hand against a desktop-started Meilisearch must read the key from `DATA_DIR/meili_master_key`; `orb-dev-key` only works for a hand-started Meilisearch or pre-randomisation installs.
@@ -290,7 +290,7 @@ class EmbeddingService:
 embedding_service = EmbeddingService()          # module singleton
 ```
 
-- **Provider validation at construction:** `EMBEDDING_PROVIDER` `"ollama"`/`"lm_studio"` → WARNING "deprecated; using in-process local" and coerced to local; anything other than `local`/`auto`/`""` → `ValueError("Unsupported EMBEDDING_PROVIDER… Orb uses in-process GGUF embeddings only")` at import time (the backend will not start). `.env.example` still shows `EMBEDDING_PROVIDER=openai` as an option in a comment block — that value is rejected by this code.
+- **Provider validation at construction:** `EMBEDDING_PROVIDER` `"ollama"`/`"lm_studio"` → WARNING "deprecated; using in-process local" and coerced to local; anything other than `local`/`auto`/`""` → `ValueError("Unsupported EMBEDDING_PROVIDER… Orb uses in-process GGUF embeddings only")` at import time (the backend will not start).
 - **Instruction handling:** `embed_query` prefixes the text with `custom_instruction or query_instruction` **only when `is_qwen3`**; `embed_documents` never adds a prefix. This asymmetry is deliberate for Qwen3-Embedding ("query gets 'Instruct: …\nQuery: ' prefix, documents do not"). retrieval calls `embed_query(enriched_query)` without `custom_instruction`.
 - **No caching** of vectors in this class. (Retrieval caches *query analysis*, not embeddings; ingestion de-duplicates texts before embedding.) Batching is the caller's job: `embed_documents` maps to `LocalLlamaRuntime.embed_batch`.
 - `reconfigure()` re-binds after a model download/selection (`is_qwen3` recomputed).
@@ -363,16 +363,14 @@ Neither store has a notion of KB besides the name prefix; nothing prevents two K
 | `EMBEDDING_DIMENSIONS` | `1024` | vector size for new collections and the `_prepare_vector` guard; **overwritten at runtime** by the models manifest / probe / `sync_embedding_infrastructure` |
 | `EMBEDDING_PROVIDER` | `local` | must be `local`/`auto`/empty (or deprecated `ollama`/`lm_studio`); anything else aborts startup |
 | `EMBEDDING_MODEL` | `local-embed` | display/`is_qwen3` detection (`"qwen3"` substring → instruction prefix); set to the catalog id by `sync_embedding_infrastructure` |
-| `VECTOR_SIMILARITY_THRESHOLD` | `0.50` | `min_score` when the reranker is off |
-| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `min_score` when `RERANKER_ENABLED` |
+| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `min_score` for every collection search |
 | `MEILI_HOST` / `MEILI_PORT` | `127.0.0.1` / `7700` | client URL; desktop injects port **17470** (`ORB_MEILI_PORT`) |
 | `MEILI_MASTER_KEY` | `orb-dev-key` | API key; desktop supplies the persisted/random key |
 | `MEILI_INDEX_NAME` | `orb_nodes` | default-KB index uid |
-| `RERANKER_ENABLED` | see [16](16-retrieval-and-chat.md) | selects which vector threshold applies |
 
 **Upsert batching.** `_upsert_batched(collection, points)` chunks every multi-point upsert at `_UPSERT_BATCH_SIZE` (default 128, `ORB_QDRANT_UPSERT_BATCH`). A point carrying a 2560-dim vector is roughly 27 KB as REST JSON, so a few hundred exceed Qdrant's request-size limit and the **entire** call is rejected with `400 (Bad Request)` — losing every point in it, not just the overflow. A note yielding 713 new entities failed exactly that way, and because the stubs are what keep Kuzu and Qdrant IDs aligned, the next pass logged `missing in Qdrant node_cores but present in Kuzu` for each one. `upsert_node_cores`, `upsert_node_relationships` and `upsert_node_items` all route through it; failures name the batch and how many points were written before it (`batch 3 of 6 (128 of 713 points)`), and `_last_upsert_error` carries the reason up so `ingestion` can report what Qdrant actually said instead of guessing at causes.
 
-None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_model, base_url`), so they cannot be changed through `runtime_config.json`; only env/`.env`/desktop-injected env and the models manifest (for dims) apply.
+None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_model, base_url`), so they cannot be changed through `runtime_config.json`; only desktop-injected env and the models manifest (for dims) apply.
 
 ## 10. Interfaces with other subsystems
 
@@ -447,7 +445,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 7. **`delete_node` deletes relationship points too** (by `source_node_id`/`target_node_id`), so a removed entity leaves nothing that still matches vector search.
 8. **`_cleanup_stores` constructs a `QdrantService` without `create_collections=False`**, so it still recreates missing collections right before deleting them — harmless but confusing in logs until `kb_registry.py` passes the flag.
 9. **Default-KB names are un-prefixed** (`node_cores`, `orb_nodes`), other KBs are `<slug>_…`; a KB literally named `node` would produce `node_node_cores`, fine, but a Qdrant instance shared with another app could collide on the default names.
-10. **`EMBEDDING_DIMENSIONS` in `.env` is advisory** — overwritten by the manifest at `QdrantService` construction and by `sync_embedding_infrastructure`.
+10. **`EMBEDDING_DIMENSIONS` from the environment is advisory** — overwritten by the manifest at `QdrantService` construction and by `sync_embedding_infrastructure`.
 11. **`save_selection`'s "collections were resized" log is optimistic** — with data present nothing is resized (§7.4).
 12. **`upsert_node_relationships` returns `bool`** and `_write_ontology` fails closed on `False`, like core and context writes.
 13. **`extra_payload` is merged last** and can overwrite `node_id`/`name`/`type` in a core payload.

@@ -64,7 +64,7 @@ Comprehensive, code-grounded documentation of the Orb repository: the Tauri desk
 | Stores | vault `.md` + attachments (bodies), SQLite `orb.db` (metadata), Kuzu (graph), Qdrant (vectors, 3 collections/KB), Meilisearch (keyword, 1 index/KB), Firefly SQLite (finance) |
 | Models | GGUF chat/embed/rerank via llama-cpp-python (vision through the chat model's `mmproj` projector); Qwen3-ASR and Marlin in-process for transcription and video; one resident at a time |
 | Isolation | `?kb=<slug>` on every data route → `KBContext` |
-| Bootstrap | `paths.json` (`data_dir`, `models_dir`, `default_vault_path`) → `desktop_runtime.py` env → `Settings` (+ `.env`, `runtime_config.json`) |
+| Bootstrap | `paths.json` (`data_dir`, `models_dir`, `default_vault_path`) → `desktop_runtime.py` env → `Settings` (+ `runtime_config.json`) |
 | Version | 1.0.0 in `desktop/src-tauri/tauri.conf.json`, `Cargo.toml`, `frontend/package.json` and the FastAPI app |
 
 ---
@@ -84,13 +84,13 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 
 | Area | Finding | Doc |
 |---|---|---|
-| Retrieval | The GGUF cross-encoder is the only ranking signal: with `RERANKER_ENABLED=false` or the reranker GGUF missing every candidate scores 0.0 < `RERANKER_SCORE_THRESHOLD`, so `hybrid_search` returns nothing and every answer is "couldn't find…". The docstring's keyword fallback does not exist. | 16 |
+| Retrieval | The GGUF cross-encoder is the only ranking signal and is mandatory: a missing or broken reranker fails the chat job with a visible error. | 16 |
 | Retrieval | `MAX_LOOP_ITERATIONS=3` gives at most two actual retrievals (iteration 1 only plans). | 16 |
 | Ingestion | Re-ingest never deletes prior graph/vector data; `mention_count` grows. `is_similarity` / `created_at` on `SEMANTIC_REL` are never set. | 10, 14 |
 | Ingestion | L1 clustering threshold comment (0.50) disagrees with code (0.35). | 10, 21 |
 | Notes | `POST /api/v1/kb` response omits `slug` although the client needs it for `?kb=`. `kb/empty` lacks the `DATA_DIR` containment guard that `delete_kb` has. Deleting a KB orphans its `chat_conversations`. | 08, 09 |
 | Notes | Ingestion's LLM title update changes only the SQLite row; the vault file is renamed on the next autosave, not immediately. | 09, 10 |
-| Config | `KUZU_DB_PATH` and `MODELS_PATH` from env are always overwritten by code; `COMMUNITY_DETECTION_ENABLED` / `TEMPORAL_DIGESTS_ENABLED` default `False` in code although `.env.example` says `true`; `EMBEDDING_PROVIDER=openai` raises. `Settings(extra="ignore")` silently drops `STORAGE_BACKEND`, `FILES_URL`, `VIDEO_MAX_PIXELS`, `FPS*`. | 21, 06 |
+| Config | `MODELS_PATH` from env is always overwritten by code; `EMBEDDING_PROVIDER=openai` raises. `Settings(extra="ignore")` silently drops `STORAGE_BACKEND`, `FILES_URL`, `VIDEO_MAX_PIXELS`, `FPS*`. | 21, 06 |
 | Config | Anthropic call sites use `settings.ANTHROPIC_MODEL` directly, ignoring `CHAT_MODEL` / per-KB pins. | 13, 06 |
 | Logging | `X-Request-Id` is captured but never written to log lines; `EmbeddingService` logger is not routed to a file; Qdrant/Meilisearch run with stdio ignored. | 23 |
 | Finance | `_filter_summary_basic` reads `type` but accounts expose `account_type`, so `report().basic["balance-in-vault"]` is always 0. Cash accounts are never listed. No link-out to the Firefly UI exists although `firefly_url` is returned. Recurrences never fire (no cron). | 17 |

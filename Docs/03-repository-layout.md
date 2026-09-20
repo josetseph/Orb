@@ -120,7 +120,6 @@ backend/
 ├── requirements.txt            base deps (FastAPI, SQLAlchemy, kuzu, qdrant, meilisearch, llama-cpp-python, …)
 ├── requirements-dev.txt        pytest + pytest-asyncio (pinned)
 ├── requirements-multimodal.txt torch / transformers ≥ 5.7 / qwen-vl-utils (installed on demand)
-├── .env.example                fully commented configuration reference
 └── .pylintrc
 ```
 
@@ -215,7 +214,6 @@ These exist on a developer machine but are not source. Do not document, lint, or
 | `backend/models/` | dev fallback MODELS_DIR | local_models / multimodal_models |
 | `backend/logs/` | legacy log dir (current logs live under DATA_DIR/logs) | — |
 | `data/` (repo root) | dev fallback DATA_DIR (SQLite, Kuzu, Qdrant, Meili, vaults, logs) | backend |
-| `.env`, `.env.local` | secrets (API keys) | developer |
 | `.context/`, `.agent/`, `.gemini/`, `.github/agents|instructions|hooks|prompts`, `.github/copilot-instructions.md` | AI-editor scratch | — |
 
 Note: `.gitignore` force-tracks `Results*/` (with its `*.log` files), but the benchmark results now live on the `orb-testing` branch, not on `main`.

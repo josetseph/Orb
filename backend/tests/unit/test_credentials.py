@@ -8,10 +8,8 @@ import sys
 
 import pytest
 
-from app.core import config
 from app.services.credentials import (
     CLOUD_PROVIDERS,
-    SOURCE_ENV,
     SOURCE_KEYCHAIN,
     CredentialStore,
     normalize_provider,
@@ -27,10 +25,7 @@ def _no_real_keychain(monkeypatch):
 
 
 @pytest.fixture()
-def store(monkeypatch) -> CredentialStore:
-    """A store with no environment keys seeded."""
-    for attr in ("OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY"):
-        monkeypatch.setattr(config.settings, attr, None, raising=False)
+def store() -> CredentialStore:
     return CredentialStore()
 
 
@@ -65,34 +60,6 @@ class TestBasicStorage:
         assert normalize_provider("hf") == "huggingface"
         store.set("google", "g-1")
         assert store.get("gemini") == "g-1"
-
-
-class TestEnvSeeding:
-    def test_env_keys_seed_the_store_once(self, monkeypatch):
-        monkeypatch.setattr(config.settings, "OPENAI_API_KEY", "sk-from-env", raising=False)
-        monkeypatch.setattr(config.settings, "GEMINI_API_KEY", None, raising=False)
-        monkeypatch.setattr(config.settings, "ANTHROPIC_API_KEY", None, raising=False)
-        monkeypatch.setattr(config.settings, "HUGGINGFACE_API_KEY", None, raising=False)
-        s = CredentialStore()
-        assert s.get("openai") == "sk-from-env"
-        assert s.source("openai") == SOURCE_ENV
-
-    def test_pushed_key_wins_over_env(self, monkeypatch):
-        monkeypatch.setattr(config.settings, "OPENAI_API_KEY", "sk-from-env", raising=False)
-        for attr in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY"):
-            monkeypatch.setattr(config.settings, attr, None, raising=False)
-        s = CredentialStore()
-        s.set("openai", "sk-from-keychain")
-        assert s.get("openai") == "sk-from-keychain"
-        assert s.source("openai") == SOURCE_KEYCHAIN
-
-    def test_cleared_env_key_does_not_come_back(self, monkeypatch):
-        monkeypatch.setattr(config.settings, "OPENAI_API_KEY", "sk-env", raising=False)
-        for attr in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY"):
-            monkeypatch.setattr(config.settings, attr, None, raising=False)
-        s = CredentialStore()
-        assert s.clear("openai") is True
-        assert s.get("openai") is None
 
 
 class TestVersioning:

@@ -753,51 +753,44 @@ class IngestionWorkflow:
         return title
 
     async def _queue_leiden_recompute_if_due(self, note_id: str) -> None:
-        """Queue community detection and/or schedule a temporal digest rebuild after ingestion.
-
-        Both features gate on their respective config switches independently so that
-        disabling one does not suppress the other.
-        """
-        from app.core.config import settings as _settings
+        """Queue community detection and schedule a temporal digest rebuild after ingestion."""
 
         # ── Community detection ───────────────────────────────────────────────
-        if _settings.COMMUNITY_DETECTION_ENABLED:
-            rows = self._graph.execute_query(
-                """
-                MATCH (:Node {id: $note_id})-[*1]-(n:Node)
-                WHERE n.kind = 'indexable' AND n.id IS NOT NULL
-                RETURN DISTINCT n.id AS node_id
-                """,
-                {"note_id": note_id},
+        rows = self._graph.execute_query(
+            """
+            MATCH (:Node {id: $note_id})-[*1]-(n:Node)
+            WHERE n.kind = 'indexable' AND n.id IS NOT NULL
+            RETURN DISTINCT n.id AS node_id
+            """,
+            {"note_id": note_id},
+        )
+        touched = sum(1 for row in rows if row.get("node_id"))
+        if touched:
+            queue_size = await _tracker.queue_nodes_for_community_recompute(
+                touched, kb_id=self.kb_id
             )
-            touched = sum(1 for row in rows if row.get("node_id"))
-            if touched:
-                queue_size = await _tracker.queue_nodes_for_community_recompute(
-                    touched, kb_id=self.kb_id
-                )
-                logger.info(
-                    f"[Community] {touched} node(s) touched — Leiden recompute pending "
-                    f"(queue size: {queue_size})"
-                )
+            logger.info(
+                f"[Community] {touched} node(s) touched — Leiden recompute pending "
+                f"(queue size: {queue_size})"
+            )
 
         # ── Temporal digests (debounced) ──────────────────────────────────────
         # Restart a module-level timer on every ingestion.  The rebuild only
         # fires after _TEMPORAL_DIGEST_IDLE_SECONDS of inactivity, so a burst
         # of notes produces exactly one rebuild once the system goes quiet.
-        if _settings.TEMPORAL_DIGESTS_ENABLED:
-            with self._temporal_digest_timer_lock:
-                if self._temporal_digest_timer is not None:
-                    self._temporal_digest_timer.cancel()
-                self._temporal_digest_timer = threading.Timer(
-                    COMMUNITY_IDLE_SECONDS,
-                    self.build_temporal_digests,
-                )
-                self._temporal_digest_timer.daemon = True
-                self._temporal_digest_timer.start()
-            logger.info(
-                f"[TemporalDigest] Digest rebuild scheduled "
-                f"({COMMUNITY_IDLE_SECONDS} s idle window)."
+        with self._temporal_digest_timer_lock:
+            if self._temporal_digest_timer is not None:
+                self._temporal_digest_timer.cancel()
+            self._temporal_digest_timer = threading.Timer(
+                COMMUNITY_IDLE_SECONDS,
+                self.build_temporal_digests,
             )
+            self._temporal_digest_timer.daemon = True
+            self._temporal_digest_timer.start()
+        logger.info(
+            f"[TemporalDigest] Digest rebuild scheduled "
+            f"({COMMUNITY_IDLE_SECONDS} s idle window)."
+        )
 
     async def _update_neighborhoods(
         self,
@@ -1901,12 +1894,6 @@ class IngestionWorkflow:
         from datetime import datetime
 
         from app.core.config import settings as _settings
-
-        if not _settings.TEMPORAL_DIGESTS_ENABLED:
-            logger.info(
-                "[TemporalDigest] Feature disabled via TEMPORAL_DIGESTS_ENABLED — skipping."
-            )
-            return 0
 
         # Guard: refuse to start while ingestion is active.
         if _tracker.has_active_ingestions(self.kb_id):

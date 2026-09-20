@@ -26,7 +26,7 @@ def test_keys_persist_and_reload(monkeypatch):
 
     second = CredentialStore()  # a fresh process
     assert second.get("openai") == "sk-test"
-    assert second.source("openai") == "keychain"
+    assert second.status()["openai"]["source"] == "keychain"
     assert second.endpoints() == ["http://localhost:1234"]
 
     second.clear("openai")

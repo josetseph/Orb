@@ -40,7 +40,7 @@ async def update_runtime_settings(body: LLMSettings):
 
     Model-only changes take effect immediately (no client reinitialization needed).
     Provider or base URL changes trigger a full LLM client reinitialization.
-    API keys are never accepted here — configure those in .env.
+    API keys are never accepted here — use the credentials API.
     """
     from app.core import runtime_config
     from app.core.config import settings

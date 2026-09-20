@@ -33,7 +33,6 @@ It does **not** own: the GGUF runtime, tokenisation or context sizing (doc 12 �
 | `backend/app/services/local_models.py` | Reranker system/instruction strings; `LocalOpenAICompat` shim consumed here. | see doc 12 |
 | `backend/app/services/embedding.py` | Qwen3 query instruction. | see doc 12 |
 | `backend/tests/unit/test_llm_json_cleaning.py`, `test_kb_llm_config.py`, `test_ingestion_chunked_extraction.py`, `test_extraction_chunking.py`, `test_chat_context.py` | Unit coverage for `_clean_json`, override resolution, chunked extraction, chat context trimming. | — |
-| `backend/.env.example` | Provider quick-start blocks and key documentation. | — |
 | `frontend/src/app/settings/page.tsx`, `frontend/src/app/kb/page.tsx` + `_components/`, `frontend/src/lib/api.ts`, `types.ts` | UI for runtime settings and per-KB LLM override (`getKBLLM`, `updateKBLLM`, `KBLLMConfig`, `EffectiveLLM`). | — |
 
 ## 3. Architecture
@@ -111,7 +110,7 @@ Notes:
 
 ```
 _chat_model_override            (per-KB instance)          →
-settings.CHAT_MODEL             (runtime_config / .env)    →
+settings.CHAT_MODEL             (runtime_config / env)     →
 provider == local: settings.LLM_MODEL  ("local-chat" placeholder = Setup selection; set to the chat catalog id after a download)
 else {openai: OPENAI_MODEL, gemini: GEMINI_MODEL, anthropic: ANTHROPIC_MODEL, huggingface: HUGGINGFACE_MODEL}.get(provider, LLM_MODEL)
 ```
@@ -176,7 +175,7 @@ Frontend: `api.getKBLLM(id)`, `api.updateKBLLM(id, {provider, model, ingestion_m
 - **Storage.** `CredentialStore` persists keys in the OS keychain through the Python `keyring` package (service `Orb`, one entry per credential id plus a `__index__` JSON list of ids, since keyring cannot enumerate) and caches them in memory. Nothing is written under `DATA_DIR`, which is commonly synced. The UI writes keys with `PUT /api/v1/credentials/{provider}` and `PUT /api/v1/credentials/endpoint`.
 - **Platform support.** macOS Keychain, Windows Credential Manager and Secret Service (gnome-keyring/kwallet) on Linux. Only Linux can lack a backend.
 - **When the keychain is unavailable** the key still works for that session (`Keychain unavailable, credentials are session-only` / `Could not update the keychain` warnings); only persistence is lost. For durable keys there, install a Secret Service provider or set the environment variable before launching.
-- **Environment fallback.** `_seed_from_env_unlocked()` loads the keychain first, then imports `OPENAI_API_KEY` and friends once without overwriting, for contributors running the backend outside the shell. Those report `source: "env"`; keychain keys report `source: "keychain"`.
+- **Keychain only.** `_load_unlocked()` reads the keychain once per process; there is no environment or `.env` fallback — keys are entered in Settings → Cloud API keys.
 - **Live changes.** Every mutation bumps `credentials.version`, which is part of `KBContext.llm`'s cache key, so per-KB clients rebuild on the next call — no restart.
 - **Endpoint identity.** An OpenAI-compatible server is keyed by its **URL**, not by a user-invented name: `endpoint_credential_id(url)` → `endpoint:<normalized url>`. `normalize_base_url` lowercases scheme and host, drops a trailing slash, and strips query/fragment, so `HTTPS://Api.Example.com/v1/` and `https://api.example.com/v1` share one key while two different servers cannot. It is covered by tests; the frontend sends the raw URL and the backend normalises it, so there is only one implementation.
 - **Model discovery.** `GET /api/v1/llm/endpoint-models?base_url=` proxies the server's `GET /v1/models`. Servers that do not implement it return 502 and the UI falls back to a free-text model name.
@@ -347,7 +346,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 ### 9.7 Temporal digest — `workflows/ingestion.py::build_temporal_digests`
 
-- **Purpose**: per-period (month/week/year, `TEMPORAL_DIGEST_PERIOD`) summaries of note contexts when `TEMPORAL_DIGESTS_ENABLED`.
+- **Purpose**: per-period (month/week/year, `TEMPORAL_DIGEST_PERIOD`) summaries of note contexts, rebuilt after ingestion goes idle.
 - **Call**: `self._llm.generate_text(system_prompt, user_prompt)`.
 - **System**: `"You are a knowledge synthesis assistant. Summarize the main topics, events, and themes from the provided …"` (continues with instructions to produce a digest for the labelled period). **User**: the period label (`"May 2024"`, `"Week 12, 2024"`, `"2024"`) plus contexts joined with `\n---\n`, truncated at 12 000 characters + `"\n...[truncated]"`.
 - **Format**: free text stored as the digest node summary.
@@ -416,7 +415,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 Files to touch, in order:
 
-1. `backend/app/core/config.py` — add `<NAME>_API_KEY: str | None`, `<NAME>_MODEL: str | None` (and an ingestion-specific model key if needed). Document them in `backend/.env.example`.
+1. `backend/app/core/config.py` — add `<NAME>_API_KEY: str | None`, `<NAME>_MODEL: str | None` (and an ingestion-specific model key if needed).
 2. `backend/app/services/llm.py`:
    - `_build_clients()` — new `if provider == "<name>":` branch returning `(chat_client, None, None)` (OpenAI-shaped if at all possible — `_chat` assumes `chat.completions.create(...).choices[0].message.content`) or a native client in one of the other two slots.
    - `get_chat_model()` / `get_ingestion_model()` maps.

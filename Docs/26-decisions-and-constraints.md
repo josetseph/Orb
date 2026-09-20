@@ -143,7 +143,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### D3. Temporal digests instead of bi-temporal relationship evolution
 - Rejected (reversed): the Feb 2026 bi-temporal design (`033589d`: `valid_from/valid_to/is_active`, "evolved" relationships, `schemas/relationships.py`) and the symbolic reranker introduced with it.
-- Rationale: `da75dfc` (2026-05-28) removed the evolution logic as complexity without measured benefit and added period-keyed temporal digests (`TEMPORAL_DIGESTS_ENABLED`, `TEMPORAL_DIGEST_PERIOD`) stored as summary nodes/vectors instead.
+- Rationale: `da75dfc` (2026-05-28) removed the evolution logic as complexity without measured benefit and added period-keyed temporal digests (`TEMPORAL_DIGEST_PERIOD`; the enable flag has since been removed) stored as summary nodes/vectors instead.
 - Enforced: `SEMANTIC_REL.ingested_at/last_updated/mention_count` are live; `created_at` and `is_similarity` are never-set leftovers (`tests/unit/test_relationships.py`, which still imported the deleted module, was removed on 2026-09-19). Do not rebuild bi-temporal edges on top of these columns without a new decision.
 
 ### D4. Ingestion is FIFO by default; heavy media jobs serialised
@@ -161,7 +161,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### D7. Community detection is idle-triggered, pre-emptible, and off by default
 - Rejected: synchronous recompute after every note.
 - Rationale: throughput; a new ingestion signals a running recompute to stop early. The algorithm is named "Leiden" throughout code, logs and UI but is implemented with a greedy cosine-threshold centroid merge over node embeddings (plain numpy; see `_embedding_cluster`).
-- Enforced: `ingestion_tracker.COMMUNITY_IDLE_SECONDS=120`, `_community_run_state_lock`; `COMMUNITY_DETECTION_ENABLED` and `TEMPORAL_DIGESTS_ENABLED` default `False` in `Settings` (`.env.example` says `true`).
+- Enforced: `ingestion_tracker.COMMUNITY_IDLE_SECONDS=120`, `_community_run_state_lock`; both rebuilds always run once ingestion goes idle.
 
 ### D8. Retrieval is a bounded multi-hop loop, `MAX_LOOP_ITERATIONS=3`
 - Rejected: unbounded loops; single-shot vector RAG; the removed "refiner" and "benchmark mode" (`8eba91d`).
@@ -273,4 +273,4 @@ See [25-development-history.md](25-development-history.md) for the full chronolo
 - **API keys never touch `DATA_DIR` in plaintext.** It must not be a synced folder (A6), but users have put it in one. Keys live in the OS keychain (Python `keyring`, service `Orb`) and in backend memory; when no keychain backend is usable the key works for the session only and is never written to disk.
 - **No endpoint ever returns key material.** `GET /api/v1/credentials` reports `configured` and `source` only.
 - **An OpenAI-compatible endpoint is identified by its URL**, not a user-chosen name — so two servers can never share a key by accident. `normalize_base_url` lives only in Python (`services/credentials.py`); the UI sends the raw URL.
-- **`.env` is a contributor fallback, not the product path.** End users cannot edit it; keys are entered in Settings.
+- **There is no `.env`.** Every user-facing value is set in the app; keys are entered in Settings and stored in the OS keychain; the desktop runtime passes paths and ports as environment variables.

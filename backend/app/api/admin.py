@@ -47,8 +47,6 @@ async def rebuild_communities(
 
     Useful when community detection was cancelled or never ran after ingestion.
     The job runs asynchronously; poll the server logs for progress.
-    COMMUNITY_DETECTION_ENABLED only controls the automatic post-ingestion trigger;
-    this manual endpoint is always available.
     """
     background_tasks.add_task(kb.get_ingestion_workflow().rebuild_leiden_communities)
     return {
@@ -77,17 +75,12 @@ async def build_temporal_digests(
     Groups all ``isolated_context`` chunks that carry a ``note_created_at`` date
     by the requested time period, summarises each bucket with the LLM, and stores
     the results as ``temporal_digest`` nodes in the knowledge graph.
-    ``IngestionWorkflow.build_temporal_digests`` is a no-op while
-    TEMPORAL_DIGESTS_ENABLED is off or an ingestion is running, so instead of
-    answering "started" for a job that will do nothing this returns **409**.
+    ``IngestionWorkflow.build_temporal_digests`` is a no-op while an ingestion
+    is running, so instead of answering "started" for a job that will do
+    nothing this returns **409**.
     """
     from app.services.ingestion_tracker import ingestion_tracker
 
-    if not settings.TEMPORAL_DIGESTS_ENABLED:
-        raise HTTPException(
-            status_code=409,
-            detail="Temporal digests are disabled (TEMPORAL_DIGESTS_ENABLED=false).",
-        )
     if ingestion_tracker.has_active_ingestions(kb.kb_id):
         raise HTTPException(
             status_code=409, detail="An ingestion is running; retry when it finishes."

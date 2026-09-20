@@ -391,8 +391,8 @@ Blocking work moved off the event loop (rationale comments in code): `GET /api/v
 | `paths.json.default_vault_path` / `ORB_DEFAULT_VAULT` | paths.json first, then env | none → `DATA_DIR/vaults/default` | Default KB vault on first boot only (row wins afterwards) |
 | `ORB_PATHS_FILE` | env | `<AppSupport>/Orb/paths.json` | where `default_vault_path` is read from |
 | `settings.KUZU_DB_PATH` | forced in `core/config.py` to `DATA_DIR/kuzu/kuzu_graph` (env value ignored) | — | default KB Kuzu file; `sync_settings_paths` re-derives it after Setup |
-| `QDRANT_COLLECTION_NODE_CORES` / `…_RELATIONSHIPS` / `…_ISOLATED_CONTEXTS` | env/.env | `node_cores`, `node_relationships`, `node_isolated_contexts` | default KB collection names (baked into the default row at first boot) |
-| `MEILI_INDEX_NAME` | env/.env | `orb_nodes` | default KB Meili index name (baked into row) |
+| `QDRANT_COLLECTION_NODE_CORES` / `…_RELATIONSHIPS` / `…_ISOLATED_CONTEXTS` | env | `node_cores`, `node_relationships`, `node_isolated_contexts` | default KB collection names (baked into the default row at first boot) |
+| `MEILI_INDEX_NAME` | env | `orb_nodes` | default KB Meili index name (baked into row) |
 | `QDRANT_HOST/PORT/API_KEY`, `MEILI_HOST/PORT/MASTER_KEY` | env (`desktop_runtime.py` injects) | see [21](21-configuration-reference.md) | every `KBContext` uses the same servers; KBs are separated by collection/index *names*, not by server |
 | `EMBEDDING_DIMENSIONS` (+ `manifest.json.selection.embedding_dims`) | settings / models manifest | 1024 | `QdrantService._ensure_collections` creates per-KB collections at this size; changing embed model with non-empty collections is refused (see [15](15-search-indexes-qdrant-meilisearch.md)) |
 

@@ -101,20 +101,12 @@ class IngestionTrackerService:
             self._active_ingestion_counts[kb_id] = max(0, current - 1)
             active = self._active_ingestion_counts[kb_id]
         logger.info(f"[IngestionTracker][{kb_id}] Ingestion ended — active: {active}")
-        if (
-            active == 0
-            and not self._community_recompute_running.get(kb_id, False)
-            and _settings.COMMUNITY_DETECTION_ENABLED
-        ):
+        if active == 0 and not self._community_recompute_running.get(kb_id, False):
             logger.info(
                 f"[IngestionTracker][{kb_id}] All ingestions complete — starting "
                 f"{COMMUNITY_IDLE_SECONDS}s idle timer for community recompute"
             )
             self.schedule_recompute(callback, kb_id=kb_id)
-        elif active == 0 and not _settings.COMMUNITY_DETECTION_ENABLED:
-            logger.debug(
-                f"[IngestionTracker][{kb_id}] Community auto-detect disabled — idle timer not started"
-            )
 
     async def queue_nodes_for_community_recompute(
         self, node_count: int, kb_id: str = "default"

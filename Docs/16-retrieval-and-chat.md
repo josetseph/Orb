@@ -394,7 +394,7 @@ Each branch's exception is caught and replaced with `[]` plus a warning (`[Entit
 
 #### Vector branch (`_vector_branch` → `_search_qdrant_multi_collection`)
 
-See §7.4 — searches `node_cores`, `node_relationships`, `node_isolated_contexts` one after another (a sequential loop inside `QdrantService.search_all_collections`; a `ponytail:` comment marks the thread-pool upgrade path) with `limit=500` per collection and `score_threshold` = `VECTOR_PRE_RERANK_THRESHOLD` (0.45) when `RERANKER_ENABLED` else `VECTOR_SIMILARITY_THRESHOLD` (0.50). The comment in code is explicit: the 500 ceiling exists only because the Qdrant API requires a limit; "the score_threshold is the only real filter".
+See §7.4 — searches `node_cores`, `node_relationships`, `node_isolated_contexts` one after another (a sequential loop inside `QdrantService.search_all_collections`; a `ponytail:` comment marks the thread-pool upgrade path) with `limit=500` per collection and `score_threshold` = `VECTOR_PRE_RERANK_THRESHOLD` (0.45). The comment in code is explicit: the 500 ceiling exists only because the Qdrant API requires a limit; "the score_threshold is the only real filter".
 
 ### 7.4 Vector search details and temporal handling
 
@@ -421,7 +421,7 @@ Log lines: `[Qdrant] Raw hits from search_all_collections: N (threshold=…, rer
 
 **Bi-temporal filtering** (`valid_from`/`valid_to`/`is_active` on relationships, commit `033589d`) **no longer exists**: the current Kuzu `SEMANTIC_REL` schema has `ingested_at`, `last_updated`, `created_at`, `is_similarity` but no validity interval, and retrieval applies no temporal predicate to graph edges. Temporal awareness today = the two Qdrant payload filters above + the `" - <date>"` suffix on isolated-context text that the LLM can read.
 
-**Temporal digests and communities** are ordinary `node_cores` points (type `community` or digest types, with `period_key`) and surface through the vector branch like any node; there is no separate community lookup ("STEP 3" comment in code). `COMMUNITY_DETECTION_ENABLED` / `TEMPORAL_DIGESTS_ENABLED` gate only their *creation* during ingestion.
+**Temporal digests and communities** are ordinary `node_cores` points (type `community` or digest types, with `period_key`) and surface through the vector branch like any node; there is no separate community lookup ("STEP 3" comment in code). Both are built after ingestion goes idle (and on demand from the admin endpoints).
 
 ### 7.5 Merge precedence, variants, and note grounding
 
@@ -482,7 +482,7 @@ Three layers:
 
 - **Query hints:** `rerank_query = f"{query} [{question_attribute}; type: t1, t2]"` (each part only when present). In `hybrid_search` both hints come from that sub-query's analysis; in the loop's expansion pass only `question_attribute` (from the original question) is passed.
 - **Texts:** `candidate["_rerank_text"]` → fallback `_build_node_text(original_obj, [])` → fallback `candidate["text"]`.
-- **Scores:** if `RERANKER_ENABLED`, call `reranker_service.rerank(rerank_query, texts)`; map `index → float(r.get("relevance_score") or 0.0)`. If the reranker returns nothing, log `Model returned no scores, skipping candidate scoring`. Every candidate gets `rerank_score = model_scores.get(idx, 0.0)` and `reranker_rank = idx + 1`. There is no keyword-overlap fallback: disabled or failed reranking yields all-zero scores, keeps the hybrid order, and skips `score_threshold`.
+- **Scores:** call `reranker_service.rerank(rerank_query, texts)`; map `index → float(r.get("relevance_score") or 0.0)`. The reranker is mandatory: no GGUF installed, a load failure, or a run returning no scores raises `RuntimeError`, which the chat job reports in its `error` field exactly like a missing chat GGUF. Every candidate gets `rerank_score` and `reranker_rank = idx + 1`.
 - **Order:** stable sort by `rerank_score` desc (ties keep channel order entity → BM25 → vector).
 - **Cut:** `candidates[:top_n]` when `top_n` is not `None`; then drop `rerank_score < score_threshold` when `score_threshold` is not `None`.
 - **Call sites:**
@@ -493,7 +493,7 @@ Three layers:
 | loop, expansion docs | `RERANKER_TOP_K` (10) | none | original-question attribute |
 | `_expand_relevant_neighbors` per-pair (§8.4) | manual: `GRAPH_EXPAND_TOP_NEIGHBORS` (10) | `GRAPH_EXPAND_SCORE_THRESHOLD` (0, i.e. off) if > 0 | none (raw sub-query) |
 
-With `RERANKER_ENABLED=false`, or when the reranker GGUF is missing/fails, `score_threshold` is skipped (it only applies to model scores) and `hybrid_search` returns the top `RERANKER_TOP_K` candidates in channel order (entity → BM25 → vector).
+`score_threshold` always applies; there is no reranker-off path.
 
 Per-candidate DEBUG lines: `[Reranker] [i] name rerank=0.1234 | text: '...'`; INFO summary: `[Reranker] qwen3-reranker-0.6b scored N candidates (top score: …)`, `Ranked N candidates → keeping top K`, `Score threshold T dropped D candidate(s) → R remaining`. Note `settings.MODEL_RERANKER_LOCAL` is only a **label** in these logs and progress stages; the actual GGUF is `reranker_gguf_path()` (manifest selection / `ORB_RERANK_GGUF`).
 
@@ -504,7 +504,7 @@ Runs once per retrieval iteration on the reranked `selected_docs` (≤ `RERANKER
 1. **Collect 1-hop edges.** For each doc's `original_obj` (needs `name`; uses `node_id`/`id` to skip Qdrant name→id resolution), `graph.get_related_nodes(node_name, max_depth=1, node_id=...)`. The 1-hop fast path runs two directed Cypher queries over `SEMANTIC_REL|REFERENCES` (outgoing then incoming; a neighbour seen in both keeps `outgoing`), returning `node_id, name, label(kind), depth=1, relationship_path=[rel_type or 'REFERENCES'], confidence_path, context_path=[NULL], natural_language_path=[NULL], edge_direction`. Incoming `REFERENCES` edges mean **note nodes** (`kind='note'`) that reference the entity are among the neighbours. Neighbours whose name is already in `surfaced_names` are skipped. Each kept edge becomes a `relationship_entry {source, src_node_id, rel_type, nl_sentence (None), neighbor(row), context (None), edge_direction}`.
 2. **NL sentence enrichment from Qdrant.** Kuzu stores no relationship text, so one `qdrant.get_relationships_for_node_ids(all ids)` (two filtered scrolls over `node_relationships`, by `source_node_id` and `target_node_id`, deduped by `natural_language`) builds a `(src_id, tgt_id) → natural_language` map. For each entry: forward match `(src_id, tgt_id)` → `nl_sentence = nl`, `_nl_is_reverse=False`; else reverse match `(tgt_id, src_id)` → `nl_sentence = nl`, `_nl_is_reverse=True`. The stored `natural_language` is used verbatim (the extraction prompt asks for a short predicate phrase such as "attends school"); nothing strips entity names from it any more.
 3. **Neighbour content enrichment.** One `get_nodes_content_by_ids` for all neighbour ids → sets `description`, `summary` (= core description), `isolated_contexts`, and `entity_type` (from core `type` when Kuzu had none).
-4. **Per-pair rerank (only when `RERANKER_ENABLED` and `len(entries) > GRAPH_EXPAND_TOP_NEIGHBORS`).** For each entry, render a one-relationship block with `_build_node_text(origin_node, [rel_entry])` where `rel_entry = {nl_sentence (or rel_type with underscores → spaces), neighbour_name, neighbour_type, neighbour_context (= _get_node_text(neighbor) or name), is_incoming}`; score all blocks against the raw sub-query; keep the top `GRAPH_EXPAND_TOP_NEIGHBORS`; if `GRAPH_EXPAND_SCORE_THRESHOLD > 0`, also drop entries below it. Otherwise ("at or below top-N limit") all entries are kept unranked. Log: `[GraphExpand] Ranked N neighbours → kept top K (scores: [...])`.
+4. **Per-pair rerank (only when `len(entries) > GRAPH_EXPAND_TOP_NEIGHBORS`).** For each entry, render a one-relationship block with `_build_node_text(origin_node, [rel_entry])` where `rel_entry = {nl_sentence (or rel_type with underscores → spaces), neighbour_name, neighbour_type, neighbour_context (= _get_node_text(neighbor) or name), is_incoming}`; score all blocks against the raw sub-query; keep the top `GRAPH_EXPAND_TOP_NEIGHBORS`; if `GRAPH_EXPAND_SCORE_THRESHOLD > 0`, also drop entries below it. Otherwise ("at or below top-N limit") all entries are kept unranked. Log: `[GraphExpand] Ranked N neighbours → kept top K (scores: [...])`.
 5. **Group by origin → one doc per source.** Entries are bucketed by `source`; neighbours are globally deduped by name (`seen_neighbors`) so a neighbour shared by two origins is attached to the first origin only. Text = `_build_node_text(origin_node, rel_entries)`:
    ```
    {origin} is a {type}. {origin context}
@@ -644,15 +644,13 @@ So one retrieval iteration in local mode is at minimum **chat → embed → rera
 
 ## 11. Configuration keys that influence retrieval and chat
 
-All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings; env vars / `backend/.env`; some are overridden at runtime by `DATA_DIR/runtime_config.json` — see [Configuration reference](21-configuration-reference.md)). `ORB_*` keys are read directly from the environment in `local_models.py`.
+All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings; env vars; some are overridden at runtime by `DATA_DIR/runtime_config.json` — see [Configuration reference](21-configuration-reference.md)). `ORB_*` keys are read directly from the environment in `local_models.py`.
 
 | Key | Default | Where read | Effect |
 |---|---|---|---|
-| `RERANKER_ENABLED` | `True` | `_apply_reranker_logging`, `_expand_relevant_neighbors`, `_search_qdrant_multi_collection` | Off ⇒ all `rerank_score = 0.0` (hybrid order kept), `RERANKER_SCORE_THRESHOLD` not applied, vector threshold switches to `VECTOR_SIMILARITY_THRESHOLD`, per-pair expansion rerank skipped (§8.3) |
 | `RERANKER_TOP_K` | `10` | `hybrid_search`, loop expansion rerank | Docs kept per rerank pass (both passes) |
 | `RERANKER_SCORE_THRESHOLD` | `0.05` | `hybrid_search` only | Drop candidates below this yes-probability after the top-K cut |
 | `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `_search_qdrant_multi_collection` | Qdrant `score_threshold` when the reranker is on |
-| `VECTOR_SIMILARITY_THRESHOLD` | `0.50` | same | Qdrant `score_threshold` when the reranker is off |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | `10` | `_expand_relevant_neighbors` | Max (origin, neighbour) pairs kept per iteration; also the trigger — per-pair rerank runs only when more pairs than this exist |
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | `0` | same | If > 0, drop pairs scoring below it after the top-N cut |
 | `CHAT_HISTORY_MAX_MESSAGES` | `24` | `chat_store.get_recent_history`, `rewrite_follow_up_query`, loop context | Messages (not turns) of history fetched and prompted |
@@ -671,7 +669,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `ORB_LLAMA_N_CTX` | `16384` | `LocalLlamaRuntime` | Chat context window; bounds the whole `iterative_step` prompt (docs + history + rules) |
 | `ORB_LLAMA_MAX_TOKENS` | unset (working tree; was `10240`) | `create_chat_completion` | Optional hard output cap; unset ⇒ `n_ctx − prompt − 32` |
 | `ORB_LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | Raises `n_ctx` when a fixed `max_tokens` is set |
-| `COMMUNITY_DETECTION_ENABLED` / `TEMPORAL_DIGESTS_ENABLED` / `TEMPORAL_DIGEST_PERIOD` | `False` / `False` / `month` | ingestion only | Whether community/digest nodes exist to be retrieved; retrieval itself has no switch |
+| `TEMPORAL_DIGEST_PERIOD` | `month` | ingestion only | Granularity of the digest nodes that retrieval sees; retrieval itself has no switch |
 | KB row `llm_provider` / `llm_model` / `llm_ingestion_model` | `NULL` | `KBContext.llm` | Per-KB override of provider + chat model (working tree) |
 
 Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name variants `limit_per_name=5`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; `_dedupe_docs`/`_truncate_context` `max_docs` 6 (chat) / 12 (finance retrieval); history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `analyze_query` `lru_cache` 64 entries; `_chat_status` 200 entries / 1800 s; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
@@ -853,7 +851,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - `graph_expansion` docs are shown to the LLM but never enter `all_docs`/`context` themselves (name-dedup against their origin); their `linked_notes` are merged into the origin doc, which is how neighbour notes reach `sources`.
 - Meili results are typed `entity_match`, not a keyword type; the source can be told apart via `original_obj._source == "meili"`.
 - Vector name variants come from Kuzu without Qdrant enrichment and are usually dropped for lack of text.
-- `RERANKER_ENABLED=false` (or a missing reranker) empties retrieval because of `RERANKER_SCORE_THRESHOLD`; the "keyword-overlap heuristic" in the docstring does not exist.
+- A missing or broken reranker fails the chat job with a clear error rather than silently returning "couldn't find enough information".
 - `reranker_rank` is the pre-sort index, not the final rank.
 - `hybrid_search(top_k)` and `retrieve_with_iterative_loop(top_k)` ignore `top_k`.
 - `MODEL_RERANKER_LOCAL` is a display string; the reranker file is chosen by the models manifest.
@@ -879,7 +877,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - **Add cancellation:** keep the `asyncio.Task` from `_chat_tasks` addressable by `request_id` and `task.cancel()`; note the LLM/embedding calls run in threads and will not stop mid-call.
 - **New stage strings:** free-form; the UI shows them verbatim. Keep them short.
 - **Change job-status retention:** the constants in `_prune()` (200 entries, 1800 s); keep entries at least until the client's next poll.
-- **New config knob:** add to `Settings` in `core/config.py`, document in `backend/.env.example` and [Configuration reference](21-configuration-reference.md).
+- **New config knob:** add to `Settings` in `core/config.py` and document in [Configuration reference](21-configuration-reference.md).
 
 ## 18. History and rationale
 

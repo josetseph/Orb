@@ -329,10 +329,7 @@ class RetrievalService:
         # Rank each (root, neighbor) pair individually with the reranker, then
         # keep only the top N — so the merged root doc only contains the neighbors
         # the reranker considers relevant to this question.
-        if (
-            settings.RERANKER_ENABLED
-            and len(relationship_entries) > settings.GRAPH_EXPAND_TOP_NEIGHBORS
-        ):
+        if len(relationship_entries) > settings.GRAPH_EXPAND_TOP_NEIGHBORS:
             from app.services.reranker import reranker_service
 
             _per_neighbor_texts: list[str] = []
@@ -634,14 +631,10 @@ class RetrievalService:
         used directly; otherwise the hit is skipped so the caller's dedup
         logic stays consistent.
         """
-        # When the reranker is enabled it re-scores all candidates — use the lower
-        # pre-rerank threshold so borderline-but-relevant nodes aren't discarded
-        # before the reranker even sees them.
-        _threshold = (
-            settings.VECTOR_PRE_RERANK_THRESHOLD
-            if settings.RERANKER_ENABLED
-            else settings.VECTOR_SIMILARITY_THRESHOLD
-        )
+        # The reranker re-scores all candidates — use the lower pre-rerank
+        # threshold so borderline-but-relevant nodes aren't discarded before
+        # the reranker even sees them.
+        _threshold = settings.VECTOR_PRE_RERANK_THRESHOLD
         _contexts_filter: Filter | None = None
         _period_key_filter: str | None = None
         _day_only: bool = False
@@ -696,7 +689,7 @@ class RetrievalService:
             return []
         logger.info(
             f"  [Qdrant] Raw hits from search_all_collections: {len(hits)} "
-            f"(threshold={_threshold}, reranker={'on' if settings.RERANKER_ENABLED else 'off'})"
+            f"(threshold={_threshold})"
         )
         merged: dict[str, dict] = {}
         unresolved_node_ids: set[str] = set()
@@ -1367,11 +1360,9 @@ class RetrievalService:
     ) -> list[dict]:  # pylint: disable=too-many-arguments,too-many-positional-arguments
         """Rank candidates and return the top_n highest-scoring ones.
 
-        When RERANKER_ENABLED is True, scores using the local model
-        (``settings.MODEL_RERANKER_LOCAL``).  When the reranker is disabled or
-        returns nothing, candidates keep the order hybrid_search produced
-        (entity → BM25 → vector, each channel in its own score order) with
-        ``rerank_score`` 0.0, and ``score_threshold`` is not applied.
+        Scores with the local reranker (``settings.MODEL_RERANKER_LOCAL``).
+        The reranker is mandatory: a missing GGUF, a load failure or a run that
+        returns no scores raises, and the chat job reports that error.
 
         Args:
             top_n: After ranking, slice to this many results.  None = no cutoff.
@@ -1413,27 +1404,20 @@ class RetrievalService:
                 text = (candidate.get("text") or "").strip()
             texts.append(text)
 
-        use_model = settings.RERANKER_ENABLED
-        model_scores: dict[int, float] = {}
+        from app.services.reranker import reranker_service
 
-        if use_model:
-            from app.services.reranker import reranker_service
-
-            results = await reranker_service.rerank(rerank_query, texts)
-            if results:
-                for r in results:
-                    if "index" not in r:
-                        continue
-                    model_scores[r["index"]] = float(r.get("relevance_score") or 0.0)
-                if model_scores:
-                    logger.info(
-                        f"  [Reranker] {settings.MODEL_RERANKER_LOCAL} scored {len(model_scores)} "
-                        f"candidates (top score: {max(model_scores.values()):.4f})"
-                    )
-            else:
-                logger.warning(
-                    "  [Reranker] Model returned no scores, skipping candidate scoring"
-                )
+        results = await reranker_service.rerank(rerank_query, texts)
+        model_scores = {
+            r["index"]: float(r.get("relevance_score") or 0.0)
+            for r in results
+            if "index" in r
+        }
+        if not model_scores:
+            raise RuntimeError("Reranker returned no scores")
+        logger.info(
+            f"  [Reranker] {settings.MODEL_RERANKER_LOCAL} scored {len(model_scores)} "
+            f"candidates (top score: {max(model_scores.values()):.4f})"
+        )
 
         for idx, candidate in enumerate(candidates):
             rerank_score = model_scores.get(idx, 0.0)
@@ -1455,7 +1439,7 @@ class RetrievalService:
         else:
             logger.info(f"  [Reranker] Ranked {len(candidates)} candidates (no cutoff)")
 
-        if score_threshold is not None and model_scores:
+        if score_threshold is not None:
             before = len(candidates)
             candidates = [
                 c for c in candidates if c.get("rerank_score", 0.0) >= score_threshold

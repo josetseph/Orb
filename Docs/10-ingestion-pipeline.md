@@ -403,8 +403,8 @@ Consequences for anyone reasoning about counts: re-ingesting the same note is a 
 
 ### 8.1 `_queue_leiden_recompute_if_due(note_id)` (runs after `_mark_note_processed`)
 
-- If `COMMUNITY_DETECTION_ENABLED` (default **False**): `MATCH (:Node {id:$note_id})-[*1]-(n:Node) WHERE n.kind='indexable' RETURN DISTINCT n.id` → `tracker.queue_nodes_for_community_recompute(ids)`. The ids are only used for logging/status (`pending_community_nodes`); the recompute is always a **full** rebuild.
-- If `TEMPORAL_DIGESTS_ENABLED` (default **False**): (re)start a per-workflow `threading.Timer(COMMUNITY_IDLE_SECONDS, self.build_temporal_digests)` (daemon). Both switches are independent.
+- `MATCH (:Node {id:$note_id})-[*1]-(n:Node) WHERE n.kind='indexable' RETURN DISTINCT n.id` → `tracker.queue_nodes_for_community_recompute(ids)`. The ids are only used for logging/status (`pending_community_nodes`); the recompute is always a **full** rebuild.
+- (Re)start a per-workflow `threading.Timer(COMMUNITY_IDLE_SECONDS, self.build_temporal_digests)` (daemon).
 
 ### 8.2 `IngestionTrackerService` (`services/ingestion_tracker.py`, global singleton `ingestion_tracker`)
 
@@ -413,7 +413,7 @@ Consequences for anyone reasoning about counts: re-ingesting the same note is a 
 | `COMMUNITY_IDLE_SECONDS = 120` | Module constant (not an env var). Idle window before community recompute and digest build. |
 | `_active_ingestion_counts[kb_id]` | Notes currently inside `process_note` (queued or running), **per KB**. |
 | `begin_ingestion(kb_id)` (async) | `counts[kb] += 1`; cancel that KB's pending debounce task; **set** the global `cancel_recompute` and `cancel_temporal` events (a running recompute/digest in any KB stops at its next checkpoint). |
-| `end_ingestion(callback, kb_id)` (async) | `counts[kb] = max(0, −1)`; when it reaches 0 and no recompute is running for that KB and `COMMUNITY_DETECTION_ENABLED`: `schedule_recompute(callback, kb_id)`. |
+| `end_ingestion(callback, kb_id)` (async) | `counts[kb] = max(0, −1)`; when it reaches 0 and no recompute is running for that KB: `schedule_recompute(callback, kb_id)`. |
 | `queue_nodes_for_community_recompute(count, kb_id)` (async) | `_pending_counts[kb] += count`, sets that KB's `_recompute_needed`; if a recompute is running, sets `cancel_recompute`. Returns the new queue size. |
 | `schedule_recompute(callback, kb_id)` | Debounce per KB: cancel that KB's existing task, `loop.create_task(_debounce_recompute(callback, kb_id))`. Needs a running loop (else warns). |
 | `_debounce_recompute(callback, kb_id)` (async) | `await asyncio.sleep(120)`; skip if a recompute is running or nothing pending and not `_recompute_needed`; else mark running, clear pending, clear `cancel_recompute`, `await asyncio.to_thread(callback)`; afterwards `mark_community_recompute_complete(kb_id)`; if the run was cancelled early (`cancel_recompute` set), set `_recompute_needed` and reschedule if no ingestion is active. |
@@ -441,7 +441,7 @@ Historical name — the current implementation is a **greedy cosine-threshold me
 
 ### 8.4 `build_temporal_digests(period=None)` (sync, timer thread; also `POST /api/v1/admin/build-temporal-digests`)
 
-- Returns 0 immediately if `TEMPORAL_DIGESTS_ENABLED` is False (even for the manual endpoint — unlike communities, the switch gates the function itself) or if ingestion is active.
+- Returns 0 immediately if ingestion is active.
 - `qdrant.scroll_all_isolated_contexts_with_dates()` → bucket `content` by `note_created_at` into `period` ∈ `month` (`%Y-%m`, default from `TEMPORAL_DIGEST_PERIOD`) | `week` (`%G-W%V`) | `year` (`%Y`).
 - `graph.clear_all_temporal_digests()` + `qdrant.delete_node` + `meili.delete_node` for old digest ids.
 - Per bucket (sorted): concatenate contexts with `\n---\n`, truncate to 12 000 chars, `self._llm.generate_text(system="You are a knowledge synthesis assistant…", user="The following contexts are from notes created during {label}: …")` (fallback summary `"Notes from {label}."`); `node_id = f"digest_{period}_{key}"` with `-`→`_` and `W`→`w` (e.g. `digest_month_2026_05`, `digest_week_2026_w21`); `name = f"{label} — {Period} Digest"` (e.g. `"May 2026 — Month Digest"`); Kuzu `MERGE (d:Node {id}) SET kind='temporal_digest', type='temporal_digest', name`; Qdrant core with `extra_payload={"period_key": key}`; Meili doc `type="temporal_digest"`, `isolated_contexts=[summary]`.
@@ -562,8 +562,6 @@ Title prompt (`llm_service.generate_title`): system `"Generate a concise, descri
 | `ORB_EXTRACTION_CHUNK_TOKENS` (env only) | unset (learned per model, starting at `4000`) | `extraction_budget` via `extraction_chunking.chunk_token_budget` | When set, pins the input-token ceiling per extraction chunk (min 400) and disables learning. |
 | `ORB_LLAMA_N_CTX` (env, via `_default_chat_n_ctx`) | see [12](12-local-models-and-inference.md) | `ingestion_context_tokens` | Local context window → chunk budget and output budget. |
 | `ORB_MODEL_IDLE_SECONDS` (env) | 300 | GGUF idle watcher | When resident models are unloaded after ingestion. |
-| `COMMUNITY_DETECTION_ENABLED` | `False` | `_queue_leiden_recompute_if_due`, `tracker.end_ingestion` | Automatic post-ingestion community rebuild. Manual endpoint ignores it. |
-| `TEMPORAL_DIGESTS_ENABLED` | `False` | `_queue_leiden_recompute_if_due`, `build_temporal_digests` | Gates both the timer and the function (manual endpoint included). |
 | `TEMPORAL_DIGEST_PERIOD` | `"month"` | `build_temporal_digests` | `month` \| `week` \| `year`. |
 | `COMMUNITY_IDLE_SECONDS` | `120` (constant) | tracker, digest timer | Not configurable. |
 | `EMBEDDING_DIMENSIONS` | `1024` (overridden from the local manifest's `embedding_dims`) | `QdrantService._prepare_vector` | Vector length check on every upsert. |
@@ -653,7 +651,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 5. **Entity `type` is frozen at first sighting in Qdrant/Meili** (`_core_content.type` wins) but overwritten in Kuzu on every ingest.
 6. **No embedding-similarity entity resolution** and no `is_similarity` edges are produced today, despite the schema column and old reports mentioning "similarity detection".
 7. **"Leiden" is agglomerative clustering**; L1 threshold is 0.35 (default arg), not the 0.50 in the comment.
-8. **`COMMUNITY_DETECTION_ENABLED` and `TEMPORAL_DIGESTS_ENABLED` default to False** — in a default install nothing runs after ingestion. The community endpoint works regardless; the digest endpoint does not.
+8. **Community detection and temporal digests always run** once the ingestion queue has been idle for `COMMUNITY_IDLE_SECONDS`; the admin endpoints run them on demand.
 9. **`multimedia_concurrency_limit` and `_process_semaphore` read settings at import/construction** — changing env at runtime has no effect.
 10. **Per-request sequencing**: `BackgroundTasks` run one after another; `INGESTION_PIPELINE_CONCURRENCY > 1` only helps across separate HTTP requests. And one failure aborts the rest of the request's queue.
 11. **The tracker is one singleton with per-KB state**: counters, idle timers and callbacks are keyed by `kb_id`, but the cancel events are shared — an ingest in any KB cancels a rebuild running in another.
