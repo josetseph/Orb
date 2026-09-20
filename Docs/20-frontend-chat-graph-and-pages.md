@@ -102,12 +102,13 @@ There is no conversation `<select>` and no stack badges; the composer footer sho
 - If `sources` is empty or absent (finance answers, user messages), no citation chips render even if the answer mentions notes.
 - Switching KB in `/kb` and returning re-runs `initializeForKb`, discarding an in-progress optimistic transcript only visually (the poll continues in the provider and its completion will still append to `messages`; `isStale()` only guards against *newer sends*, not KB switches). Practical effect: after a KB switch mid-answer the answer may appear under the new KB's conversation list until the final `getChatMessages` refresh replaces `messages`.
 - `expandedThinking` keys are message ids; after the post-completion refresh replaces optimistic ids with server ids, an expanded block collapses (id changed).
-- `getChatMessages`/`deleteChatConversation` do not send `kb` (07 §8) — conversations in non-default KBs cannot be reopened or deleted through this UI if the backend enforces KB scoping on those routes.
 - Message ids are used as `useScannedEntities` cache keys; optimistic `local-*` ids are replaced by server ids after the post-completion refresh, so the last answer is scanned twice (once per id).
 
 ## 4. 3D entity graph — `/graph-3d` (and `/graph`)
 
 `/graph` is `<Navigate to="/graph-3d" replace />` in `src/App.tsx`; old links end up here, and the sidebar "Graph" item points at `/graph-3d` directly. Both graph pages render `GraphModeSwitch` (Notes ↔ Entities) in their top bar.
+Deep link: `/graph-3d?node=<node id>` (the entity panel's "Open in graph") flies the camera to that node and opens its detail once the graph data holds it.
+
 
 `src/app/graph-3d/page.tsx` is a thin composition of the `components/graph3d` hooks (component internals in [18 §11.1](18-frontend-architecture.md)):
 

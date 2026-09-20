@@ -125,12 +125,12 @@ export const api = {
     return http.get(`/chat/conversations`, withKb(kb));
   },
 
-  async getChatMessages(conversationId: string): Promise<ChatMessageRecord[]> {
-    return http.get(`/chat/conversations/${conversationId}/messages`);
+  async getChatMessages(conversationId: string, kb = "default"): Promise<ChatMessageRecord[]> {
+    return http.get(`/chat/conversations/${conversationId}/messages${kbQuery(kb)}`);
   },
 
-  async deleteChatConversation(conversationId: string) {
-    return http.del(`/chat/conversations/${conversationId}`);
+  async deleteChatConversation(conversationId: string, kb = "default") {
+    return http.del(`/chat/conversations/${conversationId}${kbQuery(kb)}`);
   },
 
   // ── File storage ─────────────────────────────────────────────────────────

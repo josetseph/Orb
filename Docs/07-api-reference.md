@@ -1033,8 +1033,8 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 | `startChat` | `POST /chat/async` | `conversation_id` sent as `undefined` (omitted) when null |
 | `getChatStatus` | `GET /chat/status/{id}` | no `kb` |
 | `listChatConversations` | `GET /chat/conversations` | |
-| `getChatMessages` | `GET /chat/conversations/{id}/messages` | **never sends `kb`** → only conversations in the *default* KB resolve; a non-default KB conversation returns 404 |
-| `deleteChatConversation` | `DELETE /chat/conversations/{id}` | same missing-`kb` issue |
+| `getChatMessages(id, kb)` | `GET /chat/conversations/{id}/messages?kb=` | sends `kb` |
+| `deleteChatConversation(id, kb)` | `DELETE /chat/conversations/{id}?kb=` | sends `kb` |
 | `exportChat` | `GET /chat/conversations/{id}/export` | backend route is broken (500) — see 6 |
 | `upload` | `POST /upload` | direct-to-API origin via bridge; 10 min timeout |
 | `getNotes` / `getNote` / `getNoteStatus` | `GET /notes`, `/notes/{id}`, `/notes/{id}/status` | all send `kb` |
@@ -1054,7 +1054,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 
 **Frontend calls with no backend route:** none.
 
-Every `api.ts` method that omits `kb` relies on the server default of `"default"`; the two that omit it while addressing KB-scoped resources (`getChatMessages`, `deleteChatConversation`) only work for the default KB.
+Every `api.ts` method that omits `kb` relies on the server default of `"default"`; every method that addresses a KB-scoped resource sends it.
 
 ---
 
@@ -1104,7 +1104,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 7. `_chat_status` keeps full results in memory until `_prune()` evicts them (more than 200 entries, or older than 1800 s) — a finished job's result can disappear from `chat/status` after 30 minutes.
 8. `maintenance-status.ingestion` and community timer fields are process-wide, not per KB.
 9. `build-temporal-digests` reports `"started"` even when `TEMPORAL_DIGESTS_ENABLED=false` makes the job a no-op.
-10. Two frontend methods (`getChatMessages`, `deleteChatConversation`) never send `kb`, so they only work against the default KB.
+10. Every frontend method that addresses a KB-scoped resource sends `kb`; omission means the default KB on purpose.
 11. `PUT /notes/{id}` with a new title rewrites **every** note body in the KB (reads + conditional writes) — O(vault) per rename.
 12. `POST /vault/move` may return a different `to` than requested (uniquified); clients must use the returned value.
 13. `/vault-files/{kb}/…` serves any regular file in the vault, notes included, with no auth.

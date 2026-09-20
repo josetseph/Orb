@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Loader2, Maximize2 } from "lucide-react";
 import { useKB } from "@/lib/kb-context";
 import { cn } from "@/lib/utils";
@@ -120,6 +121,23 @@ export default function Graph3DPage() {
     const n = (filtered.nodes as AnyNode[]).find((x) => String(x.id) === id);
     if (n) pick(n);
   };
+
+  // `/graph-3d?node=<id>` (entity panel "Open in graph"): fly to and select
+  // that node once the data holds it. The canvas needs a frame to mount first.
+  const [searchParams] = useSearchParams();
+  const focusId = searchParams.get("node");
+  const focusedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!focusId || focusedRef.current === focusId) return;
+    const n = (filtered.nodes as AnyNode[]).find((x) => String(x.id) === focusId);
+    if (!n) return;
+    focusedRef.current = focusId;
+    const t = setTimeout(() => {
+      flyToNode(n);
+      handleNodeClick(n);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [focusId, filtered.nodes, flyToNode, handleNodeClick]);
   const toggleType = (t: string) =>
     setHidden((prev) => {
       const next = new Set(prev);

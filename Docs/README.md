@@ -94,6 +94,6 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 | Config | Anthropic call sites use `settings.ANTHROPIC_MODEL` directly, ignoring `CHAT_MODEL` / per-KB pins. | 13, 06 |
 | Logging | `X-Request-Id` is captured but never written to log lines; `EmbeddingService` logger is not routed to a file; Qdrant/Meilisearch run with stdio ignored. | 23 |
 | Finance | `_filter_summary_basic` reads `type` but accounts expose `account_type`, so `report().basic["balance-in-vault"]` is always 0. Cash accounts are never listed. No link-out to the Firefly UI exists although `firefly_url` is returned. Recurrences never fire (no cron). | 17 |
-| Frontend | `getChatMessages`, `deleteChatConversation` never send `kb`. The notes-graph preview does not run `attachments/…` image srcs through `resolveFileUrl`. | 18, 20, 07 |
+| Frontend | The notes-graph preview does not run `attachments/…` image srcs through `resolveFileUrl`. | 18, 20, 07 |
 | Tests | No CI test job (`desktop-release.yml` only builds). `pytest` is not in `requirements.txt`. `conftest` pins `LLM_PROVIDER="lm_studio"`. | 24, 27 |
 | Versioning | `.cursor/rules/architecture-decisions.mdc` is deleted in the working tree but is the only in-repo locked-decisions file. | 01, 25 |

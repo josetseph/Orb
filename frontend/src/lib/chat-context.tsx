@@ -100,9 +100,9 @@ export function ChatProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const selectConversation = useCallback(
-    async (conversationId: string, _kb: string) => {
+    async (conversationId: string, kb: string) => {
       try {
-        const rows = await api.getChatMessages(conversationId);
+        const rows = await api.getChatMessages(conversationId, kb);
         setActiveConversationId(conversationId);
         setMessages(rows.map(toMessage));
       } catch {
@@ -125,7 +125,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         return;
       }
       try {
-        await api.deleteChatConversation(activeConversationId);
+        await api.deleteChatConversation(activeConversationId, kb);
       } catch {
         return;
       }
@@ -241,7 +241,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (isStale()) return;
         if (conversationId) {
           try {
-            const rows = await api.getChatMessages(conversationId);
+            const rows = await api.getChatMessages(conversationId, kb);
             if (!isStale()) setMessages(rows.map(toMessage));
           } catch {
             // Keep optimistic messages if refresh fails.

@@ -214,7 +214,7 @@ export function EntityDetailPanel({
               </p>
             )}
 
-            <Link to="/graph-3d" className="btn btn-secondary mt-4 w-full no-underline">
+            <Link to={`/graph-3d?node=${encodeURIComponent(nodeId ?? "")}`} className="btn btn-secondary mt-4 w-full no-underline">
               <Network className="h-3.5 w-3.5" /> Open in graph
             </Link>
           </>
