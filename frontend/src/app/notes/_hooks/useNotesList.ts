@@ -94,18 +94,18 @@ export function useNotesList({
         } catch {
           /* folders optional */
         }
-        // Only keep polling notes the user already queued for ingest — never
-        // start "ingesting" tracking from autosave / vault-watcher markers.
+        // Poll every note the server says is mid-pipeline. The set lives in page
+        // state, so it is empty after navigating away and back while an ingest
+        // runs; rebuilding it from the list is what keeps the badge moving.
+        // isActiveProcessingNote ignores autosave / vault-watcher markers.
         setIngestingNoteIds((prev) => {
-          const next = new Set<string>();
           for (const id of prev) {
             const note = data.find((n: Note) => n.id === id);
-            if (note && isActiveProcessingNote(note)) next.add(id);
-            else if (note) {
+            if (note && !isActiveProcessingNote(note)) {
               notifyIfUnfocused(note.failed ? "Ingestion failed" : "Note ingested", note.title || "Untitled");
             }
           }
-          return next;
+          return new Set(data.filter(isActiveProcessingNote).map((n: Note) => n.id));
         });
       } catch (error) {
         if (!isRequestCancelled(error)) {
