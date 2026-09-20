@@ -871,7 +871,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - Stored `natural_language` is used verbatim in `_build_node_text` (`{origin} {nl} {neighbour}.`); a sentence that already contains both entity names doubles them.
 - `find_nodes_by_name` fuzzy `CONTAINS` also matches note nodes (`kind='note'`), so note titles compete as entities.
 - The title auto-set is keyed on the *title* being "New Chat", not on message count.
-- The export endpoint is broken and the UI swallows the error.
+- The chat page's Export button swallows request errors silently (`catch { /* ignore */ }`).
 - There is no streaming — "progress" is polling of a dict.
 
 ## 17. Extension points / how to modify safely

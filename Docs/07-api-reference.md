@@ -1095,7 +1095,6 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 
 ## 11. Gotchas & non-obvious behaviours
 
-1. `GET /api/v1/chat/conversations/{id}/export` is dead code in practice (`ChatStore.get_messages` does not exist) — any call is a 500.
 2. `POST /api/v1/kb/empty` `rmtree`s **everything** in the vault folder, including files Orb did not create, even for external (OneDrive/NAS) vaults. `DELETE /api/v1/kb/{id}` is the one with the external-vault guard.
 3. `GET /api/v1/vault/folders` **creates** `attachments/`. `GET /api/v1/notes` **inserts** note rows for unseen `.md` files. `GET /api/v1/graph/notes` **rewrites** `note_links` for the whole KB. `GET /api/v1/finance/workspace` **creates** a Firefly administration.
 4. Any chat query containing `account`, `report`, `cash`, `balance`, etc. (e.g. "notes about my Google account") is routed to the finance answerer, which calls Firefly and formats a ledger-centric prompt.
