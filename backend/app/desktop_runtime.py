@@ -774,8 +774,18 @@ def _ensure_firefly_env(data_dir: Path) -> None:
         "AUTHENTICATION_GUARD": "web",
         "APP_NAME": "Orb_Finance",
     }
-    _write_private(app_dir / ".env", "\n".join(f"{k}={v}" for k, v in env.items()) + "\n")
+    _write_private(app_dir / ".env", "\n".join(f"{k}={_env_quote(v)}" for k, v in env.items()) + "\n")
     _write_json(firefly_runtime_file(data_dir), runtime)
+
+
+def _env_quote(value: str) -> str:
+    """Quote a dotenv value for phpdotenv: paths like '…/Application Support/…'
+    contain spaces, which an unquoted value rejects. Single quotes are literal;
+    fall back to double quotes (escaping \\, \" and $) when the value has one."""
+    if "'" not in value:
+        return f"'{value}'"
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$")
+    return f'"{escaped}"'
 
 
 def _ensure_runtime_metadata(data_dir: Path) -> dict:

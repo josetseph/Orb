@@ -29,8 +29,29 @@ def test_status_file_is_written_atomically(tmp_path, monkeypatch):
 def test_firefly_env_and_runtime_keys(tmp_path):
     (tmp_path / "firefly" / "app").mkdir(parents=True)
     d._ensure_firefly_env(tmp_path)
-    env = dict(line.split("=", 1) for line in (tmp_path / "firefly" / "app" / ".env").read_text().splitlines())
+    env = {k: v.strip("'") for k, v in (line.split("=", 1) for line in (tmp_path / "firefly" / "app" / ".env").read_text().splitlines())}
     runtime = json.loads((tmp_path / "firefly" / "runtime.json").read_text())
     assert env["APP_KEY"] == runtime["appKey"] and env["APP_KEY"].startswith("base64:")
     assert env["STATIC_CRON_TOKEN"] == runtime["cronToken"] and len(runtime["cronToken"]) == 32
     assert env["DB_DATABASE"].endswith("firefly.sqlite")
+
+
+class TestFireflyEnvQuoting:
+    """phpdotenv rejects unquoted values with spaces; the default macOS data dir
+    lives under 'Application Support'."""
+
+    def test_values_are_single_quoted(self, tmp_path, monkeypatch):
+        from app import desktop_runtime as dr
+
+        data = tmp_path / "Application Support" / "Orb" / "data"
+        dr._ensure_firefly_env(data)
+        env = (dr.firefly_app_dir(data) / ".env").read_text()
+        db_line = next(l for l in env.splitlines() if l.startswith("DB_DATABASE="))
+        assert db_line == f"DB_DATABASE='{dr.firefly_app_dir(data) / 'storage' / 'database' / 'firefly.sqlite'}'"
+        assert all("=" in l and (l.split("=", 1)[1][0] in "'\"") for l in env.splitlines() if l)
+
+    def test_apostrophe_falls_back_to_double_quotes(self):
+        from app.desktop_runtime import _env_quote
+
+        assert _env_quote("plain") == "'plain'"
+        assert _env_quote("Joe's $HOME \"x\"") == '"Joe\'s \\$HOME \\"x\\""'
