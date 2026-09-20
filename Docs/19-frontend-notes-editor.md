@@ -17,7 +17,7 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 **Does not own**
 
 - The API client itself (`frontend/src/lib/api.ts`) and the `Note` type (`frontend/src/lib/types.ts`) — documented in [18-frontend-architecture.md](18-frontend-architecture.md); only the notes/vault/graph-entity methods are described here.
-- KB context (`frontend/src/lib/kb-context.tsx`), `frontend/src/lib/utils.ts` URL helpers (`resolveFileUrl`, `encodeFileUrl`, `isImageUrl`…) and `frontend/src/lib/desktop.ts` (`revealInFolder`) — see 18.
+- KB context (`frontend/src/lib/kb-context.tsx`), `frontend/src/lib/utils.ts` URL helpers (`resolveFileUrl`, `vaultRelPath`, `encodeFileUrl`, `isImageUrl`…) and `frontend/src/lib/desktop.ts` (`revealInFolder`) — see 18.
 - Backend note persistence, vault watcher, title/filename sync and wikilink `note_links` — see [09](09-notes-wikilinks-and-vault-files.md).
 - Ingestion itself — see [10](10-ingestion-pipeline.md). The page only queues and polls.
 
@@ -480,7 +480,7 @@ One effect with deps `[currentKB, openNoteById, refreshSelectedNote]`:
 
 ### 11.1 Upload path
 
-`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload${kbQuery(kb)}` `` with a 10-minute timeout. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response's `url` is percent-encoded once with `encodeFileUrl` before it is inserted into the note.
+`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload${kbQuery(kb)}` `` with a 10-minute timeout. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response's `rel_path` (`attachments/<sub>/<file>`, raw) is percent-encoded once with `encodeFileUrl` before it is inserted into the note; the stored link is vault-relative with no leading slash, so it survives the workspace being re-created under a new UUID. `resolveFileUrl` turns it back into `/vault-files/<kb>/…` at render time.
 
 ### 11.2 `attachFiles(files)` and `handleFileAttach(e)`
 
@@ -488,7 +488,7 @@ For each file sequentially: upload → decide image-ness by MIME `image/*` or ex
 
 | Kind | Inserted markdown |
 |---|---|
-| image | `![<filename>](<url>)` — kept as an image embed so the editor previews it and *"ingestion also discovers ![alt](/vault-files/...) for Florence"* |
+| image | `![<filename>](<url>)` — kept as an image embed so the editor previews it and *"ingestion also discovers ![alt](attachments/...) for description"* |
 | any other file | `[📎 <filename>](<url>)` |
 | voice recording | `[🎤 Voice Recording](<url>)` |
 
@@ -507,7 +507,7 @@ The backend transcodes/transcribes audio during ingestion (commit `acb19a5`, see
 ### 11.4 Preview, delete and reveal
 
 - `handleFileClick(url, filename)` → `resolvedUrl = resolveFileUrl(url, kb)`; type by `isImageUrl`/`isPdfUrl`/`isVideoUrl`/`isAudioUrl` tested on both the URL and the filename; `setFilePreview({url, filename, type})`. `resolveFileUrl` maps bare `attachments/...` to `/vault-files/<kb>/attachments/...` and leaves `/vault-files/...` alone.
-- `handleDeleteFile(fileUrl, _markdownText)` (from the attachments strip): confirm → derive vault-relative path (`/vault-files/<kb>/<path>` → decoded `<path>`; `attachments/...` kept; bare filename → `attachments/<name>`) → `POST /vault/delete` → `refreshSelectedNote` (server already stripped the markdown links across notes) → `fetchNotes`. The `_markdownText` argument is unused.
+- `handleDeleteFile(fileUrl, _markdownText)` (from the attachments strip): confirm → `vaultRelPath(fileUrl)` (either stored form → decoded vault-relative path) → `POST /vault/delete` → `refreshSelectedNote` (server already stripped the markdown links across notes) → `fetchNotes`. The `_markdownText` argument is unused.
 - `handleRevealPreviewFile()` → `GET /vault/local-path?rel=<url>&kb=` → `{rel_path, local_path, vault_path, exists}` → `revealInFolder(local_path)` (`POST /api/v1/desktop/reveal`); outside the desktop app, `window.open(url, "_blank")`. Errors → `alert("Could not reveal this file on disk.")`.
 
 ### 11.5 Date picker (`created_at`)
@@ -732,7 +732,7 @@ All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL
 |---|---|---|---|---|
 | `getNotes(search?, processed?, failed?, kb, {signal})` | `GET /notes` | `search`, `processed`, `failed`, `kb` | `notes.get_notes`: runs `sync_vault_notes` first (`sync_vault=True` default; the client never disables it), filters `kb_id`, `title ILIKE %search% OR rel_path ILIKE %search%` (**bodies are not searched**), `processed`, `failed`; `ORDER BY created_at DESC`; no limit; bodies read from vault in a thread. | `Note[]` (`_note_response`: `id, content, title, rel_path, created_at, updated_at, processed, failed, processing_stage, processing_model, kb_id`) |
 | `getNote(id, kb)` | `GET /notes/{id}` | — | `get_note` (404 if not in KB) | `Note` |
-| `getNoteStatus(id)` | `GET /notes/{id}/status` | **no kb** | `get_note_ingestion_status` — still filtered by `kb_id == get_kb()`; without `?kb=` this resolves to the default KB, so polling a note that lives in a non-default KB returns **404** (caught and ignored by the poller; see §21). 503 on DB timeout. | `{id, processed, failed, status: "completed"|"failed"|"processing", processing_stage, processing_model}` |
+| `getNoteStatus(id, kb)` | `GET /notes/{id}/status` | `kb` | `get_note_ingestion_status` — filtered by `kb_id == get_kb()`; 404 if the note is not in that KB (caught and ignored by the poller). 503 on DB timeout. | `{id, processed, failed, status: "completed"|"failed"|"processing", processing_stage, processing_model}` |
 | `createNote(content, created_at?, kb, title?, folder?)` | `POST /notes` | `{content, created_at, title, folder}` (`CreateNoteInput`) | `create_note`: uuid4 id, `processing_stage="Saved"`, `persist_note_body(..., title, folder)` writes the `.md` (filename derived from title or `Untitled N`), `refresh_note_links`. No ingest. | `Note` |
 | `updateNote(id, content, created_at?, kb, title?)` | `PUT /notes/{id}` | `{content, created_at, title}` | `update_note`: `persist_note_body`; if `title is not None` → `rename_note_file_for_title` (renames `.md`, rewrites refs/wikilinks in other notes); `created_at` parsed if present; `updated_at = now`; **never starts ingestion**; resets watcher markers (`pending…`, `External…`, `Changed on disk`, empty) to `"Saved"` but leaves `Queued…`/`Starting…` stages alone; `refresh_note_links`. | `Note` |
 | `updateNoteOnUnload(id, content, kb, title?)` | `PUT /notes/{id}` | `{content, title}` via `fetch keepalive` (< 60 000 chars) else the normal `http.put` | same | ignored |
@@ -804,7 +804,6 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 
 ## 21. Gotchas and non-obvious behaviours
 
-- **Status polling omits `kb`.** `api.getNoteStatus(id)` sends no `?kb=` while the backend filters by `get_kb()`; for notes in a non-default KB the poll 404s silently and the spinner only clears when `fetchNotes` prunes the set (search/filter/KB change) or the user reloads. `useNoteIngest` receives `currentKB` but does not pass it. (Discrepancy — see open questions.)
 - **Search matches title/`rel_path` only**, never the body (bodies live in files; the backend comment says so). Users expecting full-text search should use chat/Meili.
 - **Each `fetchNotes` is two requests** and `GET /notes` also runs a vault sync, so the 300 ms search debounce is doing real work; do not lower it casually.
 - **KB switch drops the search query** (`fetchNotes(undefined, processedFilter)`) but keeps the filter chip; the input still shows the old text until the next keystroke.

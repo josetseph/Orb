@@ -467,24 +467,20 @@ def mmproj_hf_path(model_hf_path: str) -> str:
 
 
 def find_mmproj(chat_gguf: Path) -> Path | None:
-    """The projector for ``chat_gguf``, if one sits next to it.
+    """The projector for ``chat_gguf``: ``mmproj-<model stem>-*.gguf`` beside it.
 
-    Prefers a file sharing the model's name; a folder holding one model and
-    one projector matches on the projector alone.
+    A projector is architecture-specific, so only a name match counts; an
+    unrelated projector in the folder (another model's) is never used - binding
+    the wrong one breaks every completion, not just image ones.
     """
     folder = Path(chat_gguf).parent
-    if not folder.is_dir():
-        return None
-    candidates = sorted(
-        p for p in folder.glob("*.gguf") if p.name.lower().startswith("mmproj")
-    )
-    if not candidates:
-        return None
     stem = _QUANT_SUFFIX_RE.sub("", Path(chat_gguf).stem).lower()
-    for cand in candidates:
-        if stem and stem in cand.name.lower():
+    if not folder.is_dir() or not stem:
+        return None
+    for cand in sorted(folder.glob("mmproj-*.gguf")):
+        if cand.name.lower().startswith(f"mmproj-{stem}"):
             return cand
-    return candidates[0] if len(candidates) == 1 else None
+    return None
 
 
 def ensure_mmproj(model_id: str, on_progress=None) -> Path | None:
@@ -607,6 +603,7 @@ def sync_embedding_infrastructure(
         sel = load_manifest().get("selection") or {}
         # Once per boot (main.py calls this at startup), not on every read.
         _heal_selection_paths(sel)
+        _ensure_mmproj_in_background(sel)
         reranker_id = (sel.get("reranker_id") or "").strip()
         if reranker_id:
             _settings.MODEL_RERANKER_LOCAL = reranker_id
@@ -853,6 +850,32 @@ def _heal_selection_paths(sel: dict) -> None:
         logger.info("[LocalModels] Manifest paths repaired: %s", ", ".join(fixed))
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning("[LocalModels] Could not repair manifest paths: %s", exc)
+
+
+def _ensure_mmproj_in_background(sel: dict) -> None:
+    """Fetch the selected catalog chat model's projector when none sits beside it.
+
+    Best-effort and off the boot path: a daemon thread, every outcome logged.
+    """
+    from app.services.model_catalog import get_option
+
+    chat_id = (sel.get("chat_id") or "").strip()
+    opt = get_option(chat_id) if chat_id else None
+    chat = selected_gguf(sel.get("chat_path"))
+    if not opt or not chat or find_mmproj(chat) is not None:
+        return
+
+    def _run() -> None:
+        logger.info("[LocalModels] Fetching vision projector for %s", chat_id)
+        try:
+            got = ensure_mmproj(opt.hf_path)
+            logger.info(
+                "[LocalModels] Vision projector for %s: %s", chat_id, got or "none published"
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("[LocalModels] Vision projector for %s failed: %s", chat_id, exc)
+
+    threading.Thread(target=_run, name="orb-mmproj", daemon=True).start()
 
 
 def gguf_paths_if_present() -> dict[str, Path] | None:
@@ -1246,6 +1269,19 @@ class LocalLlamaRuntime:
             **({"chat_handler": handler} if handler else {}),
             **chat_kwargs,
         )
+        if handler is not None and hasattr(handler, "_init_mtmd_context"):
+            # llama-cpp-python binds the projector on the first completion, so
+            # a wrong one used to fail every completion. Bind it now and drop
+            # it on failure: text chat keeps working, describe_image raises
+            # its "no vision projector" error.
+            try:
+                handler._init_mtmd_context(self._chat)  # pylint: disable=protected-access
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Vision projector %s failed to initialise, text-only: %s", mmproj.name, exc
+                )
+                self._chat.chat_handler = None
+                handler = None
         self._chat_handler = handler
         self._mmproj_path = mmproj if handler else None
         model_load_clock.record("chat", time.perf_counter() - started)

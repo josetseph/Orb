@@ -143,7 +143,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 
 | Method | Path | kb | Purpose | Anchor |
 |---|---|---|---|---|
-| GET | `/api/v1/setup/status` | – | Paths, AI mode, model readiness | [#](#get-apiv1setupstatus) |
+| GET | `/api/v1/setup/status` | – | Paths, model readiness | [#](#get-apiv1setupstatus) |
 | GET | `/api/v1/setup/model-catalog` | – | Hardware profile + chat model options | [#](#get-apiv1setupmodel-catalog) |
 | POST | `/api/v1/setup/download-models` | – | Download GGUFs (+ Florence/Whisper/Marlin) — blocking | [#](#post-apiv1setupdownload-models) |
 | POST | `/api/v1/setup/select-chat-model` | – | Persist model selection, resize Qdrant | [#](#post-apiv1setupselect-chat-model) |
@@ -1037,7 +1037,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 | `deleteChatConversation` | `DELETE /chat/conversations/{id}` | same missing-`kb` issue |
 | `exportChat` | `GET /chat/conversations/{id}/export` | backend route is broken (500) — see 6 |
 | `upload` | `POST /upload` | direct-to-API origin via bridge; 10 min timeout |
-| `getNotes` / `getNote` / `getNoteStatus` | `GET /notes`, `/notes/{id}`, `/notes/{id}/status` | `getNoteStatus` never sends `kb` → 404 for non-default KB notes |
+| `getNotes` / `getNote` / `getNoteStatus` | `GET /notes`, `/notes/{id}`, `/notes/{id}/status` | all send `kb` |
 | `createNote` / `updateNote` / `updateNoteOnUnload` / `deleteNote` / `batchDeleteNotes` / `moveNote` / `ingestNote` | notes routes | |
 | `moveVaultFile` / `deleteVaultFile` / `listVaultFolders` / `mkdirVaultFolder` / `resolveVaultLocalPath` | vault routes | |
 | `getGraph3DFull` / `getNodeDetail` | graph 3d routes | TS type for `getGraph3DFull` declares `facts` which the backend omits |
@@ -1054,7 +1054,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 
 **Frontend calls with no backend route:** none.
 
-Every `api.ts` method that omits `kb` relies on the server default of `"default"`; the three that omit it while addressing KB-scoped resources (`getChatMessages`, `deleteChatConversation`, `getNoteStatus`) only work for the default KB.
+Every `api.ts` method that omits `kb` relies on the server default of `"default"`; the two that omit it while addressing KB-scoped resources (`getChatMessages`, `deleteChatConversation`) only work for the default KB.
 
 ---
 
@@ -1104,7 +1104,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 7. `_chat_status` grows unbounded (full results retained) for the life of the process.
 8. `maintenance-status.ingestion` and community timer fields are process-wide, not per KB.
 9. `build-temporal-digests` reports `"started"` even when `TEMPORAL_DIGESTS_ENABLED=false` makes the job a no-op.
-10. Three frontend methods (`getChatMessages`, `deleteChatConversation`, `getNoteStatus`) never send `kb`, so they only work against the default KB.
+10. Two frontend methods (`getChatMessages`, `deleteChatConversation`) never send `kb`, so they only work against the default KB.
 11. `PUT /notes/{id}` with a new title rewrites **every** note body in the KB (reads + conditional writes) — O(vault) per rename.
 12. `POST /vault/move` may return a different `to` than requested (uniquified); clients must use the returned value.
 13. `/vault-files/{kb}/…` serves any regular file in the vault, notes included, with no auth.

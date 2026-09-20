@@ -96,6 +96,6 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 | Config | Anthropic call sites use `settings.ANTHROPIC_MODEL` directly, ignoring `CHAT_MODEL` / per-KB pins. `ai_is_configured()` returns `True` for `cloud` with no key because `LLM_BASE_URL` has a default. | 13, 06 |
 | Logging | `X-Request-Id` is captured but never written to log lines; `EmbeddingService` logger is not routed to a file; Qdrant/Meilisearch run with stdio ignored. | 23 |
 | Finance | `_filter_summary_basic` reads `type` but accounts expose `account_type`, so `report().basic["balance-in-vault"]` is always 0. Cash accounts are never listed. No link-out to the Firefly UI exists although `firefly_url` is returned. Recurrences never fire (no cron). | 17 |
-| Frontend | `getChatMessages`, `deleteChatConversation`, `getNoteStatus` never send `kb`. Chat footer model names are hard-coded. | 18, 20, 07 |
+| Frontend | `getChatMessages`, `deleteChatConversation` never send `kb`. Chat footer model names are hard-coded. | 18, 20, 07 |
 | Tests | No CI test job. `pytest` is not in `requirements.txt`. `test_relationships.py` imports a module deleted in `da75dfc`; half of `test_graph_queries.py` targets removed APIs; one `test_chat_context.py` assertion is stale; `conftest` pins `LLM_PROVIDER="lm_studio"`. | 24, 27 |
 | Versioning | `FastAPI(version="0.1.0")` while packages say `0.2.0`. `.cursor/rules/architecture-decisions.mdc` is deleted in the working tree but is the only in-repo locked-decisions file. | 01, 25 |

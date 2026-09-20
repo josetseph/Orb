@@ -32,12 +32,12 @@ class TestFindProjector:
         mine.write_bytes(b"x")
         assert find_mmproj(chat) == mine
 
-    def test_single_projector_in_folder_is_taken(self, tmp_path: Path):
+    def test_unrelated_lone_projector_is_not_taken(self, tmp_path: Path):
+        """A projector is architecture-specific: name match only, never "the only one"."""
         chat = tmp_path / "custom-model.gguf"
         chat.write_bytes(b"x")
-        only = tmp_path / "mmproj-whatever.gguf"
-        only.write_bytes(b"x")
-        assert find_mmproj(chat) == only
+        (tmp_path / "mmproj-whatever.gguf").write_bytes(b"x")
+        assert find_mmproj(chat) is None
 
     def test_ambiguous_projectors_are_not_guessed(self, tmp_path: Path):
         chat = tmp_path / "custom-model.gguf"

@@ -233,7 +233,11 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             from app.workflows.agents.ingestion_agent import attachment_key
 
             item = next(
-                (a for a in parse_attachments(body) if a["lower_url"] == attachment_key(url)),
+                (
+                    a
+                    for a in parse_attachments(body, kb.kb_id)
+                    if a["lower_url"] == attachment_key(url)
+                ),
                 None,
             )
             if not item:
@@ -244,7 +248,7 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             section = await extract_attachment(kind, item, _noop_status, wf._llm)  # pylint: disable=protected-access
             if not section.strip():
                 raise ValueError("Extraction produced no text")
-            content = place_extraction(remove_extraction(body, url), item["url"], section)
+            content = place_extraction(remove_extraction(body, url), item["link"], section)
             await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
         _attachment_jobs[key] = {"status": "done", "error": None}
     except asyncio.CancelledError:
@@ -621,8 +625,6 @@ def _attachment_rels_from_note_body(body: str) -> list[str]:
     for match in _re.finditer(_link, body or ""):
         raw = match.group(1).rstrip("/")
         rel = vault_rel_from_url(raw)
-        if not rel and raw.startswith("attachments/"):
-            rel = raw
         if rel and rel not in seen and ".." not in rel.split("/"):
             seen.add(rel)
             rels.append(rel)

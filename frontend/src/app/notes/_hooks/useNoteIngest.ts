@@ -115,7 +115,7 @@ export function useNoteIngest({
       await Promise.all(
         Array.from(ingestingNoteIds).map(async (noteId) => {
           try {
-            const status = await api.getNoteStatus(noteId);
+            const status = await api.getNoteStatus(noteId, currentKB);
             updates.push({
               id: noteId,
               processed: status.processed,

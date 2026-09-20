@@ -154,13 +154,13 @@ Callers: `create_note`, `ingest_note` (legacy combined route), `update_note`, `I
 
 `sync_vault_notes(db, kb)` (called by the notes listing and setup) starts with two idempotent repairs before it reconciles rows with files:
 
-1. **`migrate_vault_files(vault)`** (run in a thread), gated by the marker file `<vault>/.orb/migrated-v1` — when it exists the function returns `0` immediately. Otherwise every note `.md` (`iter_vault_md_files`, attachments excluded) is read and rewritten only if it changes, each write going through `mark_self_write` so the watcher ignores it:
-   - `_normalize_vault_targets`: in `](…)` targets and `orb:extract src="…"` markers, `attachments/attachments/` is collapsed to `attachments/` for `/vault-files/<kb>/…` URLs and for bare `attachments/attachments/` targets, and every segment of a `/vault-files/<kb>/…` path is `unquote`d then `quote(seg, safe="")`d — the encoding `vault_ops.rewrite_refs_in_text` writes, so a moved attachment's link and its marker keep matching.
+1. **`migrate_vault_files(vault)`** (run in a thread), gated by the marker file `<vault>/.orb/migrated-v2` (v1 vaults run the whole idempotent sweep once more) — when it exists the function returns `0` immediately. Otherwise every note `.md` (`iter_vault_md_files`, attachments excluded) is read and rewritten only if it changes, each write going through `mark_self_write` so the watcher ignores it:
+   - `_normalize_vault_targets`: in `](…)` targets and `orb:extract src="…"` markers, `attachments/attachments/` is collapsed to `attachments/` for `/vault-files/<kb>/…` URLs and for bare `attachments/attachments/` targets, and (v2) every `/vault-files/<any kb id or slug>/<rel>` target becomes the canonical vault-relative `<rel>`, each segment `unquote`d then `quote(seg, safe="")`d — the form `vault_ops.rewrite_refs_in_text` writes, so a moved attachment's link and its marker keep matching. The kb id is minted per workspace row, so absolute links died with every re-created workspace or restored DB; already-relative targets are left alone.
    - `ingestion_agent.wrap_legacy_enrichment_blocks`: pre-marker enrichment output (`[PDF Extraction (…)]`, `[Image: …]`, transcripts, …) is wrapped in `<!-- orb:extract src="" -->…<!-- /orb:extract -->` so re-ingest can find and drop it (doc 10 §6.2).
    The marker is touched after the loop (`.orb/` is created if needed) and the count of rewritten files is logged.
 2. **Legacy SQLite bodies**: for every `Note` of the KB whose `content` is non-empty, `persist_note_body(n, kb, n.content)` writes it to the vault file (choosing a `rel_path` if the row has none) when the file is missing, or the column is simply blanked when `read_note_file` already returns a body. After this `notes.content` is `""` everywhere and `note_body` never consults it.
 
-Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `<vault>/.orb/migrated-v1` re-runs the sweep on the next listing.
+Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `<vault>/.orb/migrated-v2` re-runs the sweep on the next listing.
 
 ## 5. `vault.py` primitives
 
@@ -183,9 +183,9 @@ Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `
 - `_norm(rel)`: `\`→`/`, strip leading `/`. (Does **not** strip `..`; callers check `".." in rel.split("/")` explicitly and raise `ValueError("Invalid path")`.)
 - `safe_vault_join(vault, rel) -> Path`: `(vault / _norm(rel)).resolve()` must be inside `vault.resolve()` (`relative_to`), else `ValueError("Path escapes vault")`. Because it resolves symlinks, a symlink inside the vault pointing outside is rejected too. Every disk access for notes, attachments, `/vault-files`, uploads-delete and mkdir goes through it; the note-delete route explicitly refuses to "fall back to raw path joins" on failure.
 
-### 6.2 `rewrite_refs_in_text(content, old_rel, new_rel, kb_id) -> str`
+### 6.2 `rewrite_refs_in_text(content, old_rel, new_rel) -> str`
 
-Rewrites markdown link/image **targets only** — the pattern is `(\]\(|orb:extract src=")(<src>)(\)|")`, i.e. the target must be exactly the whole parenthesised URL or the whole `src` of an extraction marker (so the marker keeps matching its link after a move and the attachment is not re-transcribed). Four `src → dst` pairs are tried in order: `/vault-files/<kb_id>/<old>`, its percent-encoded form (each segment `quote(seg, safe="")`), bare `<old>`, bare encoded `<old>`. Rationale in the docstring: an earlier bare substring replace turned `…/attachments/x.mp4` into `…/attachments/attachments/x.mp4` when `old_rel` was just a filename. Limitation: links with a title (`](url "title")`) or with a query string are not rewritten.
+Rewrites markdown link/image **targets only** — the pattern is `(\]\(|orb:extract src=")(?:/vault-files/<any>/)?(<old>|<encoded old>)(\)|")`, i.e. the target must be exactly the whole parenthesised URL or the whole `src` of an extraction marker (so the marker keeps matching its link after a move and the attachment is not re-transcribed). Both the canonical relative form and any legacy `/vault-files/<kb>/` prefix (whatever id it holds) are matched, raw or percent-encoded; the replacement is always the canonical form — relative, each segment `quote(seg, safe="")`. Rationale in the docstring: an earlier bare substring replace turned `…/attachments/x.mp4` into `…/attachments/attachments/x.mp4` when `old_rel` was just a filename. Limitation: links with a title (`](url "title")`) or with a query string are not rewritten.
 
 ### 6.3 `rewrite_wikilinks_in_text(content, resolver, source_rel_path, moved_note_id, bare_target, path_target)`
 
@@ -258,14 +258,16 @@ Batch delete loops this per id, collecting `{id, error}` on exceptions.
 
 ## 8. Attachments: upload flow, `attachments/` naming, `/vault-files/{kb}/{path}`
 
+**Canonical stored link form (since sweep v2): vault-relative** — `attachments/<sub>/<file>`, no leading slash, no `/vault-files/<kb>/` prefix, each path segment percent-encoded as `quote(seg, safe="")` (`attachments/Talk%20%281%29.m4a`). The same string is the `src` of the attachment's `orb:extract` marker. `/vault-files/<kb>/…` is now only a *serving* URL: the frontend resolves the relative form to it at render time (`resolveFileUrl`), and every backend reader accepts both forms (`vault_rel_from_url`, `ingestion_agent.attachment_key`, `rewrite_refs_in_text`, `strip_refs_in_text`). The kb id is minted per workspace row, so links that embedded it broke whenever a workspace was re-created or the DB restored.
+
 ### 8.1 Upload — `POST /api/v1/upload?kb=` (multipart `file`)
 
 1. Whole file read into memory (no server-side size limit; the desktop UI talks to the backend directly on the same origin).
 2. Audio normalisation: if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}` → `_transcode_to_m4a` (`ffmpeg -y -i in -c:a aac -b:a 128k out.m4a`, 60 s, thread). Success → bytes replaced, ext `m4a`, name hint `recording.m4a`; any failure → original bytes kept (name hint `recording.<ext>`). This is what the voice recorder relies on so Whisper and browsers get AAC.
 3. `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id)` → `save_attachment` (8.2) → returns `{url: "/vault-files/<kb_id>/<rel>", key: <rel>, filename}`.
-4. Response: `{filename (original), url, href (=url), rel_path (=key), local_path (=url), key, status:"success"}`.
+4. Response: `{filename (original), url, rel_path (=key), key, status:"success"}` — `rel_path` is the raw (unencoded) `attachments/<name>` the editor encodes and inserts; `url` is the serving URL for immediate preview.
 
-The `<kb_id>` segment in the URL is **`kb.kb_id`** — `default` or the UUID — not the slug. Markdown therefore embeds UUIDs; `/vault-files/{kb_id}` accepts id, name or slug, and `vault_rel_from_url` ignores whatever the segment is, so links survive KB renames (but not moving a note's file to another KB's vault).
+The `<kb_id>` segment in the serving URL is **`kb.kb_id`** — `default` or the UUID — not the slug. `/vault-files/{kb_id}` accepts id, name or slug, and `vault_rel_from_url` ignores whatever the segment is.
 
 ### 8.2 `save_attachment(vault, src_name, data, folder=None) -> rel`
 
@@ -280,12 +282,12 @@ Uploads never mark a self-write (the watcher ignores non-`.md` anyway).
 
 | Input | Output |
 |---|---|
-| `/vault-files/<anything>/a/b.png` | `a/b.png` |
-| `attachments/x.png` | unchanged |
+| `/vault-files/<anything>/a/b%20c.png` | `a/b c.png` |
+| `attachments/x%20y.png` | `attachments/x y.png` |
 | any string containing `/attachments/` (e.g. `http://host/foo/attachments/x.png?x=1`) | `attachments/x.png` (query stripped) |
 | anything else | `None` |
 
-Used by note delete (attachment discovery), `remove_upload`, `GET /api/v1/vault/local-path`. `MultimediaService._resolve_vault_local_path` has its own stricter parser: requires `/vault-files/<kb_id>/<rel>` (or `vault-files/…`), URL-decodes `rel`, rejects `..`, resolves the KB via `kb_registry.get_kb(kb_id)` (**id only** — a hand-written `/vault-files/<slug>/…` link is served by the browser route but is invisible to enrichment).
+The result is always the **decoded** on-disk path. Used by note delete (attachment discovery), `remove_upload`, `GET /api/v1/vault/local-path`. `vault_file_url(link, kb_id)` is the inverse for a canonical `attachments/…` link (`/vault-files/<kb_id>/<link>`; anything else passes through) — `parse_attachments(content, kb_id)` uses it so enrichment opens relative links through `MultimediaService._resolve_vault_local_path`, which keeps its stricter parser: requires `/vault-files/<kb_id>/<rel>` (or `vault-files/…`), URL-decodes `rel`, rejects `..`, resolves the KB via `kb_registry.get_kb(kb_id)` (**id only**).
 
 ### 8.4 Serving — `GET /vault-files/{kb_id}/{file_path:path}` (`api_desktop.py`)
 
@@ -307,7 +309,7 @@ What the editor writes (`useNoteMedia.ts`):
 
 | Kind | Inserted markdown |
 |---|---|
-| image upload | `![<original filename>](<encoded /vault-files url>)` — kept as an image so the editor previews it and *"ingestion also discovers ![alt](/vault-files/...) for Florence"* |
+| image upload | `![<original filename>](<encoded attachments/… path>)` — kept as an image so the editor previews it and ingestion also discovers `![alt](attachments/...)` for description |
 | any other file | `[📎 <original filename>](<encoded url>)` |
 | voice recording | `[🎤 Voice Recording](<encoded url>)` |
 
@@ -315,7 +317,7 @@ Who parses them:
 
 | Consumer | Pattern | Notes |
 |---|---|---|
-| `ingestion_agent` (module-level `ATTACHMENT_LINK_RE` / `IMAGE_LINK_RE`) | `_ATTACHMENT_URL = (?:https?://\|/vault-files/)(?:[^()\n]|\([^()\n]*\))+`; `ATTACHMENT_LINK_RE = \[(📎\|🎤)\s*(.*?)\]\((URL)\)`; `IMAGE_LINK_RE = !\[([^\]]*)\]\((URL)\)` | URL runs to the closing `)` — spaces/commas allowed (uploaded filenames), and **balanced parentheses** are kept, so `Report (2026).pdf` survives (one nesting level). Dedup by lower-cased, unquoted URL sans query. Type is decided by **extension** (`video .mp4 .mov .webm .mkv .avi`; `audio .m4a .mp3 .wav .ogg .aac`; `image .jpg .jpeg .png .webp .gif`; spreadsheets `.xlsx .xls .csv .tsv`; plus PDF/Word handled in the same node) — `🎤` only forces audio when the extension is unknown. Remote `http(s)` URLs are also accepted (guarded against SSRF/oversize elsewhere). `🖇` is **not** recognised by the backend. |
+| `ingestion_agent` (module-level `ATTACHMENT_LINK_RE` / `IMAGE_LINK_RE`) | `_ATTACHMENT_URL = (?:https?://\|/vault-files/\|attachments/)(?:[^()\n]|\([^()\n]*\))+`; `ATTACHMENT_LINK_RE = \[(📎\|🎤)\s*(.*?)\]\((URL)\)`; `IMAGE_LINK_RE = !\[([^\]]*)\]\((URL)\)` | URL runs to the closing `)` — spaces/commas allowed (uploaded filenames), and **balanced parentheses** are kept, so `Report (2026).pdf` survives (one nesting level). Dedup by `attachment_key`: lower-cased, unquoted URL sans query with any `/vault-files/<kb>/` prefix dropped — so `/vault-files/<old uuid>/attachments/x.pdf` and `attachments/x.pdf` are one attachment and a pre-sweep extraction block still matches its link. Each item carries `link` (the target as written — what `place_extraction` copies into the marker `src`) and `url` (the serving URL the extractors open, via `vault_file_url` when a `kb_id` is passed). Type is decided by **extension** (`video .mp4 .mov .webm .mkv .avi`; `audio .m4a .mp3 .wav .ogg .aac`; `image .jpg .jpeg .png .webp .gif`; spreadsheets `.xlsx .xls .csv .tsv`; plus PDF/Word handled in the same node) — `🎤` only forces audio when the extension is unknown. Remote `http(s)` URLs are also accepted (guarded against SSRF/oversize elsewhere). `🖇` is **not** recognised by the backend. |
 | `api/notes._attachment_rels_from_note_body` (delete) | `!?\[[^\]]*\]\(((?:[^()\s]\|\([^()\s]*\))+)(?:\s+"[^"]*")?\)` | any link/image whose URL maps to a vault rel; balanced parentheses allowed, but still stops at whitespace (so URLs with raw spaces are missed → those attachments are **not** deleted with the note). |
 | `parse-note-attachments.ts` (attachments strip) | `URL_PART = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((URL_PART)\)\|\[([📎🖇🎤][^\]]+)\]\((URL_PART)\))` | label stripped of the leading marker. |
 | `mediaEmbedExtension.ts` (inline embeds) | `MEDIA_URL = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((MEDIA_URL)\)\|\[([📎🖇🎤]?[^\]]*)\]\((MEDIA_URL)\))` | plain links without a marker only embed for YouTube/Vimeo. |

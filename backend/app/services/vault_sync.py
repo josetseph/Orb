@@ -74,21 +74,27 @@ _BARE_DOUBLED_RE = re.compile(_TARGET_OPEN + r"attachments/attachments/")
 
 
 def _normalize_vault_targets(text: str) -> str:
-    """Collapse ``attachments/attachments/`` and re-encode vault-file URLs the
-    way ``vault_ops.rewrite_refs_in_text`` writes them (each segment fully quoted)."""
+    """Collapse ``attachments/attachments/`` and rewrite ``/vault-files/<any kb>/<rel>``
+    to the canonical vault-relative ``<rel>`` (each segment ``quote(seg, safe="")``,
+    the form ``vault_ops.rewrite_refs_in_text`` writes). The kb id is minted per
+    workspace row, so an absolute link died with every re-created workspace."""
 
     def _fix(m: re.Match[str]) -> str:
         segs = [unquote(s) for s in m.group(3).split("/")]
         if segs[:2] == ["attachments", "attachments"]:
             del segs[0]
-        return m.group(1) + m.group(2) + "/".join(quote(s, safe="") for s in segs)
+        return m.group(1) + "/".join(quote(s, safe="") for s in segs)
 
     return _BARE_DOUBLED_RE.sub(r"\1attachments/", _VAULT_TARGET_RE.sub(_fix, text))
 
 
 def migrate_vault_files(vault: Path) -> int:
-    """One-time in-place rewrite of legacy link shapes; gated by ``.orb/migrated-v1``."""
-    marker = vault / ".orb" / "migrated-v1"
+    """One-time in-place rewrite of legacy link shapes; gated by ``.orb/migrated-v2``.
+
+    v2 added the relative-link rewrite; every step is idempotent, so a vault at
+    v1 simply runs the whole sweep once more.
+    """
+    marker = vault / ".orb" / "migrated-v2"
     if marker.exists():
         return 0
     from app.workflows.agents.ingestion_agent import wrap_legacy_enrichment_blocks
@@ -107,7 +113,7 @@ def migrate_vault_files(vault: Path) -> int:
             rewritten += 1
     marker.parent.mkdir(exist_ok=True)
     marker.touch()
-    logger.info("Vault migration v1 (%s): %d files rewritten", vault, rewritten)
+    logger.info("Vault migration v2 (%s): %d files rewritten", vault, rewritten)
     return rewritten
 
 

@@ -1,6 +1,6 @@
 import { Decoration, EditorView, WidgetType, type DecorationSet } from "@codemirror/view";
 import { StateEffect, StateField, type EditorState } from "@codemirror/state";
-import { isAudioUrl, isImageUrl, isVideoUrl } from "@/lib/utils";
+import { isAudioUrl, isImageUrl, isVideoUrl, vaultRelPath } from "@/lib/utils";
 
 /**
  * Ingestion wraps each extraction in `<!-- orb:extract src="…" -->` … `<!-- /orb:extract -->`
@@ -15,14 +15,11 @@ const OPEN_RE = /<!-- orb:extract src="([^"]*)" -->/g;
 const CLOSE = "<!-- /orb:extract -->";
 const MARKER_RE = /<!-- (\/?)orb:extract(?: src="([^"]*)")? -->/g;
 
-/** Same identity the backend uses: no query, unquoted, lowercase. */
+/** Same identity the backend uses: no query, unquoted, lowercase — and
+ * vault-relative, so a marker written as `/vault-files/<kb>/attachments/x`
+ * still matches a link stored as `attachments/x`. */
 export function extractKey(src: string): string {
-  const bare = (src || "").trim().split("?")[0];
-  try {
-    return decodeURIComponent(bare).toLowerCase();
-  } catch {
-    return bare.toLowerCase();
-  }
+  return vaultRelPath((src || "").trim().split("?")[0]).toLowerCase();
 }
 
 /** Keys of every attachment that already has a block in this document. */

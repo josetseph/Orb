@@ -17,6 +17,7 @@ import {
   isPdfUrl,
   isVideoUrl,
   resolveFileUrl,
+  vaultRelPath,
 } from "@/lib/utils";
 import type { FilePreview, Note } from "@/lib/types";
 import { errMessage } from "@/lib/utils";
@@ -76,20 +77,7 @@ export function useNoteMedia({
       }
       try {
         // /vault/delete takes a decoded vault-relative path.
-        const resolved = resolveFileUrl(fileUrl, currentKB);
-        const relPath = resolved.startsWith("/vault-files/")
-          ? resolved
-              .split("/")
-              .slice(3) // '', 'vault-files', kb, ...path
-              .map((p) => {
-                try {
-                  return decodeURIComponent(p);
-                } catch {
-                  return p;
-                }
-              })
-              .join("/")
-          : fileUrl;
+        const relPath = vaultRelPath(fileUrl);
 
         await api.deleteVaultFile(relPath, currentKB);
         // Server already stripped markdown links across notes
@@ -121,8 +109,8 @@ export function useNoteMedia({
         const chunks: string[] = [];
         for (const file of list) {
           const response = await api.upload(file, currentKB);
-          const linkUrl = encodeFileUrl(response.url);
-          if (!linkUrl) throw new Error("Upload returned no URL");
+          if (!response.rel_path) throw new Error("Upload returned no path");
+          const linkUrl = encodeFileUrl(response.rel_path);
 
           const lower = file.name.toLowerCase();
           const isImage =
@@ -130,7 +118,7 @@ export function useNoteMedia({
             /\.(jpg|jpeg|png|gif|webp|svg)$/i.test(lower);
 
           // Images stay as markdown image embeds so the editor previews them;
-          // ingestion also discovers ![alt](/vault-files/...) for description.
+          // ingestion also discovers ![alt](attachments/...) for description.
           chunks.push(
             isImage
               ? `![${file.name}](${linkUrl})`
@@ -202,7 +190,7 @@ export function useNoteMedia({
           setIsUploading(true);
           const response = await api.upload(audioFile, currentKB);
 
-          const markdownLink = `[🎤 Voice Recording](${encodeFileUrl(response.url)})`;
+          const markdownLink = `[🎤 Voice Recording](${encodeFileUrl(response.rel_path)})`;
           if (editorRef.current) {
             editorRef.current.insertAtCursor(markdownLink);
           } else if (selectedNote) {

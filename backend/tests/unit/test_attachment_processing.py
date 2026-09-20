@@ -25,6 +25,16 @@ def _pending(content: str) -> list[str]:
     return [i["url"] for i in items if i["lower_url"] not in done]
 
 
+def test_key_is_the_same_for_legacy_absolute_and_relative_links():
+    """An extraction block from before the sweep still matches its relativised link."""
+    rel = "attachments/Talk%20(Farmer).m4a"
+    assert attachment_key(M4A) == attachment_key(rel) == "attachments/talk (farmer).m4a"
+    items = parse_attachments(f"[🎤 Talk]({rel})", "kb")
+    assert items[0]["link"] == rel and items[0]["url"] == f"/vault-files/kb/{rel}"
+    once = place_extraction(f"[🎤 Talk]({rel})", M4A, "words")
+    assert _pending(once) == []
+
+
 def test_block_present_means_attachment_is_skipped():
     once = place_extraction(NOTE, M4A, "[Audio Transcript (Talk)]: words")
     assert _pending(once) == [PDF]

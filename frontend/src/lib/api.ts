@@ -161,8 +161,8 @@ export const api = {
     return http.get(`/notes/${id}${kbQuery(kb)}`);
   },
 
-  async getNoteStatus(id: string): Promise<NoteStatus> {
-    return http.get(`/notes/${id}/status`);
+  async getNoteStatus(id: string, kb = "default"): Promise<NoteStatus> {
+    return http.get(`/notes/${id}/status${kbQuery(kb)}`);
   },
 
   async createNote(

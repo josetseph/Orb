@@ -58,6 +58,8 @@ def test_move_rewrites_the_extraction_marker_with_the_link():
         '<!-- orb:extract src="/vault-files/kb/attachments/Audio.m4a" -->\n'
         "Speaker 1: hello\n<!-- /orb:extract -->"
     )
-    out = rewrite_refs_in_text(note, "attachments/Audio.m4a", "attachments/Lectures/Audio.m4a", "kb")
-    assert out.count("/vault-files/kb/attachments/Lectures/Audio.m4a") == 2
-    assert "attachments/Audio.m4a" not in out.replace("attachments/Lectures/Audio.m4a", "")
+    out = rewrite_refs_in_text(note, "attachments/Audio.m4a", "attachments/Lectures/Audio.m4a")
+    # Emits the canonical relative form whatever kb id the old link carried.
+    assert out.count("](attachments/Lectures/Audio.m4a)") == 1
+    assert out.count('src="attachments/Lectures/Audio.m4a"') == 1
+    assert "vault-files" not in out and "attachments/Audio.m4a" not in out

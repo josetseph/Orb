@@ -181,7 +181,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 |---|---|---|
 | `getNotes(search?, processed?, failed?, kb, opts?)` | `GET /notes` params `search`, `processed`, `failed`, `kb` | Only defined params are sent. Cancellable. |
 | `getNote(id, kb)` | `GET /notes/{id}?kb=` | |
-| `getNoteStatus(id): NoteStatus` | `GET /notes/{id}/status` | **No `kb`.** |
+| `getNoteStatus(id, kb): NoteStatus` | `GET /notes/{id}/status?kb=` | |
 | `createNote(content, created_at?, kb, title?, folder?)` | `POST /notes?kb=` body `{content, created_at, title, folder}` | `folder` omitted when empty. |
 | `updateNote(id, content, created_at?, kb, title?)` | `PUT /notes/{id}?kb=` body `{content, created_at, title}` | |
 | `updateNoteOnUnload(id, content, kb, title?)` | `fetch(PUT, keepalive:true)` if body `< 60_000` chars else plain `http.put` | Synchronous fire-and-forget for `beforeunload`/`pagehide`; keepalive bodies are capped ~64 KB by browsers, so large notes fall back to a normal PUT that may be killed. Does **not** send `created_at`. |
@@ -524,10 +524,11 @@ Types that live outside `types.ts`: `Message` (`chat-context.tsx`), `ScannedEnti
 | `isImageUrl` / `isVideoUrl` / `isAudioUrl` / `isPdfUrl` / `isTextUrl` / `isTabularUrl` | Extension regexes applied to the URL-decoded string, tolerant of `?query`: `jpg jpeg png gif webp svg avif bmp ico` / `mp4 webm mov m4v ogv` / `m4a m4b mp3 wav ogg oga opus aac flac weba` / `pdf` / `txt md markdown log json yaml yml xml ini cfg toml` / `csv tsv`. The lists are what **Chromium actually decodes**, not what the pipeline accepts: `.mkv` and `.avi` ingest fine but are deliberately absent (Chromium cannot demux Matroska or AVI, so a `<video>` would render a permanently broken player), and HEIC/HEIF are absent for the same reason. |
 | `youtubeEmbedUrl(url)` | `youtu.be/<id>`, `youtube.com/watch?v=`, `/embed/`, `/shorts/`, `m.`/`youtube-nocookie` hosts → `https://www.youtube-nocookie.com/embed/<id>`; id must match `^[\w-]{6,}$`; else `null`. |
 | `vimeoEmbedUrl(url)` | `vimeo.com`/`player.vimeo.com` numeric path segment → `https://player.vimeo.com/video/<id>`; else `null`. |
-| `encodeFileUrl(url)` | Percent-encodes a freshly uploaded `/vault-files/<kb>/<raw path>` URL for a markdown link (`encodeURIComponent` on the kb, `encodePathSegment` per path segment); anything else is returned unchanged. Encode-only, no decode round-trip — so it runs exactly once, at insert time (`useNoteMedia`), never on links read back from a note. |
+| `encodeFileUrl(relPath)` | Percent-encodes a freshly uploaded raw vault-relative path (`attachments/<sub>/<file>`, the upload response's `rel_path`) for a markdown link — `encodePathSegment` per segment, which also escapes `()[]` so `Report (2026).pdf` survives inside `[…](…)`. Encode-only, no decode round-trip — so it runs exactly once, at insert time (`useNoteMedia`), never on links read back from a note. Inserted links are vault-relative with no leading slash; the workspace UUID is never written into a note. |
+| `vaultRelPath(target)` | The decoded vault-relative path of a note link target in either stored form: strips an optional `/vault-files/<kb>/` prefix, then decodes each segment. `attachments/x%20y.pdf` and `/vault-files/<kb>/attachments/x%20y.pdf` both give `attachments/x y.pdf`. The one place that derivation lives (`handleDeleteFile`, `extractKey`). |
 | `fetchMediaObjectUrl(url, kbId)` | Returns external `http(s)` URLs as-is; otherwise `fetch(resolveFileUrl(url, kbId))` → `URL.createObjectURL(blob)`; throws on non-OK. Caller must revoke. |
 
-Rule of thumb used across pages: `resolveFileUrl(raw, currentKB)` is the canonical "make this note attachment reference loadable" transform on read; `encodeFileUrl` is applied once to an upload response before insertion.
+Rule of thumb used across pages: `resolveFileUrl(raw, currentKB)` is the canonical "make this note attachment reference loadable" transform on read; `vaultRelPath(raw)` is the canonical "which vault file is this" transform; `encodeFileUrl` is applied once to an upload response's `rel_path` before insertion.
 
 ## 15. `SystemStatusIndicator` — polling and states
 
@@ -621,7 +622,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 
 - `npm run dev` proxies to `http://127.0.0.1:17401` by default; set `API_PROXY_TARGET` to point it at an API on another port, or every request 502s.
 - Old notes that embed `/files/…` links (RustFS era) will 404; `isAttachmentHref` recognises only `/vault-files/` and a leading `attachments/`, so they render as plain `MarkdownAnchor` links.
-- `getChatMessages`, `deleteChatConversation`, `getNoteStatus` never send `kb`, so they only resolve resources in the default KB (07 §8). `ChatProvider.selectConversation` takes a `_kb` argument it ignores — that is the visible symptom.
+- `getChatMessages`, `deleteChatConversation` never send `kb`, so they only resolve resources in the default KB (07 §8). `ChatProvider.selectConversation` takes a `_kb` argument it ignores — that is the visible symptom.
 - `KnowledgeBase.typesense_collection` is the historical field name; the value refers to the Meilisearch index.
 - The chat page passes the note-preview setter to message bodies through `window.__chatSetPreview` rather than props/context. It is installed in a mount effect and deleted on unmount; any second chat instance would clobber it.
 - `AiLimitedBanner` checks `/setup/status` once per layout mount; after finishing setup the banner persists until a full reload, and "Dismiss" is not persisted.

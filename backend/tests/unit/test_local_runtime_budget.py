@@ -134,3 +134,43 @@ class TestJsonMode:
             messages=[], response_format={"type": "json_object"}
         )
         assert seen["response_format"] == {"type": "json_object"}
+
+
+class TestEagerProjectorInit:
+    def test_broken_projector_is_dropped_so_text_chat_still_works(self, tmp_path, monkeypatch):
+        """llama-cpp binds the projector lazily; a wrong one used to fail every completion."""
+        import sys
+        import types
+
+        class Handler:
+            def __init__(self, **kw):
+                pass
+
+            def _init_mtmd_context(self, llama):
+                raise RuntimeError("projector mismatch")
+
+        chat_format = types.ModuleType("llama_cpp.llama_chat_format")
+        chat_format.MTMDChatHandler = Handler
+        monkeypatch.setitem(sys.modules, "llama_cpp", types.ModuleType("llama_cpp"))
+        monkeypatch.setitem(sys.modules, "llama_cpp.llama_chat_format", chat_format)
+        mmproj = tmp_path / "mmproj-chat-f16.gguf"
+        monkeypatch.setattr(lm, "find_mmproj", lambda p: mmproj)
+
+        built = {}
+
+        def construct(Llama, **kwargs):
+            built.update(kwargs)
+            return _FakeLlama(1000)
+
+        monkeypatch.setattr(lm, "_construct_llama", construct)
+        rt = lm.LocalLlamaRuntime()
+        monkeypatch.setattr(rt, "_import_llama", lambda: object)
+        rt._load_chat_unlocked(tmp_path / "chat.gguf")
+
+        assert isinstance(built["chat_handler"], Handler)
+        assert rt._chat is not None and rt._chat.chat_handler is None
+        assert rt._chat_handler is None and rt._mmproj_path is None
+        assert not rt.vision_ready
+        with pytest.raises(RuntimeError, match="no vision projector"):
+            monkeypatch.setattr(rt, "ensure_chat_loaded", lambda *a, **k: None)
+            rt.describe_image("data:image/png;base64,", "what?")

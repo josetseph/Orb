@@ -166,15 +166,22 @@ function encodePathSegment(segment: string): string {
     .replace(/\]/g, "%5D");
 }
 
-/** Encode a freshly uploaded `/vault-files/<kb>/<raw path>` URL for a markdown link. */
-export function encodeFileUrl(url: string): string {
-  if (!url.startsWith("/vault-files/")) return url;
-  const rest = url.slice("/vault-files/".length);
-  const slash = rest.indexOf("/");
-  if (slash < 0) return url;
-  const kb = rest.slice(0, slash);
-  const path = rest.slice(slash + 1);
-  return `/vault-files/${encodeURIComponent(kb)}/${path.split("/").map(encodePathSegment).join("/")}`;
+/** Encode a raw vault-relative upload path (`attachments/<sub>/<file>`) for a markdown link. */
+export function encodeFileUrl(relPath: string): string {
+  return relPath.split("/").map(encodePathSegment).join("/");
+}
+
+/**
+ * Decoded vault-relative path of a note link target, whichever form it is
+ * stored in: `attachments/x%20y.pdf` and `/vault-files/<kb>/attachments/x%20y.pdf`
+ * both give `attachments/x y.pdf`.
+ */
+export function vaultRelPath(target: string): string {
+  return target
+    .replace(/^\/vault-files\/[^/]+\//, "")
+    .split("/")
+    .map(decodeURIComponentSafe)
+    .join("/");
 }
 
 /**

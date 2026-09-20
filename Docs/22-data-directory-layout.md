@@ -45,7 +45,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 │   └── <slug>/                             Orb-provisioned vault (only when no explicit vault_path was given / legacy migration)
 │       ├── attachments/                    uploads: <stem>-<8hex>.<ext>
 │       ├── <Folder>/.keep                  empty-folder marker written by vault/mkdir
-│       ├── .orb/migrated-v1                marker: vault_sync.migrate_vault_files ran for this vault (see §9.1)
+│       ├── .orb/migrated-v2                marker: vault_sync.migrate_vault_files ran for this vault (see §9.1; a v1 marker may sit beside it)
 │       └── **/*.md                         note bodies (vault-relative path = notes.rel_path)
 │   (the default KB vault is usually OUTSIDE DATA_DIR — wherever paths.json.default_vault_path points)
 ├── logs/
@@ -255,7 +255,7 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 
 | Migration | Where it runs | Gate / marker | What it does |
 |---|---|---|---|
-| Vault sweep | `vault_sync.migrate_vault_files(vault)` from `sync_vault_notes` (thread) — notes listing / setup | `<vault>/.orb/migrated-v1` (touched after the loop) | Rewrites note `.md` files in place: collapses `attachments/attachments/` in `/vault-files/<kb>/…` and bare targets, re-encodes vault-file URL segments (`unquote` → `quote(seg, safe="")`) in `](…)` targets and `orb:extract src="…"`, wraps pre-marker enrichment blocks in `<!-- orb:extract -->` markers. Writes go through `mark_self_write`. |
+| Vault sweep | `vault_sync.migrate_vault_files(vault)` from `sync_vault_notes` (thread) — notes listing / setup | `<vault>/.orb/migrated-v2` (touched after the loop; v1 vaults rerun the idempotent sweep once) | Rewrites note `.md` files in place: collapses `attachments/attachments/` in `/vault-files/<kb>/…` and bare targets, rewrites every `/vault-files/<any kb>/<rel>` in `](…)` targets and `orb:extract src="…"` to the vault-relative `<rel>` with segments re-encoded (`unquote` → `quote(seg, safe="")`), wraps pre-marker enrichment blocks in `<!-- orb:extract -->` markers. Writes go through `mark_self_write`. |
 | `rel_path` backslash repair | `core/database.init_db` → `_sqlite_repairs` | none — idempotent `UPDATE notes SET rel_path = replace(rel_path,'\','/') WHERE rel_path LIKE '%\%'` on every start | Rows written as `str(Path)` on Windows; `note_files` now stores `.as_posix()`. |
 | Legacy note bodies | `vault_sync.sync_vault_notes` | none — a row qualifies while `notes.content` is non-empty | Writes the body to the vault file via `persist_note_body` (or blanks the column when the file already has a body). `note_body` never falls back to SQLite. |
 | Kuzu path repair | `kb_registry._load` | none — idempotent; persisted with `UPDATE knowledge_bases SET kuzu_path` when `normalize_kuzu_path` changes it | Directory-shaped `kuzu_path` → `…/kuzu_graph` file path. Removed from `get_kb`/`graph`/`_build_context`/`_cleanup_stores`. |

@@ -76,10 +76,16 @@ _ENRICHMENT_BLOCK_RE = re.compile(
 
 
 def attachment_key(url: str) -> str:
-    """Canonical identity of an attachment URL: no query, unquoted, lowercase."""
+    """Canonical identity of an attachment URL: no query, unquoted, lowercase.
+
+    The legacy ``/vault-files/<kb>/`` prefix is dropped, so the old absolute
+    form and the canonical relative form of one file share a key — an
+    extraction block written before the vault sweep still matches its link.
+    """
     from urllib.parse import unquote
 
-    return unquote((url or "").strip().split("?", 1)[0]).lower()
+    raw = (url or "").strip().split("?", 1)[0]
+    return unquote(re.sub(r"^/vault-files/[^/]+/", "", raw)).lower()
 
 
 def extraction_srcs(content: str) -> set[str]:
@@ -316,8 +322,9 @@ Now apply this entire process to the following note and return only the JSON out
 """
 
 
-# Unified file link parsing (vault-files + optional remote http(s)):
-#   [📎 Filename](/vault-files/...) · [🎤 Voice Recording](...) · ![alt](...)
+# Unified file link parsing (canonical ``attachments/…``, legacy ``/vault-files/…``
+# and optional remote http(s)):
+#   [📎 Filename](attachments/...) · [🎤 Voice Recording](...) · ![alt](...)
 #
 # URLs may contain unencoded spaces and commas (common for uploaded filenames),
 # so the pattern does not stop at whitespace. They may also contain *balanced*
@@ -325,7 +332,7 @@ Now apply this entire process to the following note and return only the JSON out
 # the first ")" truncated the URL, so the attachment was silently dropped: the
 # file never reached PDF/image extraction and never rendered in the note. One
 # level of nesting covers real filenames.
-_ATTACHMENT_URL = r"(?:https?://|/vault-files/)(?:[^()\n]|\([^()\n]*\))+"
+_ATTACHMENT_URL = r"(?:https?://|/vault-files/|attachments/)(?:[^()\n]|\([^()\n]*\))+"
 ATTACHMENT_LINK_RE = re.compile(rf"\[(📎|🎤)\s*(.*?)\]\(({_ATTACHMENT_URL})\)")
 IMAGE_LINK_RE = re.compile(rf"!\[([^\]]*)\]\(({_ATTACHMENT_URL})\)")
 
@@ -767,10 +774,17 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif")
 SPREADSHEET_EXTS = (".xlsx", ".xls", ".csv", ".tsv")
 
 
-def parse_attachments(content: str) -> list[dict[str, str]]:
-    """Every attachment linked from a note, deduplicated by URL identity."""
+def parse_attachments(content: str, kb_id: str = "") -> list[dict[str, str]]:
+    """Every attachment linked from a note, deduplicated by URL identity.
+
+    ``link`` is the target as written (what extraction markers must copy);
+    ``url`` is what the extractors open — the canonical relative link resolved
+    to ``/vault-files/<kb_id>/…`` when ``kb_id`` is given.
+    """
     import os
     from urllib.parse import unquote
+
+    from app.services.local_storage import vault_file_url
 
     attachments: list[dict[str, str]] = []
     seen: set[str] = set()
@@ -785,7 +799,13 @@ def parse_attachments(content: str) -> list[dict[str, str]]:
             unquote(cleaned_url.split("?", 1)[0])
         )
         attachments.append(
-            {"emoji": emoji, "filename": display_name, "url": cleaned_url, "lower_url": key}
+            {
+                "emoji": emoji,
+                "filename": display_name,
+                "link": cleaned_url,
+                "url": vault_file_url(cleaned_url, kb_id) if kb_id else cleaned_url,
+                "lower_url": key,
+            }
         )
 
     for emoji, filename, url in ATTACHMENT_LINK_RE.findall(content or ""):
@@ -939,7 +959,7 @@ async def multimodal_node(
             f"Multimedia semaphore acquired. (Active: {settings.MULTIMEDIA_CONCURRENCY - multimedia_concurrency_limit._value if hasattr(multimedia_concurrency_limit, '_value') else '?'})"  # pylint: disable=line-too-long
         )
         original_content = state["input"].content or ""
-        attachments = parse_attachments(original_content)
+        attachments = parse_attachments(original_content, getattr(_wf, "kb_id", ""))
         linked = {item["lower_url"] for item in attachments}
         # Keep blocks for attachments still in the note — those were already
         # processed (by a prior ingest or "process this item") and are not
@@ -981,7 +1001,7 @@ async def multimodal_node(
                     else:
                         section = await extract_attachment(kind, item, _set_status, _llm)
                     if section:
-                        _append(section, item["url"])
+                        _append(section, item["link"])
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     logger.error(f"[{phase_name}] File Processing Failed: {e}")
                     media_errors.append(f"{filename}: {e}")
@@ -1014,6 +1034,7 @@ async def multimodal_node(
                         {
                             "emoji": "📎",
                             "filename": f"{item['filename']} — embedded image",
+                            "link": path,
                             "url": path,
                             "lower_url": path.lower(),
                         }
@@ -1071,7 +1092,7 @@ async def multimodal_node(
                 _append(
                     f"[Unsupported ({item['filename']})]: legacy .doc format — "
                     "re-save as .docx for Orb to read it.",
-                    item["url"],
+                    item["link"],
                 )
                 continue
             logger.info(f"Skipped (Unsupported Type): {item['url']}")
