@@ -410,6 +410,7 @@ fn open_ui(app: &AppHandle) {
 }
 
 /// Dock click with no window: recreate it on the UI (or setup) at once.
+#[cfg(target_os = "macos")]
 pub fn show_main(app: &AppHandle) {
     if first_run(app) {
         let _ = ensure_window(app).show();

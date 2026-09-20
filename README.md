@@ -121,7 +121,7 @@ On save, Orb enriches the note before graph indexing:
 
 </div>
 
-Installers ship as macOS `.dmg`, Windows `.exe` and Linux `.AppImage` / `.deb` from [GitHub Releases](https://github.com/josetseph/Orb/releases) (tags `desktop-v*`).
+Installers ship as macOS `.dmg`, Windows `.exe` and Linux `.deb` / `.rpm` from [GitHub Releases](https://github.com/josetseph/Orb/releases) (tags `desktop-v*`).
 
 ---
 
@@ -185,7 +185,7 @@ More detail: [`desktop/README.md`](desktop/README.md).
 
 ```bash
 python3 desktop/build.py prepare   # bundle Python + UI + Firefly seed (~10–20 min)
-python3 desktop/build.py dist      # cargo tauri build → nsis / AppImage / deb; macOS: .app via Tauri, .dmg via hdiutil
+python3 desktop/build.py dist      # tauri build → nsis / deb + rpm; macOS: .app via Tauri, .dmg via hdiutil
 ```
 
 Full packaging notes: [`desktop/PACKAGING.md`](desktop/PACKAGING.md).

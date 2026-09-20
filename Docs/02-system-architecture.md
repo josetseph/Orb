@@ -245,7 +245,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 
 | Mode | Who | How | Notes |
 |---|---|---|---|
-| Packaged desktop (product) | end users | `.dmg` (written by `hdiutil`) / `.exe` / `.AppImage` + `.deb` from `desktop-v*` tags, drafted as a GitHub Release by CI | bundles Python, the Vite build and the Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
+| Packaged desktop (product) | end users | `.dmg` (written by `hdiutil`) / `.exe` / `.deb` + `.rpm` from `desktop-v*` tags, drafted as a GitHub Release by CI | bundles Python, the Vite build and the Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
 | Dev desktop | contributors | `npm run dev` in `frontend/` + `ORB_URL=http://127.0.0.1:3700 cargo tauri dev` in `desktop/src-tauri/` | repo `backend/.venv` + Vite dev server; same runtime and ports |
 | Packaged-layout test | contributors | `python3 desktop/build.py prepare && ORB_USE_RESOURCES=1 cargo tauri dev` | exercises bundled runtimes without an installer |
 | Bare API | contributors | `uvicorn app.main:app` with env vars | ports 8000 / 3700 |

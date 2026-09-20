@@ -41,7 +41,7 @@ cd ..
 cd frontend && npm install && cd ..
 
 # Desktop shell (Rust)
-cargo install tauri-cli --version "^2" --locked
+cargo install tauri-cli --version "^2" --locked   # or: npm i -g @tauri-apps/cli (prebuilt; what CI uses)
 ```
 
 There is no `.env`: [21](21-configuration-reference.md) lists every setting and its env var name for a bare-uvicorn run; a pure-local run needs none of them. Cloud API keys are entered in Settings → Cloud API keys (the backend stores them in the OS keychain via `keyring`).

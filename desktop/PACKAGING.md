@@ -1,6 +1,6 @@
 # Orb Desktop Packaging
 
-Build unsigned macOS (`.dmg`), Windows (`.exe`, NSIS), and Linux (`.AppImage`, `.deb`)
+Build unsigned macOS (`.dmg`), Windows (`.exe`, NSIS), and Linux (`.deb`, `.rpm`)
 installers that bundle the Tauri shell, embedded Python (which serves the built UI),
 and a seeded Firefly III + PHP runtime.
 
@@ -12,7 +12,7 @@ python3 desktop/build.py prepare   # ~10–20 min: Python wheels, UI build, Fire
 python3 desktop/build.py dist      # preflight + cargo tauri build (macOS: .app only, then the DMG via hdiutil)
 ```
 
-Bundles land in `desktop/src-tauri/target/release/bundle/{dmg,nsis,appimage,deb}/`.
+Bundles land in `desktop/src-tauri/target/release/bundle/{dmg,nsis,deb,rpm}/`.
 On macOS `build.py` asks Tauri for the `.app` only and writes the DMG itself with a single
 `hdiutil create` from a staging folder (`Orb.app` + an `Applications` shortcut): Tauri's own
 DMG script mounts a temp image and drives Finder by AppleScript, and its unmount fails

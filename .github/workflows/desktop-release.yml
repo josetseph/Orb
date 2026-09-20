@@ -32,21 +32,21 @@ jobs:
           - name: linux-x64
             os: ubuntu-22.04
             bundles: |
-              desktop/src-tauri/target/release/bundle/appimage/*.AppImage
               desktop/src-tauri/target/release/bundle/deb/*.deb
+              desktop/src-tauri/target/release/bundle/rpm/*.rpm
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@v5
 
       # Node builds the React UI only; nothing from it ships.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -56,8 +56,10 @@ jobs:
         with:
           workspaces: desktop/src-tauri
 
+      # Prebuilt binary; `cargo install tauri-cli` compiled it from source for
+      # 6-27 minutes per job.
       - name: Install Tauri CLI
-        run: cargo install tauri-cli --version "^2" --locked
+        run: npm install -g @tauri-apps/cli@^2
 
       - name: Build tools (macOS — cmake for llama-cpp-python)
         if: runner.os == 'macOS'

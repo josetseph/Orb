@@ -39,7 +39,7 @@ credentials are present; the `hdiutil` step does no signing of its own.
 |---|---|---|
 | macOS | `bundle/dmg/Orb_<ver>_<arch>.dmg` (built by `build.py` with `hdiutil create`, not Tauri's DMG script) (+ `bundle/macos/Orb.app`) | `Orb.app/Contents/Resources/{backend,frontend,firefly}` |
 | Windows | `bundle/nsis/Orb_<ver>_x64-setup.exe` (per-user install) | `<install dir>/{backend,frontend,firefly}` |
-| Linux | `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` | `usr/lib/orb/{backend,frontend,firefly}` |
+| Linux | `bundle/deb/*.deb`, `bundle/rpm/*.rpm` (no AppImage: linuxdeploy cannot resolve the bundled Python tree's shared libraries) | `usr/lib/orb/{backend,frontend,firefly}` |
 
 `backend/` holds the portable CPython, site-packages and `app/`; `frontend/` the Vite
 build the API serves; `firefly/` the PHP runtime + Firefly app seed copied into

@@ -4,7 +4,7 @@ build the React UI in frontend/.
 
     python3 build.py prepare    # bundle Python + backend, build UI, seed Firefly
     python3 build.py check      # preflight: trees exist, imports pass
-    python3 build.py dist       # check, then `cargo tauri build` (extra args pass through)
+    python3 build.py dist       # check, then `tauri build` (extra args pass through)
     python3 build.py python | frontend | firefly     # one stage
 
 Resources land in desktop/resources/{backend,frontend,firefly}, which
@@ -223,6 +223,16 @@ def check() -> None:
     print("Packaged resources OK (trees, Python imports)")
 
 
+# The prebuilt npm CLI when it is on PATH (CI: `npm i -g @tauri-apps/cli`, no
+# 10-30 min source build), otherwise the cargo plugin (dev machines; cargo finds
+# it in ~/.cargo/bin even when that dir is not on PATH).
+TAURI = ["tauri"] if shutil.which("tauri") else ["cargo", "tauri"]
+# AppImage is deliberately absent: linuxdeploy tries to resolve the shared
+# libraries of every .so under usr/lib, which is where the bundled Python
+# tree lands, and fails on the first one it cannot find.
+BUNDLES = {"linux": "deb,rpm", "win32": "nsis"}
+
+
 def dist(extra: list[str]) -> None:
     check()
     # The resource map lives here, not in tauri.conf.json: tauri-build would
@@ -230,13 +240,14 @@ def dist(extra: list[str]) -> None:
     resources = {f"../resources/{name}": name for name in ("backend", "frontend", "firefly")}
     config = json.dumps({"bundle": {"resources": resources}})
     if sys.platform != "darwin":
-        run(["cargo", "tauri", "build", "--config", config, *extra], cwd=HERE / "src-tauri")
+        bundles = BUNDLES[sys.platform]
+        run([*TAURI, "build", "--bundles", bundles, "--config", config, *extra], cwd=HERE / "src-tauri")
         return
     # macOS: Tauri's DMG script mounts a temp image, drives Finder by AppleScript
     # and unmounts; the unmount intermittently fails with "Resource busy" while
     # Spotlight/Finder hold the fresh volume. Build the .app with Tauri and the
     # DMG with one hdiutil call from a staging folder instead - no mount at all.
-    run(["cargo", "tauri", "build", "--bundles", "app", "--config", config, *extra], cwd=HERE / "src-tauri")
+    run([*TAURI, "build", "--bundles", "app", "--config", config, *extra], cwd=HERE / "src-tauri")
     bundle = HERE / "src-tauri" / "target" / "release" / "bundle"
     app = bundle / "macos" / "Orb.app"
     version = json.loads((HERE / "src-tauri" / "tauri.conf.json").read_text())["version"]
