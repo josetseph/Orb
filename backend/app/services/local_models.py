@@ -1233,10 +1233,12 @@ class LocalLlamaRuntime:
         chat_kwargs = self._chat_kwargs()
         chat_kwargs["n_ctx"] = _clamp_ctx_to_model(chat_gguf, chat_kwargs["n_ctx"])
         logger.info(
-            "Loading chat GGUF in-process (%s, n_gpu_layers=%s, n_ctx=%s, swa_full=True): %s",
+            "Loading chat GGUF in-process (%s, n_gpu_layers=%s, n_ctx=%s, swa_full=%s, flash_attn=%s): %s",
             self.accel["backend"],
             chat_kwargs["n_gpu_layers"],
             chat_kwargs["n_ctx"],
+            bool(settings.LLAMA_SWA_FULL),
+            bool(settings.LLAMA_FLASH_ATTN),
             chat_gguf,
         )
         started = time.perf_counter()
