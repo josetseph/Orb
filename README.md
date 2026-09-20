@@ -6,20 +6,19 @@ pipeline in `backend/`, the HotpotQA / MuSiQue benchmark harness in
 shell, no frontend. Use it to try a pipeline variation, score it, and keep or
 drop it. The product lives on `main`.
 
-## Run the pipeline bare
+## Run the pipeline
 
 ```bash
-docker compose up -d                       # Qdrant :6333, Meilisearch :7700
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python3.12 -m venv .venv && source .venv/bin/activate     # 3.12 or 3.13
 pip install -r requirements.txt httpx tqdm
 cp .env.example .env                       # pick a provider block; local GGUFs need MODELS_DIR
 echo BENCHMARK_MODE=true >> .env           # short factual answers + the benchmark reasoning rules
-ORB_DATA_DIR=$PWD/../data uvicorn app.main:app --port 8000
+python run.py                              # downloads Qdrant + Meilisearch once, starts both, then the API on :8000
 ```
 
-Already running the desktop app? Skip compose and point at its sidecars:
-`QDRANT_PORT=17433 MEILI_PORT=17470`.
+No Docker. Data (SQLite, Kuzu, Qdrant, Meili, vault, logs) goes to `../data`, or `ORB_DATA_DIR`.
+Use a fresh `ORB_DATA_DIR` per experiment so runs never share an index.
 
 ## Benchmark loop
 
@@ -36,9 +35,6 @@ Scores land in `backend/tests/benchmark/results/<dataset>_<timestamp>.json`
 (gitignored). Metrics: EM, token F1, fuzzy, contains; retrieval P/R/F1 against
 the manifest's supporting notes. Details in
 [backend/tests/benchmark/README.md](backend/tests/benchmark/README.md).
-
-Ingest into a dedicated KB (`?kb=<name>` on every request; the scripts take
-`--base-url` only, so use a fresh `ORB_DATA_DIR` per experiment instead).
 
 ## Recording an experiment
 
@@ -64,13 +60,11 @@ HotpotQA N=100, EM 62 %, F1 0.736, retrieval recall 0.610.
 | Chat loop / answer synthesis | `backend/app/workflows/chat.py` |
 | Providers / model routing | `backend/app/services/llm.py`, `backend/app/services/local_models.py` |
 
-Docs for each stage: [Docs/10-ingestion-pipeline.md](Docs/10-ingestion-pipeline.md),
-[Docs/13-llm-providers-and-prompting.md](Docs/13-llm-providers-and-prompting.md),
-[Docs/16-retrieval-and-chat.md](Docs/16-retrieval-and-chat.md).
+Docs per stage under [Docs/](Docs/): ingestion (10), local models (12), prompting (13), Kuzu (14), Qdrant/Meili (15), retrieval and chat (16), env reference (21).
 
 ## Syncing with `main`
 
 Pull pipeline changes in: `git merge main`, then drop the shell files it
-brings back (`git rm -r -q desktop frontend "Platform Images" .github/workflows`) and commit.
+brings back (`git rm -r -q desktop frontend "Platform Images" .github`) and commit.
 Push a winning variation out: `git cherry-pick <commit>` onto `main` — only
 `backend/` differs, so it applies cleanly.
