@@ -15,7 +15,7 @@
 | `backend/app/desktop_runtime.py` | Provisioning the portable PHP binary and the Firefly III release tree under `DATA_DIR/firefly/`, writing `.env`, running migrations/seeds, creating Passport keys/client, creating the single Firefly user, minting the personal-access API token, persisting all of it in `runtime.json`. |
 | `backend/app/desktop_runtime.py` (`start_firefly`, env setup) | Spawning `php artisan serve --host 127.0.0.1 --port 17412`, waiting for HTTP, exporting `FIREFLY_BASE_URL` and `FIREFLY_RUNTIME_FILE` before the API imports `Settings`. |
 | `backend/app/services/firefly_service.py` | The only code in the backend that talks to Firefly. HTTP client + bearer auth, per-KB *administration* (user-group) lifecycle, request scoping, resource CRUD, normalisation into Orb's flat JSON shapes, readiness reporting, the finance branch of chat. |
-| `backend/app/api_desktop.py` (Finance section) | Pydantic input models, route wrappers, `_finance_error` status mapping, multipart handling for attachments. |
+| `backend/app/api_desktop.py` (Finance section) | Pydantic input models, route wrappers, `_finance_error` status mapping. |
 | `backend/app/services/kb_registry.py` (`firefly_group_id`, `firefly_group_title`, `set_firefly_group`, `detach_firefly_group`) | Persisting the KB → administration mapping in SQLite `knowledge_bases`. |
 | `frontend/src/components/finance/**`, `frontend/src/app/finance/page.tsx`, finance methods in `frontend/src/lib/api.ts`, `Finance*` types in `frontend/src/lib/types.ts` | The in-app finance workspace (nine tabs), the not-ready screen, data loading/refresh and every mutation. |
 
@@ -26,14 +26,14 @@
 - Generic `?kb=` resolution (`backend/app/api/deps.py:get_kb`) — see [API reference](07-api-reference.md).
 - The KB lifecycle routes in `backend/app/api/kb.py` that *call into* this service (empty/delete/rename) — documented in §15 as interfaces.
 
-There are **no unit tests** for the finance subsystem (`backend/tests/unit` has none).
+Unit tests: `backend/tests/unit/test_kb_finance_toggle.py` (every finance route is gated by `get_finance_kb`), `test_finance_chat_llm.py` (the finance answer uses the KB's LLM off the event loop) and `test_desktop_runtime.py` (`.env` value quoting). The Firefly proxy itself has no unit coverage.
 
 ## 2. Files
 
 | Path | Purpose | Key exports / symbols |
 |---|---|---|
 | `backend/app/services/firefly_service.py` | Firefly proxy + per-KB administration model + finance chat | `FireflyService`, `FireflyHTTPError`, module singleton `firefly_service`, helpers `_as_float`, `_iso_today`, `_php_escape` |
-| `backend/app/api_desktop.py` | Finance routes (`/api/v1/finance/**`), input models, `_finance_error` | `CreateWorkspaceInput`, `CreateAccountInput`, `CreateTransactionInput`, `CreateBudgetInput`, `CreateCategoryInput`, `CreateBillInput`, `CreatePiggyInput`, `CreateTagInput`, `CreateRecurrenceInput` |
+| `backend/app/api_desktop.py` | Finance routes (`/api/v1/finance/**`), input models, `_finance_error` | `CreateWorkspaceInput`, `CreateAccountInput`, `CreateTransactionInput`, `CreateBudgetInput`, `CreateCategoryInput`, `CreateRecurrenceInput` |
 | `backend/app/services/kb_registry.py` | Creates/migrates the two Firefly columns (`_ensure_firefly_columns`), persists mapping | `KBRegistry.set_firefly_group`, `detach_firefly_group`, `get_metadata`, `_save_row` |
 | `backend/app/core/config.py` | Settings keys | `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`, `FIREFLY_API_TOKEN` |
 | `backend/app/api/chat.py` | Finance-aware chat branch | `_answer_chat_query` calls `looks_like_finance_query` / `answer_finance_question` |
@@ -138,7 +138,8 @@ The `runtime.groupId` written here is the group titled **`Orb`** (the bootstrap 
 
 Regenerated on every boot by `_ensure_firefly_env`. Contract points that matter to the backend:
 
-- `APP_URL = http://127.0.0.1:17412`, `TRUSTED_PROXIES = 127.0.0.1,::1` (was `**` before `fbcafe7`), `AUTHENTICATION_GUARD = web`, `DB_CONNECTION = sqlite`, `DB_DATABASE = <app>/storage/database/firefly.sqlite` (absolute), `QUEUE_CONNECTION = sync` (webhooks/rules run inline in the request), `MAIL_MAILER = log`, `APP_NAME = Orb_Finance`.
+- `APP_URL = http://127.0.0.1:17412`, `TRUSTED_PROXIES = 127.0.0.1,::1` (was `**` before `fbcafe7`), `AUTHENTICATION_GUARD = web`, `DB_CONNECTION = sqlite`, `DB_DATABASE = <app>/storage/database/firefly.sqlite` (absolute), `QUEUE_CONNECTION = sync` (rules run inline in the request), `MAIL_MAILER = log`, `APP_NAME = Orb_Finance`.
+- Every value is written quoted (`_env_quote`): single quotes normally, double quotes with `\`, `"` and `$` escaped when the value contains an apostrophe. The default macOS data dir (`…/Application Support/Orb/…`) has a space in it, and phpdotenv rejected the unquoted path with "The environment file is invalid".
 - Upgrades: when `app/.orb-firefly-version` ≠ `FIREFLY_VERSION` (`v6.6.6`, override `ORB_FIREFLY_VERSION`), `_stash_app_state` copies `storage/database`, `storage/upload`, `storage/oauth-{private,public}.key` aside, `_swap_in_app_tree` replaces `app/` atomically-ish (`app.bak` fallback), `_restore_app_state` copies the stash back. Everything the backend depends on (SQLite DB with all administrations, uploads, Passport keys → token validity) therefore survives a Firefly version bump; only if the keys were lost does step 3 above rotate the token.
 - Build-time seed: `python -m app.desktop_runtime prefetch-firefly DEST` (the `firefly` stage of `desktop/build.py prepare`) runs `ensure_php_runtime` + `ensure_firefly_app` into a scratch dir and copies `php/` and `app/` into `desktop/resources/firefly/` (gitignored, packaged as `<resources>/firefly`). At runtime `_bundled_firefly_root()` (via `ORB_RESOURCES_ROOT`) prefers that seed over a download when its markers (`php/.orb-php-runtime`, `app/.orb-firefly-version`) match. The seed contains **no** database, keys or `runtime.json` — those are always created per install.
 
@@ -197,12 +198,12 @@ The transaction-creation error text says "Create accounts under this vault — t
 
 1. **Active administration switch** (`users.user_group_id`) before any request for a different KB — makes Firefly create new rows under the right `user_group_id` and makes group-aware endpoints return that group's data.
 2. **`user_group_id=<gid>` query parameter** stamped on every request by `_request` (`params.setdefault("user_group_id", active)` — explicit params win). Several Firefly v6 endpoints accept it; the rest ignore it silently.
-3. **PHP id allow-lists** (`_ids_for_group(model, gid)` → `Model::query()->where('user_group_id', gid)->whereNull('deleted_at' if SoftDeletes)->pluck('id')`), applied client-side to list responses via `_filter_api_data_by_ids` / `_list_scoped_resources`. This is the real guard for user-wide endpoints (`/accounts`, `/categories`, `/budgets`, `/bills`, `/piggy-banks`, `/tags`, `/recurrences`, `/rules`, `/rule-groups`, `/webhooks`, `/object-groups`, `/search/accounts`). If the PHP call fails the allow-list is the **empty set** → the list comes back empty (fail closed), with a `Could not list Firefly <Model> IDs for group …` warning.
+3. **PHP id allow-lists** (`_ids_for_group(model, gid)` → `Model::query()->where('user_group_id', gid)->whereNull('deleted_at' if SoftDeletes)->pluck('id')`), applied client-side to list responses via `_filter_api_data_by_ids` / `_list_scoped_resources`. This is the real guard for user-wide endpoints (`/accounts`, `/categories`, `/budgets`, `/recurrences`, `/rules`, `/rule-groups`, `/search/accounts`). If the PHP call fails the allow-list is the **empty set** → the list comes back empty (fail closed), with a `Could not list Firefly <Model> IDs for group …` warning.
 4. **Transaction group attribute check** (`_transaction_group_belongs`): transaction payloads carry `attributes.user_group` (or `user_group_id`); rows whose value ≠ gid are dropped. Applied in `list_recent_transactions`, `summary`, `search(kind=transactions)`, and the expense/revenue enrichment in `_list_accounts_unlocked`.
 
 Writes are protected differently: `create_transaction` refuses a source `account_id` that is not in the group's account list (400); other creates rely on mechanism 1 (Firefly stamps the active group). **Deletes and updates are not re-validated** — `DELETE /finance/categories/{id}` for an id belonging to another KB's group will be forwarded to Firefly with `user_group_id=<this gid>`; whether Firefly refuses depends on the endpoint's implementation (most v6 repositories scope by the *user*, not the group, so cross-KB deletes by id are possible from a crafted request; the UI only ever shows ids from filtered lists).
 
-Not group-filtered at all: `list_exchange_rates` (exchange rates are user-wide in Firefly), `list_attachments` (returns all attachments of the user), `download_attachment`. Charts/summary endpoints are post-filtered by id/label heuristics (§9.12).
+Charts/summary endpoints are post-filtered by id/label heuristics (§9.8).
 
 ## 6. Request scoping: `_run_scoped`, `_activate_scope_locked`, `_request`, `_list_scoped_resources`
 
@@ -267,7 +268,7 @@ sequenceDiagram
 5. `response.is_error` → `FireflyHTTPError(f"Firefly {method} {path} failed ({status}): {detail}", status_code)` where `detail` is `payload.message` / `payload.error` / `json.dumps(payload.errors or payload)` if the body is JSON, else the raw text.
 6. `204` or blank body → `None`. JSON content type (`application/json`, `application/vnd.api+json`, any `+json`) → `response.json()`. Otherwise, if the text starts with `{`/`[`, try JSON anyway; else return the text.
 
-Headers (`_headers()`): `Accept: application/vnd.api+json, application/json`, `Content-Type: application/json`, and `Authorization: Bearer <token>` when a token exists. The attachment upload overrides `Content-Type` to `application/octet-stream` and passes raw `content=`.
+Headers (`_headers()`): `Accept: application/vnd.api+json, application/json`, `Content-Type: application/json`, and `Authorization: Bearer <token>` when a token exists.
 
 ## 7. `FireflyService` internals: client, auth, PHP bridge, helpers
 
@@ -281,7 +282,7 @@ Headers (`_headers()`): `Accept: application/vnd.api+json, application/json`, `C
 | `_load_runtime()`, `_token()`, `_headers()`, `_client()` | auth | §4.2, §6.1 |
 | `_php_paths()`, `_run_php(script)`, `_bootstrap_user_id()` | PHP bridge | §4.2, §6 |
 | `_php_create_group_script`, `_php_switch_group_script`, `_php_destroy_group_script`, `_php_update_group_title_script` | PHP script builders | §5.2 |
-| `_php_model_ids_for_group_script(model, gid, key="ids")`, `_php_account_ids_for_group_script(gid)` | PHP script builders | Allowed models: `Account, Category, Budget, Recurrence, Bill, PiggyBank, Tag, Rule, RuleGroup, Webhook, ObjectGroup`; anything else → `ValueError("Unsupported Firefly model: …")` (a programming error, would surface as 400). The account variant uses key `account_ids`; `_ids_for_group` accepts either key. |
+| `_php_model_ids_for_group_script(model, gid, key="ids")`, `_php_account_ids_for_group_script(gid)` | PHP script builders | Allowed models: `Account, Category, Budget, Recurrence, Rule, RuleGroup`; anything else → `ValueError("Unsupported Firefly model: …")` (a programming error, would surface as 400). The account variant uses key `account_ids`; `_ids_for_group` accepts either key. |
 | `_ids_for_group(model, gid) -> set[str]`, `_account_ids_for_group(gid)` | async | One PHP process each (~1 s). Never raises; returns `set()` on any failure. Called **per list call** — nothing is cached, so `report()` alone spawns 5 PHP processes (Category ids, Budget ids, Category ids again inside `_list_scoped_resources`, Budget ids again, Account ids inside `_list_accounts_unlocked`). |
 | `_filter_api_data_by_ids`, `_resource_rows`, `_as_dict`, `_as_list`, `_is_json_content_type` | static helpers | Defensive JSON access; `_as_dict`/`_as_list` return `{}`/`[]` for wrong types so malformed payloads degrade to empty results instead of exceptions. |
 | `_transaction_group_belongs(item, gid)` | static | `gid` falsy → `True`; compares `attributes.user_group` (fallback `user_group_id`) with `gid` as int, else as str. Missing attributes → `False`. |
@@ -291,7 +292,7 @@ Headers (`_headers()`): `Accept: application/vnd.api+json, application/json`, `C
 
 Module-level helpers: `_as_float(value)` → `float(value)` or `0.0` on `TypeError/ValueError` (all amounts pass through it; Firefly sends amounts as strings). `_iso_today()` → UTC date. `_php_escape(value)` → escape `\` and `'`.
 
-Caching: **none** at the HTTP level; the only memoised state is `_switched_group_id`. Currency handling: Firefly stores amounts as strings; Orb formats outgoing amounts with `f"{x:.2f}"` (exchange rates `:.8f` trimmed) and parses incoming with `_as_float`; currency codes are upper-cased and taken from the account (`currency_code`/`native_currency_code`/`currency_symbol` fallback) or Firefly's primary currency.
+Caching: **none** at the HTTP level; the only memoised state is `_switched_group_id`. Currency handling: Firefly stores amounts as strings; Orb formats outgoing amounts with `f"{x:.2f}"` and parses incoming with `_as_float`; currency codes are upper-cased and taken from the account (`currency_code`/`native_currency_code`/`currency_symbol` fallback) or Firefly's primary currency.
 
 ## 8. Readiness: `status()`, `get_workspace()` and the workspace state machine
 
@@ -347,15 +348,14 @@ Notes on the diagram:
 
 Conventions for this section: every method takes `kb: KBContext` first and runs its body inside `_run_scoped` (so: global lock, administration ensured/activated, `user_group_id` stamped) unless stated otherwise. "Validation" errors are `ValueError` (route → 400); Firefly failures are `FireflyHTTPError`/`RuntimeError` (route → 502). Dates: if a caller passes `YYYY-MM-DD` where Firefly needs a datetime, the service appends `T12:00:00+00:00`. Amounts are sent as strings with two decimals. Returned rows are the `_normalize_*` shapes listed in §10.
 
-### 9.1 Workspace, currency, open
+### 9.1 Workspace and currency
 
 | Method | Firefly calls | Returns / notes |
 |---|---|---|
 | `status()` | `GET /api/v1/about` (unscoped) | §8 |
 | `get_workspace(kb)` | `GET /currencies/primary`, `GET /user-groups` | §8; creates the administration lazily |
 | `set_primary_currency(kb, code)` | `_ensure_currency_enabled(code)` (`POST /currencies/{code}/enable`, maybe `POST /currencies`), `POST /currencies/{code}/primary`, `GET /currencies/primary` | Validation: `len(code) == 3` after strip/upper. After setting, re-reads the primary and raises `RuntimeError("Tried to set primary currency to X, but Firefly reports Y.")` if they differ. Returns the ready workspace shape (title from registry or `Orb: <name>`). The primary currency is set for the **active administration** — Firefly v6 stores the primary per user group, so each KB can have its own currency. |
-| `ensure_kb_scope(kb) -> int` | PHP only | Public wrapper around `_activate_scope_locked` under the lock; used by `prepare_open`. |
-| `prepare_open(kb)` | PHP only (via `ensure_kb_scope`) | `{"url": base_url, "kb_id", "kb_name", "firefly_group_id", "administration_title"}`. Intended for a "open Firefly's own UI" button — after this call the Firefly web UI at `http://127.0.0.1:17412` shows this KB's administration because `users.user_group_id` was switched. **No frontend code calls it** (no reference to `firefly_url`, `prepare_open`, or port 17412 anywhere under `frontend/src`); the Electron shell would open such a link externally (`main.js` `setWindowOpenHandler` → `shell.openExternal` for http/https). Logging in there requires `runtime.json`'s `email`/`password`. |
+| `ensure_kb_scope(kb) -> int` | PHP only | Public wrapper around `_activate_scope_locked` under the lock (no route calls it since `/finance/open` was removed). |
 | `destroy_kb_administration(kb)`, `sync_kb_group_title(kb_id, name)` | PHP only | §5.2 |
 
 ### 9.2 Accounts
@@ -459,10 +459,6 @@ All normalisers take one JSON:API resource `{"id", "type", "attributes": {...}}`
 | `_normalize_recurrence` | `id`; `title`; `type` (group or first transaction); `description`; `amount` (first transaction); `currency` (first tx `currency_code`); `first_date`; `repeat_until`; `active`; `repetition_type` / `repetition_moment` (first repetition); `source_name` / `destination_name` (first tx) | `FinanceRecurrence` |
 | `_normalize_rule_group` | `id`; `title`; `description`; `order`; `active` | `FinanceRuleGroup` |
 | `_normalize_rule` | `id`; `title`; `description`; `rule_group_id` (str); `trigger`; `active`; `strict`; `triggers: [{type, value}]`; `actions: [{type, value}]` | `FinanceRule` |
-| `_normalize_webhook` | `id`; `title`; `url`; `active` (default False); `triggers`/`responses`/`deliveries` (lists; singular string forms wrapped) | — |
-| `_normalize_object_group` | `id`; `title`; `order` | — |
-| `_normalize_exchange_rate` | `id`; `date`; `rate` (float); `from` (`from` → `from_currency_code`); `to` (`to` → `to_currency_code`) | — |
-| `_normalize_attachment` | `id`; `filename`; `title` (→ filename); `notes`; `attachable_type`; `attachable_id` (str); `size`; `mime`; `download_url` (Firefly's own URL — requires the bearer token, so the UI should use Orb's `/finance/attachments/{id}/download` instead) | — |
 
 The TS interfaces in `frontend/src/lib/types.ts` mirror these with most fields optional; `FinanceWorkspace`, `FinanceSummary`, `FinanceReport` mirror the dicts built in `get_workspace`/`summary`/`report`. `FinanceSearchResult.results` is `Array<FinanceTransaction | FinanceAccount>` discriminated by `kind`.
 
@@ -485,7 +481,7 @@ return await kb.get_chat_workflow().chat(...)
   1. `get_workspace(kb)`; if not ready, returns an answer of the form `"I can't answer finance questions yet because <detail>"` with the note docs as context (no LLM call).
   2. `summary(kb, days=30)` (full scoped summary: accounts, 30-day totals, last 12 transactions, balance chart).
   3. Builds a system prompt (Firefly numbers authoritative; notes for plans/context; be explicit about date ranges; never invent transactions) and a user message containing the question, the rewritten query if different, **the full `{"workspace": …, "summary": …}` JSON pretty-printed**, and up to six note passages (`_format_note_passages`) or a "No relevant note passages" line.
-  4. `llm_service.generate_text(system, user)` — synchronous call on the event loop (not `to_thread`), so a slow local model blocks the loop for the duration. Requires AI to be configured (the route applies `require_ai`).
+  4. `await asyncio.to_thread(kb.llm.generate_text, system, user)` — the KB's own `LLMService` (a pinned provider applies here too), off the event loop because a pinned KB may swap a multi-GB GGUF, which would otherwise stall `/chat/status` polls. Requires AI to be configured (the route applies `require_ai`).
   5. Returns `{query, rewritten_query, answer, context: note_docs + [{"source": "finance", "summary": …, "kb_id"}], information_needs: [query], discovered_entities: {}, thinking: None}`.
 - Only the last 100 transaction groups / 30 days are visible to the model; questions about older history are answered from notes or not at all. The chart JSON is included verbatim and can be large (one point per day).
 
@@ -494,7 +490,7 @@ return await kb.get_chat_workflow().chat(...)
 Full per-route documentation (params, bodies, response shapes, status codes) is in [API reference → Finance routes](07-api-reference.md#finance-routes-api_desktoppy); this section records only what the route layer adds on top of the service.
 
 - **KB resolution:** every route depends on `get_kb` (`backend/app/api/deps.py`): `?kb=<name or slug>`, default `default`, 404 if unknown. The `KBContext` is passed straight into the service; the service uses `kb.kb_id` (registry key) and `kb.name` (title).
-- **Input models** (Pydantic, 422 on violation): `CreateWorkspaceInput(currency: str = "USD", 3 chars)`, `CreateAccountInput(name 1–255, account_type="asset", opening_balance=0.0, currency?)`, `CreateTransactionInput(description 1–1000, amount>0, account_id ≥1 char, type="withdrawal", date?, counterparty_name?, transfer_account_id?, category?, budget_id?, currency?)`, `CreateBudgetInput(name, amount?>0, currency?)`, `CreateCategoryInput(name, notes?)`, `CreateRecurrenceInput(title, amount>0, type="withdrawal", source_id, destination_id, description?, first_date?, repeat_freq="monthly")`. Rule-groups and rules take a bare `dict` body and pull keys with `.get()`; wrong types coerce via `str()`/`float()` inside the route (a non-numeric `rate` raises `ValueError` → 400).
+- **Input models** (Pydantic, 422 on violation): `CreateWorkspaceInput(currency: str = "USD", 3 chars)`, `CreateAccountInput(name 1–255, account_type="asset", opening_balance=0.0, currency?)`, `CreateTransactionInput(description 1–1000, amount>0, account_id ≥1 char, type="withdrawal", date?, counterparty_name?, transfer_account_id?, category?, budget_id?, currency?)`, `CreateBudgetInput(name, amount?>0, currency?)`, `CreateCategoryInput(name, notes?)`, `CreateRecurrenceInput(title, amount>0, type="withdrawal", source_id, destination_id, description?, first_date?, repeat_freq="monthly")`. Rule-groups and rules take a bare `dict` body and pull keys with `.get()`; values are coerced with `str()` inside the route.
 - **`_finance_error(exc)`**: `ValueError` → 400, `RuntimeError` (incl. `FireflyHTTPError`) → 502, else 500 — all with `detail: str(exc)`. Applied by every POST/PUT/DELETE route plus `GET /finance/search` and `GET /finance/report`. **Not** applied to `GET workspace/accounts/transactions/budgets/categories/recurrences/rule-groups/rules/summary` — those propagate as unhandled exceptions (plain-text 500). `GET /finance/workspace` is safe because the service catches internally.
 - All finance routes are `async def` and await the service; the service's own `to_thread` calls keep PHP off the loop, but the global lock means concurrent finance requests queue inside the process.
 
@@ -513,7 +509,7 @@ State: `workspace`, `summary`, `accounts`, `transactions`, `budgets`, `categorie
 2. If `ws.currency` set → `setCurrency`. If `!ws.ready` → clear every list and return (so switching to a KB whose Firefly is not ready never shows stale rows).
 3. `Promise.all` of eight calls: `getFinanceSummary(kb, 30)`, `listFinanceAccounts`, `listFinanceTransactions` (**required** — a failure sets `error` and aborts) and `listFinanceBudgets(kb, 30)`, `listFinanceCategories`, `listFinanceRecurrences`, `listFinanceRuleGroups`, `listFinanceRules` wrapped in `loadOptional` (failures `console.warn` and fall back to `[]`).
 4. Form seeding via the ref: first asset account (else first account) becomes the default `txForm.account_id` and `recurrenceForm.source_id` if empty; first rule group becomes `ruleForm.rule_group_id` if empty.
-5. Errors → `setError(errMessage(err, "Could not load finance data."))` where `errMessage` prefers Axios `response.data.detail` (string or joined array).
+5. Errors → `setError(errMessage(err, "Could not load finance data."))` where `errMessage` (`lib/utils.ts`) prefers the `fetch` wrapper's `response.data.detail` (string or joined array).
 
 Because the backend serialises finance requests, the eight parallel calls complete one after another (each list = 1 PHP spawn + 1–5 HTTP calls) — a cold refresh of a ready workspace typically spawns ~10 PHP processes.
 
@@ -622,7 +618,7 @@ The mapping lives in **two** places that must agree: `orb.db` (per KB) and `runt
 | Backend ↔ Firefly | REST over loopback with `Authorization: Bearer`; `php -r` scripts executed with `cwd=app/` that `require vendor/autoload.php` + `bootstrap/app.php` and use Eloquent models `FireflyIII\User`, `Models\UserGroup`, `UserRole`, `GroupMembership`, `TransactionCurrency`, `Factory\UserGroupFactory`, and the twelve ledger models. These class names and the `user_group_id` column are an **implicit dependency on Firefly internals** — a Firefly upgrade that renames them breaks scoping while the REST layer keeps working. |
 | Backend → registry | `kb_registry.get_metadata`, `set_firefly_group`, `detach_firefly_group`. |
 | KB routes → service | `destroy_kb_administration` (empty, delete, delete-non-default; best-effort), `sync_kb_group_title` (rename; best-effort). KB **create** does not call the service. |
-| Chat → service | `looks_like_finance_query`, `answer_finance_question`; the latter calls `llm_service.generate_text` synchronously. |
+| Chat → service | `looks_like_finance_query`, `answer_finance_question`; the latter calls `kb.llm.generate_text` in `asyncio.to_thread`. |
 | Frontend → backend | Only the routes listed in §13.3, always with `?kb=<currentKB name>`. |
 
 ## 16. Invariants and locked decisions
@@ -657,11 +653,10 @@ The mapping lives in **two** places that must agree: `orb.db` (per KB) and `runt
 | `_ids_for_group` PHP failure | list calls | Empty allow-list → empty lists (fail closed) with a warning; UI shows "No … yet." even though data exists. |
 | PHP timeout (>90 s, e.g. cold disk / antivirus) | `subprocess.TimeoutExpired` | Not a `RuntimeError` → 500 from wrapped routes; `get_workspace` still catches (→ `error`). |
 | Firefly 422 (validation) | `FireflyHTTPError(422)` with Firefly's `message` | 502 with detail such as `Firefly POST /api/v1/accounts failed (422): The given data was invalid.` — the UI shows it in the red banner. |
-| Firefly returns empty body on create (exchange rates) | handled | Re-list or synthetic row (§9.10). |
 | Upgrade interrupted after wiping `app/` | runtime | `_stash_app_state` reuses the previous stash if it captured nothing; `_swap_in_app_tree` restores `app.bak` on populate failure. Worst case (stash also missing): a fresh DB — all administrations lost while `orb.db` still maps them (→ "group missing" row above). |
 | Download race / corrupted archive | runtime | `_download` (via `local_models.download_file`) writes the archive only on success; extraction of an empty tree raises before the swap. |
 
-Logging: backend logger name `FireflyService` (warnings for enrichment failures, id-list failures, destroy failures, budget-limit failures, seed-bill cleanup; info on destroy). Route-level failures in KB routes log with `[empty-kb]`/`[delete-kb]`/`[delete-non-default]` prefixes. Shell status strings (`Migrating Firefly database…`, `Seeding Firefly base data…`, `Preparing Firefly API auth…`, `Creating Firefly desktop user…`, `Using bundled …`, `Embedded PHP ready`, `Firefly III app ready`) go to `DATA_DIR/boot-status.json` (via `status()`) and the UI's status indicator. Firefly's own output: `DATA_DIR/logs/firefly.log` and `app/storage/logs/`.
+Logging: backend logger name `FireflyService` (warnings for enrichment failures, id-list failures, destroy failures, budget-limit failures; info on destroy). Route-level failures in KB routes log with `[empty-kb]`/`[delete-kb]`/`[delete-non-default]` prefixes. Shell status strings (`Migrating Firefly database…`, `Seeding Firefly base data…`, `Preparing Firefly API auth…`, `Creating Firefly desktop user…`, `Using bundled …`, `Embedded PHP ready`, `Firefly III app ready`) go to `DATA_DIR/boot-status.json` (via `status()`) and the UI's status indicator. Firefly's own output: `DATA_DIR/logs/firefly.log` and `app/storage/logs/`.
 
 ## 18. Gotchas and non-obvious behaviours
 
@@ -675,11 +670,8 @@ Logging: backend logger name `FireflyService` (warnings for enrichment failures,
 - **Only page 1 (100 rows)** everywhere; transactions capped at 40 (list) / 100 (summary, enrichment).
 - **Recurrences never fire** without Firefly's cron; Orb does not run it.
 - **`create_budget` returns `spent: 0`, `currency: None`** — the UI's next `refresh()` fixes the display.
-- **Object-group create is a hack** via a seed bill; the group may disappear as soon as the seed bill is deleted.
-- **Attachments' `download_url` points at Firefly** and needs the bearer token — use Orb's `/finance/attachments/{id}/download`.
-- **Exchange rates and attachments are not scoped**; they leak across KBs by design of the upstream API.
 - **`looks_like_finance_query` is substring-based** ("accountability" → finance path) and forces an extra `summary()` call plus a big JSON prompt on every match.
-- **`generate_text` in `answer_finance_question` runs on the event loop.**
+- **`answer_finance_question` builds one large prompt** (workspace + 30-day summary JSON, verbatim) per finance question; the LLM call itself runs in a thread.
 - **Titles collide by design**: two KBs that ever share a name share a group unless the first one's group was destroyed; the default KB's Firefly-side title stays `Orb` until renamed.
 - **`runtime.json` is re-read per request** (cheap, but means a corrupted file switches the whole finance feature to `bootstrapping` instantly). The backend's rewrite drops the 0600 mode.
 - **`todayIso()`/`tomorrowIso()` are UTC, `monthStartIso()` is local** in the frontend.
@@ -701,7 +693,7 @@ Logging: backend logger name `FireflyService` (warnings for enrichment failures,
 
 | Commit | Date | Relevance |
 |---|---|---|
-| `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" | 2026-08-02 | Introduces `firefly_service.py` (complete method set, unchanged since), the shell-side Firefly bootstrap (since ported to `desktop_runtime.py`), the per-KB administration model, and the reset/empty/delete wiring. Original runtime: currency-only seed (`TransactionCurrencySeeder`), `passportReady`/`userReady` flags trusted, password passed in argv, `TRUSTED_PROXIES="**"`, a separate `generateTokenScript`. |
+| `3f21e08` "Ship LifeOS as a Docker-free desktop app with in-app data cleanup" | 2026-08-02 | Introduces `firefly_service.py` (complete method set; trimmed to the resources the UI uses on 2026-09-19), the shell-side Firefly bootstrap (since ported to `desktop_runtime.py`), the per-KB administration model, and the reset/empty/delete wiring. Original runtime: currency-only seed (`TransactionCurrencySeeder`), `passportReady`/`userReady` flags trusted, password passed in argv, `TRUSTED_PROXIES="**"`, a separate `generateTokenScript`. |
 | `6162be2` "Rebrand LifeOS / LiveOS to Orb" | 2026-08-02 | Group titles `Orb: …`, token name `Orb Desktop`, `APP_NAME=Orb_Finance`, env aliases. |
 | `fbcafe7` "Align codebase with Orb desktop product and drop legacy Docker-era paths" | 2026-08-03 | Deletes the legacy native ledger `backend/app/models/finance.py`; splits the 1,945-line `finance/page.tsx` into `components/finance/**` (hooks, tabs, shared components); `fireflyUrl` moves to the shell's port table; `TRUSTED_PROXIES` narrowed to loopback; zip extraction passes paths via argv. |
 | `38d6038` "Fix Windows Firefly prefetch by extracting PHP zips without system Python" | 2026-08-04 | `extractZipWindows` (PowerShell `Expand-Archive`, bsdtar fallback). |

@@ -1,6 +1,6 @@
 # Decisions and Constraints
 
-**What this covers:** the architectural and product decisions that are considered settled in Orb, the invariants they imply, and the rationale behind each. Many were written down originally in `.cursor/rules/architecture-decisions.mdc` (a rules file for AI editors, still present in git `HEAD` though deleted in the working tree); others are visible only in code comments and commit messages. Treat every entry here as a constraint: do not reintroduce a rejected approach without an explicit new decision.
+**What this covers:** the architectural and product decisions that are considered settled in Orb, the invariants they imply, and the rationale behind each. Many were written down originally in `.cursor/rules/architecture-decisions.mdc` (a rules file for AI editors that has since been deleted from the repository; this document is the sole source now); others are visible only in code comments and commit messages. Treat every entry here as a constraint: do not reintroduce a rejected approach without an explicit new decision.
 
 **Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Development history](25-development-history.md) · [Development guide](27-development-guide.md) · every subsystem doc's "Invariants" section
 
@@ -15,9 +15,9 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: the target user has personal notes, voice memos and finances on one machine; Docker was the biggest onboarding obstacle in the LifeOS era (README history, commit `3f21e08` "Ship LifeOS as a Docker-free desktop app").
 - Enforced: `desktop/src-tauri` spawns `python -m app.desktop_runtime`, which spawns the local binaries; no Docker files exist in the repo.
 
-### A2. First-run setup collects only data dir, models dir, optional vault, AI mode
-- Rejected: a full settings UI at first launch; auto-choosing directories.
-- Rationale: users keep models on NAS/OneDrive; the bootstrap file must be tiny and robust. A truncated `paths.json` once looked like total data loss, hence atomic writes and "corrupt file → setup page".
+### A2. First-run setup collects only data dir, models dir, optional vault
+- Rejected: a full settings UI at first launch; auto-choosing directories; a stored "AI mode" (removed 2026-09-19 — readiness is derived by `ai_gate` from what is actually configured).
+- Rationale: users keep models on a NAS and vaults in synced folders; the bootstrap file must be tiny and robust. A truncated `paths.json` once looked like total data loss, hence atomic writes and "corrupt file → setup page".
 - Enforced: `src-tauri/src/commands.rs::save_setup` (atomic tmp+rename, absolute paths only), `runtime.rs::first_run`, `core/paths.py::save_paths_file`.
 
 ### A3. Dedicated port block 17401–17470
@@ -33,6 +33,11 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: existing installs must keep working after the rename (`6162be2`).
 - Enforced: only `ORB_*` env names and the `Orb` App Support folder exist (the read-compatibility aliases from the rename were removed on 2026-09-19); the `lifeos_current_kb` browser-storage migration in `kb-context.tsx` remains. **New code writes only `ORB_*`.**
 
+### A6. The data dir must not live in a cloud-sync folder
+- Rejected: silently tolerating iCloud Drive / OneDrive / Dropbox / Google Drive data dirs; refusing to start.
+- Rationale: Files-On-Demand evicts files the databases need and blocks reads until they download; sync clients writing under a running SQLite/Kuzu/Qdrant engine corrupt them. The owner's own install hung this way with the data dir on OneDrive (2026-09-20). The vault is plain markdown and may be synced (pinned "Always keep on this device"); models are large read-only files and may sit on a NAS.
+- Enforced: `desktop_runtime.main()` prints `[desktop] WARNING: data dir … is inside a cloud-synced folder` when a path component is `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive`; the default `<AppSupport>/data` is local; docs 04/21/22/27 and the README repeat the guidance.
+
 ---
 
 ## B. Models and inference
@@ -44,7 +49,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B2. Exclusive residency: one heavy model at a time
 - Rejected: keeping chat + embed + rerank resident; separate processes per model.
-- Rationale: consumer machines (24 GB Metal was the reference) cannot hold Gemma 4 E4B, Qwen3 embed/rerank and Florence/Whisper/Marlin simultaneously.
+- Rationale: consumer machines (24 GB Metal was the reference) cannot hold Gemma 4 E4B (with its vision projector), Qwen3 embed/rerank and Qwen3-ASR/Marlin simultaneously.
 - Enforced: residency manager in `local_models.py` (`_unload_peers_for_gguf`, `ensure_chat_loaded`, `ensure_embed_loaded`), `_unload_multimodal_families`, `multimodal_runtime` single-family policy; `ModelLoadClock` reports load time separately so swaps are visible in stage timings.
 
 ### B3. Chat GGUF defaults: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`, flash-attention opt-in, no fixed output cap
@@ -69,7 +74,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B8. Multimodal stack is one shared torch + transformers ≥ 5.7 install
 - Rejected: a second transformers major just for Marlin; separate venvs per model.
-- Rationale: Marlin (Qwen3.5 backbone) requires ≥ 5.7; Florence/Whisper were patched to run on 5.x rather than pinning two stacks.
+- Rationale: Marlin (Qwen3.5 backbone) requires ≥ 5.7; Qwen3-ASR's transformers engine runs on the same stack, and its MLX engine on Apple Silicon is one extra marker-gated wheel (`mlx-qwen3-asr`), not a second stack.
 - Enforced: `requirements-multimodal.txt`, `multimodal_services._MULTIMODAL_PIP`, compatibility patches in `multimodal_runtime.py`.
 
 ---
@@ -92,7 +97,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### C4. Meilisearch replaced Typesense
 - Rationale: native Windows binary and simpler packaging (`f28d205`, `d37abd6` era).
-- Enforced: `services/meilisearch_service.py`; DB column `typesense_collection` retained with `meili_index` synonym (the `TYPESENSE_*` env aliases were dropped).
+- Enforced: `services/meilisearch_service.py`; DB column `typesense_collection` retained (raw `sqlite3` in `kb_registry`; the `TYPESENSE_*` env aliases were dropped).
 
 ### C5. Qdrant is the source of truth for vectors and long descriptive text; fail-closed on dimension mismatch
 - Rejected: silently recreating a collection when the embedding model changes.
@@ -110,6 +115,16 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### C8. Cleanup and deletion are contained to `DATA_DIR`
 - Rationale: audit finding — a mis-set path could delete arbitrary folders.
 - Enforced: KB delete / reset paths check containment before `rmtree`; `safe_vault_join` for every vault-relative path; `POST /api/v1/desktop/reveal` allow-lists `DATA_DIR`, `MODELS_DIR` and KB vaults.
+
+### C9. Attachment links are vault-root-relative
+- Rejected: absolute `/vault-files/<kb id>/…` links in note bodies (the form written until 2026-09-20).
+- Rationale: the kb id is minted per workspace row, so an absolute link died with every re-created workspace, and a vault opened in Obsidian or moved between machines could not resolve it. A link relative to the vault root survives all of that and moving a note never touches its attachments.
+- Enforced: notes store `attachments/<sub>/<file>` with `quote(seg, safe="")` segments (`vault_ops.rewrite_refs_in_text`, uploads insert `encodeFileUrl(rel_path)`); extraction markers carry the same target; readers accept both forms (`local_storage.vault_rel_from_url`, `attachment_key`, frontend `vaultRelPath`); the frontend's `resolveFileUrl` and the backend's `local_storage.vault_file_url` mint `/vault-files/<kb>/…` only for display, previews and extractor input; the v2/v3 vault sweep relativised existing links. Never write a serving URL into a note.
+
+### C10. Attachments live only under `attachments/`, grouped by note folder
+- Rejected: attachments beside their notes (media rows in the vault tree, `list_vault_media_files`, the `media_files` key of `GET /vault/folders`); a flat `attachments/` for every upload.
+- Rationale: one place to look, one boundary to guard, and an Obsidian-style vault where every non-markdown file is under one folder; grouping by the owning note's folder keeps a big vault browsable without coupling a note's location to its files (C9).
+- Enforced: `POST /api/v1/upload?folder=` → `local_storage.store_upload` writes `attachments/<folder>/<stem>-<8hex><ext>` (`..`/absolute → 400); `vault_ops.move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment ↔ note-folder moves and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`; `vault_sync.migrate_vault_files` v3 (`<vault>/.orb/migrated-v3`) moves stray files in once and rewrites their links.
 
 ---
 
@@ -129,7 +144,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### D3. Temporal digests instead of bi-temporal relationship evolution
 - Rejected (reversed): the Feb 2026 bi-temporal design (`033589d`: `valid_from/valid_to/is_active`, "evolved" relationships, `schemas/relationships.py`) and the symbolic reranker introduced with it.
 - Rationale: `da75dfc` (2026-05-28) removed the evolution logic as complexity without measured benefit and added period-keyed temporal digests (`TEMPORAL_DIGESTS_ENABLED`, `TEMPORAL_DIGEST_PERIOD`) stored as summary nodes/vectors instead.
-- Enforced: `SEMANTIC_REL.ingested_at/last_updated/mention_count` are live; `created_at` and `is_similarity` are never-set leftovers; `tests/unit/test_relationships.py` still imports the deleted module and fails at collection. Do not rebuild bi-temporal edges on top of these columns without a new decision.
+- Enforced: `SEMANTIC_REL.ingested_at/last_updated/mention_count` are live; `created_at` and `is_similarity` are never-set leftovers (`tests/unit/test_relationships.py`, which still imported the deleted module, was removed on 2026-09-19). Do not rebuild bi-temporal edges on top of these columns without a new decision.
 
 ### D4. Ingestion is FIFO by default; heavy media jobs serialised
 - Rationale: local GPUs thrash when two notes contend for the same model; exclusive residency makes true parallelism counter-productive.
@@ -210,7 +225,12 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### E8. Native wheels are built on the target OS in CI (no cross-compiling)
 - Rationale: `llama-cpp-python` Metal/CPU builds are platform-specific; v0.1.0 Mac builds shipped broken helper symlinks from a mismatched runner.
-- Enforced: `.github/workflows/desktop-release.yml` matrix (macos-14 arm64, macos-15-intel x64, windows-latest, ubuntu-latest).
+- Enforced: `.github/workflows/desktop-release.yml` matrix (macos-14 arm64, macos-15-intel x64, windows-latest, ubuntu-22.04), followed by a `release` job that only drafts the GitHub Release from those artifacts.
+
+### E9. The macOS DMG is built with `hdiutil`, not Tauri's DMG script
+- Rejected: Tauri's `bundle_dmg.sh` (mount a temp image, lay it out through Finder AppleScript, unmount); an APFS image.
+- Rationale: the unmount failed intermittently with "Resource busy" while Spotlight/Finder held the fresh volume, so release builds were flaky for no benefit; a straight `hdiutil create` from a staging folder never mounts anything. HFS+ because an APFS image compressed to roughly twice the size.
+- Enforced: `desktop/build.py dist` on macOS runs `cargo tauri build --bundles app`, stages `Orb.app` (`ditto`) + an `Applications` symlink, then `hdiutil create -fs HFS+ -format UDZO -imagekey zlib-level=9` → `bundle/dmg/Orb_<ver>_<arch>.dmg`. Windows/Linux keep plain `cargo tauri build`.
 
 ---
 
@@ -250,7 +270,7 @@ See [25-development-history.md](25-development-history.md) for the full chronolo
 - **Never infer a model's role from its chat template.** Embedding and reranker GGUFs derived from instruct models carry one. Use `<arch>.pooling_type` to exclude embedders; a reranker cannot be distinguished from a chat model by metadata, so warn rather than block.
 - **Never `rglob` MODELS_DIR.** It descended into a virtualenv and took minutes on an external disk. Walk with pruning and a depth cap.
 - **A pin that cannot be satisfied raises.** A KB pointing at a deleted or unusable model must fail loudly; silently falling back to the Setup selection would answer with a different model than the user chose.
-- **API keys never touch `DATA_DIR` in plaintext.** It is commonly a synced folder. Keys live in the OS keychain (Python `keyring`, service `Orb`) and in backend memory; when no keychain backend is usable the key works for the session only and is never written to disk.
+- **API keys never touch `DATA_DIR` in plaintext.** It must not be a synced folder (A6), but users have put it in one. Keys live in the OS keychain (Python `keyring`, service `Orb`) and in backend memory; when no keychain backend is usable the key works for the session only and is never written to disk.
 - **No endpoint ever returns key material.** `GET /api/v1/credentials` reports `configured` and `source` only.
 - **An OpenAI-compatible endpoint is identified by its URL**, not a user-chosen name — so two servers can never share a key by accident. `normalize_base_url` lives only in Python (`services/credentials.py`); the UI sends the raw URL.
 - **`.env` is a contributor fallback, not the product path.** End users cannot edit it; keys are entered in Settings.

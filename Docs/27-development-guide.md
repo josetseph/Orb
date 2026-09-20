@@ -14,10 +14,10 @@
 | Node.js 20+ | Building the Vite UI only (nothing Node ships) | `frontend/package.json` |
 | Python 3.11+ (packaged builds ship 3.12.9) | FastAPI backend + desktop runtime | Create `backend/.venv`; debug shell builds use it automatically (or set `ORB_PYTHON`) |
 | `cmake` + Xcode CLT (macOS) / build-essential (Linux) | building `llama-cpp-python` with Metal / CUDA / CPU backends | Only needed when installing or packaging llama-cpp-python |
-| `ffmpeg` | audio transcoding for Whisper | Homebrew paths are prepended to `PATH` by the shell (`runtime.rs tool_path()`) so Finder launches find it |
+| `ffmpeg` | audio transcoding for Qwen3-ASR and media probing | Homebrew paths are prepended to `PATH` by the shell (`runtime.rs tool_path()`) so Finder launches find it |
 | ~10–20 GB disk | GGUF + HF model downloads, Qdrant/Meili binaries, portable PHP | Models can live on a NAS via the setup page's models dir |
 
-No Docker, Ollama, LM Studio or database server is required. Qdrant, Meilisearch and PHP/Firefly are downloaded by `desktop_runtime.py` into `DATA_DIR` on first run.
+No Docker, Ollama, LM Studio or database server is required. Qdrant, Meilisearch and PHP/Firefly are downloaded by `desktop_runtime.py` into `DATA_DIR` on first run. Keep `DATA_DIR` on local disk — never iCloud Drive/OneDrive/Dropbox/Google Drive (the runtime warns); only the vault may be synced.
 
 ---
 
@@ -61,7 +61,7 @@ cd frontend && npm run dev                                   # Vite on 3700, pro
 cd desktop/src-tauri && ORB_URL=http://127.0.0.1:3700 cargo tauri dev
 ```
 
-What happens: the shell shows the setup page if `paths.json` is missing or corrupt, then spawns `python -m app.desktop_runtime` (`backend/.venv` python), which frees the 174xx ports, starts the API (uvicorn on 17401) immediately, and downloads/boots Qdrant, Meilisearch and Firefly behind it; the window opens as soon as `/health` answers and points at `ORB_URL`. Without `ORB_URL` the window loads the API, which serves `frontend/dist` if you have run `npm run build`. Logs go to `DATA_DIR/logs/`; `DATA_DIR` comes from `paths.json` (default `~/Library/Application Support/Orb/data`).
+What happens: the shell shows the setup page if `paths.json` is missing or corrupt, then spawns `python -m app.desktop_runtime` (`backend/.venv` python), which frees the 174xx ports, starts the API (uvicorn on 17401) immediately, and downloads/boots Qdrant, Meilisearch and Firefly behind it; the window opens as soon as `/health` answers and points at `ORB_URL`. Without `ORB_URL` the window loads the API, which serves `frontend/dist` if you have run `npm run build`. Logs go to `DATA_DIR/logs/`; `DATA_DIR` comes from `paths.json` (default `~/Library/Application Support/Orb/data`; keep it on local disk).
 
 Useful env switches (read by `src-tauri/src/runtime.rs` / `desktop_runtime.py`):
 
@@ -100,7 +100,7 @@ API_PROXY_TARGET=http://127.0.0.1:8000 npm run dev       # against a bare uvicor
 ```bash
 python3 desktop/build.py prepare     # 10–20 min: python-build-standalone + pip, vite build, firefly seed → desktop/resources/
 cd desktop/src-tauri && ORB_USE_RESOURCES=1 cargo tauri dev   # test the bundled runtimes
-python3 desktop/build.py dist        # preflight + cargo tauri build → target/release/bundle/
+python3 desktop/build.py dist        # preflight + cargo tauri build → target/release/bundle/ (macOS: .app via Tauri, .dmg via hdiutil)
 ```
 
 Release builds are produced by CI on `desktop-v*` tags. See [05](05-packaging-build-and-release.md).
@@ -121,7 +121,7 @@ Release builds are produced by CI on `desktop-v*` tags. See [05](05-packaging-bu
 
 Unit tests need no live services: `tests/unit/conftest.py` stubs Kuzu, Qdrant, Meilisearch and the LLM, but the test modules still import the real service modules, so the venv must have `requirements.txt` installed (`qdrant_client`, `kuzu`, `openai`, …) plus `pytest` and `pytest-asyncio`. There is no CI test job; run tests locally before committing.
 
-State on 2026-09-19: the full suite is green (455 passed, 0 failed) when run against an interpreter that has `requirements.txt` installed — the bundled runtime under `desktop/resources/backend/python` plus `pytest`/`pytest-asyncio` works, as does a fresh `uv venv`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder first, otherwise `graph.py` opens the real Kuzu file, which the running app holds locked.
+State on 2026-09-20: the full suite is green (485 passed, 0 failed) when run against an interpreter that has `requirements.txt` installed — the bundled runtime under `desktop/resources/backend/python` plus `pytest`/`pytest-asyncio` works, as does a fresh `uv venv`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder first, otherwise `graph.py` opens the real Kuzu file, which the running app holds locked.
 
 ---
 
@@ -130,7 +130,7 @@ State on 2026-09-19: the full suite is green (455 passed, 0 failed) when run aga
 | Item | Dev default | Packaged default |
 |---|---|---|
 | `paths.json` | `~/Library/Application Support/Orb/paths.json` (macOS) — shared with a packaged install unless you set `ORB_PATHS_FILE` | same |
-| `DATA_DIR` | `paths.json.data_dir` under `cargo tauri dev`; `<repo>/data` for a bare `uvicorn` without `paths.json` | `~/Library/Application Support/Orb/data` |
+| `DATA_DIR` | `paths.json.data_dir` under `cargo tauri dev`; `<repo>/data` for a bare `uvicorn` without `paths.json` | `~/Library/Application Support/Orb/data` (local disk; the runtime warns on a cloud-synced path) |
 | `MODELS_DIR` | `paths.json.models_dir`; `<repo>/backend/models` for a bare `uvicorn` without `paths.json` | `~/Library/Application Support/Orb/models` |
 | Logs | `DATA_DIR/logs` | same |
 
@@ -168,7 +168,7 @@ Because the bootstrap file is shared, a dev session can silently pick up your re
 
 ### Commits
 
-Recent history uses one-line imperative subjects with a long explanatory body for anything non-trivial (see `git log -5 --format=%B`). Version bumps touch `desktop/package.json` and `frontend/package.json`; release tags are `desktop-v<version>`.
+Recent history uses one-line imperative subjects with a long explanatory body for anything non-trivial (see `git log -5 --format=%B`). Version bumps touch `desktop/src-tauri/tauri.conf.json`, `desktop/src-tauri/Cargo.toml`, `frontend/package.json` and `backend/app/main.py` (`FastAPI(version=…)`); release tags are `desktop-v<version>` and CI drafts the GitHub Release from them.
 
 ---
 
@@ -195,7 +195,7 @@ Add a `ModelOption` in `services/model_catalog.py` (id, role, family, HF repo/fi
 
 First ask whether you need one: **`openai_compat` already covers every OpenAI-shaped API** (OpenRouter, Groq, Together, vLLM, LM Studio, llama-server, Ollama) — the user supplies a URL, a key and a model name, with no code change. A new provider is only warranted for a genuinely different wire protocol (as with Gemini and Anthropic).
 
-If it is: `services/llm.py` (client construction in `_build_clients`, a `_chat` branch if the SDK is not OpenAI-shaped, model resolution), `services/credentials.py::CLOUD_PROVIDERS` (+ `_ENV_SETTING` for the contributor seed), `desktop/credentials.js::KNOWN_PROVIDERS`, `core/config.py` (model field), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
+If it is: `services/llm.py` (client construction in `_build_clients`, a `_chat` branch if the SDK is not OpenAI-shaped, model resolution), `services/credentials.py::CLOUD_PROVIDERS` (+ `_ENV_SETTING` for the contributor seed), `core/config.py` (model field), `.env.example`, `kb_registry.LLM_PROVIDERS`, the settings/KB UI option lists. See [13](13-llm-providers-and-prompting.md).
 
 ### Change the graph schema
 
@@ -229,10 +229,10 @@ Short form of [26](26-decisions-and-constraints.md):
 
 - Do not add HTTP model sidecars or reintroduce Ollama / LM Studio / llama-server paths.
 - Do not load two heavy models at once outside the residency manager.
-- Do not store note bodies in SQLite or attachments outside the vault.
+- Do not store note bodies in SQLite, or attachments anywhere but `<vault>/attachments/` (grouped by note folder).
 - Do not drop or recreate Qdrant collections implicitly on a dimension mismatch.
 - Do not query another KB's data from a KB-scoped route; do not let finance lists cross administrations.
 - Do not write `TYPESENSE_*` names in new code; the `LIVEOS_*` aliases no longer exist.
 - Do not add Docker, Postgres or a second UI server back; the API serves the UI and SQLite is the only database.
-- Do not treat `/vault-files/...` paths as temporary files.
+- Do not treat `/vault-files/...` paths as temporary files, and never write one into a note — stored links are vault-root-relative (`attachments/…`).
 - Do not change `n_ctx` / `swa_full` defaults for Gemma 4 without re-testing the ordinal-loop and Metal OOM cases.

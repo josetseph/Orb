@@ -12,7 +12,7 @@
 - Construction and caching of per-KB service objects (`KBContext`): `QdrantService`, `MeilisearchService`, lazily `GraphService`, `RetrievalService`, `IngestionWorkflow`, `ChatWorkflow`.
 - The default KB bootstrap (`id == "default"`) and the healing of mis-stored Kuzu directory paths.
 - Vault provisioning (`ensure_vault`), full vault wipe (`clear_vault_contents`), and the rule for which vault folders Orb may `rmtree`.
-- Vault ↔ SQLite reconciliation (`vault_sync.sync_vault_notes`) and folder/attachment/media listings used by the notes sidebar.
+- Vault ↔ SQLite reconciliation (`vault_sync.sync_vault_notes`), the one-time vault sweep it runs first (`migrate_vault_files`), and the folder/attachment listings used by the notes sidebar.
 - External edit detection (`vault_watcher`): a watchdog observer per vault that marks notes stale but never ingests.
 - `?kb=` request scoping (`app/api/deps.py:get_kb`).
 
@@ -34,12 +34,12 @@
 | `backend/app/services/vault_sync.py` | Scan vault → create/adopt `notes` rows; list folders / attachments; one-time vault migrations | `sync_vault_notes`, `migrate_vault_files`, `iter_vault_md_files`, `list_vault_folders`, `list_attachment_files` |
 | `backend/app/services/vault_watcher.py` | watchdog observers per vault; debounced per-file sync into SQLite; stale marking | `start_vault_watchers`, `stop_vault_watchers`, `_sync_vault_file`, `_get_engine` |
 | `backend/app/core/paths.py` | `resolve_data_dir`, `resolve_default_vault_path`, `ensure_data_layout`, `sqlite_url` consumed by the registry | see [06](06-backend-core-and-configuration.md) |
-| `backend/app/core/database.py` | Async engine + `init_db` (`create_all` for `notes`, `note_links`, `knowledge_bases`, chat tables) | `engine`, `AsyncSessionLocal`, `get_db`, `init_db`, `Base` |
+| `backend/app/core/database.py` | Async engine + `init_db` (`create_all` for `notes`, `note_links`, chat tables; `knowledge_bases` has no ORM model — the registry's own DDL creates it) | `engine`, `AsyncSessionLocal`, `get_db`, `init_db`, `Base` |
 | `backend/app/api_desktop.py` | `POST /api/v1/setup/paths` (re-points default vault via `set_vault_path`), `GET /api/v1/setup/status` (`active_vault_path`), `/vault-files/{kb_id}/…` | `setup_paths`, `setup_status`, `serve_vault_file` |
-| `backend/app/main.py` | Startup: `init_db()` then `start_vault_watchers()`; shutdown: `stop_vault_watchers()` | `startup_event`, `shutdown_event` |
+| `backend/app/main.py` | Startup: `init_db()`, then (in a background thread) `start_vault_watchers()` and `_migrate_stores()`; shutdown: `stop_vault_watchers()` | `startup_event`, `shutdown_event`, `_migrate_stores` |
 | `frontend/src/lib/kb-context.tsx` | Client-side active KB (slug + display name) persisted in `localStorage["orb_current_kb"]`; supplies the `?kb=` value | `KBProvider`, `useKB` |
 
-Consumers that construct/tear down per-KB stores and are documented elsewhere: `services/graph.py` (`GraphService(db_path, qdrant)`), `services/qdrant_service.py` (`QdrantService(col_cores, col_relationships, col_contexts)`), `services/meilisearch_service.py` (`MeilisearchService(collection_name)`), `services/firefly_service.py` (`destroy_kb_administration`, `sync_kb_group_title`, and the `set_firefly_group` calls).
+Consumers that construct/tear down per-KB stores and are documented elsewhere: `services/graph.py` (`GraphService(db_path, qdrant)`), `services/qdrant_service.py` (`QdrantService(col_cores, col_relationships, col_contexts)`), `services/meilisearch_service.py` (`MeilisearchService(index_name)`), `services/firefly_service.py` (`destroy_kb_administration`, `sync_kb_group_title`, and the `set_firefly_group` calls).
 
 ## 3. The isolation model
 
@@ -115,8 +115,8 @@ Table (raw DDL in `_connect()`; there is no ORM model):
 | `vault_path` | TEXT NOT NULL | absolute vault dir |
 | `kuzu_path` | TEXT NOT NULL | Kuzu **file** path (`…/kuzu/<slug>/kuzu_graph`) |
 | `qdrant_col_cores` / `qdrant_col_rels` / `qdrant_col_contexts` | TEXT NOT NULL | Qdrant collection names |
-| `typesense_collection` | TEXT NOT NULL | **Meilisearch index name** (column name is a Typesense-era leftover; ORM exposes `meili_index` synonym) |
-| `created_at` | TEXT | `datetime.utcnow().isoformat()` (naive UTC string; the ORM declares `DateTime(timezone=True)` but the registry writes ISO text) |
+| `typesense_collection` | TEXT NOT NULL | **Meilisearch index name** (column name is a Typesense-era leftover; there is no ORM model for this table) |
+| `created_at` | TEXT | `datetime.utcnow().isoformat()` (naive UTC string) |
 | `firefly_group_id` | INTEGER NULL | Firefly `user_group_id` |
 | `firefly_group_title` | TEXT NULL | e.g. `Orb: Work Notes` |
 
@@ -140,7 +140,7 @@ In-memory state (guarded by `self._lock = threading.RLock()`):
 - `ensure_vault(vault_str)` (creates dir + `attachments/`).
 - Returns `KBContext(kb_id="default", name="default", qdrant=qdrant_service, meili=meilisearch_service, vault_path=…, _graph=graph_service, _kuzu_path=settings.KUZU_DB_PATH)`. `settings.KUZU_DB_PATH` is forced to `DATA_DIR/kuzu/kuzu_graph` at the bottom of `core/config.py`.
 
-`_ensure_default_row()` inserts the default row only if absent, with `qdrant_col_* = settings.QDRANT_COLLECTION_NODE_*` (`node_cores`, `node_relationships`, `node_isolated_contexts`), `typesense_collection = settings.MEILI_INDEX_NAME` (`orb_nodes`; the code still spells `or settings.TYPESENSE_COLLECTION_NAME`, a field that no longer exists), and `vault_path = ctx.vault_path`.
+`_ensure_default_row()` inserts the default row only if absent, with `qdrant_col_* = settings.QDRANT_COLLECTION_NODE_*` (`node_cores`, `node_relationships`, `node_isolated_contexts`), `typesense_collection = settings.MEILI_INDEX_NAME` (`orb_nodes`), and `vault_path = ctx.vault_path`.
 
 Consequence: once the default row exists, **the DB row's `vault_path` wins over `paths.json`** on subsequent boots (`_load` rebuilds the default context from `meta["vault_path"]`). `POST /api/v1/setup/paths` keeps them aligned by calling `set_vault_path("default", …)` whenever `default_vault_path` is supplied. Editing `paths.json` by hand does not move the default vault until the row is updated (see Gotchas).
 
@@ -203,7 +203,6 @@ Applied only in `_load` (repair + persist at startup); `get_kb`, `_build_context
 | default, `default_vault_path` unset | `DATA_DIR/vaults/default` |
 | default, after first boot | whatever is in the `knowledge_bases` row (`set_vault_path` keeps it in sync with Setup) |
 | non-default via `POST /api/v1/kb` | `body.vault_path` — **required** by the route (400 otherwise), although `create_kb` itself would default to `DATA_DIR/vaults/<slug>` |
-| non-default via legacy JSON migration without `vault_path` | `DATA_DIR/vaults/<slug>` |
 
 All paths pass through `ensure_vault`, so they are stored as `Path(path).expanduser().resolve()` strings — symlinks resolved, `~` expanded.
 
@@ -211,7 +210,7 @@ All paths pass through `ensure_vault`, so they are stored as `Path(path).expandu
 
 `mkdir -p <path>`; `mkdir <path>/attachments` (exist_ok). Returns the resolved `Path`. That is the entire vault layout contract: **a vault is any directory; Orb only guarantees `attachments/` exists**. There is no marker file, no config file, no `.orb/` folder. Any Obsidian vault or plain folder can be a vault. Hidden entries (`.obsidian/`, `.git/`) are ignored by all scans (§9).
 
-Created by: `_default_kb`, `create_kb`, `set_vault_path`, `_load` migration, `POST /api/v1/setup/paths`, `clear_vault_contents`, and `POST /api/v1/kb/empty` fallback.
+Created by: `_default_kb`, `create_kb`, `set_vault_path`, `POST /api/v1/setup/paths`, `clear_vault_contents`, and `POST /api/v1/kb/empty` fallback.
 
 ### 6.3 `clear_vault_contents(path)`
 
@@ -251,7 +250,7 @@ Route order: `firefly_service.destroy_kb_administration(ctx)` (best-effort) → 
 2. Under the lock: pop metadata and context; if a context exists, try `ctx.close` then `ctx.graph.close` (`GraphService.close()` closes the Kuzu connection — needed before deleting the file on disk). Delete the row.
 3. `wipe_indexes` → `_cleanup_stores(meta)`:
    - Qdrant: new `QdrantService(...)` with the KB's names (this *re-creates* the collections in its constructor if they were missing, then) `delete_collection` each of the three. Errors swallowed.
-   - Meili: `MeilisearchService(collection_name=index)` (again ensures the index exists) then `delete_index` + `wait_for_task(10 s)`.
+   - Meili: `MeilisearchService(index_name=index)` (again ensures the index exists) then `delete_index` + `wait_for_task(10 s)`.
    - Kuzu: `Path(kuzu_path).resolve()` as stored (normalised at `_load`); refuse unless under `DATA_DIR/kuzu` (comment: *"A crafted KB name used to be able to point this at arbitrary paths — never delete outside DATA_DIR/kuzu"*). Unlink file + `.wal`; remove the now-empty `<slug>` folder (never the `kuzu` root); if it is a directory, `rmtree`.
 4. `delete_vault_files` → `rmtree` **only** if under `DATA_DIR/vaults` (§6.4).
 
@@ -288,7 +287,7 @@ def get_kb(kb: str = Query(default="default", description="Knowledge base name o
 - Declared as `kb: KBContext = Depends(get_kb)` on notes, vault, files, chat, graph, admin, finance, notes-graph and `kb/empty` routes. Missing param → default KB. Unknown value → **404** before the handler runs.
 - Matching is by **name (case-insensitive) or slug**; `id` UUIDs are *not* accepted here (they are accepted by `DELETE`/`PATCH /api/v1/kb/{kb_id}` path params and by `/vault-files/{kb_id}/…`, which tries `get_kb(id)` first and then `get_kb_by_name`).
 - Because a request that omits `?kb=` silently hits `default`, every frontend call goes through `withKb(kb, …)`/`kbQuery(kb)` in `frontend/src/lib/api.ts`, and `useKB()` already holds the stored KB on the first render.
-- `frontend/src/lib/kb-context.tsx`: `localStorage["orb_current_kb"]` = `{"slug","name"}` JSON (legacy keys `lifeos_current_kb`/`liveos_current_kb` and a bare-string format are migrated on read). `currentKB` is the slug. Nothing validates that the stored slug still exists; a deleted KB yields 404s until the user picks another KB.
+- `frontend/src/lib/kb-context.tsx`: `localStorage["orb_current_kb"]` = `{"slug","name"}` JSON (`slug` required; a value without one is ignored). `currentKB` is the slug. Nothing validates that the stored slug still exists; a deleted KB yields 404s until the user picks another KB.
 - Background tasks capture the `KBContext` object at request time (`kb.get_ingestion_workflow().process_note`), so ingestion continues on the right KB even if the user switches KBs in the UI. The ingestion workflow re-resolves `kb_registry.get_kb(note.kb_id)` when persisting the enriched body.
 
 ## 9. `vault_sync` — reconciling vault files with SQLite
@@ -303,15 +302,15 @@ All helpers compute `rel = path.resolve().relative_to(vault.resolve())`, skip an
 |---|---|---|
 | `iter_vault_md_files(vault) -> list[str]` | sorted rel paths of note files | `rglob("*.md")`; skips hidden; skips anything under a top-level `attachments/` **or any folder named `attachments` at any depth** (`"/attachments/" in f"/{rel}/"`) |
 | `list_vault_folders(vault, include_attachments=True)` | sorted set of folder rel paths incl. all ancestors | `rglob("*")` dirs; hidden skipped; `attachments` added explicitly if it exists (it is a real dir so it would be found anyway) |
-| `list_attachment_files(vault)` | `[{name, rel_path}]` for regular files directly in `attachments/` | non-recursive, hidden skipped |
+| `list_attachment_files(vault)` | `[{name, rel_path}]` for regular files anywhere under `attachments/` | recursive (subfolders included), hidden skipped, sorted by `rel_path` |
 
-`.keep` files are written by `POST /api/v1/vault/mkdir` so empty folders survive; they are hidden from media listings but they *are* dotfiles, so they never appear as notes either.
+`.keep` files are written by `POST /api/v1/vault/mkdir` so empty folders survive; they are dotfiles, so they never appear as notes or attachments.
 
 ### 9.2 `sync_vault_notes(db, kb) -> {"files","created","updated"}`
 
 Called from `GET /api/v1/notes` (default `sync_vault=true`, wrapped in try/except so a scan failure never breaks listing) and from the setup flow. Algorithm:
 
-0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v1`, doc 09 §4.3), then every row of this KB with a non-empty legacy `notes.content` is moved to disk — `persist_note_body(n, kb, n.content)` when its file is missing, or just `content = ""` when `read_note_file` already returns a body.
+0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v3`, doc 09 §4.3), then every row of this KB with a non-empty legacy `notes.content` is moved to disk — `persist_note_body(n, kb, n.content)` when its file is missing, or just `content = ""` when `read_note_file` already returns a body.
 1. `rels = iter_vault_md_files(vault)`; load all `Note` rows for `kb.kb_id`; build `by_rel` (normalised `rel_path` → row) and `by_title` (`title.lower()` → row).
 2. For each `rel` on disk with no row:
    - **Adoption**: `adoptable(stem)` returns a row whose `title.lower() == stem`, whose current `rel_path` is **root-level** (no `/`), and whose current file is **not on disk** — i.e. "a root note was moved into a folder outside Orb". The row's `rel_path` is repointed, `updated_at` bumped, `updated += 1`. The on-disk check exists because *"a second note of the same name in another folder would steal the root note's row and orphan the root file"* (added in `f8f527f`).
@@ -397,7 +396,7 @@ Blocking work moved off the event loop (rationale comments in code): `GET /api/v
 | `QDRANT_HOST/PORT/API_KEY`, `MEILI_HOST/PORT/MASTER_KEY` | env (`desktop_runtime.py` injects) | see [21](21-configuration-reference.md) | every `KBContext` uses the same servers; KBs are separated by collection/index *names*, not by server |
 | `EMBEDDING_DIMENSIONS` (+ `manifest.json.selection.embedding_dims`) | settings / models manifest | 1024 | `QdrantService._ensure_collections` creates per-KB collections at this size; changing embed model with non-empty collections is refused (see [15](15-search-indexes-qdrant-meilisearch.md)) |
 
-Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` via ORM, then the registry's own DDL is idempotent) → runtime config → embedding infra sync → `start_vault_watchers()`.
+Startup wiring: `main.py` → `init_db()` (`create_all` for the ORM tables; `knowledge_bases` comes from the registry's own idempotent DDL at import) → runtime config → background thread: embedding infra sync → `start_vault_watchers()` → `_migrate_stores()`.
 
 ## 13. Interfaces with other subsystems
 
@@ -405,7 +404,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 |---|---|
 | Routers → `deps.get_kb` → registry | Every scoped route receives a `KBContext`; handlers must use `kb.kb_id` in SQL filters, `kb.vault_path` for files, `kb.qdrant/meili/graph` for stores. Never import the `graph_service`/`qdrant_service` singletons in routers (they are the default KB only). |
 | Registry → `QdrantService(col_cores, col_relationships, col_contexts)` | Constructor connects and ensures collections. `reset_all()` = delete + recreate. `client.delete_collection` used for teardown. `is_available()` gates cleanup. |
-| Registry → `MeilisearchService(collection_name)` | Constructor ensures index (`primaryKey: node_id`). `reset_all()` = delete + recreate. `client.delete_index` for teardown. |
+| Registry → `MeilisearchService(index_name)` | Constructor ensures index (`primaryKey: node_id`). `reset_all()` = delete + recreate. `client.delete_index` for teardown. |
 | Registry → `GraphService(db_path, qdrant)` | Opened lazily; `close()` before file deletion; `wipe_all_nodes()` for empty/reset. |
 | `firefly_service` → registry | reads `get_metadata(kb_id)["firefly_group_id"]`, writes `set_firefly_group` / `detach_firefly_group`. KB routes call `destroy_kb_administration` / `sync_kb_group_title`. |
 | `IngestionWorkflow` → registry | `_persist_note_body` re-resolves `kb_registry.get_kb(note.kb_id)` to find the vault; raises if the KB has no vault (bodies are never written to SQLite). |
@@ -445,7 +444,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 ## 16. Gotchas
 
 - **Name vs slug in `?kb=`.** `get_kb_by_name` accepts either, but after `PATCH` rename the *old name* stops resolving while the slug keeps working. Store slugs client-side (the frontend does).
-- **`typesense_collection` is Meilisearch.** The column and the `meta` key are legacy names; `KBContext.meili.index_name` is the same value. Don't add a second "meili_index" column — use the ORM synonym.
+- **`typesense_collection` is Meilisearch.** The column and the `meta` key are legacy names; `KBContext.meili.index_name` is the same value. Don't add a second "meili_index" column.
 - **Default KB vault path lives in two places.** `paths.json.default_vault_path` seeds the row only once. Hand-editing `paths.json` afterwards does nothing until `POST /api/v1/setup/paths` (or a direct row update). `GET /api/v1/setup/status` exposes both: `default_vault_path` (paths.json) and `active_vault_path` (registry).
 - **`create_kb` eagerly creates Qdrant collections and the Meili index** (via service constructors) but not the Kuzu file, the Firefly group, or any notes row.
 - **`kb/empty` has no external-folder guard** while `DELETE /kb/{id}` does. Emptying a KB pointed at a user's Obsidian vault deletes every file in it.
@@ -458,7 +457,6 @@ Startup wiring: `main.py` → `init_db()` (`create_all` incl. `knowledge_bases` 
 - **`created_at` for KBs is a naive-UTC ISO string**; for notes it is a tz-aware datetime. Don't compare them directly.
 - **Registry import has side effects** (opens SQLite, creates tables, may connect to Qdrant/Meili for every KB, `ensure_vault` mkdirs). Importing `app.services.kb_registry` in a test without `ORB_DATA_DIR` set writes into `<repo>/data/`.
 - `list_kbs()` exposes absolute paths and Firefly ids to any caller of `GET /api/v1/kb` (local-only app, but note it if adding remote access).
-- `_LEGACY_REGISTRY` is under the **repo** `data/`, not `DATA_DIR`; on packaged builds it never exists.
 
 ## 17. Extension points
 
@@ -484,7 +482,7 @@ A KB can pin its own chat/ingestion LLM, and can have the finance section switch
 
 - **Columns** on `knowledge_bases` (raw DDL in `_connect()` + `_ensure_optional_columns` ALTERs): `llm_provider TEXT`, `llm_model TEXT`, `llm_ingestion_model TEXT`, `llm_base_url TEXT`, all nullable; `NULL` = inherit system `Settings`. `_save_row` upserts them. `llm_model` holds either a catalog id or a GGUF path ref (`MODELS_DIR`-relative where possible, so a pin survives moving the models directory); `llm_base_url` is only meaningful for `provider = "openai_compat"` and is stored normalised. Embed / rerank / multimodal are deliberately **not** per-KB (comment: *"embed dims are shared across every KB's Qdrant collections"*).
 - **`KBContext`** gains `llm_provider`, `llm_model`, `llm_ingestion_model`, `llm_base_url`, a cached `_llm` (+ `_llm_built_for` key), `has_llm_override`, the `llm` property (global `llm_service` when no override, else `build_kb_llm_service(provider, model, ingestion_model, base_url)` → `LLMService(prov, chat_model=…, ingestion_model=…, ingestion_provider=prov, base_url=…)`), and `apply_llm_override(...)` which also drops the cached `retrieval_service` / `ingestion_workflow` / `chat_workflow` so `_ensure_lazy()` rebuilds them with the new `llm=`. The cache key is `(provider, model, ingestion_model, base_url, credentials.version)` — including the credential version means editing an API key rebuilds every pinned client without a restart.
-- **Registry API**: `LLM_PROVIDERS = ("local","openai","gemini","anthropic","huggingface")` (`ollama`/`lm_studio` are coerced to `local`); `set_llm_config(kb_id, provider=, model=, ingestion_model=)` validates the provider, persists, and calls `apply_llm_override` on the cached context (works for `default` too, creating the row if needed); `effective_llm(kb_id)` / module-level `effective_llm_config(meta)` resolve overrides over `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, per-provider `*_MODEL`) and return `{provider, model, ingestion_model, inherited}`.
+- **Registry API**: `LLM_PROVIDERS = ("local","openai_compat","openai","gemini","anthropic","huggingface")` (rows still holding `ollama`/`lm_studio` are rewritten to `local` once by `_load`); `set_llm_config(kb_id, provider=, model=, ingestion_model=, base_url=)` validates the provider, persists, and calls `apply_llm_override` on the cached context (works for `default` too, creating the row if needed); module-level `effective_llm_config(meta)` resolves overrides over `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, per-provider `*_MODEL`) and return `{provider, model, ingestion_model, inherited}`.
 - **Routes** (`api/kb.py`): `GET /api/v1/kb` rows now carry `effective_llm`; `GET /api/v1/kb/{kb_id}/llm` → `{kb_id, override:{provider,model,ingestion_model}, effective:{…}, providers:[…], local_models:[{id,label,size_gb}]}` (only downloaded GGUFs are offered); `PATCH /api/v1/kb/{kb_id}/llm` body `KBLLMInput {provider?, model?, ingestion_model?}` where `""`/`inherit`/`system`/`default` clear a field; validation: unknown provider → 400, cloud provider without API key (`ai_gate.provider_is_configured`) → 400, local model id not a known chat option or not downloaded → 400; after saving, the route constructs `ctx.llm` once and **rolls the override back** (clears all three) if construction raises, returning 400 `Could not initialise that model`. Unknown KB → 404. `kb_id` is the UUID/`default` (path param), not the slug.
 - **Ingestion model**: `llm_ingestion_model` is optional and empty by default — ingestion then follows the KB's **chat** model, not `settings.INGESTION_MODEL`. That precedence matters: inheriting the system value would give a KB cloud chat with local extraction. The Models page previously hardcoded `ingestion_model: ""` on every save, so the column could not be set from the UI and any value set through the API was wiped on the next save; it is now an opt-in checkbox that defaults to "same as chat", and the "Now using" line names it whenever it differs. Choose a *cheaper* model here with care: extraction emits strict nested JSON that the entire graph is built from.
 - **Frontend**: the LLM pin is edited on `frontend/src/app/models/page.tsx`; `/kb` renders the read-only `KBModelSummary` chip. See [13 LLM providers](13-llm-providers-and-prompting.md) for how `LLMService` consumes the pin.
@@ -492,7 +490,7 @@ A KB can pin its own chat/ingestion LLM, and can have the finance section switch
 ### 19.1 Per-KB finance switch
 
 - **Column**: `finance_enabled INTEGER NOT NULL DEFAULT 1` on `knowledge_bases`, added by both the raw DDL in `_connect()` and the `_ensure_optional_columns` ALTER. Module-level `finance_enabled_for(meta)` is the single reader: `None` (an absent column, or a row backfilled by the ALTER) means **on**, because such KBs may already hold Firefly data. `_save_row` upserts `1`/`0`.
-- **`KBContext.finance_enabled: bool = True`**, populated by both context builders. Unlike the LLM pin there is no cached client to invalidate, so `set_finance_enabled(kb_id, enabled)` just persists and assigns the field on the live context; `kb_registry.finance_enabled(kb_id)` reads it back.
+- **`KBContext.finance_enabled: bool = True`**, populated by both context builders. Unlike the LLM pin there is no cached client to invalidate, so `set_finance_enabled(kb_id, enabled)` just persists and assigns the field on the live context; readers use `kb.finance_enabled` or `finance_enabled_for(meta)`.
 - **Deliberately not destructive**: switching off leaves `firefly_group_id` / `firefly_group_title` alone, so the Firefly administration and everything in it survives and returns when the KB is switched back on. Only `clear_finance_scope` and `POST /finance/reset-administration` destroy finance data.
 - **Enforcement** is a dependency, not a check per route: `deps.get_finance_kb` wraps `get_kb` and raises 403 when the flag is off, and every `/api/v1/finance` route except `GET …/workspace` depends on it. A test (`tests/unit/test_kb_finance_toggle.py::test_every_finance_route_is_gated`) walks the router and fails if a new finance route is added without the gate.
 - **Routes / UI**: `PATCH /api/v1/kb/{kb_id}/finance {enabled}`; `GET /api/v1/kb` rows carry `finance_enabled`. The toggle is the pill on each card in `frontend/src/app/kb/page.tsx`; `frontend/src/components/finance/FinanceDisabled.tsx` is what `/finance` renders for a switched-off KB. See [07 §14.4](07-api-reference.md) and [17](17-finance-firefly.md).

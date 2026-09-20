@@ -96,7 +96,7 @@ Desktop values are injected by `desktop_runtime.py`: `QDRANT_HOST=127.0.0.1`, `Q
 | default | `node_cores` | `node_relationships` | `node_isolated_contexts` | `settings.QDRANT_COLLECTION_*`; persisted into `knowledge_bases` row by `KBRegistry._ensure_default_row` |
 | other | `<slug>_node_cores` | `<slug>_node_relationships` | `<slug>_node_isolated_contexts` | `KBRegistry.create_kb` (`f"{slug}_node_cores"` …); stored in SQLite columns `qdrant_col_cores`, `qdrant_col_rels`, `qdrant_col_contexts` |
 
-The prefix is the sanitised KB slug (`[a-z0-9_-]` only). Names are read back from SQLite, so renaming a KB does **not** rename collections (slug is immutable). The legacy JSON-registry migration in `_load` falls back to the same `f"{slug}_…"` pattern when a field is missing.
+The prefix is the sanitised KB slug (`[a-z0-9_-]` only). Names are read back from SQLite, so renaming a KB does **not** rename collections (slug is immutable).
 
 `QdrantService.collections` property returns `[cores, rels, contexts]` — the ordered list `search_all_collections` fans out to. `col_contexts` is exposed as a property because `_update_node_summary` passes it explicitly to `append_node_item`.
 
@@ -189,7 +189,7 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 | `find_node_id_by_name` | `(name) -> str|None` | `scroll(cores, filter name == name.lower().strip(), limit=1, with_vectors=False)` → payload `node_id` | `GraphService.resolve_node_id`, `_update_node_summary` |
 | `find_node_ids_by_names` | `(names) -> dict[str, str|None]` | one `MatchAny(any=normalized)` scroll paged by 500; first hit per name wins; stops early when all resolved | `_write_ontology` (nodes and relationship endpoints), `GraphService.get_linked_evidence` |
 | `get_node_content_by_id` | `(node_id) -> dict|None` | `retrieve(cores, [uuid5])` + paged scroll of contexts (`limit=100`) → `{node_id, name, type, description, community_level, isolated_contexts: [ "content - date" or "content" ]}`. If no core but contexts exist → returns a dict with empty name/type/description. Neither → `None`. | `_update_node_summary`, `GraphService.get_node_storage_payload`, `get_node_detail` fallback |
-| `get_nodes_content_by_ids` | `(node_ids) -> dict[str, dict]` | one `retrieve` for all cores + one `MatchAny` scroll of contexts paged by 500; omits ids with neither core nor contexts | retrieval (many places), `GraphService.get_node_detail`, `rebuild_leiden_communities`, `api/graph.py` title resolve |
+| `get_nodes_content_by_ids` | `(node_ids) -> dict[str, dict]` | one `retrieve` for all cores + one `MatchAny` scroll of contexts paged by 500; omits ids with neither core nor contexts | retrieval (many places), `GraphService.get_node_detail`, `rebuild_leiden_communities` |
 | `list_all_community_payloads` | `() -> list[{community_id, community_level, name, description}]` | scroll cores with `type == "community"` | none currently |
 | `get_relationships_for_node_ids` | `(node_ids) -> list[{natural_language, source_node_id, target_node_id}]` | two scrolls (`source_node_id` in ids, `target_node_id` in ids), paged 500, **deduplicated by `natural_language` text** (two different edges with identical sentences collapse) | retrieval, `_update_node_summary` (Meili NL), `rebuild_leiden_communities` (Meili refresh), `GraphService.get_node_storage_payload` |
 | `scroll_all_isolated_contexts_with_dates` | `() -> list[payload]` | full unfiltered scroll of contexts (500/page) keeping payloads with `note_created_at` | `build_temporal_digests` |
@@ -212,7 +212,7 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 
 | KB | Index uid | Decided in |
 |---|---|---|
-| default | `orb_nodes` (`settings.MEILI_INDEX_NAME`) | `_ensure_default_row` stores `settings.MEILI_INDEX_NAME` into the SQLite column **`typesense_collection`** (the code still spells `or settings.TYPESENSE_COLLECTION_NAME`; that field no longer exists) |
+| default | `orb_nodes` (`settings.MEILI_INDEX_NAME`) | `_ensure_default_row` stores `settings.MEILI_INDEX_NAME` into the SQLite column **`typesense_collection`** |
 | other | `<slug>_nodes` | `KBRegistry.create_kb` (`f"{slug}_nodes"`), same column |
 
 The SQLite column name `typesense_collection` is historical and now holds the Meilisearch index uid.
@@ -254,7 +254,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 | Function | Signature | Behaviour | Task wait | Callers |
 |---|---|---|---|---|
 | `get_node` | `(node_id) -> dict|None` | `index.get_document(node_id)`; normalises the SDK `Document` object to a dict (`vars(doc)` minus private attrs, then `dict(doc)`, then attribute pick of the six known fields); any error → `None` | — | `_update_node_summary`, `update_nodes_community`, `api/graph.py` content fallback |
-| `search_nodes` | `(query, limit=20) -> list[{score, payload}]` | `index.search(query, {"limit": limit})`; **no filter, no highlighting, no attributesToRetrieve**; `score = float(total - idx)` — a synthetic rank-based score (top hit = N, last = 1), **not** Meilisearch's `_rankingScore` | — | retrieval `_search_meili_by_keyword(query, 100)` fanned out over the query plus extracted keywords/concepts; `api/graph.py` autocomplete (`limit*2`), scan-text (`2` per candidate) |
+| `search_nodes` | `(query, limit=20) -> list[{score, payload}]` | `index.search(query, {"limit": limit})`; **no filter, no highlighting, no attributesToRetrieve**; `score = float(total - idx)` — a synthetic rank-based score (top hit = N, last = 1), **not** Meilisearch's `_rankingScore` | — | retrieval `_search_meili_by_keyword(query, 100)` fanned out over the query plus extracted keywords; `api/graph.py` autocomplete (`limit*2`), scan-text (`2` per candidate) |
 | `index_node` | `(node_id, name, node_type, isolated_contexts: list[str] | None = None, relationship_natural_language="", community_level=None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
 | `update_nodes_community` | `(rows: list[{node_id, relationship_natural_language?, name?}]) -> None` | for each row `get_node` (or `{node_id}`), overlay non-empty fields, one `add_documents(docs)` | `wait_for_task(…, 30000)` | `rebuild_leiden_communities` end-of-run refresh |
 | `delete_node` | `(node_id) -> None` | `index.delete_document(node_id)`; 404/"not found" silently ignored | `wait_for_task(…, 5000)` | `api/notes.py`, community/digest rebuilds |
@@ -381,7 +381,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 | `IngestionWorkflow` → Meili | `index_node`, `get_node`, `update_nodes_community`, `delete_node` — always after the Qdrant step succeeded |
 | `GraphService` → Qdrant | `find_node_id_by_name`, `find_node_ids_by_names`, `get_node_content_by_id`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `upsert_node_core`, `delete_community_relationships` ([14 §15](14-graph-storage-kuzu.md)) |
 | `RetrievalService` → Qdrant | `search_all_collections(query_vector, limit=500, min_score, contexts_filter, period_key_filter, day_only)`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`; builds `Filter(note_created_at == "YYYY-MM-DD")` for day queries and `MatchAny(all days of month)` + `period_key_filter="YYYY-MM"` for month queries |
-| `RetrievalService` → Meili | `search_nodes(term, 100)` for the query and each extracted keyword/concept, concurrently; consumes `payload.name/node_id/type` and the rank score |
+| `RetrievalService` → Meili | `search_nodes(term, 100)` for the query and each extracted keyword, concurrently; consumes `payload.name/node_id/type` and the rank score |
 | `RetrievalService` → Embedding | `embed_query(enriched_query)` once per retrieval |
 | `api/graph.py` → Meili | `search_nodes` (autocomplete, scan-text), `get_node` (content fallback) |
 | `api/admin.py`, `api/kb.py` → both | `reset_all` |

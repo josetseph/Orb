@@ -8,7 +8,7 @@
 
 ## 1. One-paragraph model
 
-Orb is a **local-first personal knowledge system** delivered as a Tauri desktop app. The shell spawns one child, `python -m app.desktop_runtime`, which starts the API at once and boots the three sidecars behind it; the shell loads the UI as soon as `/health` answers. Users write Markdown notes (plus images, audio, video, PDFs) into a **vault** on disk. Saving a note triggers an **ingestion pipeline** that enriches attachments with local vision/speech models, asks an LLM to extract entities and relationships, and writes the result into an embedded **Kuzu property graph**, a **Qdrant** vector store and a **Meilisearch** keyword index. **Chat** runs a multi-hop research loop across those three stores plus graph expansion and a cross-encoder reranker, then synthesises an answer with citations. All local models (chat, embedding, reranking, Florence-2, Whisper, Marlin) run **inside the API process**, one heavy model resident at a time. Everything is partitioned by **knowledge base (KB)**: each KB owns its own vault, graph, collections, index and Firefly III finance administration. SQLite holds only metadata.
+Orb is a **local-first personal knowledge system** delivered as a Tauri desktop app. The shell spawns one child, `python -m app.desktop_runtime`, which starts the API at once and boots the three sidecars behind it; the shell loads the UI as soon as `/health` answers. Users write Markdown notes (plus images, audio, video, PDFs) into a **vault** on disk. Saving a note triggers an **ingestion pipeline** that enriches attachments with local vision/speech models, asks an LLM to extract entities and relationships, and writes the result into an embedded **Kuzu property graph**, a **Qdrant** vector store and a **Meilisearch** keyword index. **Chat** runs a multi-hop research loop across those three stores plus graph expansion and a cross-encoder reranker, then synthesises an answer with citations. All local models (chat with its vision projector, embedding, reranking, Qwen3-ASR, Marlin) run **inside the API process**, one heavy model resident at a time. Everything is partitioned by **knowledge base (KB)**: each KB owns its own vault, graph, collections, index and Firefly III finance administration. SQLite holds only metadata.
 
 ---
 
@@ -55,7 +55,7 @@ Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `OR
 
 Boot order in `desktop_runtime.py`: free stale listeners on the port block → start uvicorn immediately → in a background thread, Qdrant + Meilisearch (download binaries first if missing) → Firefly install/migrate/boot → multimodal readiness check. Progress is written to `DATA_DIR/boot-status.json`, exposed by `/api/v1/admin/maintenance-status` and shown in the UI's status indicator; `QdrantService` / `MeilisearchService` reconnect on use once their sidecar is listening. Details: [04-desktop-shell.md](04-desktop-shell.md).
 
-There are **no model HTTP sidecars**. Florence, Whisper, Marlin, chat, embed and rerank all load in the uvicorn process. This is a locked decision ([26](26-decisions-and-constraints.md)).
+There are **no model HTTP sidecars**. Qwen3-ASR, Marlin, chat (with its vision projector), embed and rerank all load in the uvicorn process. This is a locked decision ([26](26-decisions-and-constraints.md)).
 
 ---
 
@@ -79,7 +79,7 @@ Precedence for paths: environment variable (`ORB_DATA_DIR` / `DATA_DIR`) → `pa
 | Data | Store | Location | Source of truth? |
 |---|---|---|---|
 | Note bodies | Markdown files | `<vault>/<rel_path>.md` | **Yes** — never stored in SQLite |
-| Attachments (images, audio, video, PDFs, docs) | Files | `<vault>/attachments/…` served at `/vault-files/<kb>/…` | Yes |
+| Attachments (images, audio, video, PDFs, docs) | Files | `<vault>/attachments/<note folder>/…` — the only place non-`.md` files live; notes link to them vault-root-relative (`attachments/…`); served at `/vault-files/<kb>/…` | Yes |
 | Note metadata (id, title, rel_path, timestamps, processing flags, kb_id) | SQLite `notes` | `DATA_DIR/orb.db` | Derived from vault + pipeline (reconciled by `vault_sync`) |
 | Knowledge base registry | SQLite `knowledge_bases` (+ in-memory cache) | `DATA_DIR/orb.db` | Yes |
 | Chat conversations / messages | SQLite `chat_conversations`, `chat_messages` | `DATA_DIR/orb.db` | Yes |
@@ -116,7 +116,7 @@ A KB is addressed three different ways, and each layer uses a different one:
 
 | Identifier | Used by |
 |---|---|
-| `id` (UUID, or the literal `default`) | SQLite `kb_id` columns, `/vault-files/<id>/…` URLs embedded in markdown, `DELETE`/`PATCH /api/v1/kb/{kb_id}`, `/kb/{kb_id}/llm`, `/kb/{kb_id}/finance` |
+| `id` (UUID, or the literal `default`) | SQLite `kb_id` columns, the `/vault-files/<id>/…` serving URLs the frontend mints for display (notes themselves store vault-relative `attachments/…` links), `DELETE`/`PATCH /api/v1/kb/{kb_id}`, `/kb/{kb_id}/llm`, `/kb/{kb_id}/finance` |
 | `slug` (`[a-z0-9_-]`, immutable, derived from the name at creation) | vault dir, Kuzu dir, Qdrant collection and Meili index names, the value the frontend stores and sends as `?kb=` |
 | `name` (display, renamable) | UI labels; also accepted by `?kb=` |
 
@@ -147,7 +147,7 @@ sequenceDiagram
   API->>API: rebuild note_links for this note
   API-->>UI: note (processing_stage = "Queued for ingestion")
   API->>AG: BackgroundTask: run agent(note_id)
-  AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF/Florence/Whisper/Marlin → append enrichment blocks to the .md
+  AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF / vision projector / Qwen3-ASR / Marlin → append enrichment blocks to the .md
   AG->>LLM: extraction node — nodes + relationships (Extraction schema, provider JSON mode, json_repair on parse; relationship_type from the closed RELATIONSHIP_TYPES vocabulary)
   AG->>IW: storage node — resolve entities by exact normalised name (Qdrant node_cores → Kuzu fallback), merge, write; prior data is never deleted on re-ingest
   IW->>QD: upsert cores / relationships / isolated contexts (embeddings via in-process GGUF)
@@ -201,8 +201,8 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 | Chat + ingestion extraction | llama-cpp-python GGUF (Metal / CUDA / Vulkan / CPU) | Gemma 4 E4B (catalogue in `model_catalog.py`) | `local_models.py` |
 | Embeddings | llama-cpp-python GGUF, `EMBEDDING_DIMENSIONS` = 1024 | Qwen3-Embedding-0.6B | `local_models.py` via `embedding.py` |
 | Reranker | llama-cpp-python GGUF cross-encoder (yes/no logits) | Qwen3-Reranker-0.6B | `local_models.py` via `reranker.py` |
-| Image captioning / OCR | transformers Florence-2-large | `microsoft/Florence-2-large` | `multimodal_runtime.py` |
-| Speech-to-text | transformers Whisper | `openai/whisper-large-v3-turbo` | `multimodal_runtime.py` |
+| Image description / OCR | the ingestion chat model: a local GGUF with its `mmproj-<model stem>-*.gguf` vision projector (llama.cpp mtmd, paired by name only), or the cloud provider | same as chat | `local_models.py` (`find_mmproj`, `ensure_mmproj`) / `llm.py` |
+| Speech-to-text | Qwen3-ASR 1.7B — `mlx-qwen3-asr` on Apple Silicon, transformers elsewhere; optional pyannote speaker labels | `qwen3-asr-1.7b` / `qwen3-asr-1.7b-hf` | `asr_engine.py` via `multimodal_runtime.py` |
 | Video understanding | transformers (Qwen3.5 backbone) Marlin-2B | `lunahr/Marlin-2B-ungated` | `multimodal_runtime.py` |
 | Cloud alternatives | OpenAI / Gemini / Anthropic / HuggingFace / any OpenAI-compatible `LLM_BASE_URL` | – | `llm.py` |
 
@@ -218,7 +218,7 @@ Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructu
 - All calls go through `frontend/src/lib/api.ts` (a `fetch` wrapper) against same-origin `/api/v1`; in dev the Vite server on 3700 proxies `/api/v1`, `/vault-files` and `/health` to 17401. There is no separate UI server or proxy body limit: uploads go straight to FastAPI.
 - Long-running work is **polled**, not streamed: chat (`/chat/status/{request_id}`), note ingestion (`/notes/{id}/status`), model downloads and multimodal readiness (`/setup/*`), maintenance (`/admin/maintenance-status`).
 - Response shapes are hand-typed in `frontend/src/lib/types.ts`; there is no OpenAPI codegen.
-- Vault media URLs are `/vault-files/<kb>/<rel_path>`; the editor rewrites them for display and the backend enforces `safe_vault_join` on the way back.
+- Notes store attachment links vault-root-relative (`attachments/<sub>/<file>`, percent-encoded segments); the frontend's `resolveFileUrl` mints `/vault-files/<current kb>/…` for display, and the backend accepts both forms on the way back and enforces `safe_vault_join`.
 - The desktop bridge `window.orbDesktop` (injected by `src-tauri/src/init.js`) exposes only: `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`. Reveal-in-folder is `POST /api/v1/desktop/reveal`; cloud credentials go through `/api/v1/credentials` and are stored in the OS keychain by the backend.
 
 Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-reference.md](07-api-reference.md).
@@ -230,7 +230,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 1. **`?kb=` everywhere.** Any new endpoint touching notes, graph, indexes, chat or finance must take `kb: KBContext = Depends(get_kb)` and use only that context's services.
 2. **Note body lives in the vault file.** `notes.content` is a deprecated fallback; write bodies with `persist_note_body`, read with `note_body`.
 3. **Title ↔ filename sync.** Renaming a note renames the `.md`; renaming the file retitles the note; wikilinks resolve by title and by path (Obsidian-compatible).
-4. **Attachments are vault files.** Never treat a `/vault-files/...` path as a temp file to delete after processing.
+4. **Attachments are vault files.** They live only under `attachments/` (grouped by note folder; `vault_ops.move_vault_file` refuses moves across that boundary) and notes link to them vault-root-relative. Never treat a `/vault-files/...` path as a temp file to delete after processing.
 5. **One heavy model at a time.** Any new inference code must go through the residency manager in `local_models.py` / `multimodal_runtime.py`, never spawn a model HTTP server.
 6. **Qdrant is fail-closed for cores/contexts.** Do not add code that drops or recreates collections on dimension mismatch during ingestion.
 7. **Enrichment blocks are idempotent.** Ingestion strips previous enrichment blocks before appending new ones so transcripts are not duplicated on re-ingest.
@@ -246,7 +246,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 
 | Mode | Who | How | Notes |
 |---|---|---|---|
-| Packaged desktop (product) | end users | `.dmg` / `.exe` / `.AppImage` from `desktop-v*` tags | bundles Python, the Vite build and the Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
+| Packaged desktop (product) | end users | `.dmg` (written by `hdiutil`) / `.exe` / `.AppImage` + `.deb` from `desktop-v*` tags, drafted as a GitHub Release by CI | bundles Python, the Vite build and the Firefly seed; downloads Qdrant/Meili/PHP/models on first run |
 | Dev desktop | contributors | `npm run dev` in `frontend/` + `ORB_URL=http://127.0.0.1:3700 cargo tauri dev` in `desktop/src-tauri/` | repo `backend/.venv` + Vite dev server; same runtime and ports |
 | Packaged-layout test | contributors | `python3 desktop/build.py prepare && ORB_USE_RESOURCES=1 cargo tauri dev` | exercises bundled runtimes without an installer |
 | Bare API | contributors | `uvicorn app.main:app` with `.env` | ports 8000 / 3700 |

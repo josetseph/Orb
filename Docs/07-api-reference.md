@@ -14,7 +14,7 @@ The API layer **owns**:
 - Translating service exceptions into HTTP status codes.
 - Request-scoped concerns: the `X-Request-Id` trace header, CORS, KB resolution via `?kb=`, the AI-availability gate (`require_ai`).
 - Scheduling background work (`BackgroundTasks`, `asyncio.create_task`) and keeping the in-memory chat job status table.
-- A small amount of orchestration that has not been pushed into services (note deletion with graph/index cleanup in `api/notes.py`, KB emptying in `api/kb.py`, node-detail title backfill in `api/graph.py`).
+- A small amount of orchestration that has not been pushed into services (note deletion with graph/index cleanup in `api/notes.py`, KB emptying in `api/kb.py`, the Meilisearch content fallback for node detail in `api/graph.py`).
 
 The API layer does **not** own: vault file semantics (`services/vault.py`, `services/vault_ops.py`, `services/note_files.py`), KB registry state (`services/kb_registry.py`), chat persistence (`services/chat_store.py`), the ingestion/chat workflows (`workflows/`), model downloading/loading (`services/local_models.py`, `services/multimodal_*`), or the Firefly proxy (`services/firefly_service.py`).
 
@@ -54,9 +54,9 @@ There is **no authentication or authorization** on any route. The API binds to l
 
 ### 3.1 App construction and router order
 
-`backend/app/main.py` calls `setup_logging()` **before** any service import (so module-level `get_logger()` calls find logging configured), then builds `FastAPI(title="Orb API", version="0.1.0")` and calls `register_all_routers(app)`.
+`backend/app/main.py` calls `setup_logging()` **before** any service import (so module-level `get_logger()` calls find logging configured), then builds `FastAPI(title="Orb API", version="1.0.0")` and calls `register_all_routers(app)`.
 
-`backend/app/api/__init__.py` includes routers in this order: **desktop** (`api_desktop.router`), health, settings, files, chat, graph, notes, vault, admin, kb. No router has a prefix; every route spells out its full path. FastAPI matches routes in registration order, so the desktop router's literal paths (`/api/v1/notes/reingest-vault`, `/api/v1/graph/notes`, `/api/v1/graph/notes/{note_id}/neighbors`, `/api/v1/chat/conversations/{conversation_id}/export`) are matched before the parameterised routes in the domain routers. None of the current literal/parameter pairs actually collide (e.g. there is no `POST /api/v1/notes/{note_id}` that `POST /api/v1/notes/reingest-vault` could shadow), but **adding a `POST /api/v1/notes/{something}` route in `api/notes.py` would not shadow `reingest-vault` (desktop is first); adding a new literal path to `api/notes.py` that also matches a desktop parameterised route would be shadowed**. Keep this ordering in mind when adding routes.
+`backend/app/api/__init__.py` includes routers in this order: **desktop** (`api_desktop.router`), health, settings, credentials, models, files, chat, graph, notes, vault, admin, kb. No router has a prefix; every route spells out its full path. FastAPI matches routes in registration order, so the desktop router's literal paths (`/api/v1/notes/reingest-vault`, `/api/v1/graph/notes`, `/api/v1/graph/notes/{note_id}/neighbors`, `/api/v1/chat/conversations/{conversation_id}/export`) are matched before the parameterised routes in the domain routers. None of the current literal/parameter pairs actually collide (e.g. there is no `POST /api/v1/notes/{note_id}` that `POST /api/v1/notes/reingest-vault` could shadow), but **adding a `POST /api/v1/notes/{something}` route in `api/notes.py` would not shadow `reingest-vault` (desktop is first); adding a new literal path to `api/notes.py` that also matches a desktop parameterised route would be shadowed**. Keep this ordering in mind when adding routes.
 
 ### 3.2 Path prefixes
 
@@ -107,7 +107,7 @@ Notes:
 | Pattern | Used by | Behaviour |
 |---|---|---|
 | Starlette `BackgroundTasks` | `notes/{id}/ingest`, `/ingest`, `admin/reingest-all`, `notes/reingest-vault`, `admin/rebuild-communities`, `admin/build-temporal-digests`, `admin/reset-ingestion-data` | Tasks run **after the response is sent**, sequentially in the order added, on the request's event loop (sync callables are run in Starlette's threadpool). Ingestion tasks additionally serialise on `IngestionWorkflow._process_semaphore` (`INGESTION_PIPELINE_CONCURRENCY`, default 1). Progress is observed by polling `GET /api/v1/notes/{id}/status` or `GET /api/v1/admin/maintenance-status`. |
-| `asyncio.create_task` + in-memory status dict | `POST /api/v1/chat/async` → `GET /api/v1/chat/status/{request_id}` | The job runs on the app event loop under a process-wide `asyncio.Lock` (`_chat_job_lock`), so at most one chat job executes at a time across all KBs; extra jobs report stage `"Waiting for current chat to finish"`. Status entries live in the module-level dict `_chat_status` and are **never evicted**. |
+| `asyncio.create_task` + in-memory status dict | `POST /api/v1/chat/async` → `GET /api/v1/chat/status/{request_id}` | The job runs on the app event loop under a process-wide `asyncio.Lock` (`_chat_job_lock`), so at most one chat job executes at a time across all KBs; extra jobs report stage `"Waiting for current chat to finish"`. Status entries live in the module-level `OrderedDict` `_chat_status`; `_prune()` (run on every write and read) drops the oldest entries once there are more than 200 or the oldest is older than 1800 s. |
 | `asyncio.to_thread` | Vault scans, Kuzu/Qdrant/Meili calls, model downloads/loads, Firefly PHP scripts | Keeps blocking I/O off the event loop; the HTTP request still waits for completion. |
 | Synchronous long request | `POST /api/v1/setup/download-models`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services` | Multi-GB downloads / model loads complete before the response returns. The frontend calls `download-models` with `timeout: 0`. |
 
@@ -123,7 +123,7 @@ There is **no streaming (SSE/WebSocket)** anywhere. "Streaming" chat in the UI i
 
 ### 3.10 Startup / shutdown side effects
 
-`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `ingestion_model`, `base_url`), `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing), `start_vault_watchers()` (best-effort). `shutdown_event`: `stop_vault_watchers()`.
+`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path` + `_sqlite_repairs`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `ingestion_model`, `base_url`), mark notes left mid-ingest by the previous run as `"Ingestion failed (interrupted)"`, then hand `_background_startup` to the default executor so `/health` answers immediately: `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing; also heals stale GGUF selection paths and starts the `orb-mmproj` projector-download thread), `start_vault_watchers()` (best-effort), and `_migrate_stores()` (one-time per-KB store scrubs gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`, see [14](14-graph-storage-kuzu.md)). `shutdown_event`: `stop_vault_watchers()`.
 
 ---
 
@@ -145,12 +145,12 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 |---|---|---|---|---|
 | GET | `/api/v1/setup/status` | – | Paths, model readiness | [#](#get-apiv1setupstatus) |
 | GET | `/api/v1/setup/model-catalog` | – | Hardware profile + chat model options | [#](#get-apiv1setupmodel-catalog) |
-| POST | `/api/v1/setup/download-models` | – | Download GGUFs (+ Florence/Whisper/Marlin) — blocking | [#](#post-apiv1setupdownload-models) |
+| POST | `/api/v1/setup/download-models` | – | Download GGUFs (+ Qwen3-ASR, speaker models, Marlin, vision projector) — blocking | [#](#post-apiv1setupdownload-models) |
 | POST | `/api/v1/setup/select-chat-model` | – | Persist model selection, resize Qdrant | [#](#post-apiv1setupselect-chat-model) |
 | POST | `/api/v1/setup/start-multimodal-services` | – | Verify/install in-process multimodal deps | [#](#post-apiv1setupstart-multimodal-services) |
-| GET | `/api/v1/setup/multimodal-status` | – | Florence/Whisper/Marlin readiness | [#](#get-apiv1setupmultimodal-status) |
+| GET | `/api/v1/setup/multimodal-status` | – | Qwen3-ASR / Marlin readiness | [#](#get-apiv1setupmultimodal-status) |
 | POST | `/api/v1/setup/start-local-llm` | – | Download if needed + load chat GGUF in-process | [#](#post-apiv1setupstart-local-llm) |
-| POST | `/api/v1/setup/paths` | – | Write `paths.json`, set default vault, AI mode | [#](#post-apiv1setuppaths) |
+| POST | `/api/v1/setup/paths` | – | Write `paths.json`, set default vault | [#](#post-apiv1setuppaths) |
 
 ### Settings (runtime LLM)
 
@@ -193,7 +193,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | POST | `/api/v1/vault/move` | kb | Move any vault file, rewrite links | [#](#post-apiv1vaultmove) |
 | POST | `/api/v1/vault/delete` | kb | Delete attachment, strip links | [#](#post-apiv1vaultdelete) |
 | POST | `/api/v1/vault/mkdir` | kb | Create folder (+ `.keep`) | [#](#post-apiv1vaultmkdir) |
-| GET | `/api/v1/vault/folders` | kb | Folder tree + attachments + media | [#](#get-apiv1vaultfolders) |
+| GET | `/api/v1/vault/folders` | kb | Folder tree + attachments | [#](#get-apiv1vaultfolders) |
 | GET | `/api/v1/vault/local-path` | kb | Resolve rel path / URL → absolute path | [#](#get-apiv1vaultlocal-path) |
 
 ### Uploads & file serving
@@ -344,7 +344,7 @@ Returns `{"status": "healthy"}`. Deliberately touches no KB, DB, or graph so it 
 
 #### GET /api/v1/setup/status
 
-No params. Calls `gguf_paths_if_present()` (`services/local_models.py`), `is_hf_snapshot_ready(multimodal_model_path(k))` for `florence`, `whisper`, `marlin` (`services/multimodal_models.py`), `resolve_default_vault_path()`, `kb_registry.get_kb_by_name("default")`, `ai_is_configured()`.
+No params. Calls `gguf_paths_if_present()` (`services/local_models.py`), `is_hf_snapshot_ready(multimodal_model_path(k))` for `asr` and `marlin` (`services/multimodal_models.py`), `resolve_default_vault_path()`, `kb_registry.get_kb_by_name("default")`, `ai_is_configured()`.
 
 ```json
 {
@@ -361,7 +361,7 @@ No params. Calls `gguf_paths_if_present()` (`services/local_models.py`), `is_hf_
 }
 ```
 
-`default_vault_path` comes from `paths.json`/env (`""` if unset); `active_vault_path` is what the default KB row actually points at. `ai_configured` is `ai_gate.ai_is_configured()`, derived from what is actually set up (GGUFs on disk, a provider key, or an endpoint URL). `multimodal_ready` requires all three snapshots.
+`default_vault_path` comes from `paths.json`/env (`""` if unset); `active_vault_path` is what the default KB row actually points at. `ai_configured` is `ai_gate.ai_is_configured()`, derived from what is actually set up (GGUFs on disk, a provider key, or an endpoint URL). `multimodal_ready` requires both snapshots (the speaker-label models are optional).
 
 #### GET /api/v1/setup/model-catalog
 
@@ -387,7 +387,7 @@ Body (optional, `DownloadModelsInput`): `include_multimodal: bool = true`, `chat
 
 Behaviour:
 1. If `multimodal_only`: `paths = gguf_paths_if_present() or {}` (no GGUF download). Else `ensure_chat_and_embed_models(on_progress, chat_id=chat_id)` in a thread — this **also** calls `save_selection(...)` which writes the manifest and `sync_embedding_infrastructure()` (resizes/creates Qdrant collections for the embed dims), then downloads chat, embed and reranker GGUFs via `ensure_gguf` into `MODELS_DIR/gguf` (staged on local SSD first). Failure → **500** `"GGUF download failed: …"`.
-2. If `include_multimodal or multimodal_only`: `ensure_multimodal_models(include_marlin=True, on_progress)` downloads HF snapshots for Florence, Whisper, Marlin under `MODELS_DIR`. Errors are captured into `multimodal_error` (not raised); a gated Marlin repo is skipped with a progress entry.
+2. If `include_multimodal or multimodal_only`: `ensure_multimodal_models(include_marlin=True, on_progress)` downloads HF snapshots for Qwen3-ASR, the pyannote diarizer, the Qwen forced aligner and Marlin under `MODELS_DIR`. Errors are captured into `multimodal_error` (not raised); a gated Marlin repo is skipped with a progress entry. On the `multimodal_only` path the selected chat model's vision projector is fetched too (`ensure_mmproj`, reported as `multimodal.vision`).
 
 Response:
 
@@ -395,7 +395,7 @@ Response:
 {
   "status": "ok",
   "chat": "/…/gguf/chat.gguf", "embed": "/…/gguf/embed.gguf", "reranker": "/…/gguf/rerank.gguf",
-  "multimodal": {"florence": "/…", "whisper": "/…", "marlin": "/…"},
+  "multimodal": {"asr": "/…", "diarizer": "/…", "aligner": "/…", "marlin": "/…", "vision": "/…/gguf/mmproj-….gguf"},
   "multimodal_error": null,
   "progress": [{"model": "chat", "percent": 42}, "… last 40 entries"],
   "warning": null
@@ -418,14 +418,14 @@ Changing the embed model invalidates existing vectors (logged warning: re-ingest
 
 #### POST /api/v1/setup/start-multimodal-services
 
-Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks Florence+Whisper snapshots exist (else returns `{"started": false, "mode": "in_process", "error": "Download Florence + Whisper in Setup first", "models": {...}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
+Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks the Qwen3-ASR snapshot exists (else returns `{"started": false, "mode": "in_process", "error": "Download Qwen3-ASR on the Models page first", "models": {"asr", "marlin"}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
 
 ```json
 {"started": true, "mode": "in_process", "already_running": false,
- "models": {"florence": true, "whisper": true, "marlin": true},
+ "models": {"asr": true, "marlin": true},
  "deps": {"ok": true, "installed": false, "error": null},
  "services": {…services_ready()…},
- "message": "Florence / Whisper / Marlin load in-process on demand (no sidecar HTTP services)."}
+ "message": "Qwen3-ASR / Marlin load in-process on demand (no sidecar HTTP services)."}
 ```
 
 Any exception → **200** `{"started": false, "mode": "in_process", "error": "…"}` (not a 5xx). Not called by the frontend.
@@ -434,11 +434,11 @@ Any exception → **200** `{"started": false, "mode": "in_process", "error": "�
 
 ```json
 {"mode": "in_process",
- "models": {"florence": true, "whisper": true, "marlin": false},
+ "models": {"asr": true, "marlin": false},
  "services": {"mode": "in_process", "local_models": bool, "marlin": bool, "deps_ok": bool, "deps_error": null|"…", "runtime": {…multimodal_runtime.status()…}}}
 ```
 
-`services.local_models` = deps importable **and** Florence ready. Importing torch/transformers for the check can take seconds the first time.
+`services.local_models` = deps importable **and** Qwen3-ASR ready. Importing torch/transformers for the check can take seconds the first time.
 
 #### POST /api/v1/setup/start-local-llm
 
@@ -635,7 +635,7 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 `require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, commits, then `BackgroundTasks.add_task(kb.get_ingestion_workflow().process_note, NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
 
-`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion` → if no ingestion is active, **unload** the local LLM, reranker and multimodal models.
+`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`ORB_MODEL_IDLE_SECONDS`, default 5 min) unloads them.
 
 #### POST /api/v1/ingest
 
@@ -673,7 +673,7 @@ Behaviour: destination is uniquified (`unique_rel_path` appends ` 2`, ` 3`… be
 
 #### POST /api/v1/vault/delete
 
-Body (`DeleteVaultFileInput`): `rel_path: str`. Calls `vault_ops.delete_vault_file`. **400** for `..`, empty, or a `.md` path (`"Use note delete for markdown files"`); **404** if missing. Unlinks the file, then `strip_refs_across_notes` removes every markdown image/link whose target contains the path (plain, `/vault-files/<kb>/…`, basename, percent-encoded) from every note in the KB and collapses triple newlines; commits.
+Body (`DeleteVaultFileInput`): `rel_path: str`. Calls `vault_ops.delete_vault_file`. **400** for `..`, empty, or a `.md` path (`"Use note delete for markdown files"`); **404** if missing. Unlinks the file, then `strip_refs_across_notes` removes every markdown image/link whose whole target is the path (canonical relative form, raw or percent-encoded, with or without a legacy `/vault-files/<any kb>/` prefix — no basename matching) from every note in the KB; blank runs are collapsed only in notes where a link was removed, so untouched notes are not rewritten; commits.
 
 ```json
 {"deleted": "attachments/a.png", "links_stripped": 1}
@@ -728,7 +728,7 @@ Multipart form, field `file` (required). Optional **query** param `folder` — t
 
 #### GET /vault-files/{kb_id}/{file_path:path}
 
-Not under `/api/v1`. `kb_id` resolved by `kb_registry.get_kb(kb_id)` (UUID) **or** `get_kb_by_name(kb_id)` (name/slug). **404** `"KB not found"` (no KB or no vault), **404** `"File not found"` (path escapes vault or not a regular file). Returns `FileResponse(full)` (Starlette sets `Content-Type` from the extension and supports Range requests). Serves **any** file in the vault, including `.md` notes and dotfiles — there is no allowlist.
+Not under `/api/v1`. `kb_id` resolved by `kb_registry.get_kb(kb_id)` (UUID) **or** `get_kb_by_name(kb_id)` (name/slug). **404** `"KB not found"` (no KB or no vault), **404** `"File not found"` (path escapes vault or not a regular file). Returns `FileResponse(full, media_type=…)` with an explicit type from `_MEDIA_CONTENT_TYPES` for known audio/video/image/text extensions (Python's `mimetypes` guesses `.m4a` as `audio/mp4a-latm`, which browsers refuse) and Starlette's guess otherwise; Range requests are supported. Serves **any** file in the vault, including `.md` notes and dotfiles — there is no allowlist.
 
 ---
 
@@ -754,7 +754,9 @@ Soft delete (`deleted_at = now`) scoped to the KB. **404** if no row updated. Re
 
 #### GET /api/v1/chat/conversations/{conversation_id}/export
 
-Query: `format: str = "markdown"` (`"json"` for JSON). Intended to return `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>\n\n<content>` blocks. **As written it calls `chat_store.get_messages(db, conversation_id)`, a method that does not exist on `ChatStore`** (the store exposes `list_messages(conversation_id, kb_id)`), so every call raises `AttributeError` → **500**. It also ignores `?kb=` and has no KB ownership check. The frontend's `api.exportChat` (used once, chat page) therefore fails. Fix: call `await chat_store.list_messages(conversation_id)` and index the resulting dicts.
+Query: `format: str = "markdown"` (`"json"` for JSON). Reads the rows through `chat_store.list_messages(conversation_id)` and returns `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>
+
+<content>` blocks. It ignores `?kb=` and does no KB ownership check (conversation ids are UUIDs). Pinned by `test_chat_export.py`.
 
 #### POST /api/v1/chat
 
@@ -882,7 +884,7 @@ Runs `rebuild_kb_note_links` and returns `{"notes": N, "links": M}`.
  "healthy": true}
 ```
 
-`community_detection.running` OR-s the per-KB workflow flag with the tracker's flag; everything under `ingestion` and the pending/needed/timer fields come from the **process-wide singleton** `services/ingestion_tracker.ingestion_tracker`, so they reflect all KBs, not just the one in `?kb=`. `healthy` is a constant `true`. The frontend sidebar polls this.
+`community_detection.running` OR-s the per-KB workflow flag with the tracker's flag; everything under `ingestion` and the pending/needed/timer fields come from `services/ingestion_tracker.ingestion_tracker.get_status_snapshot(kb_id)` — the singleton keeps its counters, timers and flags per KB, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend sidebar polls this.
 
 #### POST /api/v1/admin/rebuild-communities
 
@@ -1016,12 +1018,9 @@ Totals only consider the most recent 100 transaction groups.
 | `CreateTransactionInput` | `description (1–1000)`, `amount (>0)`, `account_id (min 1)`, `type = "withdrawal"`, `date`, `counterparty_name`, `transfer_account_id`, `category`, `budget_id`, `currency` |
 | `CreateBudgetInput` | `name (1–255)`, `amount (>0)\|None`, `currency` |
 | `CreateCategoryInput` | `name (1–255)`, `notes` |
-| `CreateBillInput` | `name`, `amount (>0)`, `repeat_freq = "monthly"`, `date`, `currency` |
-| `CreatePiggyInput` | `name`, `account_id`, `target_amount (>0)`, `current_amount = 0.0`, `start_date`, `target_date` |
-| `CreateTagInput` | `tag (1–255)`, `description` |
 | `CreateRecurrenceInput` | `title`, `amount (>0)`, `type = "withdrawal"`, `source_id`, `destination_id`, `description`, `first_date`, `repeat_freq = "monthly"` |
 
-`Node`, `ExtractedRelationship`, `Extraction` in `schemas/extraction.py` are **not** wire schemas; they normalise LLM output during ingestion (aliases like `entity1`/`entity2`, label scores `"high"`→8.0, 0–1 floats scaled to 1–10, bare lists, Gemma-style `[nodes, rels]`). See [Ingestion pipeline](10-ingestion-pipeline.md).
+`Node`, `ExtractedRelationship`, `Extraction` in `schemas/extraction.py` are **not** wire schemas; they normalise LLM output during ingestion (shape unwraps such as `{extraction|data|result: …}`, bare lists, Gemma-style `[nodes, rels]`, string items; `relationship_type` is lower-cased and coerced to `related_to` when not in `RELATIONSHIP_TYPES`). See [Ingestion pipeline](10-ingestion-pipeline.md).
 
 ---
 
@@ -1098,11 +1097,11 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 
 1. `GET /api/v1/chat/conversations/{id}/export` is dead code in practice (`ChatStore.get_messages` does not exist) — any call is a 500.
 2. `POST /api/v1/kb/empty` `rmtree`s **everything** in the vault folder, including files Orb did not create, even for external (OneDrive/NAS) vaults. `DELETE /api/v1/kb/{id}` is the one with the external-vault guard.
-3. `GET /api/v1/graph/3d/node/{id}` **writes** to Kuzu (name backfill). `GET /api/v1/vault/folders` **creates** `attachments/`. `GET /api/v1/notes` **inserts** note rows for unseen `.md` files. `GET /api/v1/graph/notes` **rewrites** `note_links` for the whole KB. `GET /api/v1/finance/workspace` **creates** a Firefly administration.
+3. `GET /api/v1/vault/folders` **creates** `attachments/`. `GET /api/v1/notes` **inserts** note rows for unseen `.md` files. `GET /api/v1/graph/notes` **rewrites** `note_links` for the whole KB. `GET /api/v1/finance/workspace` **creates** a Firefly administration.
 4. Any chat query containing `account`, `report`, `cash`, `balance`, etc. (e.g. "notes about my Google account") is routed to the finance answerer, which calls Firefly and formats a ledger-centric prompt.
 5. `GET /notes/{id}/status` returns `status: "processing"` for notes that were merely saved and never queued.
 6. `POST /api/v1/ingest` ignores `title` for the row/filename; the note is created as `Untitled.md`.
-7. `_chat_status` grows unbounded (full results retained) for the life of the process.
+7. `_chat_status` keeps full results in memory until `_prune()` evicts them (more than 200 entries, or older than 1800 s) — a finished job's result can disappear from `chat/status` after 30 minutes.
 8. `maintenance-status.ingestion` and community timer fields are process-wide, not per KB.
 9. `build-temporal-digests` reports `"started"` even when `TEMPORAL_DIGESTS_ENABLED=false` makes the job a no-op.
 10. Two frontend methods (`getChatMessages`, `deleteChatConversation`) never send `kb`, so they only work against the default KB.
@@ -1178,7 +1177,7 @@ Response:
   "kb_id": "…",
   "override": { "provider": null, "model": null, "ingestion_model": null },
   "effective": { "provider": "local", "model": "gemma-4-e4b", "ingestion_model": null, "inherited": true },
-  "providers": ["local", "openai", "gemini", "anthropic", "huggingface"],
+  "providers": ["local", "openai_compat", "openai", "gemini", "anthropic", "huggingface"],
   "local_models": [ { "id": "gemma-4-e4b", "label": "Gemma 4 E4B", "size_gb": 3.1 } ]
 }
 ```
@@ -1187,7 +1186,7 @@ Response:
 
 ### 14.3 `PATCH /api/v1/kb/{kb_id}/llm`
 
-Body (`KBLLMInput`): `provider`, `model`, `ingestion_model` — each `string | null`. The strings `""`, `"inherit"`, `"system"`, `"default"` (case-insensitive) are normalised to `null`, meaning "inherit".
+Body (`KBLLMInput`): `provider`, `model`, `ingestion_model`, `base_url` — each `string | null`. The strings `""`, `"inherit"`, `"system"`, `"default"` (case-insensitive) are normalised to `null`, meaning "inherit".
 
 Validation, in order:
 
@@ -1202,7 +1201,7 @@ Validation, in order:
 | Method | Path | Notes |
 |---|---|---|
 | `GET` | `/api/v1/models?kb=` | Everything the Models page renders in one read: `global` (system provider/model/base_url/configured), `kb` (the active KB's override + effective config), `local` (models_dir, `installed[]` from disk in any layout, `downloadable[]` from the catalog with a `downloaded` flag, hardware profile, auto-chosen embed/reranker), and `cloud` (stored endpoints, the two providers the UI offers, and `all_providers` — the native SDKs still used internally). Composes existing state; it does not duplicate any write path. |
-| `POST` | `/api/v1/models/inspect` | `{path}` → describes a browsed-to file or folder (`ref`, `name`, `format`, `size_gb`, `warnings`) or 400 with the reason it cannot be used — an embedding model, a Whisper/Florence folder, a runtime missing on this platform, or a shard continuation. Called before anything is saved so failures are specific and early. |
+| `POST` | `/api/v1/models/inspect` | `{path}` → describes a browsed-to GGUF file or folder (a folder resolves to the first GGUF shard inside it via `model_formats.loadable_path`): `ref`, `path`, `name`, `size_gb`, `warnings`; or 400 with the reason it cannot be used — missing file, unreadable GGUF, an embedding model, or a shard continuation. Called before anything is saved so failures are specific and early. |
 
 ### Credential routes (`api/credentials.py`)
 
@@ -1232,7 +1231,7 @@ Nothing is deleted either way: the KB keeps its `firefly_group_id`, so turning f
 
 The flag is stored as `knowledge_bases.finance_enabled INTEGER NOT NULL DEFAULT 1`. Rows written before the column existed read back as `NULL`, which `kb_registry.finance_enabled_for(meta)` maps to **true** — a KB that already has finance data must not silently lose it on upgrade. `GET /api/v1/kb` rows carry the normalised boolean as `finance_enabled` (the raw column is `0`/`1`).
 
-**Effect on the finance routes.** All 49 routes under `/api/v1/finance` except `GET /api/v1/finance/workspace` depend on `deps.get_finance_kb`, which resolves the KB and then raises **403** `Finance is turned off for the '<name>' knowledge base.` when the flag is off. `GET /api/v1/finance/workspace` deliberately keeps plain `get_kb` and reports the state instead:
+**Effect on the finance routes.** All 24 routes under `/api/v1/finance` except `GET /api/v1/finance/workspace` depend on `deps.get_finance_kb`, which resolves the KB and then raises **403** `Finance is turned off for the '<name>' knowledge base.` when the flag is off. `GET /api/v1/finance/workspace` deliberately keeps plain `get_kb` and reports the state instead:
 
 ```json
 { "exists": false, "ready": false, "status": "kb_disabled",

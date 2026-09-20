@@ -370,21 +370,13 @@ async def reingest_vault(
 async def export_chat(
     conversation_id: str,
     format: str = Query(default="markdown"),
-    db: AsyncSession = Depends(get_db),
 ):
     from app.services.chat_store import chat_store
 
-    messages = await chat_store.get_messages(db, conversation_id)
+    messages = await chat_store.list_messages(conversation_id)
     if format == "json":
-        return [
-            {
-                "role": m.role,
-                "content": m.content,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-            }
-            for m in messages
-        ]
-    lines = [f"## {m.role}\n\n{m.content}\n" for m in messages]
+        return [{k: m[k] for k in ("role", "content", "created_at")} for m in messages]
+    lines = [f"## {m['role']}\n\n{m['content']}\n" for m in messages]
     return PlainTextResponse("\n".join(lines), media_type="text/markdown")
 
 

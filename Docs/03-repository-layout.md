@@ -15,9 +15,7 @@ Orb/
 ├── desktop/            Tauri (Rust) shell, first-run setup page, build.py packaging script
 ├── Docs/               This documentation set
 ├── Platform Images/    Screenshots used by the README
-├── .github/workflows/  desktop-release.yml — installer build matrix
-├── .cursor/rules/      architecture-decisions.mdc (locked product decisions; deleted in the
-│                       working tree at the time of writing but still in HEAD — see 26)
+├── .github/workflows/  desktop-release.yml — installer build matrix + a job that drafts the GitHub Release
 ├── README.md           Product README (install, build, privacy)
 ├── LICENSE             MIT
 └── .gitignore
@@ -30,8 +28,7 @@ Two processes are built from three top-level source trees: the Tauri shell from 
 | `backend/` | API, ingestion, retrieval, graph, models, finance proxy | 06 – 17, 21 – 24 |
 | `frontend/` | Vite + React (react-router) UI | 18 – 20 |
 | `desktop/` | Tauri shell, first-run setup page, `build.py` packaging | 04, 05 |
-| `.github/workflows/desktop-release.yml` | CI: macOS arm64 / macOS x64 / Windows / Linux installers | 05 |
-| `.cursor/rules/architecture-decisions.mdc` | "Locked decisions" rules file for AI editors | 26 |
+| `.github/workflows/desktop-release.yml` | CI: macOS arm64 / macOS x64 / Windows / Linux installers, then a `release` job that drafts the GitHub Release from the four artifacts on a `desktop-v*` tag | 05 |
 
 ---
 
@@ -64,9 +61,8 @@ backend/
 │   │   ├── database.py         async SQLAlchemy engine (SQLite via aiosqlite)
 │   │   ├── log.py              component log routing under DATA_DIR/logs
 │   │   └── inference_device.py Metal / CUDA / Vulkan / CPU detection for llama.cpp
-│   ├── models/                 SQLAlchemy ORM (metadata only — bodies live in vault .md)
+│   ├── models/                 SQLAlchemy ORM (metadata only — bodies live in vault .md; knowledge_bases is raw DDL in kb_registry.py)
 │   │   ├── note.py             notes
-│   │   ├── kb.py               knowledge_bases (incl. firefly_group_id)
 │   │   ├── chat.py             chat_conversations, chat_messages
 │   │   └── wikilink.py         note_links
 │   ├── schemas/                Pydantic request / extraction schemas
@@ -81,7 +77,7 @@ backend/
 │   │   ├── vault_watcher.py    watchdog observers for external vault edits
 │   │   ├── note_files.py       note_body / persist_note_body
 │   │   ├── wikilinks.py        note_links maintenance, notes-graph payloads
-│   │   ├── local_storage.py    /vault-files URL ↔ vault path mapping
+│   │   ├── local_storage.py    uploads into attachments/<note folder>/; vault-relative link ↔ /vault-files URL mapping
 │   │   ├── graph.py            Kuzu GraphService (schema, writes, queries, communities, digests)
 │   │   ├── qdrant_service.py   Qdrant collections (cores / relationships / isolated contexts)
 │   │   ├── meilisearch_service.py  per-KB keyword index
@@ -93,21 +89,31 @@ backend/
 │   │   ├── llm.py              multi-provider LLMService (local / OpenAI / Gemini / Anthropic / HF)
 │   │   ├── local_models.py     GGUF download + llama-cpp-python runtime + exclusive residency
 │   │   ├── model_catalog.py    resource-aware catalogue of chat / embed / rerank GGUFs
-│   │   ├── multimodal_runtime.py   in-process Florence-2 / Whisper / Marlin
+│   │   ├── model_discovery.py  discover user-supplied chat GGUFs on disk (shards, depth cap)
+│   │   ├── model_formats.py    GGUF layout helpers: shards, magic bytes, name-based advisories
+│   │   ├── gguf_metadata.py    GGUF header parser (pooling_type / chat_template role hints)
+│   │   ├── asr_engine.py       Qwen3-ASR backend selection (MLX on Apple Silicon, transformers elsewhere)
+│   │   ├── multimodal_runtime.py   in-process Qwen3-ASR / Marlin loader
 │   │   ├── multimodal_models.py    HF snapshot downloads into MODELS_DIR
 │   │   ├── multimodal_services.py  readiness + on-demand pip install of torch/transformers
 │   │   ├── multimedia.py       attachment discovery + PDF / image / audio / video / doc enrichment
 │   │   ├── ingestion_tracker.py    ingestion bookkeeping + idle-triggered Leiden recompute
+│   │   ├── ingestion_checkpoint.py resume a failed ingestion from the model call that broke
+│   │   ├── extraction_budget.py    learn how large an extraction chunk each model handles
 │   │   ├── firefly_service.py  Firefly III HTTP client, per-KB administration scoping
 │   │   └── ai_gate.py          AI readiness, derived from real configuration
 │   ├── workflows/
 │   │   ├── ingestion.py        IngestionWorkflow — extraction, graph persistence, embedding, indexing
 │   │   ├── chat.py             ChatWorkflow — research loop + attribution
+│   │   ├── extraction_chunking.py   paragraph-bounded chunking + merge of per-chunk extractions
 │   │   └── agents/ingestion_agent.py   sequential ingestion agent driving IngestionWorkflow
 │   └── utils/graph_layout.py   deterministic 3D layouts (solar + Fruchterman–Reingold)
 ├── tests/
-│   ├── unit/                   pytest contract tests (conftest stubs Kuzu / Qdrant / Meili / LLM)
-│   │   ├── test_vault_migration.py          one-time vault sweep (doubled attachments/, legacy enrichment blocks, URL encoding)
+│   ├── unit/                   46 pytest modules (485 tests; conftest stubs Kuzu / Qdrant / Meili / LLM), e.g.
+│   │   ├── test_vault_migration.py          one-time vault sweep (v3: stray files moved under attachments/, links relativised, legacy blocks wrapped)
+│   │   ├── test_upload_folder.py            uploads land in attachments/<note folder>/; traversal rejected
+│   │   ├── test_vault_folders.py            folder moves, the attachments/ boundary, link stripping
+│   │   ├── test_desktop_runtime.py          Meili key, atomic boot status, Firefly .env quoting
 │   │   ├── test_note_created_at.py          created_at validation on note create/update/ingest
 │   │   └── test_ingestion_community_names.py community naming JSON + member-fit check
 ├── requirements.txt            base deps (FastAPI, SQLAlchemy, kuzu, qdrant, meilisearch, llama-cpp-python, …)
@@ -140,8 +146,8 @@ frontend/
     │   │   ├── page.tsx
     │   │   ├── _components/  VaultFolderTree, NotesSidebar, NoteEditorHeader, FilePreviewModal, …
     │   │   ├── _hooks/       useNotesPageController (hub), useVaultTree, useNoteAutosave, useNoteIngest,
-    │   │   │                 useNoteMedia, useNotesList, useNoteSelection, useNoteBatchSelection, useWikilinkPreview
-    │   │   └── _lib/         wikilinks, folder-tree, processing-status, rewrite-vault-urls, media-recorder, …
+    │   │   │                 useNoteMedia, useAttachmentJobs, useNotesList, useNoteSelection, useNoteBatchSelection, useWikilinkPreview
+    │   │   └── _lib/         wikilinks, folder-tree, processing-status, rewrite-vault-urls, parse-note-attachments, media-recorder, …
     │   ├── notes-graph/page.tsx  wikilink graph
     │   ├── graph-3d/page.tsx     3D entity graph (`/graph` redirects here)
     │   ├── finance/page.tsx      Firefly-backed finance workspace
@@ -173,8 +179,8 @@ frontend/
 
 ```
 desktop/
-├── build.py              packaging pipeline: bundle Python + backend, build UI, seed Firefly, preflight, cargo tauri build
-├── shell/index.html      first-run setup page (data dir, models dir, vault, AI mode → paths.json)
+├── build.py              packaging pipeline: bundle Python + backend, build UI, seed Firefly, preflight, cargo tauri build (macOS: .app via Tauri, DMG via hdiutil)
+├── shell/index.html      first-run setup page (data dir, models dir, vault → paths.json)
 ├── src-tauri/
 │   ├── tauri.conf.json   identifier com.josetseph.orb, version, no static windows, withGlobalTauri
 │   ├── Cargo.toml / build.rs
@@ -210,7 +216,7 @@ These exist on a developer machine but are not source. Do not document, lint, or
 | `.env`, `.env.local` | secrets (API keys) | developer |
 | `.context/`, `.agent/`, `.gemini/`, `.github/agents|instructions|hooks|prompts`, `.github/copilot-instructions.md` | AI-editor scratch | — |
 
-Note: `.gitignore` force-tracks `Results*/` even though it contains `*.log` files.
+Note: `.gitignore` force-tracks `Results*/` (with its `*.log` files), but the benchmark results now live on the `orb-testing` branch, not on `main`.
 
 ---
 

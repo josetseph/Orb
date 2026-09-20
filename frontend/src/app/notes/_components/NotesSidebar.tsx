@@ -129,7 +129,7 @@ export function NotesSidebar({
       </div>
 
       <div className="flex gap-1.5 px-3 pb-2">
-        <div className="flex h-[30px] flex-1 items-center gap-1.5 rounded-md border border-n-900 bg-surface px-2">
+        <div className="flex h-[30px] min-w-0 flex-1 items-center gap-1.5 rounded-md border border-n-900 bg-surface px-2">
           <Search className="h-3.5 w-3.5 text-n-500" />
           <input
             type="text"
@@ -144,7 +144,7 @@ export function NotesSidebar({
           onClick={() => onFilterChange(needsOn ? "all" : "needs")}
           title="Only notes that still need ingesting"
           className={cn(
-            "flex h-[30px] items-center gap-1 rounded-md border px-2 text-[11.5px]",
+            "flex h-[30px] shrink-0 items-center gap-1 whitespace-nowrap rounded-md border px-2 text-[11.5px]",
             needsOn
               ? "border-accent bg-accent/12 text-accent"
               : "border-n-900 bg-surface text-n-400 hover:border-n-700",

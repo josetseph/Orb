@@ -53,7 +53,7 @@ flowchart LR
 
 | Aspect | Desktop | Bare uvicorn |
 |---|---|---|
-| `DATA_DIR` | `paths.json.data_dir` (default `~/Library/Application Support/Orb/data`), `ORB_DATA_DIR` if exported | env, or `paths.json` from a previous desktop run (!), or `<repo>/data` |
+| `DATA_DIR` | `paths.json.data_dir` (default `~/Library/Application Support/Orb/data`; must be local disk — `desktop_runtime.main()` warns when the path is under `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive`), `ORB_DATA_DIR` if exported | env, or `paths.json` from a previous desktop run (!), or `<repo>/data` |
 | `MODELS_DIR` | `paths.json.models_dir` | env / `paths.json` / `backend/models` |
 | DB | SQLite `DATA_DIR/orb.db` | SQLite `DATA_DIR/orb.db` |
 | Qdrant | `127.0.0.1:17433` (set by the runtime) | default `127.0.0.1:6333` |
@@ -71,8 +71,8 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
 | `ORB_PATHS_FILE` | path / `<App Support>/Orb/paths.json` | env — `paths.paths_json_location()`; also `src-tauri/src/runtime.rs` | Location of the bootstrap JSON | rarely (scratch profiles); the shell and runtime read the same default location |
-| `ORB_DATA_DIR` (`DATA_DIR`) | path / `paths.json.data_dir` → `<repo>/data` | env — `paths.resolve_data_dir()`; `Settings.DATA_DIR` default is that result | Root for `orb.db`, `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`, `firefly/`, `runtime_config.json`, `meili_master_key`, `boot-status.json` | setup (`paths.json`); env only in dev |
-| `ORB_MODELS_DIR` (`MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/`, HF snapshots (`florence-2-large`, …), `models_manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
+| `ORB_DATA_DIR` (`DATA_DIR`) | path / `paths.json.data_dir` → `<repo>/data` | env — `paths.resolve_data_dir()`; `Settings.DATA_DIR` default is that result | Root for `orb.db`, `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`, `firefly/`, `runtime_config.json`, `meili_master_key`, `boot-status.json`. Keep it on local disk: the runtime prints `[desktop] WARNING: data dir … cloud-synced` for iCloud/OneDrive/Dropbox/Google Drive paths | setup (`paths.json`); env only in dev |
+| `ORB_MODELS_DIR` (`MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/` (incl. `mmproj-*` vision projectors), HF snapshots (`qwen3-asr-1.7b[-hf]`, `marlin-2b`), `manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
 | `MODELS_PATH` | str / `"models"` → **overridden** to `MODELS_DIR` | `Settings` (config.py bottom, `paths.sync_settings_paths`) | Alias only | code |
 | `KUZU_DB_PATH` | str / **overridden** to `<DATA_DIR>/kuzu/kuzu_graph` | `Settings`; `kb_registry` default KB, `graph.GraphService` default | Default KB's Kuzu file; per-KB files are `<DATA_DIR>/kuzu/<slug>/kuzu_graph` | code |
 | `ORB_DEFAULT_VAULT` | path / none | env — `paths.resolve_default_vault_path()` **after** `paths.json.default_vault_path` | Default KB vault folder when the file has none; else `<DATA_DIR>/vaults/default` | rarely (dev) |
@@ -111,7 +111,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `INGESTION_GEMINI_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model` (gemini branch) | Gemini ingestion fallback before `GEMINI_MODEL` | .env |
 | `ORB_EXTRACTION_CHUNK_TOKENS` (working tree) | int / `4000` ceiling | env — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
 | `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | .env |
-| `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel Florence/Whisper/Marlin jobs | .env |
+| `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | .env |
 
 ### 3.5 Embeddings axis
 
@@ -172,19 +172,21 @@ All read in `backend/app/services/local_models.py` (and `model_catalog.py` for t
 | `ORB_CHAT_GGUF` | HF `repo/file` / `bartowski/google_gemma-4-E4B-it-GGUF/google_gemma-4-E4B-it-Q4_K_M.gguf` | import-time `CHAT_MODEL_ID` | Legacy default chat GGUF (used only when the manifest has no selection) | rarely |
 | `ORB_EMBED_GGUF` | / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | `EMBED_MODEL_ID` | Legacy default embed GGUF | rarely |
 | `ORB_RERANK_GGUF` | / `mradermacher/Qwen3-Reranker-0.6B-GGUF/Qwen3-Reranker-0.6B.Q4_K_M.gguf` | `RERANK_MODEL_ID` → `reranker_gguf_path` fallback | Legacy default reranker GGUF | rarely |
-| `ORB_RAM_GB` | float / detected (`sysctl hw.memsize` / `wmic` / `/proc/meminfo`, fallback 8) | `model_catalog.total_ram_gb` | Fakes installed RAM for catalog filtering (which chat GGUFs Setup offers) | tests / rarely |
+| `ORB_RAM_GB` | float / detected (`os.sysconf`; ctypes on Windows) | `model_catalog.total_ram_gb` | Fakes installed RAM for catalog filtering (which chat GGUFs Setup offers) | tests / rarely |
 | `MODEL_RERANKER_LOCAL` | str / `qwen3-reranker-0.6b` | `Settings`; `retrieval.py` (labels only), overwritten from manifest | Display name of the reranker in logs/progress | manifest > .env |
 
 The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_manifest.json` (`selection.chat_path`, `embed_path`, `reranker_path`, `embedding_dims`, ids), written by Setup — not from env. See [12](12-local-models-and-inference.md).
 
-### 3.10 Multimodal models (Florence / Whisper / Marlin)
+### 3.10 Multimodal models (Qwen3-ASR / Marlin / image description)
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `MODEL_FLORENCE_HF` / `MODEL_FLORENCE_LOCAL` | str / `microsoft/Florence-2-large` / `florence-2-large` | `Settings`; `multimodal_models.model_ids("florence")` | HF repo to download; folder name under `MODELS_DIR` (the runtime's multimodal prep only checks for `qwen3-asr-*` folders before pre-warming) | code |
-| `MODEL_WHISPER_HF` / `MODEL_WHISPER_LOCAL` | `openai/whisper-large-v3-turbo` / `whisper-large-v3-turbo` | same | Audio transcription model | code |
-| `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | `lunahr/Marlin-2B-ungated` / `marlin-2b` | same | Video understanding model (Qwen3.5-based) | code |
-| `FLORENCE_MAX_IMAGE_PIXELS` | int / `1500000` | `Settings`; `multimodal_runtime` via `getattr(..., 0) or 1_500_000` | Downscale images above this many pixels before Florence. **`0` is not "unlimited"** — it falls back to 1.5 MP | .env |
+| `MODEL_ASR_HF` / `MODEL_ASR_LOCAL` | str / `""` / `""` | `Settings`; `multimodal_models._asr_repo_and_dir` | Qwen3-ASR repo and `MODELS_DIR` folder. Empty = `asr_engine` picks per platform: `qwen3-asr-1.7b` (MLX, Apple Silicon) or `qwen3-asr-1.7b-hf` (transformers); an explicit value pins it | code |
+| `ASR_ENGINE` | `auto` \| `mlx` \| `transformers` / `auto` | `Settings`; `multimodal_models`, `multimodal_runtime` | Transcription backend; an explicit engine is never substituted | .env |
+| `ASR_LANGUAGE` | str \| None / `"en"` | `Settings`; `multimodal_runtime` | Language hint; `None` lets the model detect it | .env |
+| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None — `True` / `2.0` / `None` | `Settings`; `multimodal_runtime` | Speaker labels via pyannote community-1 (CPU), its segmentation step, optional speaker cap | .env |
+| `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `Settings`; `multimodal_models.model_ids("marlin")` | Video understanding model (Qwen3.5-based) | code |
+| `IMAGE_DESCRIBE_MAX_PIXELS` | int / `1500000` | `Settings`; `multimedia.py` via `getattr(..., 0) or 1_500_000` | Downscale images above this many pixels before any model (local vision projector or cloud) sees them. **`0` is not "unlimited"** — it falls back to 1.5 MP | .env |
 | `FORCE_QWENVL_VIDEO_READER` | str / `pyav` | `multimodal_runtime` `os.environ.setdefault` (consumed by `qwen-vl-utils`) | Video decoder backend | code (`setdefault` — env wins if pre-set) |
 | `VIDEO_MAX_PIXELS` | int / `200704` | same `setdefault` (qwen-vl-utils) | Per-frame pixel budget for Marlin | code / env |
 | `FPS` / `FPS_MAX_FRAMES` / `FPS_MIN_FRAMES` | `2.0` / `240` / `4` | same | Frame sampling for Marlin | code / env |
@@ -194,7 +196,7 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 
 | Name | Type / default | Effect |
 |---|---|---|
-| `PDF_VISUAL_EXTRACTION_ENABLED` | bool / `True` | Allow Florence rendering of scanned/sparse pages |
+| `PDF_VISUAL_EXTRACTION_ENABLED` | bool / `True` | Render scanned/sparse pages for the vision model |
 | `PDF_VISUAL_EXTRACTION_MAX_PAGES` | int / `0` | Cap of visually processed pages per PDF; `0` = all qualifying pages |
 | `PDF_VISUAL_RENDER_DPI` | int / `144` | Render DPI (`max(value, 72)`; zoom = dpi/72) |
 | `PDF_VISUAL_TEXT_THRESHOLD` | int / `80` | Pages whose native text length ≥ threshold skip the visual pass |
@@ -282,6 +284,8 @@ Location: `ORB_PATHS_FILE` or `<App Support>/Orb/paths.json` (macOS `~/Library/A
 | `default_vault_path` | no (preserved if omitted on save) | same | `paths.resolve_default_vault_path` (**before** env) |
 
 All paths are stored absolute (`expanduser().resolve()`). The backend caches the parsed file for the process lifetime (`_PATHS_CACHE`); `save_paths_file` refreshes it. Deleting the file shows the first-run setup page again on next desktop launch.
+
+`data_dir` belongs on local disk: `desktop_runtime.main()` prints `[desktop] WARNING: data dir … is inside a cloud-synced folder` when a path component is `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive` (Files-On-Demand eviction blocks reads; sync clients corrupt SQLite/Kuzu/Qdrant under a running engine). `default_vault_path` is the only path that may point into a synced folder.
 
 ### 4.2 `DATA_DIR/runtime_config.json`
 
@@ -382,7 +386,7 @@ else {"local": LLM_MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL,
 | `LLM_BASE_URL`, `LLM_API_KEY` | only affect `ai_is_configured()`; no HTTP client uses them |
 | `STORAGE_BACKEND`, `FILES_URL` | not `Settings` fields; ignored by the backend |
 | `EMBEDDING_PROVIDER=openai` (from `.env.example` Option C) | raises `ValueError` |
-| `FLORENCE_MAX_IMAGE_PIXELS=0` | not "full resolution"; falls back to 1.5 MP |
+| `IMAGE_DESCRIBE_MAX_PIXELS=0` | not "full resolution"; falls back to 1.5 MP |
 | `COMMUNITY_DETECTION_ENABLED` / `TEMPORAL_DIGESTS_ENABLED` | `.env.example` implies default `true`; code default `False` |
 | `ORB_LLAMA_MAX_TOKENS=10240` comment in `.env.example` | the old shell injected it; `desktop_runtime.py` sets no default (per-call sizing) |
 

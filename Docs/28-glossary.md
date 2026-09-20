@@ -13,15 +13,15 @@
 | **Orb** | The product name (since 2026-08-02, `6162be2`). Lineage: **LiveOS Brain** (Jan–Jul 2026) → **LifeOS** (`3f21e08`, desktop pivot) → **Orb** (same day). | everywhere |
 | **Desktop shell** | The Tauri (Rust) application in `desktop/src-tauri` that spawns the desktop runtime, owns the window and provides native pickers/notifications. | [04](04-desktop-shell.md) |
 | **Desktop runtime** | `backend/app/desktop_runtime.py` — the one child the shell spawns; sweeps ports, runs uvicorn, downloads and boots Qdrant, Meilisearch and Firefly. | [04](04-desktop-shell.md) |
-| **Setup page** | First-run page (`desktop/shell/index.html`) that collects data dir, models dir, optional default vault and AI mode, and writes `paths.json`. | [04](04-desktop-shell.md) |
+| **Setup page** | First-run page (`desktop/shell/index.html`) that collects data dir, models dir and optional default vault, and writes `paths.json`. | [04](04-desktop-shell.md) |
 | **boot-status.json** | `DATA_DIR/boot-status.json`, the runtime's sidecar boot progress, surfaced by `/admin/maintenance-status` and the UI status indicator (there is no splash screen). | [04](04-desktop-shell.md) |
 | **paths.json** | Bootstrap file in the OS app-support dir: `data_dir`, `models_dir`, `default_vault_path?`. | [21](21-configuration-reference.md) |
-| **DATA_DIR** | Root for all mutable app data (SQLite, Kuzu, Qdrant, Meili, vaults, logs, binaries, Firefly). | [22](22-data-directory-layout.md) |
+| **DATA_DIR** | Root for all mutable app data (SQLite, Kuzu, Qdrant, Meili, vaults, logs, binaries, Firefly). Must sit on local disk — the runtime warns when it is inside a cloud-sync folder. | [22](22-data-directory-layout.md) |
 | **MODELS_DIR** | Root for GGUF files, HF snapshots and the models manifest. | [22](22-data-directory-layout.md) |
 | **App Support root** | `~/Library/Application Support/Orb` (macOS), `%APPDATA%\Orb` (Windows), `~/.config/Orb` (Linux). | [04](04-desktop-shell.md) |
 | **Port block** | 17401 API (serves the UI) · 17412 Firefly · 17433 Qdrant · 17470 Meilisearch; 3700 is the Vite dev server only. | [04](04-desktop-shell.md) |
 | **Packaged layout** | Tauri resource dir (`backend/`, `frontend/`, `firefly/`) produced by `desktop/build.py prepare`. | [05](05-packaging-build-and-release.md) |
-| **build.py** | `python3 desktop/build.py prepare` (bundle Python, Vite build, Firefly seed) and `dist` (preflight + `cargo tauri build`). | [05](05-packaging-build-and-release.md) |
+| **build.py** | `python3 desktop/build.py prepare` (bundle Python, Vite build, Firefly seed) and `dist` (preflight + `cargo tauri build`; on macOS the `.app` comes from Tauri and the DMG from one `hdiutil create`). | [05](05-packaging-build-and-release.md) |
 | **orbDesktop bridge** | `window.orbDesktop`, injected by `src-tauri/src/init.js`: `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`. | [18](18-frontend-architecture.md) |
 | **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `ingestion_model`, `base_url`. | [21](21-configuration-reference.md) |
 
@@ -33,14 +33,16 @@
 | **Slug** | Immutable `[a-z0-9_-]` KB identifier derived from the name at creation; used for vault/Kuzu dirs, Qdrant/Meili names and the `?kb=` value. Distinct from the KB `id` (UUID or literal `default`, used in SQLite and `/vault-files/<id>/…`) and the renamable display `name`. | [08](08-knowledge-bases-and-vaults.md) |
 | **KBContext** | Dataclass bundling a KB's service instances (qdrant, meili, lazy graph/retrieval/ingestion/chat). | [08](08-knowledge-bases-and-vaults.md) |
 | **kb_registry** | SQLite-backed registry + in-memory cache of KBs. | [08](08-knowledge-bases-and-vaults.md) |
-| **Vault** | The folder of `.md` notes and attachments for one KB (`DATA_DIR/vaults/<slug>` or a user-chosen path). | [09](09-notes-wikilinks-and-vault-files.md) |
+| **Vault** | The folder of `.md` notes and attachments for one KB (`DATA_DIR/vaults/<slug>` or a user-chosen path). Every non-markdown file lives under its `attachments/`; it is the one Orb folder that may live in a synced location. | [09](09-notes-wikilinks-and-vault-files.md) |
 | **rel_path** | Vault-relative path of a note's `.md` file, stored on `notes.rel_path`. | [09](09-notes-wikilinks-and-vault-files.md) |
 | **Note body** | The Markdown content of a note; always read from the vault file (`note_body`), never authoritative in SQLite. | [09](09-notes-wikilinks-and-vault-files.md) |
 | **Title ↔ filename sync** | Renaming a note renames its file and vice versa, so `[[Title]]` links keep working (Obsidian-style). | [09](09-notes-wikilinks-and-vault-files.md) |
 | **Wikilink** | `[[Title]]`, `[[folder/Title]]`, `[[Title|alias]]` links between notes; parsed by `WIKILINK_RE`; stored as `note_links` rows. | [09](09-notes-wikilinks-and-vault-files.md) |
 | **Notes graph** | The graph of notes connected by wikilinks (distinct from the entity graph). | [09](09-notes-wikilinks-and-vault-files.md), [20](20-frontend-chat-graph-and-pages.md) |
-| **Attachment markers** | `[📎](url)` file, `[🎤](url)` voice recording, `![alt](url)` image — discovered by ingestion. | [11](11-multimedia-enrichment.md) |
-| **/vault-files/** | URL scheme `/vault-files/<kb>/<rel_path>` that serves vault files from disk. | [09](09-notes-wikilinks-and-vault-files.md) |
+| **Attachment** | A non-`.md` file in the vault. Lives only under `attachments/<note folder>/` (uploads are grouped by the owning note's folder as `<stem>-<8hex>.<ext>`); notes reference it vault-root-relative (`attachments/<sub>/<file>`, percent-encoded segments) and the frontend resolves that to `/vault-files/<kb>/…` for display. Moves across the `attachments/` boundary are refused. | [09](09-notes-wikilinks-and-vault-files.md) |
+| **Attachment markers** | `[📎](attachments/…)` file, `[🎤](attachments/…)` voice recording, `![alt](attachments/…)` image — discovered by ingestion (absolute `/vault-files/…` targets are still read). | [11](11-multimedia-enrichment.md) |
+| **/vault-files/** | URL scheme `/vault-files/<kb>/<rel_path>` that serves vault files from disk. A serving URL only: notes never store it (the v2/v3 vault sweep relativised old links). | [09](09-notes-wikilinks-and-vault-files.md) |
+| **Vault sweep** | `vault_sync.migrate_vault_files`: one-time, idempotent repair of a vault, gated by `<vault>/.orb/migrated-v3` — moves stray non-`.md` files under `attachments/`, relativises `/vault-files/<kb>/` links, collapses doubled `attachments/`, wraps legacy enrichment blocks in markers. Logs `Vault migration v3 (…)`. | [22](22-data-directory-layout.md) |
 | **safe_vault_join** | Path-traversal guard: resolves a rel path under the vault root or raises. | [09](09-notes-wikilinks-and-vault-files.md) |
 | **vault_sync** | Reconciles SQLite note rows with files on disk. | [08](08-knowledge-bases-and-vaults.md) |
 | **vault_watcher** | watchdog observer for external edits; marks notes stale, never auto-ingests. | [08](08-knowledge-bases-and-vaults.md) |
@@ -60,9 +62,9 @@
 | **Core** | An entity's consolidated description/summary across notes; embedded into `node_cores`. | [15](15-search-indexes-qdrant-meilisearch.md) |
 | **Joint Approach** | The ingestion design (Apr 2026) that extracts nodes and relationships in one LLM pass and merges with existing entities; adopted for the final implementation. | [25](25-development-history.md) |
 | **Entity resolution** | Matching a newly extracted entity to an existing node by exact normalised name (Qdrant `node_cores` payload `name` is the lookup source, Kuzu the fallback). There is no embedding-similarity matching today; `SEMANTIC_REL.is_similarity` is a never-set leftover of the removed bi-temporal design. | [10](10-ingestion-pipeline.md) |
-| **Enrichment block** | Markdown placed under an attachment link by multimedia processing (transcripts, captions, PDF text), delimited by `<!-- orb:extract src="…" -->…<!-- /orb:extract -->`; on re-ingest only blocks whose attachment is gone are removed. Pre-marker blocks get markers once from the vault sweep. | [11](11-multimedia-enrichment.md) |
-| **Florence** | Microsoft Florence-2-large vision model: captions/OCR for images and PDF pages. | [11](11-multimedia-enrichment.md), [12](12-local-models-and-inference.md) |
-| **Whisper** | OpenAI whisper-large-v3-turbo: audio/video transcription. | [11](11-multimedia-enrichment.md) |
+| **Enrichment block** | Markdown placed under an attachment link by multimedia processing (transcripts, captions, PDF text), delimited by `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` where `src` is the same vault-relative link as the attachment's; on re-ingest only blocks whose attachment is gone are removed. Pre-marker blocks get markers once from the vault sweep. | [11](11-multimedia-enrichment.md) |
+| **Vision projector (mmproj)** | `mmproj-<chat stem>-*.gguf` beside the chat GGUF that lets the local model describe images (llama.cpp mtmd). `find_mmproj` pairs it by name only; it is bound eagerly at load (`_init_mtmd_context`) and dropped with a warning if it fails so text chat keeps working; the `orb-mmproj` boot thread downloads it for catalog models. | [11](11-multimedia-enrichment.md), [12](12-local-models-and-inference.md) |
+| **Qwen3-ASR** | Qwen3-ASR 1.7B audio/video transcription (`asr_engine.py`: `mlx-qwen3-asr` on Apple Silicon, transformers elsewhere; optional pyannote speaker labels). | [11](11-multimedia-enrichment.md) |
 | **Marlin** | Marlin-2B (Qwen3.5 backbone) video-understanding model. | [11](11-multimedia-enrichment.md) |
 | **ingestion_tracker** | Process-global tracker of in-flight ingestions; triggers a community recompute after `COMMUNITY_IDLE_SECONDS` (120 s, a constant) of idleness, and lets a new ingestion pre-empt a running recompute. | [10](10-ingestion-pipeline.md) |
 | **Community** | Cluster of entities stored as `Node(kind='community')` with `MEMBER_OF`/`CONTAINS` edges and levels. Called "Leiden" in code, logs and UI, but implemented with a greedy cosine-threshold merge over embeddings; off by default (`COMMUNITY_DETECTION_ENABLED=False` in code). | [14](14-graph-storage-kuzu.md) |
@@ -111,7 +113,7 @@
 | **Ordinal loop** | Failure mode where Gemma 4 repeats ordinals / "or the"; detected and retried. | [12](12-local-models-and-inference.md) |
 | **Provider axes** | Independent chat, ingestion and embedding provider/model settings. | [13](13-llm-providers-and-prompting.md) |
 | **local (alias)** | `LLM_PROVIDER=local` means in-process GGUF; historical alias for the former Ollama/LM Studio paths. | [13](13-llm-providers-and-prompting.md) |
-| **Multimodal runtime** | `multimodal_runtime.py`: torch/transformers loader for Florence, Whisper, Marlin. | [12](12-local-models-and-inference.md) |
+| **Multimodal runtime** | `multimodal_runtime.py`: torch/transformers (and MLX) loader for Qwen3-ASR and Marlin. | [12](12-local-models-and-inference.md) |
 | **ensure_multimodal_services** | Verifies HF snapshots and can pip-install torch/transformers into the running interpreter. | [12](12-local-models-and-inference.md) |
 
 ## Finance
@@ -136,7 +138,7 @@
 | Identifier | Status |
 |---|---|
 | `LIVEOS_*` env vars, `LifeOS`/`LiveOS` app-support dirs | Removed 2026-09-19; only `ORB_*` / `Orb` exist |
-| `typesense_collection` column | Column name kept for existing DBs; holds the Meilisearch index name (`meili_index` synonym). The `TYPESENSE_*` env aliases are gone. |
+| `typesense_collection` column | Column name kept for existing DBs; holds the Meilisearch index name (raw `sqlite3` in `kb_registry`, no ORM class). The `TYPESENSE_*` env aliases are gone. |
 | `notes.content` column | Deprecated fallback; body lives in vault |
 | `/files/*` rewrite to RustFS, `STORAGE_BACKEND` | Container-era S3 storage; desktop uses vault files |
 | Electron shell (`main.js`, `preload.js`, `supervisor.js`), Next.js UI server, `prepare-dist`, `node_deps`, `credentials.enc` | Replaced by the Tauri shell + `desktop_runtime.py`, the API-served Vite build, `build.py`, and the OS keychain via `keyring` (2026-09) |

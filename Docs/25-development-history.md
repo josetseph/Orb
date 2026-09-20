@@ -1,17 +1,17 @@
 # Development History
 
-**What this covers.** A chronological reconstruction of how Orb evolved from its first commit (2026-01-17, "Working Version 1", a Docker-composed research prototype called LifeOS) to the current Docker-free Tauri desktop product. It is built entirely from the git history of `/Users/josetseph/Projects/Technical/personal/Orb` (70 commits on `main`): commit messages, per-commit file stats, key diffs, and the histories of `README.md`, `docker-compose*.yml`, `backend/requirements.txt`, and the deleted `.cursor/rules/architecture-decisions.mdc`. It records every architectural decision point (what was chosen, what was rejected, and the evidence at the time), the subsystems that were removed, and the legacy aliases/dead paths still visible in the code so that engineers and AI assistants do not resurrect them.
+**What this covers.** A chronological reconstruction of how Orb evolved from its first commit (2026-01-17, "Working Version 1", a Docker-composed research prototype called LifeOS) to the current Docker-free Tauri desktop product. It is built entirely from the git history of `/Users/josetseph/Projects/Technical/personal/Orb` (135 commits on `main` at the time of writing; the timeline table in §1 ends at `02ac9d3`, and the Tauri migration, the 1.0.0 cleanup passes and the release prep are covered in §5–§6): commit messages, per-commit file stats, key diffs, and the histories of `README.md`, `docker-compose*.yml`, `backend/requirements.txt`, and the deleted `.cursor/rules/architecture-decisions.mdc`. It records every architectural decision point (what was chosen, what was rejected, and the evidence at the time), the subsystems that were removed, and the legacy aliases/dead paths still visible in the code so that engineers and AI assistants do not resurrect them.
 
 **Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Local models and inference](12-local-models-and-inference.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Finance (Firefly)](17-finance-firefly.md) · [Testing](24-testing.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
 
 ## How to read this document
 
-- Section 1 is the full commit timeline (all 70 commits) with a category tag and one-line significance.
+- Section 1 is the commit timeline through `02ac9d3` (the first 70 commits) with a category tag and one-line significance.
 - Section 2 tells the story era by era (five eras), with the key diffs that mark each transition.
 - Section 3 is the decision log: one entry per architectural decision, with date, commit, alternatives rejected, and rationale/evidence.
 - Section 4 lists removed subsystems and legacy paths still visible in the code today.
 - Section 5 is the version history (`0.1.0` -> `1.0.0`).
-- Section 6 summarises uncommitted work in the working tree as of 2026-09-02.
+- Section 6 summarises the post-0.2.0 work from 2026-09-02 to 2026-09-20: per-KB overrides, the two 2026-09-19 cleanup passes and the 1.0.0 release prep.
 - Section 7 lists open questions / discrepancies discovered while reconstructing this history.
 
 Short SHAs are cited throughout; `git show <sha>` in the repo resolves them. Dates are author dates (`--date=short`). Categories used in the timeline: **infra** (stack/deploy), **retrieval**, **ingestion**, **graph**, **llm**, **ui**, **kb** (multi-knowledge-base), **media** (multimodal), **desktop**, **release** (CI/packaging), **security**, **perf**, **docs**, **bench** (benchmarks/experiments), **cleanup**.
@@ -208,7 +208,7 @@ One entry per architectural decision, in chronological order of when it was made
 
 | # | Date / SHA | Decision | Alternatives rejected | Rationale / evidence |
 |---|---|---|---|---|
-| D-01 | 2026-01-17 `6fd0224` | FastAPI backend + Next.js frontend, LangGraph for ingestion/chat workflows | (none recorded) | Present from the first commit; never revisited. `langgraph==1.0.6` pinned unchanged for the whole history. |
+| D-01 | 2026-01-17 `6fd0224` | FastAPI backend + Next.js frontend, LangGraph for ingestion/chat workflows | (none recorded) | Present from the first commit. `langgraph==1.0.6` stayed pinned until 2026-09-19, when the ingestion agent became a plain sequential function and LangGraph was dropped (§6). |
 | D-02 | 2026-01-23 `6852528` | Graph-first hybrid retrieval with a unified vector index over distilled nodes (Concept/Entity/Task/Persona/Reference) | Plain chunk RAG | Commit message: "prioritizing temporal anchors, knowledge graph consensus, grounding, and semantic fallback". The node vocabulary persists in Kuzu today. |
 | D-03 | 2026-01-29 `8c133f4` | Provider-agnostic LLM layer with automatic fallback and structured outputs | Single-provider (Ollama-only) | `MULTI_PROVIDER.md`, `.env.example`; enables the OpenAI/Gemini/Anthropic/HF options still offered. |
 | D-04 | 2026-02-01 `033589d` | Symbolic ranking instead of neural reranking | Neural reranker (`rerankers` lib) | Message: "Replaces neural reranking with pure symbolic ranking". **Reversed** by `559e988`/`097c822` (reranker service, run early, top-20) and again by `3f21e08` (GGUF cross-encoder in-process). Net: a reranker *is* used today. |
@@ -304,13 +304,13 @@ The version lives in `desktop/src-tauri/tauri.conf.json` and `Cargo.toml` (the r
 | *(unreleased)* | 2026-08-03 → 08-06 `fbcafe7`…`72413b9` | API modularisation and legacy removal, notes-page fixes, Windows Firefly prefetch, security/data-loss/perf audit, wikilink autocomplete, title↔filename sync. |
 | **0.2.0** | 2026-08-07 `e14dc67` | "ingest/retrieval speedups and wikilink UX" — includes `8de5cda` batching/parallel I/O. `02ac9d3` (Firefly download race fix) landed after the bump and is in HEAD without a version change. |
 | *0.3.0 (untagged)* | 2026-09-18 `1b5e452` | Electron shell replaced by a Tauri 2 shell over the Python desktop runtime; version bumped in the tree but never tagged. |
-| **1.0.0** | 2026-09-19 `1d5c7d7` | Major: the over-engineering sweep (§6 entry of the same date) — one LLM call path, GGUF-only local chat, no stored AI mode, finance API trimmed to what the UI uses, 16 dependencies dropped, ~7k lines removed, suite green. First release from the Tauri shell. |
+| **1.0.0** | 2026-09-19 `1d5c7d7` (bump `15e4c92`) | Major: the over-engineering sweep (§6 entry of the same date) — one LLM call path, GGUF-only local chat, no stored AI mode, finance API trimmed to what the UI uses, 16 dependencies dropped, ~7k lines removed, suite green. First release from the Tauri shell. Release prep followed through 2026-09-20 (`5b7a90f` … `0b50c22`, §6): bundle id `com.josetseph.orb`, a `release` job drafting the GitHub Release, the hdiutil DMG, the band-aid removal pass, vault-relative attachment links and the attachments-only vault tree. |
 
 ## 6. Uncommitted work in progress (as of 2026-09-02)
 
 The working tree diverges from `02ac9d3`. This section summarises `git status` / `git diff --stat` only; it does not describe behaviour beyond what the diffs and new file names show. 22 tracked files modified (+1,144 / −340), 9 untracked files (excluding `Docs/`).
 
-**Deleted:** `.cursor/rules/architecture-decisions.mdc` (the locked-decisions rule quoted in section 3). Its content is preserved in [Decisions and constraints](26-decisions-and-constraints.md); whether the deletion is intentional is an open question (see below).
+**Deleted:** `.cursor/rules/architecture-decisions.mdc` (the locked-decisions rule quoted in section 3). The deletion is now in `HEAD` as well; its content is preserved in [Decisions and constraints](26-decisions-and-constraints.md), which is the sole source.
 
 **Per-KB LLM overrides** (`backend/app/api/kb.py` +119, `backend/app/services/kb_registry.py` +205, `ai_gate.py`, `llm.py`, `retrieval.py`, `workflows/chat.py`, `frontend/src/app/kb/page.tsx`, `frontend/src/lib/{api,types}.ts`, new `frontend/src/app/kb/_components/KBModelPanel.tsx` 274 lines, new test `backend/tests/unit/test_kb_llm_config.py`):
 
@@ -330,7 +330,7 @@ The working tree diverges from `02ac9d3`. This section summarises `git status` /
 
 **Minor:** `firefly_service.py` (+20/−), `api/admin.py`, `api/chat.py`, `api/notes.py`, `api_desktop.py` (1–4 line changes each, consistent with the `require_ai(kb)` / per-KB LLM plumbing).
 
-### 2026-09-19 — over-engineering sweep (uncommitted)
+### 2026-09-19 — over-engineering sweep (`1d5c7d7`)
 
 A repo-wide audit removed about 6,500 lines and 16 dependencies without changing product behaviour:
 
@@ -343,7 +343,7 @@ A repo-wide audit removed about 6,500 lines and 16 dependencies without changing
 - **Frontend**: native `fetch` client, native `<dialog>` modals, no hydration flag, no barrels, lint at 0 warnings.
 - Tests: 455 passing, 0 failing (stale tests fixed or deleted).
 
-**2026-09-19 (later the same day) — band-aid removal pass (uncommitted):** repairs that ran on every read became one-time migrations, and prompt-and-parse became JSON mode.
+**2026-09-19 (later the same day) — band-aid removal pass (`69330c7`):** repairs that ran on every read became one-time migrations, and prompt-and-parse became JSON mode.
 
 - **Structured output**: `json_mode` on `_chat`/`generate`/`ingestion_generate[_with_meta]`/`_reason_step` (OpenAI `response_format`, Gemini `response_mime_type`, llama.cpp JSON grammar; Anthropic prompt-driven); the research step and community naming are JSON parsed by pydantic (`_ResearchStep`, `_CommunityName`), deleting `_section_re`, `_clean_next_query`, the first-turn/`FULL_ANSWER` rescues and `_parse_name_summary`; `_clean_json` is fence + curly quotes + `json_repair` (hard import).
 - **Closed relationship vocabulary**: `RELATIONSHIP_TYPES` (42 predicates, catch-all `related_to`) listed in the prompts and enforced by the schema; `clean_rel_type`, the alias validators and the `_` → space rewrites are gone; default `relates_to` → `related_to`.
@@ -353,9 +353,21 @@ A repo-wide audit removed about 6,500 lines and 16 dependencies without changing
 - **API / frontend**: chat responses carry `sources: [{id, title}]` instead of a `### References` block; `created_at` is a `datetime` (422 on garbage); upload response is `{url}`; frontend URL helpers stopped repairing/decoding; Tauri `trusted()` compares URL origins.
 - Tests: 473 passing, 0 failing; new `test_vault_migration.py`, `test_note_created_at.py`, `test_ingestion_community_names.py`.
 
+**2026-09-19 → 09-20 — 1.0.0 release prep (`5b7a90f` … `0b50c22`):** what shipped between the band-aid pass and the release.
+
+- **Release**: version 1.0.0 in `tauri.conf.json`, `Cargo.toml`, `frontend/package.json` and the FastAPI app (`15e4c92`); bundle identifier `com.josetseph.orb` (`621b17e`); `.github/workflows/desktop-release.yml` gained a `release` job that drafts the GitHub Release from the four platform artifacts on a `desktop-v*` tag (`5b7a90f`).
+- **macOS DMG**: `build.py dist` asks Tauri for the `.app` only (`--bundles app`) and writes `Orb_<ver>_<arch>.dmg` itself with one `hdiutil create` from a staging folder (`Orb.app` + `Applications` symlink), HFS+ and UDZO zlib-9 (`1c01efb`, `dc76156`) — Tauri's `bundle_dmg.sh` mount/AppleScript/unmount failed intermittently with "Resource busy", and an APFS image compressed to twice the size.
+- **Data dir guard**: `desktop_runtime.main()` warns loudly when the data dir sits under `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive` (`329cbc3`); the owner's own data dir moved off OneDrive. Guidance: `DATA_DIR` on local disk, only the vault in a synced folder.
+- **Firefly `.env` quoting**: every value is quoted by `_env_quote` (`f54809b`) — the default macOS data dir path contains a space ("Application Support") and phpdotenv rejected it.
+- **Vault-relative attachment links** (`76a9f4f`): notes store `attachments/<sub>/<file>` (percent-encoded segments) instead of `/vault-files/<kb>/…`; readers accept both forms (`vault_rel_from_url`, `attachment_key`, frontend `vaultRelPath`), the frontend's `resolveFileUrl` mints the serving URL per current KB, and `local_storage.vault_file_url` does the same for previews/extractor input. The vault sweep became v2 (relativise links) and then v3.
+- **Vision projector pairing** (`76a9f4f`): `find_mmproj` matches only `mmproj-<model stem>-*.gguf` beside the chat GGUF (no "only projector in the folder" fallback); `LocalLlamaRuntime` initialises the projector's mtmd context eagerly at load and drops it with a warning on failure; the `orb-mmproj` daemon thread started by `sync_embedding_infrastructure` downloads the projector for the selected catalog model.
+- **Attachments only under `attachments/`, uploads grouped by note folder** (`5a60d40`, `0b50c22`): `list_vault_media_files` and the `media_files` key of `GET /vault/folders` are gone, the tree has no media rows, `vault_ops.move_vault_file` refuses moves across the `attachments/` boundary, `POST /upload?folder=` stores at `attachments/<folder>/<stem>-<8hex><ext>`, and the v3 sweep (`<vault>/.orb/migrated-v3`) moves stray files in and rewrites their links. Attachment-link stripping reuses the move rewriter's matcher.
+- **Small fixes**: `getNoteStatus` sends `?kb=` on the status poll.
+- Tests: 485 passing, 0 failing; new `test_upload_folder.py` plus cases in `test_vault_folders.py`, `test_vault_migration.py`, `test_local_runtime_budget.py`, `test_desktop_runtime.py`.
+
 ## 7. Open questions and discrepancies
 
-- `.cursor/rules/architecture-decisions.mdc` is deleted in the working tree but was the only in-repo statement of the locked decisions. If the deletion is intentional, `Docs/26-decisions-and-constraints.md` becomes the sole source; if not, it should be restored.
+- `.cursor/rules/architecture-decisions.mdc` was the only in-repo statement of the locked decisions; it is now deleted in `HEAD`, so `Docs/26-decisions-and-constraints.md` is the sole source.
 - No commit records *why* Kuzu was chosen over Neo4j or Meilisearch over Typesense beyond "embedded"/"replaced by"; the decision log states this explicitly rather than inferring benchmarks.
 - `docker-compose.yml`, both `Dockerfile`s and `backend/.dockerignore` survive despite `fbcafe7`'s message "remove ... Docker". They are contributor-only; nothing in CI uses them.
 - `backend/app/models/note.py` still has a `content` column although note bodies are vault files (D-29). Whether it is written anywhere is a question for [Notes and vault files](09-notes-wikilinks-and-vault-files.md).

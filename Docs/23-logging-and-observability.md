@@ -67,7 +67,7 @@ Desktop: `DATA_DIR/logs` is the same directory the shell and runtime use for `ba
 | `DatabaseService` | `database.log` | `core/database.py` |
 | `GraphService` | `graph.log` | `services/graph.py` |
 | `LLMService` | `llm.log` | `services/llm.py` |
-| `LocalModels` | `llm.log` | `services/local_models.py` (incl. `[ModelLoad]` clock lines) |
+| `LocalModels` | `llm.log` | `services/local_models.py` (incl. `[ModelLoad]` clock lines, `[LocalModels] Fetching vision projector for <id>` from the `orb-mmproj` boot thread, `Vision projector attached: <mmproj>` / `… failed to initialise, text-only` at chat load) |
 | `InferenceDevice` | `llm.log` | `core/inference_device.py` |
 | `RetrievalService` | `retrieval.log` | `services/retrieval.py` |
 | `QdrantService` | `retrieval.log` | `services/qdrant_service.py` |
@@ -130,7 +130,7 @@ Plain `logging.getLogger(name)`. Passing a name that is not in `COMPONENT_LOG_FI
 
 | File | Source | Mechanism |
 |---|---|---|
-| `DATA_DIR/logs/backend.log` | The whole runtime process: `[desktop] …` status lines, uvicorn/Orb console-format lines (all components, `LEVEL: message`), `llama.cpp` / Metal init prints, Python tracebacks that escape logging, `pip` output from on-demand multimodal installs | `runtime.rs` opens the file in append mode and hands it to the child as stdout+stderr |
+| `DATA_DIR/logs/backend.log` | The whole runtime process: `[desktop] …` status lines (incl. `[desktop] WARNING: data dir … is inside a cloud-synced folder` printed by `main()` before uvicorn starts), uvicorn/Orb console-format lines (all components, `LEVEL: message`), `llama.cpp` / Metal init prints, Python tracebacks that escape logging, `pip` output from on-demand multimodal installs | `runtime.rs` opens the file in append mode and hands it to the child as stdout+stderr |
 | `DATA_DIR/logs/qdrant.log`, `meilisearch.log` | The search binaries' output | `desktop_runtime._spawn(label, cmd, log=_log_path(data_dir, …))` opens the file in append mode (`"ab"`), stderr merged into stdout |
 | `DATA_DIR/logs/firefly.log` | `php artisan serve` output | same; Laravel's own logs are under `DATA_DIR/firefly/app/storage/logs/` |
 | `DATA_DIR/logs/multimodal.log` | The background multimodal-prep child (`ensure_multimodal_services`) | same |
@@ -145,8 +145,8 @@ These files are **never rotated**; they grow until deleted. The Python component
 |---|---|---|---|
 | `GET /health` | `src-tauri/src/runtime.rs` health poll (window shown on first 200) | `{"status":"healthy"}` | No dependencies; same origin as the UI |
 | `GET /` | manual | `{"message":"Orb is online","status":"active"}` | logs DEBUG |
-| `GET /api/v1/setup/status` | `setup/page.tsx` (polled during downloads), `settings/page.tsx`, `ai-limited-banner.tsx` | `data_dir`, `models_dir`, `paths_json`, `default_vault_path`, `active_vault_path`, `ai_configured` (`ai_gate.ai_is_configured()`), `local_models_ready` (`gguf_paths_if_present()`), `multimodal_ready` (all three HF snapshots ready), `database_backend`, `llm_provider` | Cheap: filesystem stats only; safe to poll |
-| `GET /api/v1/setup/multimodal-status` | `setup/page.tsx` | `mode: "in_process"`, `models: {florence, whisper, marlin: bool}`, `services: services_ready()` | snapshot readiness, not "loaded in RAM" |
+| `GET /api/v1/setup/status` | `setup/page.tsx` (polled during downloads), `settings/page.tsx`, `ai-limited-banner.tsx` | `data_dir`, `models_dir`, `paths_json`, `default_vault_path`, `active_vault_path`, `ai_configured` (`ai_gate.ai_is_configured()`), `local_models_ready` (`gguf_paths_if_present()`), `multimodal_ready` (ASR + Marlin snapshots ready), `database_backend`, `llm_provider` | Cheap: filesystem stats only; safe to poll |
+| `GET /api/v1/setup/multimodal-status` | `setup/page.tsx` | `mode: "in_process"`, `models: {asr, marlin: bool}`, `services: services_ready()` | snapshot readiness, not "loaded in RAM" |
 | `GET /api/v1/admin/maintenance-status?kb=` | `system-status-indicator.tsx` (sidebar pill, polled), `settings/page.tsx` | `community_detection: {running, pending_nodes, needed, timer_armed, idle_seconds}`, `temporal_digests: {running}`, `ingestion: {active}`, `healthy: true` | From `IngestionWorkflow.get_maintenance_status()` + `ingestion_tracker.get_status_snapshot()`; `healthy` is hard-coded `True`. Indicator precedence: ingest active → "Ingesting"; community running → "Communities"; digest running → "Digests"; community timer armed → "Queued (idle_seconds, default 120)"; else idle |
 | `GET /api/v1/notes/{id}/status` | note editor polling after save/ingest | `id`, `status` (`completed` \| `failed` \| `processing`), `processing_stage`, `processing_model`, `processed`, `failed` | Reads only the five `notes` columns; returns **503 "Database temporarily unavailable, retry shortly"** on SQLite lock errors so the poller retries |
 | `GET /api/v1/settings` | settings page | effective provider/models (`06` §13) | first call constructs `LLMService` |
@@ -167,12 +167,14 @@ All paths relative to `DATA_DIR/logs/` (desktop: `~/Library/Application Support/
 | Chat answer empty / "Local LLM returned empty content" | `llm.log`, `backend.log` | `empty content (0 output tokens)`, `PromptTooLongError`, `RepetitionLoopError`; Metal OOM lines only appear in `backend.log` (llama.cpp stderr) |
 | Extraction truncated / JSON repair loops | `ingestion.log` | `Extraction output truncated`, `chunk i/n`, `extraction_chunks`; tune `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_N_CTX` |
 | Note stuck in "processing" | `ingestion.log`, then `errors.log` | note id, `[IngestionTracker]`, `Multimedia semaphore acquired`; check `GET /notes/{id}/status` `processing_stage` |
-| Images/PDF/audio not described | `multimedia.log` | `Local image description failed`, `snapshot`, `ffmpeg`/`ffprobe` not found, `Florence`, `Whisper`, `Marlin`; `GET /setup/multimodal-status` |
+| Images/PDF/audio not described | `multimedia.log` | `Local image description failed`, `no vision projector`, `snapshot`, `ffmpeg`/`ffprobe` not found, `asr`, `Marlin`; `GET /setup/multimodal-status` |
+| Local model cannot see images | `llm.log` | `[LocalModels] Fetching vision projector for <id>` / `Vision projector for <id>: none published`, `Vision projector attached: mmproj-…`, `Vision projector … failed to initialise, text-only` — `find_mmproj` pairs only `mmproj-<chat stem>-*.gguf` beside the chat GGUF (never another model's projector); the `orb-mmproj` daemon thread started by `sync_embedding_infrastructure` downloads it for catalog models |
+| App started with the data dir in iCloud/OneDrive/Dropbox/Google Drive | `backend.log` | `[desktop] WARNING: data dir <path> is inside a cloud-synced folder; move it to local disk (Settings -> Storage)` — `desktop_runtime.main()`, keyed on the path components `CloudStorage`, `Mobile Documents`, `Dropbox`, `Google Drive` |
 | Search finds nothing / vector results empty | `retrieval.log` | `[Qdrant] Raw hits`, `threshold=`, `reranker=on/off`, `MeilisearchService` connection errors; verify Qdrant `17433` / Meili `17470` are up (`curl 127.0.0.1:17433/`, `curl 127.0.0.1:17470/health`) |
 | Dimension mismatch errors from Qdrant | `retrieval.log`, `api.log` (startup) | `Embedding infrastructure sync skipped`, `dims`, `recreat`; `models_manifest.json` `embedding_dims` vs `EMBEDDING_DIMENSIONS` |
 | Graph queries fail / "No Kuzu path" | `graph.log`, `api.log` | `Repaired kuzu_path`, Kuzu exceptions; check `knowledge_bases.kuzu_path` is a file path |
 | External `.md` edits not detected | `ingestion.log` | `VaultWatcher`, `Vault watcher not started` (startup warning) |
-| Notes still carry `attachments/attachments/` links or undelimited legacy enrichment blocks after an upgrade | `ingestion.log` | `Vault migration v2 (<vault>): N files rewritten` — one-time sweep by `vault_sync.migrate_vault_files`, gated by `<vault>/.orb/migrated-v2`; absent means the sweep has not run for that vault |
+| Notes still carry `/vault-files/<kb>/` or `attachments/attachments/` links, undelimited legacy enrichment blocks, or non-`.md` files sit outside `attachments/` after an upgrade | `ingestion.log` | `Vault migration v3 (<vault>): N files moved, M files rewritten` — one-time sweep by `vault_sync.migrate_vault_files`, gated by `<vault>/.orb/migrated-v3`; absent means the sweep has not run for that vault |
 | Graph detail still shows `FACTS:` descriptions, `relates_to` edges or `Untitled note` for real notes | `api.log` | `Store migration v1 for KB '<name>': N descriptions scrubbed, M note names filled`, or `Store migration v1 for KB '<name>' deferred to next start: <error>` — `main._migrate_stores`, marker `DATA_DIR/.stores-migrated-v1-<kb_id>` touched only on success |
 | Finance pages error | `finance.log`, `firefly.log`, `DATA_DIR/firefly/app/storage/logs/` | `FireflyService`, token/`runtime.json` problems, `user_group` switch failures |
 | `database is locked` / 503 from status polling | `database.log`, `errors.log` | concurrent writers (watcher + API); usually transient |

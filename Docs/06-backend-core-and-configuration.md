@@ -29,16 +29,16 @@
 |---|---|---|
 | `backend/app/main.py` | FastAPI app construction, CORS, trace-id middleware, startup/shutdown | `app`, `request_trace_id` (ContextVar), `trace_id_middleware`, `startup_event`, `shutdown_event` |
 | `backend/app/core/config.py` | pydantic-settings `Settings` class; global `settings` singleton; post-construction path mutation | `Settings`, `settings`, `BACKEND_DIR`, `REPO_ROOT`, `DEFAULT_KUZU_DB_PATH` |
-| `backend/app/core/paths.py` | `paths.json` bootstrap; env > file > repo fallback resolution of data/models/vault dirs; download staging dir; data layout creation | `paths_json_location`, `load_paths_file`, `save_paths_file`, `resolve_data_dir`, `resolve_models_dir`, `resolve_default_vault_path`, `looks_like_network_volume`, `local_download_staging_dir`, `ensure_data_layout`, `sqlite_url`, `clear_paths_cache`, `sync_settings_paths` |
-| `backend/app/core/runtime_config.py` | `DATA_DIR/runtime_config.json` load/save/apply of the five mutable provider keys | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
+| `backend/app/core/paths.py` | `paths.json` bootstrap; env > file > repo fallback resolution of data/models/vault dirs; download staging dir; data layout creation | `paths_json_location`, `load_paths_file`, `save_paths_file`, `resolve_data_dir`, `resolve_models_dir`, `resolve_default_vault_path`, `looks_like_network_volume`, `local_download_staging_dir`, `ensure_data_layout`, `sqlite_url`, `sync_settings_paths` |
+| `backend/app/core/runtime_config.py` | `DATA_DIR/runtime_config.json` load/save/apply of the four mutable provider keys | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
 | `backend/app/core/database.py` | Async engine (SQLite/aiosqlite, NullPool), session factory, declarative `Base`, `init_db` | `engine`, `DATABASE_URL`, `AsyncSessionLocal`, `Base`, `get_db`, `init_db` |
 | `backend/app/core/log.py` | Component-routed rotating file logging (full detail in [23](23-logging-and-observability.md)) | `setup_logging`, `reconfigure_logging`, `get_logger`, `resolve_logs_dir`, `COMPONENT_LOG_FILES` |
 | `backend/app/core/inference_device.py` | Torch device/dtype selection and Qwen3.5 fast-path shim | `resolve_torch_device`, `resolve_torch_dtype`, `prepare_qwen3_5_inference` |
-| `backend/app/models/__init__.py` | Re-exports all ORM classes | `ChatConversation`, `ChatMessage`, `KnowledgeBase`, `Note`, `NoteLink` |
+| `backend/app/models/__init__.py` | Package docstring only — no re-exports; import the module you need (`knowledge_bases` has no ORM class, see §9.2) | — |
 | `backend/app/models/note.py` | `notes` table (metadata only) | `Note` |
 | `backend/app/models/chat.py` | `chat_conversations`, `chat_messages` tables | `ChatConversation`, `ChatMessage` |
 | `backend/app/models/wikilink.py` | `note_links` table | `NoteLink` |
-| `backend/app/schemas/__init__.py` | Re-exports schemas | see below |
+| `backend/app/schemas/__init__.py` | Package docstring only — no re-exports | — |
 | `backend/app/schemas/note.py` | Note / vault-file request bodies | `CreateNoteInput`, `MoveNoteInput`, `MoveVaultFileInput`, `DeleteVaultFileInput`, `BatchDeleteNotesInput`, `MkdirInput` |
 | `backend/app/schemas/chat.py` | Chat request bodies | `ChatTurn`, `CreateConversationInput`, `ChatInput` |
 | `backend/app/schemas/extraction.py` | LLM extraction result models with noise-tolerant validators | `Node`, `ExtractedRelationship`, `Extraction`, `NoteInput` |
@@ -47,7 +47,7 @@
 | `backend/app/api/health.py` | `/` and `/health` | `router` |
 | `backend/app/api/settings.py` | `GET/PATCH /api/v1/settings` runtime LLM settings | `router`, `LLMSettings` |
 | `backend/app/services/ai_gate.py` | AI readiness derived from real configuration | `ai_is_configured`, `require_ai`, `chat_is_local_only` |
-| `backend/app/services/local_storage.py` | Vault attachment upload/remove and URL→rel-path mapping | `vault_rel_from_url`, `store_upload`, `remove_upload` |
+| `backend/app/services/local_storage.py` | Vault attachment upload/remove and link ↔ serving-URL mapping | `vault_rel_from_url`, `vault_file_url`, `store_upload`, `remove_upload` |
 | `backend/.env.example` | Documented example of every env var | — |
 | `backend/requirements.txt`, `backend/requirements-multimodal.txt` | Python dependencies (core / optional multimodal) | — |
 | `backend/app/desktop_runtime.py` | The process the Tauri shell spawns: port sweep, uvicorn, sidecar boot ([04](04-desktop-shell.md)) | `main`, `status` |
@@ -68,7 +68,7 @@ flowchart TB
         dev[inference_device.py]
     end
     subgraph models["app/models + app/schemas"]
-        orm[ORM: Note, KnowledgeBase, ChatConversation, ChatMessage, NoteLink]
+        orm[ORM: Note, ChatConversation, ChatMessage, NoteLink]
         sch[Pydantic: note, chat, extraction]
     end
     subgraph services["app/services"]
@@ -148,7 +148,7 @@ from app.core.database import init_db
 
 ### 4.2 App object and routers
 
-`app = FastAPI(title="Orb API", version="0.1.0")` — the version string is hard-coded `0.1.0` while `desktop/package.json` and `frontend/package.json` are `0.2.0` (see discrepancies).
+`app = FastAPI(title="Orb API", version="1.0.0")` — kept in step by hand with `desktop/src-tauri/tauri.conf.json`, `Cargo.toml` and `frontend/package.json` (doc 05 §4).
 
 `register_all_routers(app)` (`backend/app/api/__init__.py`) includes routers in this exact order:
 
@@ -335,13 +335,15 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 
 | Field | Type | Default | Consumer |
 |---|---|---|---|
-| `MODEL_FLORENCE_HF` / `MODEL_FLORENCE_LOCAL` | str | `microsoft/Florence-2-large` / `florence-2-large` | `multimodal_models.model_ids("florence")` → HF repo id and `MODELS_DIR/<local>` folder |
-| `MODEL_WHISPER_HF` / `MODEL_WHISPER_LOCAL` | str | `openai/whisper-large-v3-turbo` / `whisper-large-v3-turbo` | same for whisper |
-| `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | str | `lunahr/Marlin-2B-ungated` / `marlin-2b` | same for marlin |
-| `FLORENCE_MAX_IMAGE_PIXELS` | int | `1500000` | `multimodal_runtime` via `getattr(settings, "FLORENCE_MAX_IMAGE_PIXELS", 0) or 1_500_000` — **`0` does not mean "full resolution"** despite `.env.example`; `0` falls back to 1.5 MP |
+| `MODEL_ASR_HF` / `MODEL_ASR_LOCAL` | str | `""` / `""` | `multimodal_models._asr_repo_and_dir` — empty means `asr_engine` picks the layout per platform (`qwen3-asr-1.7b` for MLX on Apple Silicon, `qwen3-asr-1.7b-hf` for transformers); an explicit repo/dir pins it |
+| `ASR_ENGINE` | str | `"auto"` | `multimodal_models`, `multimodal_runtime` — `auto` \| `mlx` \| `transformers`; an explicit engine is never substituted |
+| `ASR_LANGUAGE` | str \| None | `"en"` | `multimodal_runtime` — `None` lets the model detect the language |
+| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None | `True` / `2.0` / `None` | `multimodal_runtime` — pyannote speaker labels on transcripts, segmentation step, optional speaker cap |
+| `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | str | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `multimodal_models.model_ids("marlin")` → HF repo id and `MODELS_DIR/<local>` folder |
+| `IMAGE_DESCRIBE_MAX_PIXELS` | int | `1500000` | `multimedia.py` via `getattr(settings, "IMAGE_DESCRIBE_MAX_PIXELS", 0) or 1_500_000` — images are downscaled to this before any model (local projector or cloud) sees them; **`0` does not mean "full resolution"**, it falls back to 1.5 MP |
 | `MODEL_RERANKER_LOCAL` | str | `qwen3-reranker-0.6b` | `retrieval.py` (log/progress label only), overwritten from manifest by `sync_embedding_infrastructure` |
 | `PDF_VISUAL_EXTRACTION_ENABLED` | bool | `True` | `multimedia.py` `_page_needs_visual` |
-| `PDF_VISUAL_EXTRACTION_MAX_PAGES` | int | `0` | cap on Florence-rendered pages per PDF; `0` = unlimited |
+| `PDF_VISUAL_EXTRACTION_MAX_PAGES` | int | `0` | cap on pages rendered for the vision model per PDF; `0` = unlimited |
 | `PDF_VISUAL_RENDER_DPI` | int | `144` | render DPI, floored at 72 |
 | `PDF_VISUAL_TEXT_THRESHOLD` | int | `80` | pages with ≥ this many native-text chars skip the visual pass |
 
@@ -359,7 +361,7 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 |---|---|---|---|
 | `LOG_LEVEL` | str | `"INFO"` | `log.setup_logging` (`getattr(logging, LEVEL.upper(), INFO)`) |
 | `INGESTION_PIPELINE_CONCURRENCY` | int | `1` | `workflows/ingestion.py` `asyncio.Semaphore` around whole-note processing (FIFO when 1) |
-| `MULTIMEDIA_CONCURRENCY` | int | `1` | `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` around Florence/Whisper/Marlin work |
+| `MULTIMEDIA_CONCURRENCY` | int | `1` | `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` around vision / Qwen3-ASR / Marlin work |
 
 ### 5.4 Post-construction mutation of `settings`
 
@@ -426,7 +428,6 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 | `local_download_staging_dir()` | `-> Path` | `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` override; else macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%/Orb/model-downloads`, Linux `~/.cache/orb/model-downloads`. Always `mkdir -p`. |
 | `ensure_data_layout(data_dir=None)` | `-> Path` | creates `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/` under the data dir. Called at import of `database.py`, in `kb_registry._connect`, and by `sync_settings_paths`. |
 | `sqlite_url(data_dir=None, driver="aiosqlite")` | `-> str` | `sqlite+<driver>:///<DATA_DIR>/orb.db` (absolute). |
-| `clear_paths_cache()` | `-> None` | drop `_PATHS_CACHE` (tests / external edits). |
 | `sync_settings_paths(settings_obj=None)` | `-> None` | re-resolves data/models and writes `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH`, `KUZU_DB_PATH` onto `settings`; calls `ensure_data_layout`. Docstring is explicit: "SQLite/Qdrant engines created at import still need a restart to retarget storage roots." |
 
 ### 6.3 `paths.json` schema
@@ -489,11 +490,11 @@ Other code paths open their **own** connections to the same `orb.db`: `kb_regist
 
 ### 8.3 `init_db()`
 
-1. Imports `app.models.chat`, `kb`, `note`, `wikilink` so `Base.metadata` is populated (the comment notes finance has no local tables — it lives in Firefly).
+1. Imports `app.models.chat`, `note`, `wikilink` so `Base.metadata` is populated (the comment notes finance has no local tables — it lives in Firefly).
 2. `Base.metadata.create_all` inside `engine.begin()`.
 3. On SQLite only, `_sqlite_repairs`: `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)` — because `create_all` never adds new indexes to tables that already exist, and this composite index was introduced (`fbcafe7`) after the `notes` table had shipped — and `UPDATE notes SET rel_path = replace(rel_path, '\', '/') WHERE rel_path LIKE '%\%'`, repairing rows written as `str(Path)` on Windows (`note_files` now stores `rel_path` with `.as_posix()`). Both are idempotent and run on every start.
 
-There is **no migration framework** (no Alembic). New columns on existing installs are handled ad hoc (`kb_registry._ensure_firefly_columns` for `firefly_group_id`/`firefly_group_title`); adding a column to `Note`/`ChatMessage` requires a similar manual `ALTER TABLE` path or it will only exist on fresh databases.
+There is **no migration framework** (no Alembic). New columns on existing installs are handled ad hoc (`kb_registry._ensure_optional_columns` for `firefly_group_id`/`firefly_group_title` and the `llm_*` override columns); adding a column to `Note`/`ChatMessage` requires a similar manual `ALTER TABLE` path or it will only exist on fresh databases.
 
 ## 9. ORM models (`backend/app/models/`)
 
@@ -531,12 +532,12 @@ Derived status contract (`api/notes.py get_note_ingestion_status`): `processed �
 | `vault_path` | Text | no | Absolute vault folder |
 | `kuzu_path` | Text | no | Kuzu database **file** (`<DATA_DIR>/kuzu/<slug>/kuzu_graph`; default KB `<DATA_DIR>/kuzu/kuzu_graph`); `kb_registry._load` heals legacy directory paths once at startup via `normalize_kuzu_path` and persists the fix |
 | `qdrant_col_cores`, `qdrant_col_rels`, `qdrant_col_contexts` | String | no | Per-KB Qdrant collection names (`<slug>_node_cores`, `<slug>_node_relationships`, `<slug>_node_isolated_contexts`; default KB uses the `QDRANT_COLLECTION_*` settings) |
-| `typesense_collection` | String | no | **Meilisearch index name**; column name kept for existing DBs. `meili_index = synonym("typesense_collection")` gives ORM code the modern name. |
+| `typesense_collection` | String | no | **Meilisearch index name**; column name kept for existing DBs (raw SQL only — there is no ORM synonym). |
 | `created_at` | DateTime(tz) | — | |
 | `firefly_group_id` | Integer | yes | Firefly III `user_group_id` (administration) owned by this KB — "never leak across vaults" |
 | `firefly_group_title` | Text | yes | Its title |
 
-`kb_registry` is the writer of this table (raw `sqlite3`, with its own DDL that matches these columns); the ORM class exists so `create_all` and other ORM code can see it. See [08](08-knowledge-bases-and-vaults.md).
+`kb_registry` is the sole owner of this table (raw `sqlite3` DDL); there is no ORM class for it. See [08](08-knowledge-bases-and-vaults.md).
 
 ### 9.3 `chat_conversations` / `chat_messages` (`models/chat.py`)
 
@@ -582,7 +583,7 @@ The current working tree (uncommitted at the time of writing) adds three nullabl
 
 | Column | Type | Meaning |
 |---|---|---|
-| `llm_provider` | String | Pinned chat/ingestion provider for this KB (`local`, `openai`, `gemini`, `anthropic`, `huggingface`); `NULL` = inherit `settings.LLM_PROVIDER`. Rows holding the deprecated `ollama`/`lm_studio` are rewritten to `local` by `kb_registry._load` (`UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')`); `set_llm_config` still coerces on write |
+| `llm_provider` | String | Pinned chat/ingestion provider for this KB (`local`, `openai`, `gemini`, `anthropic`, `huggingface`); `NULL` = inherit `settings.LLM_PROVIDER`. Rows holding the deprecated `ollama`/`lm_studio` are rewritten to `local` by `kb_registry._load` (`UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')`); there is no write-time coercion |
 | `llm_model` | String | Pinned chat model id; `NULL` = inherit |
 | `llm_ingestion_model` | String | Pinned ingestion model id; `NULL` = inherit `llm_model`, then system |
 
@@ -596,7 +597,7 @@ Comment in the model: "Chat + ingestion only — embed/rerank/multimodal stay sy
 
 | Model | Fields | Used by |
 |---|---|---|
-| `CreateNoteInput` | `title: str \| None`, `content: str = ""`, `created_at: str \| None` (ISO string parsed by `api/notes._parse_date_str`), `folder: str \| None` (vault-relative folder, e.g. `Life/Daily Log`) | `POST /api/v1/notes`, `PUT /api/v1/notes/{id}` |
+| `CreateNoteInput` | `title: str \| None`, `content: str = ""`, `created_at: datetime \| None` (pydantic parses ISO 8601; garbage → 422, naive → UTC), `folder: str \| None` (vault-relative folder, e.g. `Life/Daily Log`) | `POST /api/v1/notes`, `PUT /api/v1/notes/{id}` |
 | `MoveNoteInput` | `folder: str = ""` (empty = vault root) | `POST /api/v1/notes/{id}/move` |
 | `MoveVaultFileInput` | `from_rel: str`, `to_rel: str` | vault file move |
 | `DeleteVaultFileInput` | `rel_path: str` | delete attachment + strip markdown links to it |
@@ -635,7 +636,7 @@ These models are the contract between the extraction prompt and the graph writer
 4. Any other list → treated as a bare node list: string items become `{"name": item}`, dict items may carry an embedded `relationships` list which is popped and appended to the top-level relationships.
 5. Anything else non-dict → empty extraction.
 
-`ensure_list` on `nodes`/`relationships`: `None`/non-list → `[]`; string items in `nodes` → `{"name": ...}`. `handle_sentiment_none`: falsy → `"Neutral"`.
+`ensure_list` on `nodes`/`relationships`: `None`/non-list → `[]`; string items in `nodes` → `{"name": ...}`.
 
 **`NoteInput`** — `content: str`, `created_at: str | None`, `title: str | None`, `skip_ingestion: bool = False`. Body of the legacy `POST /api/v1/ingest`-style route (`api/notes.ingest_note`) and vault re-ingest; `skip_ingestion=True` saves metadata + vault file only and bypasses `require_ai`.
 
@@ -741,7 +742,7 @@ Not gated: note CRUD, vault file ops, wikilinks graph, finance, KB management, s
 
 ## 15. `inference_device.py`
 
-Only imported by the multimodal stack (Florence/Whisper/Marlin in `multimodal_runtime.py`), because it imports `torch` at module level (~150–200 MB RSS). Logger `InferenceDevice` → `llm.log`.
+Only imported by the multimodal stack (Qwen3-ASR/Marlin in `multimodal_runtime.py`), because it imports `torch` at module level (~150–200 MB RSS). Logger `InferenceDevice` → `llm.log`.
 
 | Function | Behaviour |
 |---|---|
@@ -753,12 +754,13 @@ This module is distinct from GGUF backend detection (`local_models.detect_llama_
 
 ## 16. `local_storage.py` — vault attachments
 
-Replaces the former RustFS/S3 object store. Attachments live at `<vault_path>/attachments/<file>` and are served by `api/files.py` under `/vault-files/<kb>/<rel>`.
+Replaces the former RustFS/S3 object store. Attachments live only under `<vault_path>/attachments/<note folder>/<file>` and are served by `api/files.py` under `/vault-files/<kb>/<rel>`; notes store the vault-relative `attachments/…` link, never the serving URL.
 
 | Function | Behaviour |
 |---|---|
-| `vault_rel_from_url(url) -> str \| None` | Normalises backslashes; `/vault-files/<kb>/<rest>` → `<rest>` (`split("/", 3)[3]`); a string already starting with `attachments/` passes through; any URL containing `/attachments/` → `attachments/<tail before ?>`; else `None`. Used when deleting attachments referenced from markdown and by `remove_upload`. |
-| `store_upload(vault, filename, data, kb_id, folder="") -> dict` (async) | Validates `folder` (no `..`, not absolute → `ValueError`), `mkdir -p` `attachments/<folder>`; `rel = vault.save_attachment(...)`; returns `{"url": "/vault-files/<kb_id>/<rel>", "rel_path": rel, "key": rel, "filename": filename}`. `url` is for previewing the upload only; notes store the vault-relative `rel_path`. |
+| `vault_rel_from_url(url) -> str \| None` | Decoded vault-relative path for any stored form. Normalises backslashes; `/vault-files/<any kb>/<rest>` → `unquote(rest)`; `attachments/…` → `unquote`d; any URL containing `/attachments/` → `attachments/<tail before ?>`; else `None`. Used when deleting attachments referenced from markdown and by `remove_upload`. |
+| `vault_file_url(link, kb_id) -> str` | `/vault-files/<kb_id>/<link>` for a canonical `attachments/…` link; any other target passes through. Serving URL for previews and extractor input only — never written into notes. |
+| `store_upload(vault, filename, data, kb_id, folder="") -> dict` (async) | `folder` is the owning note's vault folder (`POST /api/v1/upload?kb=&folder=`, default `""`). Rejects absolute or `..` folders (`ValueError("Invalid folder")` → 400 from the route); `dest = attachments/<folder>` (flat `attachments/` when empty) checked with `safe_vault_join`; `rel = save_attachment(vault, filename, data, dest)` (`<stem>-<8hex><ext>`); returns `{"url": vault_file_url(rel, kb_id), "key": rel, "filename": filename}`. The route answers `{filename, url, rel_path, key, status}` and the frontend inserts `encodeFileUrl(rel_path)`. |
 | `remove_upload(vault, key_or_url)` (async) | Resolves `rel` via `vault_rel_from_url` or uses the input; strips leading `/`; refuses empty or `..` segments; `vault_ops.safe_vault_join` (raises `ValueError` outside the vault → silently return); unlinks if a file. Never raises. |
 
 ## 17. Interfaces with other subsystems
@@ -780,7 +782,7 @@ Replaces the former RustFS/S3 object store. Attachments live at `<vault_path>/at
 3. **`core/` never imports `services/` at module scope.** Function-local imports only (`config._default_data_dir`, `runtime_config._data_path`, `main.startup_event`).
 4. **`KUZU_DB_PATH` is derived, not configured.** Always `<DATA_DIR>/kuzu/kuzu_graph` for the default KB; per-KB paths come from `kb_registry`.
 5. **`DATA_DIR` is frozen for the SQLite engine at import.** `sync_settings_paths` updates `settings` and logging, but the engine, Qdrant/Meili clients and Kuzu handles need a process restart (`window.orbDesktop.restartBackend` relaunches the runtime after the paths change).
-6. **API keys live in the OS keychain, never in `DATA_DIR`.** `CredentialStore` (`services/credentials.py`) persists them through the Python `keyring` package (service entry + a JSON index of ids) and caches them in memory; nothing is written under `DATA_DIR`, which is frequently a synced folder. `PUT`/`DELETE /api/v1/credentials/{provider}` and `/credentials/endpoint` are the only write paths; `runtime_config.json` and `PATCH /settings` never carry keys, and no endpoint ever returns key material. Environment variables still seed the store for contributors running the backend outside the shell.
+6. **API keys live in the OS keychain, never in `DATA_DIR`.** `CredentialStore` (`services/credentials.py`) persists them through the Python `keyring` package (service entry + a JSON index of ids) and caches them in memory; nothing is written under `DATA_DIR` (which must not be a cloud-synced folder — the runtime warns — but users have put it in one). `PUT`/`DELETE /api/v1/credentials/{provider}` and `/credentials/endpoint` are the only write paths; `runtime_config.json` and `PATCH /settings` never carry keys, and no endpoint ever returns key material. Environment variables still seed the store for contributors running the backend outside the shell.
 7. **Router order is significant** — the desktop router must stay first (§4.2).
 8. **`extra="ignore"` on `Settings`** — unknown env keys are silently dropped; a typo in a variable name is not an error.
 9. **No migrations.** Schema changes on existing installs need an explicit `ALTER TABLE` path (pattern: `kb_registry._ensure_optional_columns`) or an `init_db` addition like the manual index.
@@ -809,17 +811,16 @@ Replaces the former RustFS/S3 object store. Attachments live at `<vault_path>/at
 
 - `settings.MODELS_PATH` and `settings.KUZU_DB_PATH` from the environment are **overwritten** at the bottom of `config.py`; setting them in `.env` does nothing.
 - `.env.example` documents `EMBEDDING_PROVIDER=openai`, `COMMUNITY_DETECTION_ENABLED=true` "defaults", `KUZU_DB_PATH`, `VIDEO_MAX_PIXELS`/`FPS*`, `MODELS_PATH=models` — several of these are unused or overridden by code (see §5.3 "unused" markers and [21](21-configuration-reference.md)).
-- `FLORENCE_MAX_IMAGE_PIXELS=0` does **not** disable the cap (`or 1_500_000`).
+- `IMAGE_DESCRIBE_MAX_PIXELS=0` does **not** disable the cap (`or 1_500_000`).
 - `ai_is_configured()` returns `True` for `cloud`/`hybrid` even with no key because `LLM_BASE_URL` has a non-empty default.
 - `GET /api/v1/settings` forces construction of `LLMService` (and accel detection); calling it in a tight loop is cheap after the first call but the first call can take a moment and logs "Primary LLM Provider: …".
 - `PATCH /settings` re-runs only `init_clients()`; ingestion clients stay bound to the old provider until restart.
 - The `metadata` column on `chat_messages` is exposed as `ChatMessage.metadata_json` in Python.
-- `KnowledgeBase.meili_index` is a synonym; SQL and raw `sqlite3` code must use `typesense_collection`.
+- The Meilisearch index name lives in the `typesense_collection` column of `knowledge_bases` (raw `sqlite3` in `kb_registry`; no ORM class or synonym).
 - `resolve_default_vault_path()` prefers `paths.json` over env — the opposite of `resolve_data_dir()`.
 - `get_kb_by_name` treats an empty `?kb=` as default; `"Default"` (any case) also resolves to default, but a KB *named* "default" cannot be created distinctly.
 - `store_upload` builds URLs with the KB **id**, while `?kb=` accepts name **or slug**; the `files` router resolves both.
 - Unit tests (`backend/tests/unit/conftest.py`) monkeypatch `settings.LLM_PROVIDER="lm_studio"` (a deprecated alias) — keep the alias mapping in `LLMService.__init__` or the suite breaks.
-- The FastAPI `version="0.1.0"` string is stale relative to the `0.2.0` app version.
 
 ## 21. Extension points
 

@@ -17,12 +17,12 @@ Key user-facing capabilities:
 | Area | Capability |
 |---|---|
 | Notes & vault | Real `.md` files in a per-knowledge-base vault folder (Obsidian-compatible), folders, attachments, `[[wikilinks]]` with autocomplete and disambiguation, entity highlighting in the editor, in-app voice recording |
-| Multimedia ingest | PDF text + vision on embedded images and scanned pages (Florence-2), image captions/OCR, audio and video transcription (Whisper), video visual understanding (Marlin); results are appended to the note markdown |
+| Multimedia ingest | PDF text + vision on embedded images and scanned pages, image descriptions/OCR by the ingestion model (a local GGUF through its vision projector, or a cloud endpoint), audio and video transcription (Qwen3-ASR), video visual understanding (Marlin); results are appended to the note markdown |
 | Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and relationships (relationship types are a closed 42-predicate vocabulary, off-list → `related_to`), optional community clustering (labelled "Leiden", implemented as a greedy cosine merge over embeddings) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
 | Chat | Multi-hop research loop combining entity lookup, keyword search (Meilisearch), vector search (Qdrant), graph expansion and a local cross-encoder reranker; persistent conversations; optional "thinking" display |
 | Knowledge bases | Multiple fully isolated KBs (separate vault, graph, vectors, keyword index, Firefly administration) switchable from the sidebar |
 | Finance | Per-KB Firefly III administration: accounts, transactions, budgets, categories, recurrences, rules, reports, search |
-| Local models | First-run setup page picks a data dir and a models dir (NAS/OneDrive friendly); GGUF chat/embed/rerank via llama-cpp-python inside the API process; cloud providers optional |
+| Local models | First-run setup page picks a data dir (local disk — never a cloud-synced folder), a models dir (NAS-friendly) and the notes vault (the one folder that may be synced); GGUF chat/embed/rerank via llama-cpp-python inside the API process; cloud providers optional |
 
 ---
 
@@ -40,8 +40,8 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 
 1. **Desktop shell, no Docker for users.** A Tauri shell spawns `python -m app.desktop_runtime`, which supervises the local binaries and processes.
 2. **Every local model runs in-process** in the FastAPI worker, loaded from `MODELS_DIR`. No HTTP model sidecars, no Ollama/LM Studio/llama-server.
-3. **Exclusive residency.** Only one heavy model is in memory at a time (chat *or* embed *or* rerank *or* Florence/Whisper/Marlin).
-4. **Notes are files.** Bodies live as `.md` in a per-KB vault; SQLite stores metadata only. Attachments live in the vault too.
+3. **Exclusive residency.** Only one heavy model is in memory at a time (chat *or* embed *or* rerank *or* Qwen3-ASR/Marlin).
+4. **Notes are files.** Bodies live as `.md` in a per-KB vault; SQLite stores metadata only. Attachments live in the vault too — only under `attachments/`, grouped by note folder, and notes link to them vault-root-relative.
 5. **Per-KB isolation everywhere**, including finance (one Firefly administration per KB).
 6. **Fail-closed indexing.** A Qdrant dimension mismatch during ingest raises instead of wiping a collection.
 7. **Idempotent enrichment.** Prior enrichment blocks are stripped before re-ingest.
@@ -51,7 +51,7 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 
 ## 4. Technology stack
 
-| Layer | Technology | Version pins (as of 0.2.0) |
+| Layer | Technology | Version pins (as of 1.0.0) |
 |---|---|---|
 | Desktop shell | Tauri 2 (Rust) with dialog / notification / opener plugins; updater not wired | – |
 | UI | Vite + React (react-router) static build served by the API, React Compiler, Tailwind CSS, CodeMirror 6, three.js + react-force-graph (2D/3D), native `fetch` | React 19.2.6, Tailwind 4, TypeScript 6 |
@@ -59,11 +59,11 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 | Graph | Kuzu embedded graph database | kuzu 0.11.3 |
 | Vectors | Qdrant (local binary) + qdrant-client | Qdrant v1.18.2, client 1.17.1 |
 | Keyword search | Meilisearch (local binary) + meilisearch python | Meilisearch v1.49.0, client 0.34.1 |
-| Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Florence-2, Whisper, Marlin) | llama-cpp-python ≥ 0.3 |
+| Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Marlin), Qwen3-ASR via `mlx-qwen3-asr` on Apple Silicon and transformers elsewhere; images are described by the chat GGUF through its `mmproj-*` vision projector | llama-cpp-python ≥ 0.3 |
 | Cloud LLMs | openai, anthropic, google-genai, HuggingFace; structured output requested in each provider's JSON mode (llama.cpp grammar locally, prompt-only on Anthropic) and cleaned with `json-repair` | – |
 | Document parsing | PyMuPDF, Pillow, python-docx, openpyxl, `av` (media probing), ffmpeg (transcoding) | – |
 | Finance | Firefly III (Laravel) on a portable PHP 8.5 from NativePHP `php-bin` | Firefly v6.6.6, php-bin 1.2.0 |
-| Packaging | `desktop/build.py` + `cargo tauri build`: python-build-standalone CPython, Vite build, Firefly seed; no Node ships | Python 3.12.9 |
+| Packaging | `desktop/build.py` + `cargo tauri build`: python-build-standalone CPython, Vite build, Firefly seed; no Node ships; the macOS DMG is written by `hdiutil`, not Tauri's DMG script | Python 3.12.9 |
 | Metadata DB | SQLite (`DATA_DIR/orb.db`) | – |
 
 ---
@@ -75,7 +75,7 @@ Tauri shell ── spawns ──▶ python -m app.desktop_runtime ── boots �
                                                                         ▲                     │
 Vite/React UI (served by FastAPI at /) ── /api/v1 ──────────────────────┘                     │ in-process
 FastAPI ── per-KB KBContext ──▶ vault .md · SQLite metadata · Kuzu graph · Qdrant · Meili · Firefly
-        └── models: GGUF chat/embed/rerank · Florence-2 · Whisper · Marlin (one resident at a time)
+        └── models: GGUF chat (+ vision projector)/embed/rerank · Qwen3-ASR · Marlin (one resident at a time)
 ```
 
 Write path: note saved → attachments enriched → LLM extracts entities/relationships → graph + vectors + keyword index updated → communities recomputed after idle.
@@ -87,7 +87,7 @@ The full picture with diagrams is in [02-system-architecture.md](02-system-archi
 
 ## 6. Versioning and status
 
-- Current version **0.3.0** (`desktop/src-tauri/tauri.conf.json`, `Cargo.toml`; `frontend/package.json` still reads `0.2.0` and the FastAPI `version` string `0.1.0`).
+- Current version **1.0.0** — `desktop/src-tauri/tauri.conf.json`, `Cargo.toml`, `frontend/package.json` and the FastAPI `version` string all agree; release tags are `desktop-v<version>` and CI drafts the GitHub Release from them.
 - Installers are **unsigned**; macOS users may need `xattr -cr /Applications/Orb.app`. Notarization and Authenticode hooks exist but are not enabled.
 - Auto-update is not wired (planned: `tauri-plugin-updater`, gated by `ORB_ENABLE_UPDATER=1`).
 - Name lineage: **LiveOS Brain** (January–July 2026 research prototype) → **LifeOS** (desktop pivot, `3f21e08`) → **Orb** (`6162be2`, same day, 2026-08-02). The `LIVEOS_*` / `LifeOS` read-compatibility aliases were removed on 2026-09-19.

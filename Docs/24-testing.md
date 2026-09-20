@@ -11,11 +11,11 @@
 | Owns | Does NOT own |
 |---|---|
 | `backend/tests/unit/` — the only automated test suite in the repository (pytest, pure-Python, no live infrastructure). | Runtime behaviour of the services under test — see the per-subsystem docs linked above. |
-| Lint/type configuration: `backend/.pylintrc`, `frontend/eslint.config.mjs`, `frontend/tsconfig.json`. | CI enforcement — there is none. `.github/workflows/desktop-release.yml` is the only workflow and it builds installers only (see [Packaging, build and release](05-packaging-build-and-release.md)). |
+| Lint/type configuration: `backend/.pylintrc`, `frontend/eslint.config.mjs`, `frontend/tsconfig.json`. | CI enforcement — there is none. `.github/workflows/desktop-release.yml` is the only workflow; it builds installers and drafts a GitHub Release, and runs no tests (see [Packaging, build and release](05-packaging-build-and-release.md)). |
 
 Boundary facts that matter when modifying code:
 
-- Unit tests never start Qdrant, Meilisearch, Kuzu, SQLite, or an LLM. Every service is instantiated with `Class.__new__(Class)` to skip `__init__` (which would open connections), then the attributes the method under test reads are set by hand. Any change to a service's `__init__`-assigned attribute names (`client`, `_enabled`, `collection`, `_index`, `_db`, `_conn`) silently breaks the corresponding test helper.
+- Unit tests never start Qdrant, Meilisearch, Kuzu, SQLite, or an LLM. Every service is instantiated with `Class.__new__(Class)` to skip `__init__` (which would open connections), then the attributes the method under test reads are set by hand. Any change to a service's `__init__`-assigned attribute names (`_client`, `_enabled`, `index_name`, `_index`, `_db`, `_conn`) silently breaks the corresponding test helper.
 - The harness is single-KB: it never sends `?kb=`, so it operates on whatever the backend resolves as the default KB. Run it against a dedicated KB by making that KB the default before starting (see [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md)).
 
 
@@ -35,9 +35,13 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_extraction_chunking.py` | Paragraph-bounded chunking, token budget, and extraction merge in `app/workflows/extraction_chunking.py`. | `TestSplitForExtraction`, `TestChunkTokenBudget`, `TestMergeExtractions` |
 | `backend/tests/unit/test_ingestion_chunked_extraction.py` | Chunk/truncate/retry loop and batched image titling in `ingestion_agent`; documents the duck-typed LLM protocol via `_StubLLM`. | 4 async tests |
 | `backend/tests/unit/test_kb_llm_config.py` | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
-| `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution, eager projector init dropping a broken projector. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf`, `TestEagerProjectorInit` |
+| `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution, `response_format` pass-through in JSON mode, eager projector init dropping a broken projector so text chat still works. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf`, `TestJsonMode`, `TestEagerProjectorInit` (17 tests) |
 | `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
-| `backend/tests/unit/test_vault_migration.py` | The one-time vault sweep (`vault_sync.migrate_vault_files`): legacy link shapes fixed in place, `/vault-files/<any kb>/…` links and their markers relativised, `.orb/migrated-v2` marker written, second run is a no-op. | 2 tests |
+| `backend/tests/unit/test_vault_migration.py` | The one-time vault sweep (`vault_sync.migrate_vault_files`): legacy link shapes fixed in place and the second run is a no-op; v2 relativises `/vault-files/<any kb>/…` links and their markers; v3 moves stray non-`.md` files under `attachments/` and rewrites their links; `.orb/migrated-v3` marker written. | 3 tests |
+| `backend/tests/unit/test_upload_folder.py` | `store_upload` puts a file in `attachments/<note folder>/`, root notes upload flat, and `..`/absolute folders raise `Invalid folder`. | 3 tests |
+| `backend/tests/unit/test_vault_folders.py` | Folder moves carry everything and rewrite the extraction marker with the link, a folder cannot move into itself, `move_vault_file` refuses moves across the `attachments/` boundary, folder delete removes the tree; `TestStripRefs` pins that deleting an attachment strips every link form and leaves unrelated notes untouched. | 5 tests + `TestStripRefs` |
+| `backend/tests/unit/test_desktop_runtime.py` | Meili master key random for fresh installs and sticky, legacy `orb-dev-key` kept when data exists, `boot-status.json` written atomically, Firefly `.env`/`runtime.json` keys; `TestFireflyEnvQuoting` pins `_env_quote` (single quotes; double-quoted escaped fallback on an apostrophe). | 6 tests |
+| `backend/tests/unit/test_vision_routing.py` | `find_mmproj` pairs only `mmproj-<chat stem>-*.gguf` beside the chat GGUF (another model's projector, or none, → `None`); `mmproj_hf_path` naming. | 8 tests |
 | `backend/tests/unit/test_note_created_at.py` | `created_at` on note create/update is a `datetime`: garbage → 422, naive → UTC. | 4 tests |
 | `backend/tests/unit/test_ingestion_community_names.py` | Community names come back as `{name, summary}` JSON and are accepted only when anchored in a member entity (`_name_fits_members`), else the derived fallback. | 2 tests |
 | `backend/tests/unit/test_gguf_metadata.py` | GGUF header parsing against **synthesised** fixtures (`build_gguf` writes spec-conformant bytes), including the guards for corrupt/hostile headers and the `pooling_type` vs `chat_template` role distinction. | 24 tests |
@@ -45,16 +49,11 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_byo_model_selection.py` | End-to-end bring-your-own model: `resolve_chat_gguf` for catalog ids / relative refs / absolute paths, loud failure for missing or unusable files, `n_ctx` clamping, KB-API validation, payload listing. | 18 tests |
 | `backend/tests/unit/test_credentials.py` | `CredentialStore` semantics, env seeding and precedence, version bumps, endpoint URL identity, and the invariant that **no status output contains key material**. | 24 tests |
 | `backend/tests/unit/test_finance_chat_llm.py` | Finance synthesis routes through the KB's own LLM and runs off the event loop (a concurrent poller must keep ticking). | 6 async tests |
-| `backend/tests/unit/test_timing_helpers.py` | `[Timing]` line composition; load vs inference split never goes negative. | `TestLogStageTiming` |
 | `backend/tests/unit/test_credentials.py`, `test_credentials_keyring.py` | `CredentialStore`: endpoint URL normalisation, env seeding, keychain persistence through `keyring` (mocked), session-only fallback when no backend is usable. | — |
 | `backend/.pylintrc` | Backend lint policy. | see §6 |
 | `frontend/eslint.config.mjs`, `frontend/tsconfig.json` | Frontend lint + TS strictness. | see §6 |
-| `Results/Results (Sub Questions Approach)/…` | Feb 2026 experiments (Neo4j/Postgres era, sub-question decomposition retrieval). | 6 reports, 4 results JSON, 6 log folders |
-| `Results/Results (Looping approach)/…` | Mar 2026 experiments (iterative retrieval loop). | 3 reports, 2 results JSON, 3 log folders |
-| `Results/Results (Joint Approach)/…` | Mar–Apr 2026 (joint node+relationship extraction). | 1 report, 2 side-test results JSON, 3 log folders |
-| `Results/Results (Final Implementation)/…` | May 2026 (Kuzu/Typesense migration, GGUF reranker). | 5 reports, 3 results JSON, 4 log folders |
-| `Results/Results (After Optimizations)/…` | 17 May 2026 (post ingestion/retrieval optimisation pass). | 1 report, 1 results JSON, 1 log folder |
-| `.github/workflows/desktop-release.yml` | The only CI workflow: four `build.py prepare` + `build.py dist` (cargo tauri build) jobs on tag `desktop-v*`. **No job runs pytest, pylint or eslint** (`npm run build` inside `prepare` does run `tsc --noEmit`). | — |
+| `Results/…` (branch `orb-testing`) | The Feb–May 2026 benchmark reports and logs (Sub Questions, Looping, Joint, Final Implementation, After Optimizations) — moved off `main` with the harness (`49bfedd`); the `.gitignore` force-track rule for `Results*/` remains. | — |
+| `.github/workflows/desktop-release.yml` | The only CI workflow: four `build.py prepare` + `build.py dist` jobs on tag `desktop-v*`, then a `release` job that drafts the GitHub Release from their artifacts. **No job runs pytest, pylint or eslint** (`npm run build` inside `prepare` does run `tsc --noEmit`). | — |
 
 
 ## 3. Running the unit tests
@@ -97,9 +96,9 @@ In short: the unit tests need the **full** backend environment installed, even t
 - Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder before running the suite: `app/services/graph.py` opens the configured Kuzu file at import and the running desktop app holds a lock on the real one.
 - Nothing writes to disk except `tmp_path` fixtures in `test_local_runtime_budget.py`.
 
-### 3.4 Observed state of the suite (2026-09-19)
+### 3.4 Observed state of the suite (2026-09-20)
 
-`pytest tests/unit -q` → **473 passed, 0 failed** (2026-09-19, after the band-aid removal pass; 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
+`pytest tests/unit -q` → **485 passed, 0 failed** (2026-09-20, after the attachments / projector / packaging changes; 473 after the 09-19 band-aid removal pass, 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
 
 Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing_helpers.py` and `test_chat_runtimes.py` were deleted with the code they covered; `test_graph_queries.py` lost the three tests for `min_confidence` / `find_paths_between_nodes` (APIs removed in `fbcafe7`); `test_qdrant_*.py` and `test_meili_contract.py` now set the backing `_client` attribute instead of the read-only lazy `client` property; `test_model_formats.py` shrank to the GGUF cases; `test_credentials.py` fakes `keyring` (it used to write into the developer's real keychain); the image-title stub speaks `ingestion_generate_with_meta`; the whitespace-query assertion in `test_chat_context.py` matches the stripping behaviour.
 
@@ -127,7 +126,7 @@ The pattern the live tests actually rely on is **not** these fixtures but three 
 
 ## 5. Unit test modules — contract pinned and why it matters
 
-Nine tracked modules plus five untracked (uncommitted as of 2026-09-02) modules. "Status" is against the current sources.
+46 modules under `backend/tests/unit/`. "Status" is against the current sources.
 
 | Module | Target | Tests | Status |
 |---|---|---|---|
@@ -141,12 +140,12 @@ Nine tracked modules plus five untracked (uncommitted as of 2026-09-02) modules.
 | `test_extraction_chunking.py` | `app/workflows/extraction_chunking.py` | 15 | pass |
 | `test_ingestion_chunked_extraction.py` | `ingestion_agent._extract_with_chunking`, `_batch_image_titles` | 4 (async) | pass |
 | `test_kb_llm_config.py` | `kb_registry.effective_llm_config`, `LLMService.get_chat_model/get_ingestion_model` | 18 | pass |
-| `test_local_runtime_budget.py` | `LocalLlamaRuntime` budgeting / GGUF resolution / `response_format` pass-through | 16 | pass |
+| `test_local_runtime_budget.py` | `LocalLlamaRuntime` budgeting / GGUF resolution / `response_format` pass-through / eager projector init | 17 | pass |
 | `test_model_load_clock.py` | `ModelLoadClock` | 4 | pass |
-| `test_vault_migration.py` | `vault_sync.migrate_vault_files` (one-time sweep + marker) | 1 | pass |
+| `test_vault_migration.py` | `vault_sync.migrate_vault_files` (one-time sweep v1/v2/v3 + marker) | 3 | pass |
 | `test_note_created_at.py` | `schemas.note` / `POST /ingest` `created_at` parsing | 4 | pass |
 | `test_ingestion_community_names.py` | `IngestionWorkflow._name_and_summary`, `_name_fits_members` | 2 | pass |
-| (30 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments, extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime, vision routing, … | 300+ | pass |
+| (31 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
 
 ### 5.1 `test_chat_context.py` — follow-up query rewriting
 
@@ -161,7 +160,7 @@ Contract pinned for `LLMService.rewrite_follow_up_query(history, latest_query, m
 
 Why it matters: this is the only guard that multi-turn chat (`POST /api/v1/chat` with `conversation_id`, added in `ac7f4e4`, 2026-07-02) degrades to single-turn retrieval instead of failing when the local model is busy or offline. See [Retrieval and chat](16-retrieval-and-chat.md).
 
-Stale assertion: `test_returns_latest_when_empty_query` expects `"   "` back for a whitespace query; the implementation now does `latest = (latest_query or "").strip()` first and returns `""`. Fix the test, not the code.
+`test_returns_latest_when_empty_query` matches the stripping behaviour (`latest = (latest_query or "").strip()` → `""`); the older assertion that expected `"   "` back was fixed on 2026-09-19.
 
 ### 5.2 `test_extraction_schemas.py` — tolerant Pydantic validators
 
@@ -174,7 +173,7 @@ Pins the pre-validators in `app/schemas/extraction.py` that absorb the many shap
 | `Extraction.normalize_keys` | `None` → empty; unwrap `{"extraction"|"data"|"result": {...}}` when the inner dict has `nodes` or `relationships`; Gemma two-list `[nodes, rels]`; bare list of dicts/strings → nodes (strings become `{"name": s}`); a node's embedded `"relationships"` list is hoisted to the top level. |
 | `Extraction.ensure_list` | `nodes`/`relationships` `None` or scalar → `[]`; string items in `nodes` → `{"name": …}`. |
 
-Why it matters: the ingestion pipeline (`app/workflows/agents/ingestion_agent.py`, see [Ingestion pipeline](10-ingestion-pipeline.md)) calls `Extraction.model_validate` on whatever `_clean_json` returns; a validator regression turns into "note failed" for a whole model family. The edge-weight formula comment (`strength×0.5 + confidence×0.3 + relevance×0.2`) is why the 1–10 scale must be preserved — see [Graph storage (Kuzu)](14-graph-storage-kuzu.md).
+Why it matters: the ingestion pipeline (`app/workflows/agents/ingestion_agent.py`, see [Ingestion pipeline](10-ingestion-pipeline.md)) calls `Extraction.model_validate` on whatever `_clean_json` returns; a validator regression turns into "note failed" for a whole model family. Per-edge scores (`strength`/`confidence`/`relevance`) no longer exist on the schema (doc 26 D2), so there is no score scale to preserve.
 
 ### 5.3 `test_graph_layout.py` — deterministic 3-D layout
 
@@ -195,8 +194,7 @@ Contracts:
 
 - **depth = 1 fast path** must not use variable-length `*1..` syntax nor `all(`. Still true: `get_related_nodes(max_depth=1)` now issues two directed queries from `_hop_query("->")` and `_hop_query("<-")`, tags rows with `edge_direction`, dedupes by `node_id` (outgoing wins) and sorts by name. The assertion `result == expected` still holds only because the mock returns the same list object for both calls.
 - **depth > 1** must not put `all(rel IN relationships(path) WHERE …)` in the `WHERE` clause — the code comment explains it "triggers a `KU_UNREACHABLE` parser assertion in this Kuzu build". Still true; confidence is returned as `confidence_path` and (per the comment) filtered in Python.
-- **Post-filter by `min_confidence`**: `test_depth2_results_filtered_by_confidence` calls `get_related_nodes(..., min_confidence=0.5)`. The parameter was removed in `fbcafe7`; the current signature is `(node_name, max_depth=2, node_id=None)` and the depth>1 branch returns rows unfiltered — **TypeError today**, and the behaviour it pinned no longer exists (check callers in `retrieval.py` before re-adding).
-- `find_paths_between_nodes(names, max_depth)`: both tests fail with `AttributeError`; the method was deleted in `fbcafe7`. The patch target `app.services.graph.qdrant_service` still resolves (the module imports the singleton), which is why the failure surfaces only at call time.
+- The `min_confidence` post-filter and `find_paths_between_nodes` tests were removed on 2026-09-19 together with the APIs they pinned (both deleted in `fbcafe7`; the current signature is `get_related_nodes(node_name, max_depth=2, node_id=None)` and the depth>1 branch returns rows unfiltered). Check callers in `retrieval.py` before re-adding either.
 - Unknown node (`resolve_node_id → None`) → `[]`. Passes.
 
 Why it matters: Kuzu's Cypher dialect differs from Neo4j's; the Neo4j-era hyphenated-relationship-type errors (32 per run, `Results/Results (Sub Questions Approach)/…/GEMINI_INGESTION_REPORT.md`) and the Kuzu `KU_UNREACHABLE` assertion were both discovered by benchmark runs, and these tests are the only thing that stops the query text from drifting back. See [Graph storage (Kuzu)](14-graph-storage-kuzu.md).
@@ -228,9 +226,9 @@ Caveat: the real methods also read `self._col_cores` (collection name) and call 
 
 Why it matters: the `type` and `community_level` payload keys are the filter keys retrieval relies on; renaming either breaks entity-type-filtered search silently.
 
-### 5.8 `test_relationships.py` — dead module
+### 5.8 `test_relationships.py` — deleted 2026-09-19
 
-Imports `can_evolve`, `get_contradicting_types`, `get_expected_relationships`, `get_inverse_type`, `is_bidirectional` from `app/schemas/relationships.py` — the bi-temporal relationship ontology added in `033589d` (2026-02-01) and deleted in `da75dfc` (2026-05-28). The whole module errors at collection. Delete the test or restore the module; nothing in `app/` references those helpers.
+It imported `can_evolve`, `get_contradicting_types`, `get_expected_relationships`, `get_inverse_type`, `is_bidirectional` from `app/schemas/relationships.py` — the bi-temporal relationship ontology added in `033589d` (2026-02-01) and deleted in `da75dfc` (2026-05-28) — and errored at collection for four months before it was removed with the other stale modules (§3.4).
 
 ### 5.9 `test_extraction_chunking.py` (new) — paragraph-bounded chunking and merge
 
@@ -238,7 +236,7 @@ Targets `app/workflows/extraction_chunking.py`:
 
 - `split_for_extraction(text, budget_tokens, count_tokens) -> list[str]`: short text returned as one chunk; whitespace-only → `[]`; splits on `\n\n` paragraph boundaries first, packing whole paragraphs up to the budget; an oversized paragraph falls back to sentence splitting (chunks end with `.`); no chunk is empty; the concatenation of all chunks preserves every word in order.
 - `chunk_token_budget(context_tokens, expected_output_tokens) -> int`: `budget × 3.5 ≤ context − output` (input plus ~2.5× output must fit the window); capped at **4000**; floored at `MIN_SPLIT_TOKENS`; env `ORB_EXTRACTION_CHUNK_TOKENS` overrides the cap in either direction.
-- `merge_extractions(parts) -> Extraction`: `None` parts skipped; nodes deduplicated case-insensitively by name with `isolated_context` concatenated (duplicates not repeated); a generic `"thing"` type is upgraded by a later specific type; relationships deduplicated by case-insensitive `(source, target, relationship_type)` keeping the highest `confidence`; the first non-empty `title` wins.
+- `merge_extractions(parts) -> Extraction`: `None` parts skipped; nodes deduplicated case-insensitively by name with `isolated_context` concatenated (duplicates not repeated); a generic `"thing"` type is upgraded by a later specific type; relationships deduplicated by case-insensitive `(source, target, relationship_type)`, first occurrence wins (there are no per-edge scores); the first non-empty `title` wins.
 
 ### 5.10 `test_ingestion_chunked_extraction.py` (new) — the agent's chunk/retry loop
 
@@ -342,7 +340,7 @@ There is no separate `typecheck` script, but `npm run build` is `tsc --noEmit &&
 | E2E (playwright/cypress) | none |
 | Desktop (`desktop/`) tests or lint | none |
 | Pre-commit hooks | none (`.pre-commit-config.yaml` absent) |
-| CI test/lint job | none — `desktop-release.yml` only runs `build.py prepare` (which includes `npm run build` → `tsc --noEmit`) and `build.py dist` |
+| CI test/lint job | none — `desktop-release.yml` only runs `build.py prepare` (which includes `npm run build` → `tsc --noEmit`), `build.py dist` and a release-draft job |
 
 
 
@@ -350,7 +348,7 @@ There is no separate `typecheck` script, but `npm run build` is `tsc --noEmit &&
 
 | Gap | Detail | Risk |
 |---|---|---|
-| No CI test job | `.github/workflows/desktop-release.yml` is the only workflow and runs only on `desktop-v*` tags / manual dispatch; it never invokes pytest, pylint, eslint or `tsc`. | Regressions accumulate silently between manual runs. |
+| No CI test job | `.github/workflows/desktop-release.yml` is the only workflow and runs only on `desktop-v*` tags / manual dispatch; it builds installers and drafts the release but never invokes pytest, pylint, eslint or `tsc` directly. | Regressions accumulate silently between manual runs. |
 | Unit suite needs a full environment | `pytest`/`pytest-asyncio` are absent from `requirements.txt` and `backend/.venv` is partial; the suite itself is green (§3.4). | New contributors must build a venv first. |
 | No frontend tests | No jest/vitest/RTL/playwright in `frontend/package.json`; only `eslint` and the `tsc --noEmit` in `npm run build`. | Editor (CodeMirror wikilink autocomplete), chat polling and graph canvas logic are unverified. |
 | No desktop-shell / runtime tests | `desktop/src-tauri` has no tests and `backend/app/desktop_runtime.py` (ports, sidecar boot, Firefly bootstrap) is exercised only by hand. | |
@@ -392,7 +390,6 @@ Follow the idioms the passing modules use; do not reach for the dead `mock_*` fi
 - **`patch("kuzu.Database")` imports kuzu.** The graph tests are not free of the native dependency, only of a database file.
 - **Kuzu query text is pinned**: never reintroduce `WHERE all(...)` over `relationships(path)` or `*1..N` in the depth-1 path — `KU_UNREACHABLE` is a hard crash, not an exception.
 - **Extraction validators are order-sensitive**: `Extraction.normalize_keys` (before) → `ensure_list` (before, per field) → `Node`/`ExtractedRelationship` validators. Wrapper unwrapping only happens when the inner dict has `nodes` or `relationships`.
-- **Scores are 1–10, never 0–1** after validation; anything in `[0,1]` is scaled ×10. A model returning `0.0` confidence therefore stores `1.0`.
 - **`_clean_json` picks the *first* fenced block** — a response containing two fences returns only the first.
 - **Meilisearch documents must carry `node_id`** (index primary key); `update_nodes_community` synthesises `{"node_id": …}` if `get_node` returns nothing.
 - **Retrieval F1 is F1 of means**, not mean of F1s.
@@ -418,6 +415,8 @@ Follow the idioms the passing modules use; do not reach for the dead `mock_*` fi
 | 2026-06-12 | `a8587e6`, `4408a72` | Local model services + ingestion status; async chat polling (Results folder touched for report links). |
 | 2026-07-02 | `ac7f4e4` | Persistent conversations + follow-up rewrite → `test_chat_context.py`. |
 | 2026-08-02/03 | `3f21e08`, `6162be2`, `fbcafe7` | Docker-free desktop app; LifeOS/LiveOS → Orb rename across `Results/` and tests; legacy paths dropped — `find_paths_between_nodes` and `min_confidence` removed from `graph.py` (orphaning half of `test_graph_queries.py`), benchmark notes/cache/progress untracked, `fetch_notes.py` added, README rewritten. |
-| 2026-08 → 09 (uncommitted) | — | Five new unit modules for chunked extraction, per-KB LLM config, llama.cpp budgeting and the model-load clock. |
+| 2026-08 → 09 | `b4d14cd`… | Five new unit modules for chunked extraction, per-KB LLM config, llama.cpp budgeting and the model-load clock. |
+| 2026-09-19 | `1d5c7d7`, `69330c7` | Over-engineering sweep and band-aid removal: stale modules deleted (`test_relationships.py`, `test_timing_helpers.py`, `test_chat_runtimes.py`), `test_vault_migration.py`, `test_note_created_at.py`, `test_ingestion_community_names.py` added; 455 → 473 passing. |
+| 2026-09-20 | `f54809b` … `5a60d40` | Release prep: `test_upload_folder.py`; new cases for the `attachments/` boundary (`test_vault_folders.py`), the v2/v3 sweeps (`test_vault_migration.py`), eager projector init and strict `find_mmproj` (`test_local_runtime_budget.py`, `test_vision_routing.py`), Firefly `.env` quoting (`test_desktop_runtime.py`); 485 passing. |
 
 Why the archive is kept in git despite its size: the reports are the only record of *why* the retrieval loop, reranker thresholds, Kuzu migration and model choices look the way they do; the raw logs let the numbers be re-derived. Why unit tests avoid infrastructure entirely: the project has no CI runner with Qdrant/Meilisearch, and the desktop packaging bundles its own binaries, so "fast, deterministic, import-only" was the only feasible contract (conftest docstring).

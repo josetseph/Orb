@@ -1,6 +1,6 @@
 # Retrieval and Chat
 
-**What this covers.** The question-answering half of Orb: how a chat request enters the FastAPI backend (`POST /api/v1/chat` synchronously, or `POST /api/v1/chat/async` + `GET /api/v1/chat/status/{request_id}` polling), how conversations and messages are persisted in SQLite (`chat_conversations`, `chat_messages`), how follow-up questions are rewritten against history, and — in most depth — the multi-hop **iterative research loop** in `backend/app/services/retrieval.py` that combines LLM query analysis, Kuzu entity lookup, Meilisearch BM25, Qdrant vector search across three collections, 1-hop graph expansion, in-process GGUF cross-encoder reranking and a per-iteration LLM reasoning step to produce a final answer with note citations. It also documents the wire shapes the Next.js chat page consumes, every configuration key that influences retrieval, the log files to read when debugging, failure modes, and how to tune retrieval safely.
+**What this covers.** The question-answering half of Orb: how a chat request enters the FastAPI backend (`POST /api/v1/chat` synchronously, or `POST /api/v1/chat/async` + `GET /api/v1/chat/status/{request_id}` polling), how conversations and messages are persisted in SQLite (`chat_conversations`, `chat_messages`), how follow-up questions are rewritten against history, and — in most depth — the multi-hop **iterative research loop** in `backend/app/services/retrieval.py` that combines LLM query analysis, Kuzu entity lookup, Meilisearch BM25, Qdrant vector search across three collections, 1-hop graph expansion, in-process GGUF cross-encoder reranking and a per-iteration LLM reasoning step to produce a final answer with note citations. It also documents the wire shapes the React chat page consumes, every configuration key that influences retrieval, the log files to read when debugging, failure modes, and how to tune retrieval safely.
 
 **Related docs:** [System architecture](02-system-architecture.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Local models & inference](12-local-models-and-inference.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Frontend chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Logging & observability](23-logging-and-observability.md) · [Testing](24-testing.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -30,7 +30,7 @@ This slice does **not** own (only consumes):
 
 | Path | Purpose | Key exports |
 |---|---|---|
-| `backend/app/api/chat.py` | FastAPI router: conversations CRUD, `POST /api/v1/chat`, `POST /api/v1/chat/async`, `GET /api/v1/chat/status/{request_id}`; in-memory job registry and global job lock | `router`, `_chat_status: dict[str, dict]`, `_chat_job_lock: asyncio.Lock`, `_chat_tasks: set[asyncio.Task]`, `_answer_chat_query`, `_run_chat_job`, `_run_chat_job_serialized` |
+| `backend/app/api/chat.py` | FastAPI router: conversations CRUD, `POST /api/v1/chat`, `POST /api/v1/chat/async`, `GET /api/v1/chat/status/{request_id}`; in-memory job registry (bounded) and global job lock | `router`, `_chat_status: OrderedDict[str, (written_at, dict)]`, `_set_status`, `_get_status`, `_prune`, `_chat_job_lock: asyncio.Lock`, `_chat_tasks: set[asyncio.Task]`, `_answer_chat_query`, `_run_chat_job`, `_run_chat_job_serialized` |
 | `backend/app/api_desktop.py` (chat export section) | `GET /api/v1/chat/conversations/{conversation_id}/export` (markdown/json) — **currently broken**, see §4.6 | `export_chat` |
 | `backend/app/schemas/chat.py` | Pydantic wire schemas | `ChatTurn{role,content}`, `CreateConversationInput{title?}`, `ChatInput{query(min 1), request_id?, conversation_id?}` |
 | `backend/app/models/chat.py` | SQLAlchemy ORM models | `ChatConversation`, `ChatMessage` |
@@ -39,7 +39,7 @@ This slice does **not** own (only consumes):
 | `backend/app/services/retrieval.py` | `RetrievalService`: iterative loop, hybrid search, graph expansion, rerank, text formatting | `RetrievalService`, `retrieval_service` (default-KB singleton; per-KB instances are built by `KBContext`) |
 | `backend/app/services/reranker.py` | Async façade over the in-process GGUF reranker; returns its rows as-is | `RerankerService.rerank`, `reranker_service` |
 | `backend/app/services/local_models.py` (reranker part) | `LocalGgufReranker` (Qwen3-Reranker yes/no logit scoring), residency rules | `local_gguf_reranker`, `reranker_gguf_path`, `_RERANK_SYSTEM`, `_RERANK_INSTRUCTION` |
-| `backend/app/services/llm.py` (contracts used here) | Query analysis, iterative reasoning step, follow-up rewrite, thinking extraction, query-analysis cache | `analyze_query`, `iterative_step`, `rewrite_follow_up_query`, `_reason_step`, `_reason_step_sync`, `get_chat_model`, `_query_analysis_cache` |
+| `backend/app/services/llm.py` (contracts used here) | Query analysis, iterative reasoning step, follow-up rewrite, thinking extraction, query-analysis cache | `analyze_query` (`lru_cache(64)` on `_analyze_query_cached`), `iterative_step`, `rewrite_follow_up_query`, `_reason_step`, `_reason_step_sync`, `get_chat_model` |
 | `backend/app/services/kb_registry.py` (`KBContext`) | Builds one `RetrievalService(graph, qdrant, meili)` + `ChatWorkflow(retrieval)` per KB lazily | `KBContext.get_chat_workflow` (retrieval is built alongside and reached as `KBContext.retrieval_service`) |
 | `backend/app/services/ai_gate.py` | 503 gate when AI is not configured | `require_ai`, `ai_is_configured` |
 | `backend/app/core/log.py` | Routes `RetrievalService`/`QdrantService`/`MeilisearchService`/`RerankerService` → `retrieval.log`; `ChatWorkflow`/`ChatStore` → `chat.log` | `COMPONENT_LOG_FILES` |
@@ -107,7 +107,7 @@ flowchart TD
     C -- yes --> D{current_query set?}
     D -- "no (iteration 1)" --> H
     D -- yes --> E[hybrid_search current_query]
-    E --> E1[analyze_query sub-query<br/>entities, keywords, concepts, attribute, types, date/period]
+    E --> E1[analyze_query sub-query<br/>entities, keywords, attribute, types, date/period]
     E1 --> E2[embed_query enriched query]
     E2 --> E3[asyncio.gather<br/>entity branch Kuzu + Person name variants<br/>Meili BM25 per term<br/>Qdrant 3 collections w/ temporal filters]
     E3 --> E4[merge entity → BM25 → vector, dedup by lowercase name<br/>vector name variants]
@@ -162,7 +162,7 @@ Both `/chat` and `/chat/async` do the same preamble:
 
 ### 4.4 Asynchronous `POST /api/v1/chat/async` + polling
 
-**Job registry.** `_chat_status: dict[str, dict]` is a module-level dict keyed by `request_id`. Entries are written by `start_chat`, `_run_chat_job_serialized` and `_run_chat_job`, read by `get_chat_status`. **Entries are never evicted**; the final `"Complete"` entry embeds the whole `result` (including `context` docs with `original_obj` payloads), so memory grows with every chat in the process lifetime.
+**Job registry.** `_chat_status` is a module-level `OrderedDict` keyed by `request_id`, holding `(written_at, entry)`. Entries are written through `_set_status` by `start_chat`, `_run_chat_job_serialized` and `_run_chat_job`, read through `_get_status` by `get_chat_status`; both call `_prune()`, which pops the oldest entries while there are more than 200 or the oldest is older than 1800 s. The final `"Complete"` entry embeds the whole `result` (including `context` docs with `original_obj` payloads), so a finished job's result disappears from `chat/status` after 30 minutes or 200 newer jobs.
 
 **Task lifetime.** `start_chat` does `task = asyncio.create_task(_run_chat_job_serialized(...))`, adds it to `_chat_tasks` (a strong-reference set so the task is not garbage-collected mid-flight) and removes it via `add_done_callback(_chat_tasks.discard)`. The job runs on the **app event loop** — the same loop as `AsyncSessionLocal` — which is why it is a task and not a thread (the docstring: "Run chat on the app event loop (same loop as AsyncSessionLocal)"). Commit `4408a72` originally ran jobs in a threadpool; this was changed when SQLite/aiosqlite sessions needed to stay on one loop.
 
@@ -207,7 +207,7 @@ The progress callback signature is `(stage: str, model: str | None) -> None`. St
 | 13 | `Formatting answer` | null | `ChatWorkflow.chat` (not on the finance path) |
 | 14 | `Complete` / `Failed` | null | `_run_chat_job` |
 
-The `"Gemma4"` model label is a **hard-coded string** in `chat.py`/`retrieval.py`; it does not reflect `get_chat_model()` (cloud providers or a different local GGUF still show "Gemma4"). The chat page footer separately hard-codes "Gemma3 4B".
+The `"Gemma4"` model label is a **hard-coded string** in `chat.py`/`retrieval.py`; it does not reflect `get_chat_model()` (cloud providers or a different local GGUF still show "Gemma4").
 
 ### 4.6 Result shape and the export endpoint
 
@@ -226,7 +226,7 @@ The `"Gemma4"` model label is a **hard-coded string** in `chat.py`/`retrieval.py
 
 The API layer adds `request_id`, `conversation_id`, `assistant_message_id`. The finance path (`firefly_service.answer_finance_question`) returns the same keys plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source":"finance","summary":...,"kb_id":...}` to `context`; `thinking` is copied from the note-retrieval pass if present.
 
-**Export.** `GET /api/v1/chat/conversations/{conversation_id}/export?format=markdown|json` in `backend/app/api_desktop.py` calls `chat_store.get_messages(db, conversation_id)`, **a method that does not exist** (`ChatStore` exposes `list_messages(conversation_id, kb_id=None)`), so every call raises `AttributeError` → 500. It also ignores `kb` and does no ownership check. The chat page's "Export" button calls `api.exportChat(activeConversationId, "markdown")`, expects a `text/markdown` body, builds a Blob download named `chat-<first 8 chars>.md`, and **swallows the error silently** (`catch { /* ignore */ }`) — so the button appears to do nothing. Intended output: JSON `[{"role","content","created_at"}]` or markdown `## <role>\n\n<content>\n` blocks joined by blank lines.
+**Export.** `GET /api/v1/chat/conversations/{conversation_id}/export?format=markdown|json` in `backend/app/api_desktop.py` reads the rows through `chat_store.list_messages(conversation_id)` and returns JSON `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>` blocks. It ignores `kb` and does no ownership check. The chat page's "Export" button calls `api.exportChat(activeConversationId, "markdown")`, builds a Blob download named `chat-<first 8 chars>.md`, and swallows errors silently.
 
 ## 5. Conversation persistence (`chat_store.py`, `models/chat.py`)
 
@@ -261,7 +261,7 @@ ORM relationship `ChatConversation.messages` is `cascade="all, delete-orphan"`, 
 
 ### 5.2 `ChatStore` API
 
-All methods are `async`, open their own `AsyncSessionLocal()` session, and return plain dicts (`_conversation_to_dict`: `id, kb_id, title, created_at, updated_at` ISO strings; `_message_to_dict`: `id, conversation_id, role, content, thinking, created_at` — **`metadata` is never returned to clients**).
+All methods are `async`, open their own `AsyncSessionLocal()` session, and return plain dicts (`_conversation_to_dict`: `id, kb_id, title, created_at, updated_at` ISO strings; `_message_to_dict`: `id, conversation_id, role, content, thinking, sources, created_at` — `sources` is `metadata.sources` or `[]`; the rest of `metadata` is never returned to clients).
 
 | Method | Behaviour |
 |---|---|
@@ -289,7 +289,7 @@ History flows through two independent consumers, each with its own truncation:
    - Returns `latest` unchanged when the query is blank/whitespace or history is empty (no LLM call).
    - Takes `history[-CHAT_HISTORY_MAX_MESSAGES:]`, keeps `user`/`assistant` turns with content, truncates each turn to 600 chars (`[:597] + "..."`), renders `User: ...` / `Assistant: ...` lines.
    - Prompt: "You rewrite follow-up questions into standalone search queries for a document collection. CONVERSATION: ... LATEST USER MESSAGE: ... Return ONE standalone search query ... Reply with only the rewritten query." System prompt: "You are a precise query rewriter. Output only the rewritten query."
-   - Uses `_reason_step_sync` (OpenAI-compatible `chat.completions.create` on the chat client — **it has no Gemini/Anthropic branch**, so on those providers `self.chat_client.chat.completions` will fail and the fallback below applies).
+   - Uses `_reason_step_sync`, a thin caller of `_chat` (so it works on every provider, Gemini and Anthropic included).
    - Accepts the result only if non-empty and ≤ 300 chars after stripping quotes; otherwise (or on any exception, logged as a warning) returns the original query. `backend/tests/unit/test_chat_context.py` pins these behaviours (no history → unchanged; LLM failure → unchanged; invalid roles/empty content ignored; 800-char turn truncated with `...`).
    - The rewritten query is what the **entire** retrieval loop sees as `ORIGINAL QUESTION`; the raw user text is only stored and echoed back as `query`.
 
@@ -301,7 +301,7 @@ There is no token counting for history; `CHAT_HISTORY_MAX_MESSAGES` (24 messages
 
 The working tree adds a per-KB chat/ingestion model override that changes how chat picks its LLM:
 
-- `knowledge_bases` gains `llm_provider`, `llm_model`, `llm_ingestion_model` columns (the raw-SQL registry in `kb_registry.py` adds them via `_ensure_optional_columns`). `GET/PATCH /api/v1/kb/{kb_id}/llm` read/update them; `GET /api/v1/kb` rows include `effective_llm {provider, model, ingestion_model, inherited}`. Allowed providers: `local, openai, gemini, anthropic, huggingface` (`LLM_PROVIDERS`); `ollama`/`lm_studio` are mapped to `local`. Local model ids must be catalog chat models already downloaded (`model_catalog.chat_model_downloaded`), cloud providers must have their key in `.env`; the PATCH constructs the service eagerly and rolls the override back with a 400 if construction fails.
+- `knowledge_bases` gains `llm_provider`, `llm_model`, `llm_ingestion_model` columns (the raw-SQL registry in `kb_registry.py` adds them via `_ensure_optional_columns`). `GET/PATCH /api/v1/kb/{kb_id}/llm` read/update them; `GET /api/v1/kb` rows include `effective_llm {provider, model, ingestion_model, inherited}`. Allowed providers: `local, openai_compat, openai, gemini, anthropic, huggingface` (`LLM_PROVIDERS`). Local model ids must be downloaded catalog chat models or GGUF path refs that `inspect_chat_model` accepts, cloud providers must have their key in the credential store (keychain), `openai_compat` needs an endpoint URL and a model; the PATCH constructs the service eagerly and rolls the override back with a 400 if construction fails.
 - `KBContext.llm` returns the global `llm_service` when nothing is pinned, otherwise a cached `LLMService(provider, chat_model=..., ingestion_model=..., ingestion_provider=provider)` rebuilt whenever the override tuple changes. `KBContext._ensure_lazy()` passes that instance as `llm=` to `RetrievalService`, `IngestionWorkflow` and `ChatWorkflow`; `apply_llm_override` drops all three cached services so the next request rebuilds them.
 - `RetrievalService._llm` (property) returns the override or lazily imports the global `llm_service`; `hybrid_search` and `retrieve_with_iterative_loop` call `self._llm.analyze_query` / `self._llm.iterative_step`. `ChatWorkflow._llm` is used for `rewrite_follow_up_query`. **Embedding and reranking remain system-wide** (embedding dims are shared across every KB's Qdrant collections — a deliberate constraint stated in `kb_registry.py`).
 - `LLMService.get_chat_model()` precedence is now: instance `_chat_model_override` → `settings.CHAT_MODEL` → provider-specific key (`LLM_MODEL` for local, `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL`).
@@ -315,7 +315,7 @@ The working tree adds a per-KB chat/ingestion model override that changes how ch
 ### 6.1 Setup
 
 1. Build `conversation_context` from history (§5.4 item 2).
-2. `_progress("Analyzing question", "Gemma4")`; `_loop_qa = llm.analyze_query(query)`; keep only `question_attribute` (`_loop_question_attr`) for reranking graph-expansion docs later. `hybrid_search` re-analyses each sub-query itself; the `analyze_query` memo (`_query_analysis_cache`, 64 entries, key `(query, today)`) dedupes identical strings within a day, which matters because a cache miss on local mode forces a chat-GGUF load.
+2. `_progress("Analyzing question", "Gemma4")`; `_loop_qa = llm.analyze_query(query)`; keep only `question_attribute` (`_loop_question_attr`) for reranking graph-expansion docs later. `hybrid_search` re-analyses each sub-query itself; the `analyze_query` memo (`functools.lru_cache(maxsize=64)` on `_analyze_query_cached`, key `(query, today)`) dedupes identical strings within a day, which matters because a cache miss on local mode forces a chat-GGUF load.
 3. State: `accumulated_steps: list[{query, full_answer, reasoning}]`, `all_docs: list[dict]`, `surfaced_names: set[str]`, `current_query = None`, `tried_queries: list[str]`.
 
 ### 6.2 Each iteration (`for iteration in range(settings.MAX_LOOP_ITERATIONS)`, default 3)
@@ -354,7 +354,6 @@ The Sub-Questions approach (decompose into 2–4 sub-questions) preceded the loo
 |---|---|---|
 | `intent` | `search\|summarize\|compare\|explain\|list\|recent\|verify` | logged only |
 | `entities` | `list[str]` | **sole source of entity names** for the Kuzu entity branch (no regex/TitleCase fallback — the code that once filtered stopwords/short tokens is now empty lists) |
-| `concepts` | `list[str]` | appended to the embedding query; extra Meili terms |
 | `keywords` | `list[str]` | extra Meili terms |
 | `expected_entity_types` | `list[str]` (lowercased) | appended to the reranker query as `type: a, b` |
 | `question_attribute` | `str|null` | appended to the embedding query and the reranker query |
@@ -363,7 +362,7 @@ The Sub-Questions approach (decompose into 2–4 sub-questions) preceded the loo
 
 The prompt embeds `Today's date: {ISO today}` so the model resolves relative dates ("yesterday", "last month") itself — **there is no natural-language date parser anywhere in the backend**. The prompt's examples use the key `expected_entity_types` while its bullet list says `entity_types`; the schema field is `expected_entity_types`. On any exception the safe defaults are returned (see doc 13 §7).
 
-The **enriched query** used for embedding is `f"{query} {question_attribute} {concepts...}"` (only non-empty parts). The reranker query is built separately (§8.3).
+The **enriched query** used for embedding is `f"{query} {question_attribute}"` (only non-empty parts; there is no `concepts` field any more). The reranker query is built separately (§8.3).
 
 ### 7.2 Embedding
 
@@ -393,13 +392,13 @@ Each branch's exception is caught and replaced with `[]` plus a warning (`[Entit
 
 #### Keyword branch (`_meili_branch`, Meilisearch)
 
-- Terms: `[query] + [t for t in keywords + concepts if t.lower() not in query.lower()]`.
+- Terms: `[query] + [t for t in keywords if t.lower() not in query.lower()]`.
 - Each term → `_search_meili_by_keyword(term)` → `asyncio.to_thread(meili.search_nodes, term, 100)`. `search_nodes` returns hits with `score = total_hits - rank_index` (a **rank-derived pseudo-score**, not a BM25 score; Meili's own ranking score is not requested) and `payload = the indexed document` (`node_id, name, type, description, ...`).
 - Per term, dedupe by lowercase name keeping the higher pseudo-score; across terms, first-seen wins. Result rows: `{id: node_id, name, entity_type: type, summary: description, score, _source: "meili"}` — note the key is `id`, **not `node_id`**, which matters for later `node_id`-keyed lookups (they fall back to `id`).
 
 #### Vector branch (`_vector_branch` → `_search_qdrant_multi_collection`)
 
-See §7.4 — searches `node_cores`, `node_relationships`, `node_isolated_contexts` concurrently (one thread per collection inside `QdrantService.search_all_collections`) with `limit=500` per collection and `score_threshold` = `VECTOR_PRE_RERANK_THRESHOLD` (0.45) when `RERANKER_ENABLED` else `VECTOR_SIMILARITY_THRESHOLD` (0.50). The comment in code is explicit: the 500 ceiling exists only because the Qdrant API requires a limit; "the score_threshold is the only real filter".
+See §7.4 — searches `node_cores`, `node_relationships`, `node_isolated_contexts` one after another (a sequential loop inside `QdrantService.search_all_collections`; a `ponytail:` comment marks the thread-pool upgrade path) with `limit=500` per collection and `score_threshold` = `VECTOR_PRE_RERANK_THRESHOLD` (0.45) when `RERANKER_ENABLED` else `VECTOR_SIMILARITY_THRESHOLD` (0.50). The comment in code is explicit: the 500 ceiling exists only because the Qdrant API requires a limit; "the score_threshold is the only real filter".
 
 ### 7.4 Vector search details and temporal handling
 
@@ -465,7 +464,7 @@ Build order and types:
 - **B. Vector nodes** (incl. vector variants): same text check; `type="community_summary"` when `entity_type.lower() == "community"` else `"vector_match"`.
 - No candidate type `neighbor_node` is produced any more, although the summary log line still counts it.
 
-`_get_node_text(node)` = `summary` or `description` or `" ".join(isolated_contexts)`. `_build_node_text(node, [])` renders the root line: `"{name} is a {entity_type}. {text}"` when a type exists; else the text itself if it already starts with the name; else `"{name}. {text}"`. There is **no scoring fusion** across channels: vector scores, Meili pseudo-scores and entity matches are never combined numerically. Channel precedence only decides *which entry survives name-dedup*; the reranker alone decides the final order. (The `boosts`/`symbolic_immune` keys printed by `_log_retrieval_details` are relics of the 2026-02 "symbolic ranking" pipeline and are never set.)
+`_get_node_text(node)` = `summary` or `description` or `" ".join(isolated_contexts)`. `_build_node_text(node, [])` renders the root line: `"{name} is a {entity_type}. {text}"` when a type exists; else the text itself if it already starts with the name; else `"{name}. {text}"`. There is **no scoring fusion** across channels: vector scores, Meili pseudo-scores and entity matches are never combined numerically. Channel precedence only decides *which entry survives name-dedup*; the reranker alone decides the final order. (`_log_retrieval_details` is one JSON debug line per retrieval — type, score, name, linked notes and the text sent to the LLM per candidate.)
 
 If there are zero candidates, `hybrid_search` logs `[Retrieval] No candidates found` and returns `[]`.
 
@@ -474,7 +473,7 @@ If there are zero candidates, `hybrid_search` logs `[Retrieval] No candidates fo
 Three layers:
 
 1. `RetrievalService._apply_reranker_logging(query, candidates, top_n, question_attribute, expected_entity_types, score_threshold)` — builds query + texts, applies scores, sorts, slices, thresholds.
-2. `RerankerService.rerank(query, documents, top_n=None)` (`services/reranker.py`) — async façade: returns `[]` if no documents, if `reranker_gguf_path()` is `None` (logs `No GGUF selected — download/select a reranker in Setup`), or on any exception (logged at ERROR). Otherwise `await asyncio.to_thread(local_gguf_reranker.rerank, ...)` and the rows are returned as-is (`results or []`).
+2. `RerankerService.rerank(query, documents, top_n=None)` (`services/reranker.py`) — async façade: returns `[]` if no documents, if `reranker_gguf_path()` is `None` (logs `No GGUF selected — download/select a reranker on the Models page`), or on any exception (logged at ERROR). Otherwise `await asyncio.to_thread(local_gguf_reranker.rerank, ...)` and the rows are returned as-is (`results or []`).
 3. `LocalGgufReranker.rerank` (`services/local_models.py`) — Qwen3-Reranker GGUF via llama-cpp-python, `n_ctx` from `ORB_RERANK_N_CTX` (default 8192), `logits_all=True`. Each document is scored **one at a time, sequentially** with a 1-token completion (`max_tokens=1, temperature=0, logprobs=5`) of the prompt
    ```
    <|im_start|>system\n{_RERANK_SYSTEM}\n<|im_end|>
@@ -645,7 +644,7 @@ So one retrieval iteration in local mode is at minimum **chat → embed → rera
 
 **Cloud providers** (`LLM_PROVIDER=openai|gemini|anthropic|huggingface`, or a KB override) remove the chat-model swaps but **embedding and reranking stay local** — the embed ↔ rerank swap per iteration remains, and the reranker's sequential per-document scoring is unchanged.
 
-**Batching/parallel I/O already in place** (commits `8de5cda`, `b84ca73`): entity/BM25/vector branches concurrent; per-term Meili queries concurrent; Qdrant collections searched in a thread pool; all Kuzu variant lookups batched (`find_name_variants_batch`); Qdrant content/relationship enrichment batched by id list; note grounding one Cypher `UNWIND`; SQLite title lookup one `IN` query. Remaining serial hot spots: the reranker's per-document loop, `get_related_nodes` once per relevant doc (two Cypher queries each), and the LLM calls themselves.
+**Batching/parallel I/O already in place** (commits `8de5cda`, `b84ca73`): entity/BM25/vector branches concurrent; per-term Meili queries concurrent; Qdrant's three collections searched sequentially (one call each; the thread pool was dropped on 2026-09-19); all Kuzu variant lookups batched (`find_name_variants_batch`); Qdrant content/relationship enrichment batched by id list; note grounding one Cypher `UNWIND`; SQLite title lookup one `IN` query. Remaining serial hot spots: the reranker's per-document loop, `get_related_nodes` once per relevant doc (two Cypher queries each), and the LLM calls themselves.
 
 ## 11. Configuration keys that influence retrieval and chat
 
@@ -679,7 +678,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `COMMUNITY_DETECTION_ENABLED` / `TEMPORAL_DIGESTS_ENABLED` / `TEMPORAL_DIGEST_PERIOD` | `False` / `False` / `month` | ingestion only | Whether community/digest nodes exist to be retrieved; retrieval itself has no switch |
 | KB row `llm_provider` / `llm_model` / `llm_ingestion_model` | `NULL` | `KBContext.llm` | Per-KB override of provider + chat model (working tree) |
 
-Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name variants `limit_per_name=5`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; `_dedupe_docs`/`_truncate_context` `max_docs` 6 (chat) / 12 (finance retrieval); history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `_query_analysis_cache` 64 entries; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
+Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name variants `limit_per_name=5`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; `_dedupe_docs`/`_truncate_context` `max_docs` 6 (chat) / 12 (finance retrieval); history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `analyze_query` `lru_cache` 64 entries; `_chat_status` 200 entries / 1800 s; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
 
 ## 12. Function reference
 
@@ -689,7 +688,7 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 |---|---|
 | `RetrievalService.__init__(graph, qdrant, meili, llm=None)` | Bind per-KB stores (defaults to module singletons) and optional per-KB LLM |
 | `RetrievalService._llm` (property) | Per-KB LLM override or lazily-imported global `llm_service` |
-| `_log_retrieval_details(query, results, query_entities, query_concepts)` | DEBUG dump of every final candidate: type, score, full summary, isolated context, linked notes, exact text sent to the LLM |
+| `_log_retrieval_details(query, results, query_entities)` | One DEBUG JSON line: query, entities and, per final candidate, type, score, name, linked notes and the exact text sent to the LLM |
 | `_get_node_relationships(node, max_relationships=5)` | Legacy 1-hop relationship sentences for a node (Kuzu + Qdrant neighbour contexts). **Unused** |
 | `_expand_relevant_neighbors(relevant_docs, question, surfaced_names)` | 1-hop graph expansion: collect unseen neighbours, fill NL predicates from Qdrant, enrich, per-pair rerank to top-N, emit one `graph_expansion` doc per origin with neighbour note provenance |
 | `_build_node_text(node, relationships, brief_root=False)` | Render `"{name} is a {type}. {ctx}"` plus one `"{a} {predicate} {b}."` + neighbour descriptor line per relationship (`brief_root` = header only; currently never passed as True) |
@@ -715,7 +714,7 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 | `ChatWorkflow._retrieve_context(user_query, history, progress_callback, max_context_docs)` | Rewrite follow-up → `retrieve_with_iterative_loop(top_k=50)` → dedupe/truncate; returns `(rewritten_query, final_answer or "", unique_docs, thinking)` |
 | `ChatWorkflow.chat(user_query, history, progress_callback)` | Full turn: retrieve (max 6 docs) → choose answer/fallback → `sources` (`ChatSource` list) → timing → result dict |
 | `ChatWorkflow.retrieve_for_query(user_query, history, progress_callback)` | Evidence only (max 12 docs), no answer; used by the finance path |
-| `ChatWorkflow._extract_references(docs)` | Unique `- [title](/notes/id)` lines from `linked_notes`, titles refreshed from SQLite `notes` |
+| `ChatWorkflow._extract_references(docs)` | Unique `ChatSource(id, title)` entries from `linked_notes`, titles refreshed from SQLite `notes` |
 
 ### 12.3 `backend/app/api/chat.py` and `backend/app/services/chat_store.py`
 
@@ -775,7 +774,7 @@ Conversation and message records (`GET .../conversations`, `.../messages`, `Chat
 - **Entity highlighting:** `useScannedEntities(content, kb, {enabled, cacheKey: message.id})` POSTs the answer text to `/api/v1/graph/entities/scan-text` (regex-extracted capitalised candidates → Meili `search_nodes(candidate, 2)`, skipping `note`/`community` types) and `injectEntityLinks` rewrites matched names into `entity://<node_id>` links rendered as dashed-underline buttons that open `EntityDetailPanel`. Only the **5 most recent assistant messages** (`ENTITY_SCAN_RECENT_LIMIT`) are scanned (commit `b84ca73`: older conversations used to fire one scan per message on load); results are cached in a bounded module-level map keyed by `kb:messageId`, and in-flight scans are aborted via `AbortSignal` when content/KB changes.
 - **Markdown links:** `urlTransform`/`MarkdownAnchor` from `lib/markdown-entities` handle `entity://`, `/notes/...`, file links; other anchors render normally.
 - **User messages** render as plain `whitespace-pre-wrap` text.
-- Header: New Chat, Delete Chat (confirm dialog → soft delete), Export (broken, §4.6), conversation `<select>` (titles), KB badge, store badges. Footer hard-codes "Gemma3 4B · Qwen3 Embedding · Qwen3 Reranker · Florence 2 · Whisper V3".
+- Header: New Chat, Delete Chat (confirm dialog → soft delete), Export (broken, §4.6), conversation `<select>` (titles), KB badge, store badges.
 
 ## 14. How to tune retrieval
 
@@ -789,7 +788,7 @@ Work from the logs (§15.1) before touching knobs: `retrieval.log` tells you whi
 | Multi-hop questions stop after one hop | Not enough iterations | `MAX_LOOP_ITERATIONS` 3 → 4 or 5 (each extra iteration ≈ one full embed/rerank/chat swap cycle in local mode); check `[IterLoop] EXHAUSTED` vs the no-next-query warning in logs to see which termination fired |
 | Bridge entity is only reachable through a neighbour | Expansion budget | Raise `GRAPH_EXPAND_TOP_NEIGHBORS`; keep `GRAPH_EXPAND_SCORE_THRESHOLD` at 0 unless expansions are visibly noisy |
 | Answers ignore facts that were retrieved | Prompt too long / weak model | Lower `RERANKER_TOP_K`, or move `LLM_PROVIDER`/KB override to a stronger model; check `llm.log` for `PromptTooLongError` or `hit max_tokens` |
-| "I couldn't find any relevant information" on every question | Reranker missing/disabled with default threshold | Select/download the reranker in Setup, or set `RERANKER_SCORE_THRESHOLD=0`; look for `[Reranker] No GGUF selected` / `Model returned no scores` |
+| "I couldn't find any relevant information" on every question | Reranker missing/disabled with default threshold | Select/download the reranker on the Models page, or set `RERANKER_SCORE_THRESHOLD=0`; look for `[Reranker] No GGUF selected` / `Model returned no scores` |
 | Month/day questions miss ordinary entities | Month mode restricts `node_cores` to `period_key` matches; day mode searches contexts only | Enable temporal digests/communities at ingestion, or rephrase without the date; there is no config knob for this behaviour |
 | Slow turns | Model swaps | Read the `[Timing] chat … model_load=… loads=…` line; raise `ORB_MODEL_IDLE_SECONDS`/set 0 to avoid cold loads, use a cloud chat provider to remove chat-model swaps, reduce `RERANKER_TOP_K` to shorten reranker passes |
 | Follow-ups lose context | History window | `CHAT_HISTORY_MAX_MESSAGES` (also increases rewrite prompt size) |
@@ -827,7 +826,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | Per-KB pinned local model not downloaded | `resolve_chat_gguf` raises → `Failed` (PATCH normally prevents this) | Error bubble |
 | `analyze_query` JSON/provider failure | Safe defaults: no entities, keywords = whitespace tokens; entity channel skipped | Weaker recall; `Query analysis failed` in `llm.log` |
 | `iterative_step` LLM failure, JSON parse failure or `PromptTooLongError` | Empty result → no next query → exhaustion | "couldn't find enough information"; cause only in `llm.log` |
-| LLM ignores the protocol (no labels) | Planning turn: single-line fallback accepted as query; assessment turn: FINDING promoted to answer, else stop | Possibly premature/odd answer |
+| LLM ignores the protocol (not a JSON object with the four keys) | `_ResearchStep.model_validate_json` raises → empty result → no next query → exhaustion | "couldn't find enough information" |
 | LLM repeats a query | Not detected; the loop searches again (cache makes analysis cheap, but embed/rerank/reason repeat) | Wasted iteration |
 | Local repetition loop (Gemma ordinal cascade) | `create_chat_completion` retries up to 3 fresh samples, then `RuntimeError` → exhaustion or `Failed` | `llm.log` `Chat repetition loop on attempt n/3` |
 | Empty graph / fresh KB | All channels empty → exhaustion | "I couldn't find any relevant information in the knowledge base to answer that." |
@@ -864,11 +863,10 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - `reranker_rank` is the pre-sort index, not the final rank.
 - `hybrid_search(top_k)` and `retrieve_with_iterative_loop(top_k)` ignore `top_k`.
 - `MODEL_RERANKER_LOCAL` is a display string; the reranker file is chosen by the models manifest.
-- The `"Gemma4"` model label in stages and the "Gemma3 4B" footer are hard-coded.
-- `_chat_status` grows unbounded (each entry keeps the full `result.context`).
+- The `"Gemma4"` model label in stages is hard-coded.
+- `_chat_status` keeps the full `result.context` per entry until `_prune()` evicts it (200 entries / 1800 s).
 - Sync `/chat` bypasses the job lock and never sets `done`.
 - `ensure_conversation` silently forks a new conversation for unknown/foreign/deleted ids.
-- `rewrite_follow_up_query` uses the OpenAI-style client only; on `gemini`/`anthropic` providers it fails and falls back to the raw query (logged as a warning, not an error).
 - Month filter (`period_filter`) excludes ordinary entity cores; day filter searches contexts only.
 - Stored `natural_language` is used verbatim in `_build_node_text` (`{origin} {nl} {neighbour}.`); a sentence that already contains both entity names doubles them.
 - `find_nodes_by_name` fuzzy `CONTAINS` also matches note nodes (`kind='note'`), so note titles compete as entities.
@@ -887,7 +885,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - **Add streaming:** replace the status dict with an SSE/WebSocket endpoint fed by the same `progress_callback`; keep `_chat_status` for the existing poller.
 - **Add cancellation:** keep the `asyncio.Task` from `_chat_tasks` addressable by `request_id` and `task.cancel()`; note the LLM/embedding calls run in threads and will not stop mid-call.
 - **New stage strings:** free-form; the UI shows them verbatim. Keep them short.
-- **Evict job status:** add a TTL sweep over `_chat_status` keyed by completion time; keep entries at least until the client's next poll.
+- **Change job-status retention:** the constants in `_prune()` (200 entries, 1800 s); keep entries at least until the client's next poll.
 - **New config knob:** add to `Settings` in `core/config.py`, document in `backend/.env.example` and [Configuration reference](21-configuration-reference.md).
 
 ## 18. History and rationale
@@ -910,4 +908,4 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | 2026-08-06/07 `b84ca73`, `8de5cda` | Concurrent entity/BM25/vector search, batched Kuzu/Qdrant lookups, `analyze_query` day-cache; frontend scans only the 5 most recent messages with id-keyed cache and abortable requests | Fewer round trips and model swaps |
 | working tree (2026-09) | Per-KB LLM override (provider + chat/ingestion model), `model_load_clock` timing line, dynamic output budget / `PromptTooLongError`, per-KB chat GGUF switching, `require_ai(kb)` | Attribute wall time to loads vs inference; let a KB pin a stronger/cloud model |
 
-Open discrepancies noted while writing (also listed in the report): docstring-only keyword fallback in `_apply_reranker_logging`; unused `_get_node_relationships`; `neighbor_node` type in logs; "person entities" comment on the untyped vector-variant expansion; broken chat export; hard-coded "Gemma4"/"Gemma3 4B" labels; `rewrite_follow_up_query` lacking Gemini/Anthropic branches.
+Open discrepancies noted while writing (also listed in the report): docstring-only keyword fallback in `_apply_reranker_logging`; unused `_get_node_relationships`; `neighbor_node` type in logs; "person entities" comment on the untyped vector-variant expansion; broken chat export; hard-coded "Gemma4" label.

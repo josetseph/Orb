@@ -9,7 +9,7 @@ Everything else is the Python runtime's job.
 
 | Concern | Owner |
 |---|---|
-| First-run setup (data dir, models dir, vault, AI mode → `paths.json`) | shell (`desktop/shell/index.html` + `save_setup` command) |
+| First-run setup (data dir, models dir, vault → `paths.json`) | shell (`desktop/shell/index.html` + `save_setup` command) |
 | Spawning, watching, restarting, killing the runtime | shell (`src-tauri/src/runtime.rs`) |
 | The window, navigation guard, `window.orbDesktop` bridge | shell (`runtime.rs`, `src/init.js`) |
 | Native pickers, notifications, external links | shell (Tauri dialog / notification / opener plugins) |
@@ -21,7 +21,7 @@ Everything else is the Python runtime's job.
 
 ```
 desktop/
-  build.py                 packaging pipeline (see doc 05)
+  build.py                 packaging pipeline (see doc 05; on macOS the DMG comes from hdiutil, not Tauri)
   shell/index.html         first-run page; blank on every other launch until the window navigates
   build/                   icon.png, entitlements.mac.plist
   src-tauri/
@@ -62,12 +62,13 @@ leaves nothing behind.
 
 - **Ports**: `ORB_{API,FIREFLY,QDRANT,MEILI}_PORT`, defaults 17401 / 17412 / 17433 / 17470.
 - **Paths**: `ORB_DATA_DIR` / `ORB_MODELS_DIR` / `paths.json` via `app.core.paths`.
+- **Cloud-sync guard**: `main()` prints `[desktop] WARNING: data dir <path> is inside a cloud-synced folder; move it to local disk (Settings -> Storage)` when any component of the data dir is `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive` — evicted Files-On-Demand placeholders block reads and sync clients corrupt SQLite/Kuzu/Qdrant under a running engine. Keep `DATA_DIR` on local disk (the default `~/Library/Application Support/Orb/data` is); only the markdown vault belongs in a synced folder, pinned "Always keep on this device".
 - **Env defaults** (overridable): `LLM_PROVIDER=local`,
   `EMBEDDING_PROVIDER=local`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`.
 - **Sidecars**: Qdrant and Meilisearch binaries are downloaded on first run into
   `DATA_DIR/bin/<platform>/` (optional `ORB_SHA256_<ASSET>` pins). The Meili master
   key lives in `DATA_DIR/meili_master_key`. Firefly: portable PHP + app seeded from
-  `<resources>/firefly` (or downloaded), `.env` written, `artisan migrate`, `db:seed`,
+  `<resources>/firefly` (or downloaded), `.env` written with every value quoted (`_env_quote`: single quotes, or double quotes with `\`, `"` and `$` escaped when the value holds an apostrophe — the default macOS data dir path contains a space and phpdotenv rejects an unquoted one), `artisan migrate`, `db:seed`,
   Passport keys/client, desktop user + API token in `DATA_DIR/firefly/runtime.json`.
 - **Reconnect on use**: `QdrantService` and `MeilisearchService` retry their
   connection when called, so a KB opened before a sidecar is listening becomes

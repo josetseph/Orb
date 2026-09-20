@@ -4,7 +4,6 @@ Unit tests for graph service query paths.
 Covers:
   - get_related_nodes depth=1 (fast path, never touches variable-length syntax)
   - get_related_nodes depth>1 (fixed path, no all() predicate in WHERE)
-  - find_paths_between_nodes (fixed path, no all() predicate in WHERE)
   - Post-filtering logic for confidence
 """
 

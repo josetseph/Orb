@@ -9,9 +9,12 @@ A Tauri (Rust) shell over the Python desktop runtime. The shell spawns one child
 3. Serves the built **Vite UI** from the API (one origin, no CORS, no UI server)
 4. Persists cloud keys in the **OS keychain** and stops every sidecar when the API exits
 
-First run shows a bundled setup page (data dir, models dir, vault, AI mode) that
+First run shows a bundled setup page (data dir, models dir, vault) that
 writes `paths.json`. Every other launch opens straight onto Notes; download and
-boot progress shows in the status indicator inside the app.
+boot progress shows in the status indicator inside the app. Keep the data dir on
+local disk (the default `~/Library/Application Support/Orb/data` is fine); the
+runtime warns when it sits in iCloud/OneDrive/Dropbox/Google Drive. The vault is
+the one folder that may be synced.
 
 Ports: API `17401` (serves the UI), Firefly `17412`, Qdrant `17433`, Meilisearch
 `17470`. Override any with `ORB_*_PORT`. See [PACKAGING.md](./PACKAGING.md).
@@ -60,7 +63,7 @@ Logs: `DATA_DIR/logs/backend.log` (runtime + API), `qdrant.log`, `meilisearch.lo
 
 ```bash
 python3 desktop/build.py prepare   # ~10–20 min first time: Python wheels, UI, Firefly seed
-python3 desktop/build.py dist      # preflight, then `cargo tauri build`
+python3 desktop/build.py dist      # preflight, then `cargo tauri build` (macOS: .app via Tauri, DMG via hdiutil)
 ```
 
 Bundles land under `desktop/src-tauri/target/release/bundle/`. Details in

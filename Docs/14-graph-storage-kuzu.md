@@ -12,7 +12,7 @@
 
 - The per-KB Kuzu database file (`DATA_DIR/kuzu/<slug>/kuzu_graph`, default KB: `DATA_DIR/kuzu/kuzu_graph`) and its `.wal`.
 - Schema bootstrap (idempotent DDL in `_SCHEMA_STMTS`) and a process-wide `threading.RLock` per `GraphService` instance that serialises every Cypher statement.
-- Structural facts only: which node IDs exist, their `kind`/`name`/`type`, which note REFERENCES which entity, SEMANTIC_REL edges with numeric weights and provenance, community membership (MEMBER_OF / CONTAINS), and persisted 3D coordinates (`pos_x/pos_y/pos_z`).
+- Structural facts only: which node IDs exist, their `kind`/`name`/`type`, which note REFERENCES which entity, SEMANTIC_REL edges with their provenance (`note_id`, timestamps, `mention_count` — the score columns are schema-only), community membership (MEMBER_OF / CONTAINS), and persisted 3D coordinates (`pos_x/pos_y/pos_z`).
 - The 3D layout algorithms (`backend/app/utils/graph_layout.py`) whose outputs are persisted to Kuzu.
 - The `GET /api/v1/graph/*` visualisation/autocomplete endpoints and the `/api/v1/admin/*` maintenance endpoints that drive rebuilds.
 
@@ -37,7 +37,6 @@
 | `backend/app/core/config.py` | `KUZU_DB_PATH`, `COMMUNITY_*`, `TEMPORAL_DIGEST*` settings | `settings` |
 | `backend/tests/unit/test_graph_queries.py` | Pins Cypher shape / return contract of hop queries and name lookups | — |
 | `backend/tests/unit/test_graph_layout.py` | Pins layout determinism and geometry | — |
-| `backend/tests/unit/test_relationships.py` | Pins relationship-type cleaning and edge-weight behaviour | — |
 | `backend/requirements.txt` | `kuzu==0.11.3` pin | — |
 
 ## 3. Architecture / flow
@@ -294,11 +293,10 @@ Older ingests stored descriptions as `"FACTS: k=v | k=v. Prose…"`. They were s
 ```python
 create_or_update_relationship(
     source_name, source_label, target_name, target_label, relationship_type,
-    confidence=1.0, strength=5.0, relevance=5.0, natural_language="",
-    relationship_id=None, context="", note_id=None, source_id="", target_id="")
+    natural_language="", relationship_id=None, note_id=None, source_id="", target_id="")
 ```
 
-`source_label`, `target_label`, `context` are accepted for call-site compatibility and ignored (all nodes are `indexable`).
+`source_label`, `target_label` are accepted for call-site compatibility and ignored (all nodes are `indexable`). There are no score parameters.
 
 Steps:
 1. Empty `relationship_type` → `ValueError`. Otherwise `re.sub(r"[^A-Za-z0-9_]", "_", relationship_type.strip())`. (The ingestion caller passes `ExtractedRelationship.relationship_type`, which the schema has already coerced onto `RELATIONSHIP_TYPES` — default `related_to`, doc 10 §6.3 — so in practice the sanitiser is a no-op.)
@@ -324,8 +322,8 @@ An edge is identified by the triple `(source.id, target.id, rel_type)` and is **
 
 | Field | Source | Read by |
 |---|---|---|
-| `confidence` | LLM extraction (0–1) | `_hop_query` returns `coalesce(r.confidence, 1.0)` as `confidence_path`; var-length query returns `coalesce(r.confidence, 0.0)`. Retrieval receives it but current code does no confidence filtering (the in-code comment "Confidence filtering is done in Python below" is stale; see §18). |
-| `confidence`, `strength`, `relevance`, `edge_weight` | schema-only (never written since 2026-09-19) | not read by any query today |
+| `confidence` | schema-only (never written since 2026-09-19; NULL on every edge) | `_hop_query` still returns `coalesce(r.confidence, 1.0)` as `confidence_path` and the var-length query `coalesce(r.confidence, 0.0)` — so retrieval always sees the fallback constants and does nothing with them (the in-code comment "Confidence filtering is done in Python below" is stale; see §18). |
+| `strength`, `relevance`, `edge_weight` | schema-only (never written since 2026-09-19) | not read by any query today |
 | `mention_count` | reinforcement counter | not read by any query today |
 | `note_id` | first asserting note | not read by any query today (REFERENCES.note_id is what evidence lookups use) |
 
@@ -387,7 +385,7 @@ Response includes `orphans_removed`. Community nodes are not recounted; a commun
 
 ### 9.1 What the algorithm really is
 
-Everything is named *Leiden* — `rebuild_leiden_communities`, `create_leiden_community`, `set_node_community_membership` docstrings, log prefixes `[Community]`, the admin endpoint — but **no Leiden/Louvain/igraph/networkx code exists in the repo** (`git grep` for `leidenalg|igraph|networkx` returns nothing; none are in `backend/requirements.txt`). The implementation in `IngestionWorkflow.rebuild_leiden_communities` is **agglomerative clustering of embedding vectors** using `sklearn.cluster.AgglomerativeClustering(n_clusters=None, distance_threshold=…, metric="cosine", linkage="average")` on L2-normalised vectors from `embedding_service.embed_documents`. The graph topology (SEMANTIC_REL edges) is **not** an input to clustering; only node text is. Treat "Leiden" as a historical label.
+Everything is named *Leiden* — `rebuild_leiden_communities`, `create_leiden_community`, `set_node_community_membership` docstrings, log prefixes `[Community]`, the admin endpoint — but **no Leiden/Louvain/igraph/networkx code exists in the repo** (`git grep` for `leidenalg|igraph|networkx` returns nothing; none are in `backend/requirements.txt`). The implementation in `IngestionWorkflow.rebuild_leiden_communities` is a **greedy cosine-threshold merge of embedding vectors** (`_embedding_cluster`: each item joins the first cluster whose centroid is within `distance_threshold`, else starts a new one — plain numpy, single pass, no scikit-learn) on L2-normalised vectors from `embedding_service.embed_documents`. The graph topology (SEMANTIC_REL edges) is **not** an input to clustering; only node text is. Treat "Leiden" as a historical label.
 
 ### 9.2 Three-level hierarchy
 
@@ -441,12 +439,12 @@ The caller (`rebuild_leiden_communities`) then calls `qdrant.delete_node(id)` an
 | **Idle after ingestion** | `process_note` `finally:` → `IngestionTrackerService.end_ingestion(self.rebuild_leiden_communities)`; when the active-ingestion counter reaches 0 → `schedule_recompute` → `_debounce_recompute` sleeps `COMMUNITY_IDLE_SECONDS = 120` (module constant in `ingestion_tracker.py`, **not** a setting) then `asyncio.to_thread(callback)` if there are pending node ids **or** `_recompute_needed` | `settings.COMMUNITY_DETECTION_ENABLED` (default **False** in `config.py`; `.env.example` ships `true`) |
 | **Admin** | `POST /api/v1/admin/rebuild-communities` → `BackgroundTasks.add_task(kb.get_ingestion_workflow().rebuild_leiden_communities)` | none — works even when the flag is off |
 
-Pending ids come from `_queue_leiden_recompute_if_due(note_id)`: the note's 1-hop `indexable` neighbours are added to `_tracker._pending_node_ids`. They are only a *trigger*; the rebuild is always full-graph (the tracker's `queue_nodes_for_community_recompute` "always returns an empty batch").
+The pending count comes from `_queue_leiden_recompute_if_due(note_id)`: the number of the note's 1-hop `indexable` neighbours is added to the tracker's per-KB `_pending_counts[kb_id]` (`queue_nodes_for_community_recompute(count, kb_id=…)` returns the new queue size). It is only a *trigger and a status number*; the rebuild is always full-graph.
 
 
 ### 9.7 Cancellation, single-flight and early stop
 
-- `_tracker` is the process-global `ingestion_tracker` singleton, shared by **all** KBs. `begin_ingestion` (any KB) sets `cancel_recompute` and `cancel_temporal`; a running rebuild in KB A is cancelled by an ingest in KB B. The debounce callback is whichever workflow's bound method was passed to the most recent `end_ingestion`, so with multi-KB ingestion the idle-triggered rebuild may run for a different KB than the one whose nodes were queued.
+- `_tracker` is the process-global `ingestion_tracker` singleton, but its state is keyed per KB (`_active_ingestion_counts`, `_debounce_tasks`, `_community_recompute_running`, `_pending_counts`, all by `kb_id`), so each KB gets its own idle timer and its own `rebuild_leiden_communities` callback. Only the two cancel events are global: `begin_ingestion` (any KB) sets `cancel_recompute` and `cancel_temporal`, so a running rebuild in KB A is cancelled by an ingest in KB B.
 - Inside `rebuild_leiden_communities`, `_tracker.cancel_recompute.is_set()` is checked before every cluster at each level and inside the generic-name retry loop; when set the method returns `created` (count so far). `_debounce_recompute` then sets `_recompute_needed=True` and reschedules if no ingestion is active.
 - Per-workflow single-flight: `_community_run_seq` / `_community_run_active_seq` / `_community_run_running` under `_community_run_state_lock`. A newer request sets `cancel_recompute`, polls every 0.25 s until the active run releases, and an older superseded request returns 0 without running. The claim is released in `finally`.
 - If ingestion becomes active during the claim handoff, the cancel flag is preserved so the new run exits at its first checkpoint.
@@ -625,7 +623,7 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 
 | Method & path | Body | Response | Side effects |
 |---|---|---|---|
-| `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running", "pending_nodes", "needed", "timer_armed", "idle_seconds"}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}` | none; combines the per-KB workflow flags with the global tracker snapshot |
+| `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running", "pending_nodes", "needed", "timer_armed", "idle_seconds"}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}` | none; combines the per-KB workflow flags with the tracker's snapshot for that KB (`get_status_snapshot(kb_id)`) |
 | `POST /api/v1/admin/rebuild-communities` | — | `{"status":"started","message":…}` | `BackgroundTasks` → `rebuild_leiden_communities()` for the KB; ignores `COMMUNITY_DETECTION_ENABLED` |
 | `POST /api/v1/admin/build-temporal-digests` | `{"period": "month"|"week"|"year"|null}` | `{"status":"started","message":"… (period=…)"}` | `BackgroundTasks` → `build_temporal_digests(period)`; **no-ops if `TEMPORAL_DIGESTS_ENABLED` is False** |
 | `POST /api/v1/admin/reset-ingestion-data` | — | `{"status":"started",…}` | Synchronously `UPDATE notes SET processed=false, failed=false WHERE kb_id=…` and commit; then in background `kb.graph.wipe_all_nodes()`, `kb.qdrant.reset_all()`, `kb.meili.reset_all()`. Tables/collections/indexes are recreated empty; Kuzu tables are **not** dropped (schema stays). |
@@ -704,7 +702,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 4. **Feature flags default to `False` in code but `true` in `.env.example`.** Desktop builds without a `.env` get no automatic community detection or digests unless `runtime_config.json` sets them.
 5. **`POST /admin/build-temporal-digests` returns `started` but does nothing when `TEMPORAL_DIGESTS_ENABLED` is False**, contradicting its docstring. `rebuild-communities` really does ignore its flag.
 6. **`COMMUNITY_IDLE_SECONDS=120` is a constant.**
-7. **Stale unit tests.** `backend/tests/unit/test_graph_queries.py` calls `find_paths_between_nodes` and `get_related_nodes(..., min_confidence=…)`, both removed in da75dfc, and its stub sets `svc._db/_conn` while the class uses `db/conn`; `test_relationships.py` imports `app.schemas.relationships`, deleted in da75dfc. These tests fail today; the depth-1 tests still pass. `test_graph_layout.py` is current.
+7. **Unit tests.** `backend/tests/unit/test_graph_queries.py` covers `get_related_nodes` (depth 1 and the depth>1 Cypher shape); the tests for `find_paths_between_nodes` / `min_confidence` (removed in da75dfc) were deleted on 2026-09-19. `test_graph_layout.py` is current.
 8. **`get_related_nodes` depth>1 is undirected, unfiltered and has no `edge_direction`**; the "Confidence filtering is done in Python below" comment describes removed code. Depth 1 returns `coalesce(confidence,1.0)`, depth>1 `coalesce(confidence,0.0)`.
 9. **Reinforcement is first-write-wins** for `relationship_id`, `note_id`, `ingested_at`; only `mention_count` and `last_updated` evolve.
 10. **REFERENCES edges are never removed on re-ingest**, only on note delete.
@@ -712,7 +710,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 12. **`get_node_detail.community_id` is an arbitrary one** of the node's up-to-three communities (`OPTIONAL MATCH … LIMIT 1`), while `get_full_3d_graph.community_id` is the finest level.
 13. **Community level lives on `MEMBER_OF.level`, not on the community node**; Qdrant payload also has it.
 14. **`GET /graph/3d/node/{id}` is read-only**; note names that used to be backfilled per request were fixed once by `main._migrate_stores`.
-15. **The ingestion tracker is process-global**, so KBs cancel each other's rebuilds and the idle callback may target the wrong KB.
+15. **The ingestion tracker's cancel events are process-global** (its counters, timers and callbacks are per KB), so an ingest in one KB still cancels another KB's running rebuild.
 16. **Importing `app.services.graph` opens the default Kuzu DB** — tests must patch `kuzu.Database`/`kuzu.Connection` first (`_get_graph_service_class` pattern); any script importing `app.services.*` while the backend runs will contend for the file.
 17. **`KBRegistry.delete_kb` evaluates `ctx.graph` to close it**, opening a never-opened DB just to close it.
 18. **`is_similarity`, `created_at` are never written; `"evolved"` is never returned**; `get_node_storage_payload.facts/potential_questions` are always empty; `get_node_detail.themes/member_count/domain/status` are always empty.

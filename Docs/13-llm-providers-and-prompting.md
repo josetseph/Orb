@@ -8,7 +8,7 @@
 
 ## 1. Responsibilities and boundaries
 
-`LLMService` **owns**: constructing provider SDK clients from `settings`; presenting one call surface (`generate`, `generate_text`, `reason`, `generate_title`, `analyze_query`, `iterative_step`, `rewrite_follow_up_query`, `ingestion_generate[_with_meta]`, `ingestion_count_tokens`, `ingestion_context_tokens`) to every caller; choosing the model name per provider and per KB; JSON cleaning/repair; retry/fallback policy for extraction; parsing the iterative-step protocol; the query-analysis cache; and the prompt text for the calls it makes itself (query analysis, iterative step, title, rewrite, reasoning system prompt, local extraction system prompt).
+`LLMService` **owns**: constructing provider SDK clients from `settings`; presenting one call surface (`generate`, `generate_text`, `reason`, `generate_title`, `analyze_query`, `iterative_step`, `rewrite_follow_up_query`, `ingestion_generate[_with_meta]`, `ingestion_count_tokens`, `ingestion_context_tokens`) to every caller; choosing the model name per provider and per KB; JSON cleaning/repair; parsing the iterative-step protocol; image description through the ingestion provider (`describe_image`); the query-analysis cache; and the prompt text for the calls it makes itself (query analysis, iterative step, title, rewrite, reasoning system prompt, local extraction system prompt).
 
 It does **not** own: the GGUF runtime, tokenisation or context sizing (doc 12 — it only forwards `model`, `messages`, `temperature`, `max_tokens`); the extraction prompt, chunking and merge policy (`workflows/agents/ingestion_agent.py`, `workflows/extraction_chunking.py`, doc 10); community/digest prompts (`workflows/ingestion.py`, doc 14); the finance prompt (`firefly_service.py`, doc 17); retrieval scoring; the HTTP chat endpoints (doc 16). Those prompts are nevertheless catalogued in §9 of this document because they are the complete inventory of LLM prompts in the backend.
 
@@ -21,7 +21,7 @@ It does **not** own: the GGUF runtime, tokenisation or context sizing (doc 12 �
 | `backend/app/api/settings.py` | `GET/PATCH /api/v1/settings` runtime provider/model/base_url changes. | `LLMSettings`, `get_runtime_settings`, `update_runtime_settings` |
 | `backend/app/core/runtime_config.py` | Persists mutable overrides (`provider, model, ingestion_model, base_url`) to `DATA_DIR/runtime_config.json`; applied at startup. | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
 | `backend/app/core/config.py` | Settings fields (`LLM_*`, `CHAT_MODEL`, `INGESTION_*`, `*_API_KEY`, `*_MODEL`, `CHAT_HISTORY_MAX_MESSAGES`, `MAX_LOOP_ITERATIONS`). | `settings` |
-| `backend/app/services/kb_registry.py` | Per-KB LLM override storage (`knowledge_bases.llm_provider/llm_model/llm_ingestion_model`), `effective_llm_config`, `build_kb_llm_service`, `KBContext.llm`. | `LLM_PROVIDERS`, `effective_llm_config`, `build_kb_llm_service`, `KBRegistry.set_llm_config`, `KBRegistry.effective_llm` |
+| `backend/app/services/kb_registry.py` | Per-KB LLM override storage (`knowledge_bases.llm_provider/llm_model/llm_ingestion_model`), `effective_llm_config`, `build_kb_llm_service`, `KBContext.llm`. | `LLM_PROVIDERS`, `effective_llm_config`, `build_kb_llm_service`, `KBRegistry.set_llm_config` |
 | `backend/app/api/kb.py` | `GET/PATCH /api/v1/kb/{id}/llm`, `effective_llm` in `GET /api/v1/kb`. | `KBLLMInput`, `get_kb_llm`, `update_kb_llm` |
 | `backend/app/workflows/agents/ingestion_agent.py` | Knowledge-Architect extraction prompt, chunked extraction, batched image titling, garbage-name rename prompt. | `_build_extraction_prompt`, `_extract_chunk`, `_extract_with_chunking`, `_batch_image_titles` |
 | `backend/app/workflows/extraction_chunking.py` | Pure chunk/merge helpers for long notes. | `chunk_token_budget`, `split_for_extraction`, `merge_extractions`, `MIN_SPLIT_TOKENS` |
@@ -29,7 +29,7 @@ It does **not** own: the GGUF runtime, tokenisation or context sizing (doc 12 �
 | `backend/app/workflows/chat.py` | Passes per-KB `llm` to retrieval; follow-up rewrite call; timing lines. | `ChatWorkflow` |
 | `backend/app/services/retrieval.py` | Calls `analyze_query` and `iterative_step`; builds `conversation_context`. | `RetrievalService._llm` |
 | `backend/app/services/firefly_service.py` | Finance answer prompt (`answer_finance_question`). | — |
-| `backend/app/services/multimedia.py` | Cloud vision fallback prompt ("Describe this image briefly."). | `_describe_image_cloud` |
+| `backend/app/services/multimedia.py` | Calls `llm.describe_image` for images and PDF renders; `image_data_url` downscaling. | `MultimediaService.describe_image`, `image_data_url` |
 | `backend/app/services/local_models.py` | Reranker system/instruction strings; `LocalOpenAICompat` shim consumed here. | see doc 12 |
 | `backend/app/services/embedding.py` | Qwen3 query instruction. | see doc 12 |
 | `backend/tests/unit/test_llm_json_cleaning.py`, `test_kb_llm_config.py`, `test_ingestion_chunked_extraction.py`, `test_extraction_chunking.py`, `test_chat_context.py` | Unit coverage for `_clean_json`, override resolution, chunked extraction, chat context trimming. | — |
@@ -80,7 +80,7 @@ For `provider=local` every one of those calls goes through `LocalOpenAICompat.ch
 
 ## 4. Providers and client construction (`init_clients`, `_build_clients`)
 
-`LLMService(provider=None, *, chat_model=None, ingestion_model=None, ingestion_provider=None)`:
+`LLMService(provider=None, *, chat_model=None, ingestion_model=None, ingestion_provider=None, base_url=None)`:
 
 - `provider` defaults to `settings.LLM_PROVIDER`; `ollama` / `lm_studio` are mapped to `local` with a deprecation warning (the "local alias" — commit `09e35e3` introduced `local` as the unified name for any OpenAI-compatible server; since `3f21e08` it means in-process llama-cpp only).
 - Keyword overrides are stored as `_chat_model_override`, `_ingestion_model_override`, `_ingestion_provider_override` (blank → `None`; `ollama|lm_studio` → `local`). These are what per-KB pinning uses (§5.3).
@@ -90,10 +90,10 @@ For `provider=local` every one of those calls goes through `LocalOpenAICompat.ch
 |---|---|---|---|
 | `local` | GGUFs on disk (lazily) | `local_llama_runtime.make_chat_client()` → `LocalOpenAICompat` | none (in-process); llama errors propagate |
 | `openai_compat` | endpoint URL (`get_base_url()`: per-instance override → `LLM_BASE_URL`) + the key stored for that URL | `OpenAI(base_url, api_key, timeout=300.0, max_retries=2)` | 300 s, 2 retries |
-| `openai` | `credentials.get("openai")` (raises `ValueError` naming Settings if missing) | `OpenAI(api_key, timeout=300.0)` | SDK default `max_retries` (2), 300 s |
-| `gemini` | `GEMINI_API_KEY` | `gemini_client = genai.Client(api_key, http_options=HttpOptions(timeout=120000))` (120 s per call) | none beyond SDK |
-| `anthropic` | `ANTHROPIC_API_KEY` | `anthropic_client = Anthropic(api_key)` | SDK defaults |
-| `huggingface` | `HUGGINGFACE_API_KEY` **and** `HUGGINGFACE_MODEL` | `OpenAI(base_url="https://router.huggingface.co/v1", timeout=300.0, max_retries=3)` | 300 s, 3 retries |
+| `openai` | the `openai` key in the credential store (`get_api_key`; raises `ValueError("No OpenAI API key. Add one in Settings -> AI provider.")` if missing) | `OpenAI(api_key, timeout=300.0)` | SDK default `max_retries` (2), 300 s |
+| `gemini` | the `gemini` key in the credential store | `gemini_client = genai.Client(api_key, http_options=HttpOptions(timeout=120000))` (120 s per call) | none beyond SDK |
+| `anthropic` | the `anthropic` key in the credential store | `anthropic_client = Anthropic(api_key)` | SDK defaults |
+| `huggingface` | the `huggingface` key in the credential store **and** `HUGGINGFACE_MODEL` | `OpenAI(base_url="https://router.huggingface.co/v1", timeout=300.0, max_retries=3)` | 300 s, 3 retries |
 | anything else | — | `ValueError("Unsupported LLM provider: …")` | |
 
 Notes:
@@ -131,11 +131,11 @@ by ingestion_provider:
   huggingface: HUGGINGFACE_MODEL
 ```
 
-May return `None` (cloud provider with no model configured) — callers pass it straight through as `model=`; the OpenAI SDK then errors. `_extract_openai` / `_extract_anthropic` / `_extract_huggingface` ignore `model=` and always use `settings.<PROVIDER>_MODEL`; `ingestion_generate_with_meta` for Anthropic likewise hard-codes `settings.ANTHROPIC_MODEL`. Only local and Gemini honour a separate ingestion model in the *extraction* path; `ingestion_generate_with_meta` honours it for local/openai/HF/Gemini.
+May return `None` (cloud provider with no model configured) — callers pass it straight through as `model=`; the OpenAI SDK then errors. Every ingestion call goes through `_chat(..., ingestion=True)`, which uses this value for all providers (Anthropic and Gemini fall back to `settings.<PROVIDER>_MODEL` only when it is `None`).
 
 ### 5.3 Per-KB overrides (`kb_registry.py`, `api/kb.py`) — uncommitted working tree
 
-Storage: three nullable TEXT columns on `knowledge_bases` (`llm_provider`, `llm_model`, `llm_ingestion_model`), added by `_ensure_optional_columns` (ALTER TABLE on existing DBs), round-tripped by `_save_row`/`_load_from_sqlite`, mirrored on `KBContext.llm_provider/llm_model/llm_ingestion_model`. `NULL`/blank = inherit. Only chat/ingestion are per-KB; embed/rerank/multimodal are global (embed dims are shared — doc 12 invariant 4).
+Storage: four nullable TEXT columns on `knowledge_bases` (`llm_provider`, `llm_model`, `llm_ingestion_model`, `llm_base_url`), added by `_ensure_optional_columns` (ALTER TABLE on existing DBs), round-tripped by `_save_row`/`_load`, mirrored on `KBContext.llm_provider/llm_model/llm_ingestion_model/llm_base_url`. `NULL`/blank = inherit. Only chat/ingestion are per-KB; embed/rerank/multimodal are global (embed dims are shared — doc 12 invariant 4).
 
 `effective_llm_config(meta) -> {"provider", "model", "ingestion_model", "inherited"}` (pure, no client construction; tested in `test_kb_llm_config.py`):
 
@@ -155,9 +155,9 @@ _system_model_for(provider, ingestion):
 
 Note the deliberate asymmetry: a KB that pins only `llm_model` inherits the **system provider**; a KB that pins only `llm_provider` gets that provider's system default model (`CHAT_MODEL` applies only when the pinned provider equals the global one).
 
-`KBContext.llm` (property): returns the global `llm_service` when nothing is pinned; otherwise builds/caches `build_kb_llm_service(provider, model, ingestion_model)` = `LLMService(prov, chat_model=model, ingestion_model=ingestion_model, ingestion_provider=prov)` keyed by `(provider or LLM_PROVIDER, model, ingestion_model)` so a global provider change rebuilds it. `apply_llm_override(...)` resets `_llm`, `retrieval_service`, `ingestion_workflow`, `chat_workflow` so `_ensure_lazy()` re-creates them with `llm=self.llm` (`RetrievalService(llm=…)`, `IngestionWorkflow(llm=…)`, `ChatWorkflow(retrieval, llm=…)`). `RetrievalService._llm` and `ChatWorkflow._llm` / `IngestionWorkflow._llm` fall back to the global singleton when `llm is None`. `FireflyService.answer_finance_question` uses `kb.llm.generate_text` in `asyncio.to_thread` (comment: a pinned KB may swap a multi-GB GGUF here, which would otherwise block `/chat/status` polls).
+`KBContext.llm` (property): returns the global `llm_service` when nothing is pinned; otherwise builds/caches `build_kb_llm_service(provider, model, ingestion_model, base_url)` = `LLMService(prov, chat_model=model, ingestion_model=ingestion_model, ingestion_provider=prov, base_url=base_url)` keyed by `(provider or LLM_PROVIDER, model, ingestion_model, base_url, credentials.version)` so a global provider change or an edited API key rebuilds it. `apply_llm_override(...)` resets `_llm`, `retrieval_service`, `ingestion_workflow`, `chat_workflow` so `_ensure_lazy()` re-creates them with `llm=self.llm` (`RetrievalService(llm=…)`, `IngestionWorkflow(llm=…)`, `ChatWorkflow(retrieval, llm=…)`). `RetrievalService._llm` and `ChatWorkflow._llm` / `IngestionWorkflow._llm` fall back to the global singleton when `llm is None`. `FireflyService.answer_finance_question` uses `kb.llm.generate_text` in `asyncio.to_thread` (comment: a pinned KB may swap a multi-GB GGUF here, which would otherwise block `/chat/status` polls).
 
-`KBRegistry.set_llm_config(kb_id, *, provider, model, ingestion_model)`: normalises (`ollama|lm_studio` → `local`; unknown provider → `ValueError`), persists, and calls `apply_llm_override` on the cached context. `KBRegistry.effective_llm(kb_id)` → resolved dict or `None` (default KB with no row → resolved from `{}`).
+`KBRegistry.set_llm_config(kb_id, *, provider, model, ingestion_model, base_url=None)`: normalises (unknown provider → `ValueError`), persists, and calls `apply_llm_override` on the cached context. Callers resolve the effective config with the module-level `effective_llm_config(meta)`.
 
 API (`api/kb.py`):
 
@@ -253,10 +253,10 @@ Parsing: the model is asked (with `json_mode=True`) for one JSON object `{"reaso
 ### 8.1 `ai_gate.py`
 
 ```python
-provider_is_configured(provider) -> bool
+provider_is_configured(provider, base_url=None) -> bool
     local|ollama|lm_studio : gguf_paths_if_present() is not None       # chat+embed GGUFs on disk
-    openai|gemini|anthropic|huggingface : bool(settings.<PROVIDER>_API_KEY)
-    anything else : False
+    openai_compat          : bool(base_url or LLM_BASE_URL)             # a URL to call; a key is optional
+    anything else          : credentials.has(provider)                  # keychain / env-seeded store
 
 ai_is_configured(kb=None) -> bool
     if kb.llm_provider is pinned → provider_is_configured(kb.llm_provider)   # KB usable whenever its provider is
@@ -271,14 +271,14 @@ chat_is_local_only() -> bool         # LLM_PROVIDER in (local, ollama, lm_studio
 require_ai(kb=None)  → HTTPException 503 {"error": "ai_not_configured", "message": "AI is not configured. Notes, wikilinks, and finance still work. Open Setup to enable local models or a cloud provider."}
 ```
 
-Used by `POST /api/v1/chat`, `POST /api/v1/chat/start`, `POST /api/v1/notes/reingest-vault`, note ingestion endpoints (`api/notes.py`), admin re-ingest (`api/admin.py`) — all pass the resolved `KBContext` so a KB pinned to a configured provider works regardless of what is set globally. `/setup/status.ai_configured` calls it with no KB.
+Used by `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/reingest-vault`, note ingestion endpoints (`api/notes.py`), admin re-ingest (`api/admin.py`) — all pass the resolved `KBContext` so a KB pinned to a configured provider works regardless of what is set globally. `/setup/status.ai_configured` calls it with no KB.
 
 There is no stored "AI mode" anywhere: Setup only asks for folders, and choosing a model on the Models page is what makes AI usable. See [12](12-local-models-and-inference.md).
 
 ### 8.2 `GET/PATCH /api/v1/settings` (`api/settings.py`) and `runtime_config.py`
 
 - `GET` → `{"provider": settings.LLM_PROVIDER, "model": llm_service.get_chat_model() or LLM_MODEL, "ingestion_model": llm_service.get_ingestion_model() or LLM_MODEL, "base_url": LLM_BASE_URL}` — touching `llm_service` **constructs the real service** (lazy proxy), so the first Settings page load builds provider clients.
-- `PATCH {provider?, model?, ingestion_model?, base_url?}` → merges into `runtime_config.load()`, mutates `settings.LLM_PROVIDER / CHAT_MODEL / INGESTION_MODEL / LLM_BASE_URL`, `runtime_config.save(...)`, and if provider **or** base_url changed: `llm_service.provider = LLM_PROVIDER.lower(); llm_service.init_clients()`. Model-only changes need no re-init because `get_chat_model()` reads `settings` on every call. API keys are never accepted (`.env` only). Provider switch to a cloud provider whose key is missing makes `init_clients()` raise `ValueError` → 500, leaving `settings.LLM_PROVIDER` already changed (and persisted) — the next startup will fail the same way until fixed (gotcha §11).
+- `PATCH {provider?, model?, ingestion_model?, base_url?}` → merges into `runtime_config.load()`, mutates `settings.LLM_PROVIDER / CHAT_MODEL / INGESTION_MODEL / LLM_BASE_URL`, `runtime_config.save(...)`, and if provider **or** base_url changed: `llm_service.provider = LLM_PROVIDER.lower(); llm_service.init_clients()`. Model-only changes need no re-init because `get_chat_model()` reads `settings` on every call. API keys are never accepted here — they go through `PUT /api/v1/credentials/{provider}` into the OS keychain (see *Credentials* above). Provider switch to a cloud provider whose key is missing makes `init_clients()` raise `ValueError` → 500, leaving `settings.LLM_PROVIDER` already changed (and persisted) — the next startup will fail the same way until fixed (gotcha §11).
 - `runtime_config.json` (in `DATA_DIR`, fallback `<repo>/data/`): only `MUTABLE_KEYS = {provider, model, ingestion_model, base_url}` are read/written; `apply_to_settings` maps `provider→LLM_PROVIDER`, `model→CHAT_MODEL`, `ingestion_model→INGESTION_MODEL`, `base_url→LLM_BASE_URL`. `main.startup_event` applies it before `sync_embedding_infrastructure()`.
 - Frontend `settings/page.tsx`: loads `GET /settings`, shows a provider select (`LOCAL_PROVIDERS` set hides model fields for local — "Model name fields only apply to cloud providers"), sends only changed fields via `api.updateLLMSettings(patch)`, and reports whether a restart is needed based on the response. What takes effect without restart: provider/model/base_url for the chat **and** ingestion clients (`init_clients` rebuilds both); what does not: per-KB pinned services (rebuilt lazily only if their key changes — a global provider change does change the key when the KB inherits the provider), `EmbeddingService` (unaffected — embeddings are always local).
 
@@ -290,7 +290,7 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
 
 - **Purpose**: turn one note (or one chunk of a long note) into `Extraction{title, nodes[{name,type,isolated_context}], relationships[{source_name,target_name,relationship_type,natural_language}]}`. `relationship_type` must be one of `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates, listed verbatim in the prompt under "Allowed `relationship_type` values (no others)"); the schema validator coerces anything else to `related_to` (doc 10).
 - **Call**: `checkpoint.generate_with_meta(llm, prompt, temperature=0.1, json_mode=True)` → `llm.ingestion_generate_with_meta` (provider JSON mode, §6.1) + `llm._clean_json` + `Extraction.model_validate_json`. Up to `_MAX_EXTRACTION_ATTEMPTS=3` with `asyncio.sleep(30*(attempt+1))` between attempts ("KV-cache pressure … lets Metal/CPU recover"). If `meta.truncated` and the chunk is > `MIN_SPLIT_TOKENS` (400) and depth < 3 → split in half (`split_for_extraction`) and `merge_extractions`.
-- **Inputs**: `extraction_content` = optional `# {user title}\n\n` + note body after multimedia enrichment. Chunking: `chunk_token_budget(llm.ingestion_context_tokens(), overhead=count(_build_extraction_prompt("")))` = `max(400, min(ORB_EXTRACTION_CHUNK_TOKENS|4000, (ctx - overhead - 64)/3.5))`; paragraphs → lines → sentences → words → chars.
+- **Inputs**: `extraction_content` = optional `# {user title}\n\n` + note body after multimedia enrichment. Chunking: `chunk_token_budget(llm.ingestion_context_tokens(), overhead=count(_build_extraction_prompt("")), model)` = `max(400, min(learned_budget(model, 4000), (ctx - overhead - 64)/3.5))` — the ceiling is learned per model from truncations (`services/extraction_budget.py`, pinned by `ORB_EXTRACTION_CHUNK_TOKENS`); a note over budget is extracted by task (entities → relationships → contexts) rather than by text (doc 10 §11); chunks split paragraphs → lines → sentences → words → chars.
 - **Skeleton** (≈1.9 k tokens of instructions; all braces doubled in source because it is an f-string):
 
   ```
@@ -316,8 +316,8 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 **Source-neutral framing.** Orb is used for personal notes, course material, company and technical documentation and meeting records, so no prompt describes the corpus as the reader's own. The extraction prompt's first CORE RULE says so explicitly ("Do not assume the reader wrote it, and do not describe it as someone's personal knowledge"), the query rewriter says "document collection", and the temporal-digest summariser says "documents … without assuming who wrote them or why". Keep new prompts neutral: a model told it is reading a personal knowledge base narrates a company's meeting minutes as if they were a diary.
 ### 9.2 Batched image titling — `ingestion_agent.py::_batch_image_titles(llm, items)`
 
-- **Purpose**: name each Florence-described image once per note so the enrichment block reads `[Image: <title>]` (placeholder tokens `{{ORB_IMAGE_TITLE_n}}` are substituted; filename fallback). Batched deliberately: calling the chat GGUF per image evicted Florence each time.
-- **Call**: `llm.ingestion_generate(prompt, temperature=0.0)`.
+- **Purpose**: name each model-described image once per note so the enrichment block reads `[Image: <title>]` (placeholder tokens `{{ORB_IMAGE_TITLE_n}}` are substituted; filename fallback). Batched deliberately so the note pays one titling call, not one per image.
+- **Call**: `checkpoint.generate(llm, prompt, temperature=0.0, json_mode=True)` → `llm.ingestion_generate`.
 - **Prompt**: `"For each numbered image description below, give a concise, specific title (2–6 words) that would serve as a unique entity name.\n\n{lines}\n\nReturn ONLY a JSON array: [{\"index\": 1, \"title\": \"...\"}, ...]"` where each line is `N. (file: <filename>) "<description[:600]>"`.
 - **Format**: first `[...]` via regex → `json.loads`; titles kept if `1 < len ≤ 80`; any failure → `{}`.
 
@@ -399,16 +399,18 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 - **User**: `"User question:\n{query}"` + optional `"Rewritten retrieval query:\n{rq}"` + `"Firefly finance context JSON:\n{json.dumps({workspace, summary(30 days)}, indent=2)}"` + `"Relevant note passages from KB \"{name}\":\n[Title] text[:1200] …"` or `"No relevant note passages were retrieved from KB \"{name}\"."`, joined by `\n\n`.
 - **Format**: free text.
 
-### 9.13 Cloud vision fallback — `multimedia.py::_describe_image_cloud`
+### 9.13 Image description — `LLMService.describe_image(image_path)`
 
-Used only when local Florence is unavailable and `OPENAI_API_KEY` or `GEMINI_API_KEY` is set: OpenAI `chat.completions.create(model=OPENAI_MODEL or "gpt-4o-mini", messages=[{text:"Describe this image briefly.", image_url:data URL}], max_tokens=400)` or Gemini `generate_content(model=GEMINI_MODEL or "gemini-2.0-flash", contents=["Describe this image briefly.", image part])`. Bypasses `LLMService` entirely.
+- **Purpose**: read one image (a note attachment, an embedded PDF image, a sparse PDF page render, an image inside a `.docx`) with the KB's **ingestion** provider, so "the model you picked" reads your pictures. Called by `MultimediaService.describe_image` and `extract_text_from_pdf` (doc 11).
+- **Prompt** (`IMAGE_DESCRIBE_PROMPT`): `"Describe this image for a personal knowledge base, as plain text in this order: (1) one or two sentences on what it shows and what kind of image it is (photo, screenshot, poster, chart, document); (2) the people, places, organisations, dates and events it refers to; (3) ALL visible text transcribed verbatim, keeping line order — headings, dates, names, prices, links. No commentary."` — metadata before the transcription so an output cap loses the tail of the text, not the entities.
+- **Call** by `ingestion_provider`: `local` → `local_llama_runtime.describe_image(data_url, prompt, model)` (chat GGUF + `mmproj` projector, `temperature=0.1`, no fixed output cap); `gemini` → `generate_content([prompt, Part.from_bytes(...)])` with `temperature=0.1`, `thinking_budget=0`; `anthropic` → `messages.create` with a base64 `image` block + text, `max_tokens=ANTHROPIC_MAX_OUTPUT_TOKENS`; `openai` / `openai_compat` / `huggingface` → `chat.completions.create` with `image_url` + text content parts. The image is `multimedia.image_data_url(path)` — JPEG (quality 88), downscaled to `IMAGE_DESCRIBE_MAX_PIXELS`.
+- **Format**: plain text, stripped. A text-only model that returns nothing → `ValueError("… returned no text for the image. Check that this model accepts image input.")`; a local model without a projector → `RuntimeError` naming the missing `mmproj-*.gguf`; an OpenAI-shaped `finish_reason == "length"` appends ` […]`. There is no cross-provider fallback.
 
 ### 9.14 Non-LLM model prompts (for completeness)
 
-- **Florence-2 task token**: `<MORE_DETAILED_CAPTION>` (doc 12 §12.3).
 - **Qwen3 reranker**: system `"Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."`, instruct `"Given a question, retrieve relevant passages that answer the question"`, ChatML with empty `<think>` (doc 12 §10).
 - **Qwen3 embedding query instruction**: `"Instruct: Given a question, retrieve relevant context.\nQuery: "` (doc 12 §9.2); documents get no instruction (`workflows/ingestion.py` comment: "Documents are embedded without any instruction prefix").
-- **Whisper**: `language="en", task="transcribe"`; **Marlin**: `model.caption(video_path)` (remote-code prompt).
+- **Qwen3-ASR**: `language=language_name(ASR_LANGUAGE)` on both engines (`en` by default; `None` = detect), `return_format="transcription_only"` on the transformers engine; **Marlin**: `model.caption(video_path)` (remote-code prompt).
 
 ## 10. How to add a provider
 
@@ -419,7 +421,7 @@ Files to touch, in order:
    - `_build_clients()` — new `if provider == "<name>":` branch returning `(chat_client, None, None)` (OpenAI-shaped if at all possible — `_chat` assumes `chat.completions.create(...).choices[0].message.content`) or a native client in one of the other two slots.
    - `get_chat_model()` / `get_ingestion_model()` maps.
    - If the provider is *not* OpenAI-shaped, add one branch to `_chat` that returns `(text, {"finish_reason", "truncated", "thinking"})`, as the Gemini/Anthropic branches do. Nothing else needs a branch.
-3. `backend/app/services/ai_gate.py` — add to `_CLOUD_KEYS` so `provider_is_configured` and the KB PATCH validation know about it.
+3. `backend/app/services/credentials.py` — add to `CLOUD_PROVIDERS` so the credential routes accept its key and `provider_is_configured` / `ai_is_configured` know about it.
 4. `backend/app/services/kb_registry.py` — add to `LLM_PROVIDERS` and to `_system_model_for`'s map.
 5. Frontend: `settings/page.tsx` `PROVIDERS` / `CLOUD_MODEL_HINTS`, and the KB model panel provider list comes from the API (`providers`).
 6. `backend/requirements.txt` — SDK pin.
@@ -478,6 +480,6 @@ History:
 - `fbcafe7` (2026-08-03): `api/settings.py` router, `runtime_config.py` shape.
 - `f8f527f` (2026-08-06): fallback isolated into a dedicated `LLMService` instance ("mutating the shared singleton's provider/clients would race with concurrent chat/ingestion calls").
 - `8de5cda` (2026-08-07): `_query_analysis_cache` (per-day memo; avoids repeated model swaps on local).
-- Uncommitted working tree (2026-09): per-KB overrides (`LLMService` kwargs, `kb_registry.effective_llm_config`, `KBContext.llm`, `/kb/{id}/llm`), `ai_gate.provider_is_configured` + `require_ai(kb)`, `ingestion_generate_with_meta` with truncation metadata, no default `max_tokens`, `ingestion_count_tokens`/`ingestion_context_tokens`, chunked extraction + batched image titling in the ingestion agent, `[Timing]` lines via `services/timing.py`.
+- Uncommitted working tree (2026-09): per-KB overrides (`LLMService` kwargs, `kb_registry.effective_llm_config`, `KBContext.llm`, `/kb/{id}/llm`), `ai_gate.provider_is_configured` + `require_ai(kb)`, `ingestion_generate_with_meta` with truncation metadata, no default `max_tokens`, `ingestion_count_tokens`/`ingestion_context_tokens`, chunked extraction + batched image titling in the ingestion agent, `[Timing]` lines via the model-load clock (first in `services/timing.py`, since folded into `local_models.ModelLoadClock`).
 - Uncommitted working tree (2026-09-19): `instructor`, `extract_structured` and the per-provider extraction helpers, `GeminiChatWrapper`, the fallback provider, the async client twins and `_init_ingestion_clients` were removed; every generation method now goes through one `_chat()`; `_build_clients` is called for the main and the ingestion provider; query analysis is plain JSON with `lru_cache`; `LLM_RESPONSE_FORMAT`, `LLM_FALLBACK_PROVIDER`, `LLM_KEEP_ALIVE` and `AI_SETUP_MODE` are gone. `llm.py` went from 1903 to ~1070 lines.
 - Uncommitted working tree (2026-09-19, band-aid pass): `json_mode` on `_chat`/`generate`/`ingestion_generate[_with_meta]`/`_reason_step` (provider JSON mode per §6.1); `iterative_step` and community naming moved from labelled prose to JSON parsed with pydantic (`_ResearchStep`, `_CommunityName`), deleting `_section_re`, `_clean_next_query`, the first-turn/`FULL_ANSWER` rescues and `_parse_name_summary`; `_clean_json` dropped control-character stripping and made `json_repair` a hard import; the `<think>` regex tolerates an unclosed tag. Probe on Gemma-4 E4B Q4: JSON mode returned 23 nodes/22 rels vs 25/24 in prose with `finish=stop` instead of `length`; the research step was correct in both modes.

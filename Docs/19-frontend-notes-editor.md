@@ -1,6 +1,6 @@
 # Frontend: Notes Page and Markdown Editor
 
-**What this covers.** The `/notes` route of the Vite + React frontend: the three-region notes workspace (vault sidebar, editor column, side panels), the `useNotesPageController` hook hub and the nine hooks it composes (list, selection, autosave, ingest, vault tree, media, batch selection, wikilink preview, restore effects), the pure helpers in `frontend/src/app/notes/_lib/`, the CodeMirror 6 based `MarkdownNoteEditor` and its extensions (markdown highlighting, live-preview mark hiding, entity highlighting, `[[wikilink]]` autocomplete/hover/click, inline media embeds, toolbar commands), the read-only `SegmentedNoteContent` renderer, `ConnectedNotesPanel`, `EntityDetailPanel`, `BlobMediaPlayer`, and the notes/vault/graph-entity methods of the API client. It cross-checks every frontend call against the backend contracts in `backend/app/api/notes.py`, `backend/app/api/vault.py`, `backend/app/api/graph.py` and `backend/app/services/wikilinks.py`.
+**What this covers.** The `/notes` route of the Vite + React frontend: the three-region notes workspace (vault sidebar, editor column, side panels), the `useNotesPageController` hook hub and the hooks it composes (list, selection, autosave, ingest, vault tree, media, batch selection, wikilink preview, restore effects, attachment jobs), the pure helpers in `frontend/src/app/notes/_lib/`, the CodeMirror 6 based `MarkdownNoteEditor` and its extensions (markdown highlighting, live-preview mark hiding, entity highlighting, `[[wikilink]]` autocomplete/hover/click, inline media embeds, collapsible extraction blocks, toolbar commands), the read-only `SegmentedNoteContent` renderer, `ConnectedNotesPanel`, `EntityDetailPanel`, `BlobMediaPlayer`, and the notes/vault/graph-entity methods of the API client. It cross-checks every frontend call against the backend contracts in `backend/app/api/notes.py`, `backend/app/api/vault.py`, `backend/app/api/graph.py` and `backend/app/services/wikilinks.py`.
 
 Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, graph and other pages](20-frontend-chat-graph-and-pages.md) · [Notes, wikilinks and vault files (backend)](09-notes-wikilinks-and-vault-files.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [API reference](07-api-reference.md) · [Desktop shell](04-desktop-shell.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Glossary](28-glossary.md)
 
@@ -31,10 +31,11 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/app/notes/_hooks/useNoteSelection.ts` | Selected note + dirty-baseline refs, list↔selection sync, `openNoteById`, `refreshSelectedNote`, content/title change handlers; `useNoteSelectHandler` (save-then-load). | `useNoteSelection`, `useNoteSelectHandler`, `NoteSelectionApi` |
 | `frontend/src/app/notes/_hooks/useNoteAutosave.ts` | 1.5 s debounced PUT, in-flight race handling, flush on unmount and `beforeunload`. | `useNoteAutosave`, `NoteAutosaveApi` |
 | `frontend/src/app/notes/_hooks/useNoteIngest.ts` | Ingest button handler, `ingestingNoteIds` set, 5 s status poll. | `useNoteIngest` |
-| `frontend/src/app/notes/_hooks/useVaultTree.ts` | Folder collapse state, selected folder, drag state, vault listing, move/rename/mkdir/delete-file flows, `useNoteRestoreEffects` (URL `?note=`, sessionStorage restore, bfcache/visibility refresh). | `useVaultTree`, `useNoteRestoreEffects` |
+| `frontend/src/app/notes/_hooks/useVaultTree.ts` | Expanded-folder state (persisted per KB), selected folder, drag state, multi-file selection, vault listing, move/rename/mkdir/delete flows for notes, files and folders, `useNoteRestoreEffects` (URL `?note=`, sessionStorage restore, bfcache/visibility refresh). | `useVaultTree`, `useNoteRestoreEffects` |
 | `frontend/src/app/notes/_hooks/useNoteMedia.ts` | Upload/attach, voice recording (MediaRecorder), file preview modal, reveal-in-Finder, created_at date change. | `useNoteMedia` |
 | `frontend/src/app/notes/_hooks/useNoteBatchSelection.ts` | Checkbox multi-select and batch delete. | `useNoteBatchSelection` |
 | `frontend/src/app/notes/_hooks/useWikilinkPreview.ts` | Hover card state, click → resolve or create missing note. | `useWikilinkPreview` |
+| `frontend/src/app/notes/_hooks/useAttachmentJobs.ts` | Per-attachment "process now" jobs for the open note: start/cancel, seed from the server on note switch, 3 s poll while one runs, refresh the note when a job finishes. | `useAttachmentJobs` |
 | `frontend/src/app/notes/_lib/types.ts` | Page-local types. | `ProcessedFilter`, `FolderTreeNode`, `VaultFileEntry`, `WikilinkPreviewState`, `FolderDialogState`, `RenameDialogState`, `NoteAttachment` |
 | `frontend/src/app/notes/_lib/wikilinks.ts` | Client wikilink normalisation, insert-target disambiguation, autocomplete scoring, indexed resolver. | `normalizeLink`, `folderOf`, `noteVaultPath`, `noteDisplayName`, `wikilinkInsertTarget`, `suggestWikilinkNotes`, `parseWikilinkCreateTarget`, `WikilinkResolver`, `resolveNoteByWikilink`, `WikilinkSuggestion` |
 | `frontend/src/app/notes/_lib/folder-tree.ts` | Builds the sidebar tree from `Note.rel_path` + extra folders. | `buildFolderTree` |
@@ -42,23 +43,20 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/app/notes/_lib/rewrite-vault-urls.ts` | Single-pass rewrite of vault file paths inside note markdown after move/rename. | `rewriteVaultPathsInContent` |
 | `frontend/src/app/notes/_lib/parse-note-attachments.ts` | Regex extraction of `![]()` / `[📎…]()` / `[🎤…]()` links. | `parseNoteAttachments` |
 | `frontend/src/app/notes/_lib/media-recorder.ts` | Picks a supported `MediaRecorder` MIME type. | `pickSupportedAudioMimeType` |
-| `frontend/src/app/notes/_lib/storage-keys.ts` | sessionStorage key for last-opened note per KB. | `lastNoteStorageKey` |
-| `frontend/src/app/notes/_components/NotesSidebar.tsx` | Left column: KB header, search, filter bar, batch bar, vault tree, empty state. | `NotesSidebar` |
-| `frontend/src/app/notes/_components/VaultFolderTree.tsx` | Recursive folder/note tree with drag-drop, virtualised flat rows, attachments section. | `VaultFolderTree` |
-| `frontend/src/app/notes/_components/VaultFileRow.tsx` | One attachment row (click/rename/delete, draggable). | `VaultFileRow` |
-| `frontend/src/app/notes/_components/NotesFilterBar.tsx` | Processed-state filter chips. | `NotesFilterBar` |
+| `frontend/src/app/notes/_lib/storage-keys.ts` | sessionStorage key for last-opened note per KB (the expanded-folders key lives in `useVaultTree`). | `lastNoteStorageKey` |
+| `frontend/src/app/notes/_components/NotesSidebar.tsx` | Left column (288 px): "Notes" pane header with new-folder/new-note buttons, filter input + "needs ingest" toggle, batch bar, vault tree, empty state, footer count. | `NotesSidebar` |
+| `frontend/src/app/notes/_components/VaultFolderTree.tsx` | Folder/note tree flattened to rows (`content-visibility` skips off-screen ones) with drag-drop for notes, files and folders, and a nested attachments section. | `VaultFolderTree` |
+| `frontend/src/app/notes/_components/VaultFileRow.tsx` | One attachment row (click/rename/delete, draggable, ⌘-click multi-select). | `VaultFileRow` |
 | `frontend/src/app/notes/_components/NotesBatchBar.tsx` | Select-all / delete-selected bar. | `NotesBatchBar` |
 | `frontend/src/app/notes/_components/NoteStatusBadge.tsx` | Per-note status pill (Saved / Ingesting / Ingested / Failed / Pending). | `NoteStatusBadge` |
 | `frontend/src/app/notes/_components/NotesEmptyState.tsx` | Empty sidebar / empty editor placeholders. | `NotesEmptyState` |
-| `frontend/src/app/notes/_components/NoteEditorHeader.tsx` | Title input, status, date/record/ingest/connected/delete buttons. | `NoteEditorHeader` |
-| `frontend/src/app/notes/_components/NoteAttachmentsStrip.tsx` | Chips for attachments parsed from the note body. | `NoteAttachmentsStrip` |
+| `frontend/src/app/notes/_components/NoteEditorHeader.tsx` | Toolbar row: folder, live/source view switch, attach, record, ingest/cancel, connected panel, overflow menu (date, reveal, delete). | `NoteEditorHeader`, `ViewMode` |
 | `frontend/src/app/notes/_components/DatePickerModal.tsx` | `created_at` editor. | `DatePickerModal` |
 | `frontend/src/app/notes/_components/FilePreviewModal.tsx` | Image/PDF/video/audio/other preview with reveal button. | `FilePreviewModal` |
 | `frontend/src/app/notes/_components/FolderDialog.tsx` | New-folder prompt. | `FolderDialog` |
 | `frontend/src/app/notes/_components/RenameDialog.tsx` | Rename vault file prompt. | `RenameDialog` |
 | `frontend/src/app/notes/_components/WikilinkHoverCard.tsx` | Fixed-position preview card for `[[links]]`. | `WikilinkHoverCard` |
-| `frontend/src/components/markdown-editor/index.ts` | Barrel. | `MarkdownNoteEditor`, `MarkdownNoteEditorHandle`, `MarkdownNoteEditorProps` |
-| `frontend/src/components/markdown-editor/MarkdownNoteEditor.tsx` | CodeMirror host component (controlled value, drop/paste upload, toolbar, imperative handle). | `MarkdownNoteEditor` |
+| `frontend/src/components/markdown-editor/MarkdownNoteEditor.tsx` | CodeMirror host component (controlled value, drop/paste upload, toolbar, imperative handle). No barrel — import this file directly (default export). | `MarkdownNoteEditor` (default), `MarkdownNoteEditorHandle`, `MarkdownNoteEditorProps` |
 | `frontend/src/components/markdown-editor/MarkdownToolbar.tsx` | Formatting toolbar. | `MarkdownToolbar` |
 | `frontend/src/components/markdown-editor/markdownCommands.ts` | Toolbar/keybinding commands (wrap, heading, list, link, code block…). | command functions + `markdownKeymap` |
 | `frontend/src/components/markdown-editor/markdownHighlight.ts` | Highlight style + editor theme. | `markdownHighlightStyle`, `markdownEditorTheme` |
@@ -67,9 +65,10 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/components/markdown-editor/entityExtension.ts` | Entity-name decorations + click/hover → detail panel. | `entityExtension` |
 | `frontend/src/components/markdown-editor/wikilinkExtension.ts` | `[[` autocomplete, decorations, click/hover callbacks. | `wikilinkExtension` |
 | `frontend/src/components/markdown-editor/mediaEmbedExtension.ts` | Inline image/audio/video widgets for vault links. | `mediaEmbedExtension` |
+| `frontend/src/components/markdown-editor/extractMarkerExtension.ts` | Collapses `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` blocks written by ingestion into one chip ("Transcript / Description / Extracted text from x · N words"); keys blocks by `extractKey` = `vaultRelPath(src)` lower-cased so absolute and relative link forms match. | `extractKey`, `extractedKeys`, `extractNoun`, `expandedExtracts`, `toggleExtractEffect` |
 | `frontend/src/components/segmented-note-content.tsx` | Read-only note body renderer with entity highlights / enrichment blocks. | `SegmentedNoteContent` |
 | `frontend/src/components/connected-notes-panel.tsx` | Right panel: note subgraph neighbours (notes + entities). | `ConnectedNotesPanel` |
-| `frontend/src/components/entity-detail-panel.tsx` | Slide-over with entity details, relationships, source notes. | `EntityDetailPanel` |
+| `frontend/src/components/entity-detail-panel.tsx` | Inline right-column panel with entity details, relationships, source notes. | `EntityDetailPanel` |
 | `frontend/src/components/blob-media-player.tsx` | Fetches media as blob and plays it (auth-free, range-safe). | `BlobMediaPlayer` |
 | `frontend/src/lib/markdown-entities.tsx` | Shared entity-matching / markdown-to-React helpers used by read-only renderers. | (see §10) |
 | `frontend/src/lib/api.ts` (notes/vault/graph subset) | `fetch`-based client methods. | `api.getNotes`, `api.getNote`, `api.createNote`, `api.updateNote`, `api.updateNoteOnUnload`, `api.deleteNote`, `api.batchDeleteNotes`, `api.moveNote`, `api.ingestNote`, `api.getNoteStatus`, `api.reingestVault`, `api.listVaultFolders`, `api.mkdirVaultFolder`, `api.moveVaultFile`, `api.deleteVaultFile`, `api.resolveVaultLocalPath`, `api.upload`, entity/search/scan-text/note-subgraph methods |
@@ -81,41 +80,41 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 ```
 ┌────────────────────────────┬──────────────────────────────────────────────────────┐
 │ NotesSidebar (w-56…w-80)   │ editor column (flex-1, z-10)                         │
-│  ├ header: "Notes", KB     │  NoteEditorHeader (title input, status, buttons)     │
-│  │  name, Reingest/        │  NoteAttachmentsStrip (chips parsed from body)       │
-│  │  NewFolder/NewNote      │  ┌──────────────────────────┬─────────────────────┐  │
-│  ├ search input            │  │ MarkdownNoteEditor       │ ConnectedNotesPanel │  │
-│  ├ NotesFilterBar          │  │ (CodeMirror, key=note.id)│ (optional, toggled) │  │
-│  ├ NotesBatchBar           │  └──────────────────────────┴─────────────────────┘  │
-│  ├ VaultFolderTree         │  EntityDetailPanel (fixed slide-over, nodeId!=null)  │
-│  │  (virtualised rows)     │                                                      │
-│  └ footer count            │  — or — NotesEmptyState variant="editor"             │
+│  ├ pane header: "Notes",   │  NoteEditorHeader (toolbar: folder, view, attach,    │
+│  │  NewFolder/NewNote      │    record, ingest, connected, ⋯ menu)                │
+│  ├ filter input + "needs"  │  title <input>, date + status line,                  │
+│  │  toggle                 │  attachment chips parsed from the body (inline)      │
+│  ├ NotesBatchBar           │  ┌──────────────────────────┬─────────────────────┐  │
+│  ├ VaultFolderTree         │  │ MarkdownNoteEditor       │ right column:       │  │
+│  │  (content-visibility    │  │ (CodeMirror, key=note.id)│ EntityDetailPanel   │  │
+│  │   rows)                 │  │                          │ or ConnectedNotes   │  │
+│  └ footer count            │  └──────────────────────────┴─────────────────────┘  │
+│                            │  — or — NotesEmptyState variant="editor"             │
 └────────────────────────────┴──────────────────────────────────────────────────────┘
-Overlays (fixed): DatePickerModal, FilePreviewModal (AnimatePresence), FolderDialog,
-RenameDialog, WikilinkHoverCard. `ShaderBackground` sits under everything.
+Overlays: DatePickerModal, FilePreviewModal, FolderDialog, RenameDialog (all native
+<dialog>), WikilinkHoverCard, and a context menu for note/folder rows.
 ```
 
 Key composition facts:
 
 - `MarkdownNoteEditor` is rendered with `key={selectedNote.id}`, so switching notes **remounts** the CodeMirror view (fresh undo history, fresh extension state). Controlled `value={selectedNote.content}` and `onChange={selection.handleContentChange}`.
 - `ConnectedNotesPanel` is only mounted while `showConnectedPanel` is true; it receives `noteId`, `noteContent`, `kb` and two navigation callbacks: `onSelectNote(id)` looks the id up in `list.notes` and calls `handleNoteSelect`; `onSelectEntity(nodeId, name)` opens the entity panel.
-- `EntityDetailPanel` is always mounted while a note is selected; it renders nothing until `nodeId` is non-null.
+- The right column shows `EntityDetailPanel` when `entityPanelNodeId` is set, else `ConnectedNotesPanel` when toggled on; they share one slot rather than overlapping.
 - `DatePickerModal`, `FilePreviewModal`, `FolderDialog` and `RenameDialog` are native `<dialog>` elements opened with `showModal()` (Esc, backdrop and focus trapping come from the browser); `WikilinkHoverCard` is a plain conditional render.
-- All props are threaded explicitly (no context) — `NotesSidebar` alone takes 38 props. `VaultFolderTree` receives the sidebar's scroll container via `scrollRef` because it virtualises against that element.
+- All props are threaded explicitly (no context) — `NotesSidebar` alone takes over forty props and forwards most of them to `VaultFolderTree`.
 
 ### Component → props table
 
 | Component | Props (type) | Notes |
 |---|---|---|
-| `NotesSidebar` | `currentKB, currentKBName: string`; `notes: Note[]`; `searchQuery: string`; `processedFilter: ProcessedFilter`; `isLoading, isSaving: boolean`; `selectedFolder, vaultName: string`; `vaultFolders: string[]`; `attachmentFiles: VaultFileEntry[]`; `collapsedFolders: Set<string>`; `selectedNoteId: string|null`; `selectedNoteIds: Set<string>`; `batchDeleting: boolean`; `dragNoteId, dragFileRel: string|null`; callbacks `onSearchChange, onFilterChange, onReingestVault, onOpenFolderDialog(parent), onCreateNote(folderOverride?), onToggleSelectAll, onBatchDelete, onToggleFolder(path), onSelectFolder(path), onNoteSelect(note), onToggleNoteSelected(id), onMoveNoteToFolder(id, folder), onMoveVaultFile(fromRel, folder), onDragNoteStart/End, onDragFileStart/End, onFileClick(relPath, name), onRenameFile(relPath), onDeleteVaultAttachment(relPath, name)` | Computes `visibleNotes = processedFilter === "ingesting" ? notes.filter(isActiveProcessingNote) : notes`. Shows the KB name line only when `currentKB !== "default"`. New-note button is disabled while `isSaving`. Footer shows `N notes · <selectedFolder or vaultName>` (or `N ingesting`). Empty state only when both `notes` and `vaultFolders` are empty. |
-| `VaultFolderTree` | everything the sidebar forwards plus `scrollRef: RefObject<HTMLDivElement>` and `onCreateNote(folderPath)` | See §9. |
-| `VaultFileRow` | `name, relPath: string; depth: number; isDragging: boolean; onDragStart(relPath); onDragEnd(); onClick(relPath, name); onRename(relPath); onDelete(relPath, name)` | Draggable; sets `dataTransfer` `text/vault-file`. Single-click → `onClick`, double-click → `onRename`. Rename/delete icon buttons appear on hover. Left padding `22 + depth*12`. |
-| `NotesFilterBar` | `processedFilter; onFilterChange` | Five chips in two rows: All / Ingested / Saved, Ingesting / Failed. |
+| `NotesSidebar` | `currentKB, currentKBName: string`; `notes: Note[]`; `searchQuery: string`; `processedFilter: ProcessedFilter`; `isLoading, isSaving: boolean`; `selectedFolder, vaultName: string`; `vaultFolders: string[]`; `attachmentFiles: VaultFileEntry[]`; `expandedFolders: Set<string>`; `selectedNoteId: string|null`; `selectedNoteIds, selectedFileRels: Set<string>`; `batchDeleting: boolean`; `dragNoteId, dragFileRel: string|null`; callbacks `onSearchChange, onFilterChange, onReingestVault, onOpenFolderDialog(parent), onCreateNote(folderOverride?), onToggleSelectAll, onBatchDelete, onToggleFolder(path), onSelectFolder(path), onNoteSelect(note), onNoteContextMenu?, onFolderContextMenu?, onToggleNoteSelected(id), onToggleFileSelected(rel), onMoveNoteToFolder(id, folder), onMoveVaultFile(fromRel, folder), onMoveVaultFiles(rels[], folder), onMoveVaultFolder(fromPath, folder), onDeleteVaultFolder(path), onDragNoteStart/End, onDragFileStart/End, onFileClick(relPath, name), onRenameFile(relPath), onDeleteVaultAttachment(relPath, name)` | Computes `visibleNotes = processedFilter === "ingesting" ? notes.filter(isActiveProcessingNote) : notes`. The filter input is a plain text box; next to it a `Zap` toggle flips `processedFilter` between `"needs"` and `"all"` and shows the count of unprocessed notes. New-note button is disabled while `isSaving`. Footer shows `N notes · <selectedFolder or vaultName>`. Empty state only when both `notes` and `vaultFolders` are empty. |
+| `VaultFolderTree` | everything the sidebar forwards, with `onCreateNote(folderPath)` | See §9. |
+| `VaultFileRow` | `name, relPath: string; depth: number; isDragging, isSelected: boolean; selectedRels: Set<string>; onToggleSelected(relPath); onDragStart(relPath); onDragEnd(); onClick(relPath, name); onRename(relPath); onDelete(relPath, name)` | Draggable; sets `dataTransfer` `text/vault-file`, plus `text/vault-files` (JSON array) when the row is part of a multi-selection. Click → `onClick`; ⌘/Ctrl-click → `onToggleSelected`; double-click → `onRename`. Rename/delete icon buttons appear on hover. Left padding `22 + depth*12`. |
 | `NotesBatchBar` | `noteCount, selectedCount: number; batchDeleting: boolean; onToggleSelectAll; onBatchDelete` | Returns `null` when `noteCount === 0`. Label toggles between "Select all" and "Clear selection" when `selectedCount === noteCount`. |
 | `NoteStatusBadge` / `NoteStatusDot` | `note: Note` | See §8. |
 | `NotesEmptyState` | `variant: "sidebar"|"editor"; searchQuery?; isSaving?; onCreateNote?` | Sidebar variant says "No notes found" when `searchQuery` non-empty, else "No notes yet". |
-| `NoteEditorHeader` | `selectedNote: Note; isSaving, isUploading, isRecording, showConnectedPanel: boolean; onTitleChange(title); onIngest; onToggleDatePicker; onToggleRecording; onToggleConnectedPanel; onDelete` | Title `<input>` bound to `selectedNote.title || ""`, placeholder "Untitled". Status line: `Saving…` / `Uploading…` / `Saved` plus formatted `created_at` (en-US `short month day, year hour:minute`) and `NoteStatusBadge`. Ingest button disabled when `isSaving`, when content is blank, or when `isActiveProcessingNote`; label is `Ingesting…` / `Saving…` / `Re-ingest` (processed) / `Retry` (failed) / `Ingest`. Record button disabled while uploading, pulses red while recording. |
-| `NoteAttachmentsStrip` | `content: string; onFileClick(url, filename); onDeleteFile(fileUrl, markdownText)` | Calls `parseNoteAttachments(content)` on every render; returns `null` if none. Chip label strips the leading `📎`/`🎤` emoji. |
+| `NoteEditorHeader` | `selectedNote: Note; currentKB: string; isSaving, isUploading, isRecording, showConnectedPanel: boolean; viewMode: ViewMode; onViewModeChange(mode); onIngest; onCancelIngest; onAttachFile(e); onToggleDatePicker; onToggleRecording; onToggleConnectedPanel; onDelete` | Toolbar above the editor. The title `<input>` and the date/status line are rendered by `page.tsx` itself (title bound to `selectedNote.title || ""`, placeholder "Untitled"; `created_at` formatted en-US `short month day, year hour:minute`; status from `noteStatus`). Ingest button disabled when `isSaving`, when content is blank, or when `isActiveProcessingNote` (then a cancel button appears). Record button disabled while uploading. |
+| attachment chips (inline in `page.tsx`) | — | `parseNoteAttachments(selectedNote.content)` each render; one chip per link with a type icon (`isAudioUrl`/`isImageUrl`/`isVideoUrl`), click → `media.handleFileClick(url, label)`, × → `media.handleDeleteFile(url, raw)`. Labels have the `📎`/`🎤` prefix stripped by the parser. |
 | `DatePickerModal` | `createdAt: string; pendingDateChange: string|null; onPendingChange(iso); onClose` | `<input type="datetime-local" defaultValue={new Date(createdAt).toISOString().slice(0,16)}>` — note this is the **UTC** slice, not local time (see §21). Each change converts back to ISO via `new Date(value).toISOString()` and reports it; nothing is saved until `onClose`. Button label "Save & Close" when a pending change exists. Clicking the backdrop closes too. |
 | `FilePreviewModal` | `filePreview: FilePreview; currentKB: string; onClose; onReveal` | By `filePreview.type`: `image` → `<img>`; `pdf` → `<iframe>`; `video`/`audio` → `BlobMediaPlayer` (`kind` accordingly, `kbId=currentKB`); `other` → "Preview not available" + reveal button. Header button label uses `isDesktopApp() ? revealInFolderLabel() : "Open"`. |
 | `FolderDialog` | `folderDialog: {parent, name}; vaultName; onNameChange; onSubmit; onCancel` | Enter submits, Escape cancels. Subtitle `Inside <parent or vaultName>`. |
@@ -165,6 +164,7 @@ Assignments to `.current` happen synchronously during render (not in an effect) 
 | 8 | `useNoteMedia({ currentKB, selectedNote, editorRef, handleContentChange, refreshSelectedNote, fetchNotes, searchQuery, processedFilter, setSelectedNote, contentBeforeEditRef, titleBeforeEditRef, setIsSaving, refreshVaultFiles })` | selection, list, autosave, vault | upload/record/preview/date state + handlers |
 | 9 | `useNoteBatchSelection({ currentKB, notes, selectedNote, setSelectedNote, contentBeforeEditRef, autoSaveTimeoutRef, fetchNotes, searchQuery, processedFilter })` | list, selection, autosave | `selectedNoteIds`, `setSelectedNoteIds`, `batchDeleting`, `toggleNoteSelected`, `toggleSelectAll`, `handleBatchDeleteNotes` |
 | 10 | `useWikilinkPreview({ notes, onNoteSelect: handleNoteSelect, sourceNote: selectedNote, kb, onNotesChanged: () => list.fetchNotes(searchQuery, processedFilter) })` | list, select handler | `wikilinkPreview`, `handleWikilinkClick`, `handleWikilinkHover`, `handleWikilinkLeave` |
+| 11 | `useAttachmentJobs({ currentKB, selectedNote, refreshSelectedNote })` | selection | `jobs: Record<url, AttachmentJob>`, `start(rawUrl, force?)`, `cancel(rawUrl)` — exposed to the page as `attachments` |
 
 ### 4.4 Hook → responsibilities → endpoints
 
@@ -177,7 +177,8 @@ Assignments to `.current` happen synchronously during render (not in an effect) 
 | `useNoteIngest` | queue ingest, 5 s poll, terminal refresh | `POST /notes/{id}/ingest`, `GET /notes/{id}/status`, `GET /notes/{id}` |
 | `useVaultTree` | tree UI state, folder ops, moves, renames, file delete | `POST /notes/{id}/move`, `POST /vault/move`, `POST /vault/mkdir`, `POST /vault/delete`, `GET /vault/folders` |
 | `useNoteRestoreEffects` | `?note=` deep link, sessionStorage restore, bfcache/visibility refresh | `GET /notes/{id}`, `GET /notes` |
-| `useNoteMedia` | uploads, recording, previews, reveal, created_at edit | `POST /upload` (direct desktop port), `POST /vault/delete`, `GET /vault/local-path`, `PUT /notes/{id}`, `GET /notes/{id}` |
+| `useNoteMedia` | uploads, recording, previews, reveal, created_at edit | `POST /upload?kb=&folder=`, `POST /vault/delete`, `GET /vault/local-path`, `PUT /notes/{id}`, `GET /notes/{id}` |
+| `useAttachmentJobs` | per-attachment extraction jobs | `POST /notes/{id}/attachments/process`, `POST /notes/{id}/attachments/cancel`, `GET /notes/{id}/attachments/jobs` |
 | `useNoteBatchSelection` | multi-select, batch delete | `POST /notes/batch-delete` |
 | `useWikilinkPreview` | hover card, click navigate/create | `POST /notes` (`createNote`) |
 | controller itself | create/delete note, reingest vault, delete attachment (+preview cleanup) | `POST /notes`, `DELETE /notes/{id}`, `POST /notes/reingest-vault`, `POST /vault/delete` (via vault hook) |
@@ -225,7 +226,7 @@ The autosave timer is cleared *before* the DELETE so a debounced PUT cannot resu
 
 ### 5.1 State
 
-`notes: Note[]`, `searchQuery: string`, `processedFilter: ProcessedFilter` (`"all" | "ingested" | "ingesting" | "saved" | "failed"`), `isLoading`. Refs: `searchTimeoutRef` (debounce), `fetchNotesRequestRef` (monotonic request id), `fetchAbortRef` (current `AbortController`), `prevKBRef`.
+`notes: Note[]`, `searchQuery: string`, `processedFilter: ProcessedFilter` (`"all" | "needs" | "ingested" | "ingesting" | "saved" | "failed"`), `isLoading`. Refs: `fetchNotesRequestRef` (monotonic request id), `fetchAbortRef` (current `AbortController`). The KB switch is detected during render (`loadedKb` state compared with `currentKB`).
 
 ### 5.2 `fetchNotes(search?, filter?)`
 
@@ -235,6 +236,7 @@ The autosave timer is cleared *before* the DELETE so a debounced PUT cannot resu
 | `filter` | `processed` | `failed` | client-side |
 |---|---|---|---|
 | `"all"` / undefined | — | — | — |
+| `"needs"` | `false` | — | — (the sidebar's ⚡ toggle: everything not yet in the graph) |
 | `"ingested"` | `true` | — | — |
 | `"saved"` | `false` | `false` | — |
 | `"failed"` | — | `true` | — |
@@ -253,7 +255,7 @@ Consequence: every `fetchNotes` is **two** sequential requests (`/notes` then `/
 - **KB switch effect** `[currentKB]`: if the KB changed since last run → `clearSelectionForKBSwitch()`; then `fetchNotes(undefined, processedFilter)`.
 - **Search/filter effect** `[debouncedQuery, processedFilter]`: skips its **first** run (`searchEffectRanRef`) because the effect above already fetched. The query text goes through `useDebounced(searchQuery, 300)` (`lib/utils.ts`); the processed filter applies immediately.
 
-There is no pagination: `GET /notes` returns the whole list (backend default `limit` is documented in §17) and rendering cost is handled by virtualisation in `VaultFolderTree` (§9.4). Sorting is whatever the backend returns (created_at descending) but the tree re-sorts alphabetically (folders first) — see §9.2.
+There is no pagination: `GET /notes` returns the whole list (backend default `limit` is documented in §17) and rendering cost is handled by `content-visibility: auto` rows in `VaultFolderTree` (§9.3). Sorting is whatever the backend returns (created_at descending) but the tree re-sorts alphabetically (folders first) — see §9.2.
 
 ## 6. Selection and dirty tracking (`useNoteSelection`, `useNoteSelectHandler`)
 
@@ -378,7 +380,7 @@ stateDiagram-v2
 ### 8.2 Polling
 
 Effect keyed on `ingestingNoteIds` (a `Set`, so any add/remove restarts the interval). While the set is non-empty, every **5000 ms** it runs `poll()`:
-- For each id in parallel: `GET /notes/{id}/status` (no `kb` param — status is keyed by note id alone). Response `NoteStatus = {id, processed, failed, status, processing_stage?, processing_model?}`.
+- For each id in parallel: `GET /notes/{id}/status?kb=` (`api.getNoteStatus(id, currentKB)`; the backend 404s when the note is not in that KB, which the poller ignores). Response `NoteStatus = {id, processed, failed, status, processing_stage?, processing_model?}`.
 - For ids that reached a terminal state (`processed || failed`) it additionally fetches the full note (`GET /notes/{id}?kb=`).
 - Then: remove terminal ids from the set; patch `notes` (full refreshed note where available, else just the four status fields); patch `selectedNote` likewise — if the refreshed note is selected and there are no local edits, baselines move and the whole note is adopted; with local edits, fresh metadata is merged but `content` is kept (note: `title` is *not* preserved in that branch — a title typed during ingest could be replaced by the server title; see §21).
 
@@ -417,16 +419,16 @@ Pure function producing `FolderTreeNode[]` (`{name, path, note?, children}`):
 3. Each note: no `rel_path` → root leaf with `name = title || "Untitled"`, `path = note.id`. Otherwise strip `.md`, split; last segment is the leaf name (falls back to title), the rest becomes the folder chain; leaf `path = rel` (with `.md`).
 4. `sortTree`: folders (nodes with no note **and** ≥1 child) before leaves, then `localeCompare` on name, recursively. An *empty* folder therefore sorts among leaves, not among folders.
 
-### 9.3 Flattened rows and virtualisation (`VaultFolderTree`)
+### 9.3 Flattened rows (`VaultFolderTree`)
 
 The comment in the file records the motivation: *"large vaults previously rendered one DOM node per note and re-built the whole tree per keystroke."* (commit `b84ca73`). The component:
 
 1. Filters `vaultFolders` to exclude `attachments` and `attachments/*` (the attachments folder gets its own section).
 2. Builds the tree. Attachments live only under `attachments/`; non-markdown files elsewhere in the vault are not listed.
-3. Linearises into `TreeRow[]` respecting `collapsedFolders`: `vault-header` → recursive `folder`/`note` rows → `attachments-header` → (`attachments-empty` | `attachment` rows) when `!collapsedFolders.has("attachments")`.
-4. Rows render as plain elements with the `.tree-row` class (`content-visibility: auto; contain-intrinsic-size: auto 50px`), so the browser skips layout and paint for off-screen rows without a virtualiser.
+3. Linearises into `TreeRow[]` respecting `expandedFolders` (folders start closed; children are emitted only for expanded paths): `vault-header` → recursive `folder`/`note` rows → `attachments-header` → when `expandedFolders.has("attachments")`, nested `attachment-folder` rows (built from `attachmentFiles` parents plus any `attachments/*` entry in `vaultFolders`, so empty subfolders show) with their `attachment` rows, then root-level attachments, or `attachments-empty` when there is nothing.
+4. Rows render as plain elements with the `.tree-row` class (`content-visibility: auto; contain-intrinsic-size: auto 50px`), so the browser skips layout and paint for off-screen rows without a virtualiser (the earlier `@tanstack/react-virtual` layer was removed).
 
-Row keys: `folder:<path>`, `note:<id>`, `media:<rel_path>`, `attachment:<rel_path>`, plus fixed keys for headers.
+Row keys: `folder:<path>`, `note:<id>`, `attachment-folder:<path>`, `attachment:<rel_path>`, plus fixed keys for headers.
 
 ### 9.4 Interaction model
 
@@ -437,25 +439,30 @@ Row keys: `folder:<path>`, `note:<id>`, `media:<rel_path>`, `attachment:<rel_pat
 | Folder hover buttons | `FolderPlus` → `onOpenFolderDialog(path)`; `Plus` → `onSelectFolder(path)` + `onCreateNote(path)`. |
 | Click note row | `onNoteSelect(note)`; checkbox → `onToggleNoteSelected(id)` (click propagation stopped). |
 | Drag note | `dataTransfer["text/note-id"] = id`, `onDragNoteStart(id)` (row gets 50 % opacity). |
-| Drag file | `dataTransfer["text/vault-file"] = rel_path`, `onDragFileStart`. |
-| Drop on vault header / folder / note row / attachments header / attachment folder / attachment row / container | `acceptVaultDrop(e, target)` where target is `""`, `node.path`, the note's parent folder, `"attachments"`, the attachment folder's path, the attachment's parent folder, or `""` respectively. Reads ids from `dataTransfer` falling back to the drag state; ends both drags; then `onMoveVaultFolder` if a folder is dragged, `onMoveNoteToFolder` if a note id is present, else — only when the target is `attachments` or under `attachments/` (file drops onto note folders and the vault root are ignored) — `onMoveVaultFile`. |
-| Any drag in progress | folder rows/headers show a teal (notes) or sky (attachments) ring as drop affordance. |
+| Drag file | `dataTransfer["text/vault-file"] = rel_path` (+ `text/vault-files` JSON when the row is in the ⌘-click selection), `onDragFileStart`. |
+| Drag folder | Any non-root folder row (note folders and attachment subfolders): `dataTransfer["text/vault-folder"] = path`; the tree owns this drag state (`dragFolder`). |
+| Drop on vault header / folder / note row / attachments header / attachment folder / attachment row / container | `acceptVaultDrop(e, target)` where target is `""`, `node.path`, the note's parent folder, `"attachments"`, the attachment folder's path, the attachment's parent folder, or `""` respectively. Reads ids from `dataTransfer` falling back to the drag state; ends all drags; then `onMoveVaultFolder` if a folder is dragged, `onMoveNoteToFolder` if a note id is present, else — only when the target is `attachments` or under `attachments/` (file drops onto note folders and the vault root are ignored; the backend also refuses moves across the `attachments/` boundary with 400) — `onMoveVaultFiles` for a multi-selection or `onMoveVaultFile` for one. |
+| Any drag in progress | folder rows/headers show an accent ring as drop affordance; the dragged row is at 50 % opacity. |
+| Right-click note / folder row | `onNoteContextMenu` / `onFolderContextMenu` → the page's context menu (new folder, delete, …). |
 
-Indent guides: one 1-px vertical line per depth level at `left = 10 + i*12`; folder rows pad `6 + depth*12`, note rows `10 + depth*12`, file rows `22 + depth*12`.
+Folder rows pad `6 + depth*12`, note rows `8 + depth*12`, file rows `22 + depth*12`. Folder rows carry hover buttons: delete (non-root only), new folder, new note.
 
 ### 9.5 Expand/collapse state
 
-`collapsedFolders: Set<string>` lives in `useVaultTree` **in memory only** — it is not persisted to storage; a reload expands every folder. (The only persisted key in `storage-keys.ts` is the last-opened note id.) The `"attachments"` pseudo-path shares the same set. Helpers: `toggleFolder(path)`, `expandFolderAndAncestors(folder)` (deletes the folder and every ancestor prefix from the set — used after creating a note in a folder), and `submitFolderDialog` un-collapses the new folder and its parent.
+`expandedFolders: Set<string>` lives in `useVaultTree` and is **persisted per KB** in `localStorage["orb:notes-expanded:<kb>"]` through `loadJson`/`saveJson`; folders start closed, and switching KB reloads the set (and clears `selectedFolder`). The `"attachments"` pseudo-path and attachment subfolders share the same set. Helpers: `toggleFolder(path)`, `expandFolderAndAncestors(folder)` (adds the folder and every ancestor prefix — used after creating a note in a folder), and `submitFolderDialog` expands the new folder and its parent.
 
 ### 9.6 Mutations
 
 | Handler | Client validation | Endpoint & body | After success | Error UX |
 |---|---|---|---|---|
-| `handleMoveNoteToFolder(noteId, folder)` | — | `POST /notes/{id}/move?kb=` `{folder}` | `fetchNotes`; `patchLocalNote(result.note)` if returned else `refreshSelectedNote` | `alert(getApiErrorDetail(e) \|\| "Failed to move note.")` |
+| `handleMoveNoteToFolder(noteId, folder)` | — | `POST /notes/{id}/move?kb=` `{folder}` | `fetchNotes`; `patchLocalNote(result.note)` if returned else `refreshSelectedNote` | `alert(errMessage(e, "Failed to move note."))` |
 | `handleMoveVaultFile(fromRel, folder)` | no-op if target equals source | `POST /vault/move?kb=` `{from_rel, to_rel: folder ? folder/filename : filename}` | `rewriteOpenNotePaths(result.from, result.to)`; `fetchNotes` | same pattern |
+| `handleMoveVaultFiles(rels[], folder)` | skips unchanged targets | one `POST /vault/move` per file, sequential | rewrites the open note for every success, clears the selection, **one** `fetchNotes` for the batch | `alert("Could not move: a, b")` listing failures |
+| `handleMoveVaultFolder(fromPath, folder)` | no-op when unchanged or when dropping a folder into itself/its descendant | `POST /vault/move?kb=` `{from_rel: path, to_rel: folder/name}` | `refreshSelectedNote` (links were rewritten on disk); `fetchNotes` | same pattern |
+| `handleDeleteVaultFolder(path)` | `confirm("Delete folder … and everything in it?…")` | `POST /vault/delete?kb=` `{rel_path: path}` | `fetchNotes`; returns `true` | same pattern; returns `false` |
 | `openRenameDialog(relPath)` / `submitRenameDialog()` | non-empty; no `/`, `\`, `..` | `POST /vault/move` with the same folder and new basename; closes dialog if unchanged | rewrite open note paths; `fetchNotes` | same |
 | `openFolderDialog(parent)` / `submitFolderDialog()` | non-empty; no separators or `..` | `POST /vault/mkdir?kb=` `{path: parent/name}` | select the new folder; un-collapse it and parent; `fetchNotes` | `"Failed to create folder"` |
-| `refreshVaultFiles()` | — | `GET /vault/folders` | updates only `attachmentFiles`/`mediaFiles` | swallowed |
+| `refreshVaultFiles()` | — | `GET /vault/folders` | updates only `attachmentFiles` | swallowed |
 | `handleDeleteVaultAttachment(relPath, name)` | `confirm("Delete \"name\" from your vault?\n\nLinks to this file will be removed from notes.")` | `POST /vault/delete?kb=` `{rel_path}` | if the open note's content mentions `result.deleted` or `/vault-files/<kb>/<deleted>` → `refreshSelectedNote` (server already stripped the links on disk); `fetchNotes`; returns result | alert; returns `null` |
 
 `rewriteOpenNotePaths(from, to)` applies `rewriteVaultPathsInContent` to the selected note and pushes the result through `onContentChange` — i.e. it becomes a normal dirty edit that autosave persists 1.5 s later. Only the *open* note is rewritten client-side; other notes are rewritten by the backend (`vault.py` move handler, see §17).
@@ -468,7 +475,7 @@ Single-pass regex `oldUrl|from` (longest alternative first, both escaped) where 
 
 One effect with deps `[currentKB, openNoteById, refreshSelectedNote]`:
 
-1. **Deep link:** if `?note=<id>` is in the URL → write it to `sessionStorage[lastNoteStorageKey(kb)]`, `openNoteById(id)`, then `history.replaceState({}, "", "/notes")` so a refresh does not fight in-page selection. Returns early (no listeners registered in this run; they are registered when the effect re-runs on the next dep change — in practice `openNoteById`/`refreshSelectedNote` are stable, so listeners are only attached if `currentKB` or hydration changes; see §21).
+1. **Deep link:** if `?note=<id>` is in the URL → write it to `sessionStorage[lastNoteStorageKey(kb)]`, `openNoteById(id)`, then `history.replaceState({}, "", "/notes")` so a refresh does not fight in-page selection. Returns early (no listeners registered in this run; they are registered when the effect re-runs on the next dep change — in practice `openNoteById`/`refreshSelectedNote` are stable, so listeners are only attached if `currentKB` changes; see §21).
 2. **Cold restore:** `restoreSelection()` — only when `selectedNoteRef.current` is null, read the per-KB key and `openNoteById`.
 3. **Listeners:** `pageshow` with `event.persisted` (bfcache) → `fetchNotes(searchQuery, processedFilter)` + `refreshOpenNote()`; `visibilitychange` → visible → `refreshOpenNote()`. `refreshOpenNote` refreshes the currently open note in place (`refreshSelectedNote`) or opens the stored id if nothing is open.
 
@@ -480,7 +487,7 @@ One effect with deps `[currentKB, openNoteById, refreshSelectedNote]`:
 
 ### 11.1 Upload path
 
-`api.upload(file, kb, folder)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload?kb=&folder=` `` with a 10-minute timeout; `folder` is the selected note's vault folder (dirname of `rel_path`, `""` for root notes) so uploads group under `attachments/<folder>/`. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response's `rel_path` (`attachments/<sub>/<file>`, raw) is percent-encoded once with `encodeFileUrl` before it is inserted into the note; the stored link is vault-relative with no leading slash, so it survives the workspace being re-created under a new UUID. `resolveFileUrl` turns it back into `/vault-files/<kb>/…` at render time.
+`api.upload(file, kb, folder)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload?kb=&folder=` `` with a 10-minute timeout (`kb` and `folder` are omitted when default/empty); `folder` is the selected note's vault folder (`noteFolder` = dirname of `rel_path`, `""` for root notes) so uploads land under `attachments/<folder>/<stem>-<8hex><ext>` — flat under `attachments/` for root notes. Both file uploads and voice recordings pass the same `noteFolder`. The API serves the UI, so the request is same-origin with no proxy body limit in between. The response is `{filename, url, rel_path, key, status}`; only `rel_path` (`attachments/<sub>/<file>`, raw) is used: it is percent-encoded once with `encodeFileUrl` and inserted into the note. The stored link is vault-relative with no leading slash and never contains the workspace id, so it survives the workspace being re-created under a new UUID; `resolveFileUrl(link, kb)` turns it into `/vault-files/<kb>/…` at every render site, and `vaultRelPath(link)` gives the decoded path back when the API needs one (delete, extraction-block keys).
 
 ### 11.2 `attachFiles(files)` and `handleFileAttach(e)`
 
@@ -492,7 +499,7 @@ For each file sequentially: upload → decide image-ness by MIME `image/*` or ex
 | any other file | `[📎 <filename>](<url>)` |
 | voice recording | `[🎤 Voice Recording](<url>)` |
 
-All chunks are joined with newlines, wrapped in `\n…\n`, and inserted via `editorRef.current.insertAtCursor(...)`; if the editor ref is missing they are appended to the content through `handleContentChange`. Then `refreshVaultFiles()` so the sidebar shows the new file. `isUploading` is true for the whole batch. Errors: `alert(getApiErrorDetail(e) || e.message || "Failed to upload file")`. `handleFileAttach` adapts an `<input type=file>` change event and clears `e.target.value` afterwards so the same file can be picked again. The editor's drop/paste path calls `attachFiles` directly (`onDropFiles` prop).
+All chunks are joined with newlines, wrapped in `\n…\n`, and inserted via `editorRef.current.insertAtCursor(...)`; if the editor ref is missing they are appended to the content through `handleContentChange`. Then `refreshVaultFiles()` so the sidebar shows the new file. `isUploading` is true for the whole batch. Errors: `alert(errMessage(e, "Failed to upload file"))`. `handleFileAttach` adapts an `<input type=file>` change event and clears `e.target.value` afterwards so the same file can be picked again. The editor's drop/paste path calls `attachFiles` directly (`onDropFiles` prop).
 
 ### 11.3 Voice recording (`startRecording` / `stopRecording`, `media-recorder.ts`)
 
@@ -686,7 +693,7 @@ The page wires these to `useWikilinkPreview` (§13.4): click resolves via `Wikil
 Props: `content: string; onFileClick(url, filename); onEntityClick?(nodeId, name); proseClassName: string; kb?: string`.
 
 1. `useScannedEntities(content, kb, { enabled: Boolean(onEntityClick) })` — entity scan only when a click handler exists.
-2. `parseSegments(content)` splits on the enrichment markers the ingestion pipeline writes into note bodies: `[Image: <title>]`, `[PDF Extraction (<file>)]:`, `[Audio Transcript (<title>)]:`, `[Video Transcript (<title>)]:` (regex `MARKER_RE`). Text before/between markers becomes `text` segments; each marker plus the following chunk becomes an `image` / `pdf` / `audio` / `video` segment with a `label`. Empty content renders `*Empty note*`.
+2. `parseSegments(content)` splits on the `<!-- orb:extract src="…" -->` … `<!-- /orb:extract -->` blocks ingestion writes (`BLOCK_RE`) and reads each block's first line `[<Kind> (<name>)]:` / `[Image: <title>]` (`HEADER_RE`) for its label; the kind maps to `image` / `video` / `audio` (any transcript) / `pdf` (every other document). Text before/between blocks becomes `text` segments. No header list to keep in step with the backend. Empty content renders `*Empty note*`.
 3. Each non-text segment is preceded by a `SegmentDivider` pill (blue image / amber pdf / emerald audio / purple video with a lucide icon) and every segment is rendered by `ReactMarkdown` with `remarkGfm`, `components={{ a: LinkComponent }}` and `urlTransform`, after `injectEntityLinks(text, scannedEntities)`.
 4. `makeLinkComponent(onFileClick, onEntityClick, kb)` decides per anchor: `entity://<node_id>` → blue pill button calling `onEntityClick`; attachment links (label starts with 📎/🎤 or `isAttachmentHref`) → inline `<img>`, `BlobMediaPlayer kind="video"`, PDF `<iframe>` + "open full preview" button, or a purple attachment button calling `onFileClick(resolvedUrl, filename)`; everything else → `MarkdownAnchor`.
 
@@ -718,7 +725,7 @@ Layout: a tiny force simulation in React state — nodes seeded deterministicall
 
 ### 16.2 `EntityDetailPanel`
 
-Props: `nodeId: string | null; name?; kb?; onClose`. Absolutely positioned right slide-over (`w-80`) inside the editor column. On `nodeId` change it calls `api.getNodeDetail(nodeId, kb)` → `GET /graph/3d/node/{node_id}?kb=`; response fields rendered: `name`, `node_type` badge, `description`, `isolated_contexts` (first 6), `facts`, `domain`, `community_name || community_id`, `connections` (first 10, with `← relationship` / `→ relationship` by `direction`), `related_notes` ("Mentioned in notes", names only — not clickable). Empty body shows *"No stored contexts yet for this entity. Re-ingest the note …"*; a failed fetch shows "Entity details unavailable". Footer links to `/graph-3d`. The backend endpoint also backfills missing names from SQLite/Qdrant into Kuzu as a side effect of viewing (see `backend/app/api/graph.py`).
+Props: `nodeId: string | null; name?; kb?; onClose`. An inline column (`flex h-full flex-col animate-rise`) — the notes page renders it in the right-hand slot instead of `ConnectedNotesPanel` while an entity is open; the chat page puts it in a 320 px aside. Renders nothing while `nodeId` is null. On `nodeId` change it calls `api.getNodeDetail(nodeId, kb)` → `GET /graph/3d/node/{node_id}?kb=`; response fields rendered: type icon, `name`, `node_type` + `community_name || community_id` line, `description`, `isolated_contexts` (first 6), `facts`, `domain`, `connections` (first 10, `← ` prefix for incoming), `related_notes` ("Mentioned in", names only — not clickable). Empty body shows *"Nothing stored for this entity yet. Re-ingest the note if ingestion just finished."*; a failed fetch shows "Entity details unavailable". Footer is a `Link` to `/graph-3d`. Nodes with no stored name display as "Untitled note" — the backend no longer backfills names at request time.
 
 ### 16.3 `BlobMediaPlayer`
 
@@ -741,17 +748,17 @@ All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL
 | `moveNote(id, folder, kb)` | `POST /notes/{id}/move` | `{folder}` (`""` = root) | `vault_ops.move_note_to_folder`; 409 on `FileExistsError`, 400 on missing/invalid | `{...moved, note: Note}` |
 | `ingestNote(id, kb)` | `POST /notes/{id}/ingest` | — | `require_ai(kb)`; resets `processed/failed`, stage `"Queued for ingestion"`, `processing_model=None`; schedules `ingestion_workflow.process_note` as a BackgroundTask (always force re-ingest) | `{note_id, status:"processing_started", message}` |
 | `reingestVault(kb)` | `POST /notes/reingest-vault` | — | (defined outside `notes.py`; queues every note — see [10](10-ingestion-pipeline.md)) | — |
-| `listVaultFolders(kb)` | `GET /vault/folders` | — | `vault.list_folders`: ensures `attachments/` exists; `list_vault_folders(include_attachments=True)`, `list_attachment_files`; empty lists when no vault | `{folders, attachments:[{name, rel_path}], vault_name, vault_path}` |
+| `listVaultFolders(kb)` | `GET /vault/folders` | — | `vault.list_folders`: ensures `attachments/` exists; `list_vault_folders(include_attachments=True)`, `list_attachment_files`; empty lists when no vault. Attachments live only under `attachments/`, so there is no separate media listing | `{folders, attachments:[{name, rel_path}], vault_name, vault_path}` |
 | `mkdirVaultFolder(path, kb)` | `POST /vault/mkdir` | `{path}` | validates no `..`, `safe_vault_join`, `mkdir -p`, writes a `.keep` file so empty folders survive | `{path, status:"ok"}` |
-| `moveVaultFile(fromRel, toRel, kb)` | `POST /vault/move` | `{from_rel, to_rel}` | `vault_ops.move_vault_file` — moves note **or** attachment and rewrites markdown links in all notes; 409 exists / 404 missing / 400 invalid | `{from, to, …}` (client reads `from`/`to`) |
+| `moveVaultFile(fromRel, toRel, kb)` | `POST /vault/move` | `{from_rel, to_rel}` | `vault_ops.move_vault_file` — moves a note, an attachment or a folder and rewrites markdown links in all notes; 409 exists / 404 missing / 400 invalid, including `"Cannot move across the attachments/ boundary"` (attachment → note folder, note → `attachments/`, or a folder move crossing it) | `{from, to, …}` (client reads `from`/`to`) |
 | `deleteVaultFile(relPath, kb)` | `POST /vault/delete` | `{rel_path}` | `vault_ops.delete_vault_file` — deletes the file and strips links to it from note bodies; 404 / 400 | `{deleted: <rel>, …}` |
 | `resolveVaultLocalPath(relOrUrl, kb)` | `GET /vault/local-path` | `rel` | accepts a vault-relative path or `/vault-files/...` URL; `safe_vault_join`; 404 if missing | `{rel_path, local_path, vault_path, exists:true}` |
-| `upload(file, kb, folder?)` | `POST /upload` (direct FastAPI origin on desktop) | multipart `file`; query `folder=` (note's vault folder) | see [09](09-notes-wikilinks-and-vault-files.md) — stores under `attachments/<folder>/`, transcodes audio | `{filename, url, rel_path, key, status}` |
+| `upload(file, kb, folder?)` | `POST /upload?kb=&folder=` | multipart `file`; query `folder=` (note's vault folder, vault-relative) | `store_upload(vault, filename, data, kb_id, folder)` — stores under `attachments/<folder>/<stem>-<8hex><ext>`; `..`/absolute folders → 400 "Invalid folder"; see [09](09-notes-wikilinks-and-vault-files.md) | `{filename, url, rel_path, key, status}` — the client inserts `encodeFileUrl(rel_path)`, never `url` |
 | `searchEntities(q, kb, limit=5)` | `GET /graph/entities/search` | `q, limit` | Meili `search_nodes(q, limit*2)`, drops `note`/`community`; `[]` if `q` < 2 chars or AI not configured | `[{node_id, name, node_type}]` |
 | `scanTextEntities(text, kb, {signal})` | `POST /graph/entities/scan-text` | `{text}` | regex candidates (multi-word Capitalised sequences + single Capitalised words ≥ 4 letters), first 40 candidates each searched in Meili (2 hits), kept if the entity name occurs in the text; excludes notes/communities | `[{node_id, name, node_type}]` |
 | `getNoteEntitySubgraph(text, kb)` | `POST /graph/entities/note-subgraph` | `{text}` | scan-text + Kuzu 1-hop edges among the found set | `NotesGraphPayload` (`center_id: null`) |
 | `getNoteNeighbors(noteId, kb)` | `GET /graph/notes/{id}/neighbors` | — | `wikilinks.note_neighborhood_payload` | `NotesGraphPayload` |
-| `getNodeDetail(nodeId, kb)` | `GET /graph/3d/node/{id}` | — | `graph_3d_node_detail` (+ Meili content fallback, title backfill) | entity detail object (§16.2) |
+| `getNodeDetail(nodeId, kb)` | `GET /graph/3d/node/{id}` | — | `graph_3d_node_detail` (+ Meili content fallback; "Untitled note" display default, no write-back) | entity detail object (§16.2) |
 
 Backend wikilink resolution (`services/wikilinks.py`) is invoked on every create/update to rebuild `note_links` for the source note; its `WikilinkResolver` has the same four-step precedence as the client class (§13.3). `notes_graph_payload` synthesises `missing:<title>` phantom nodes for unresolved targets — that is where the red nodes in the Connected panel come from.
 
@@ -798,7 +805,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 10. **Vault path rewrites are single-pass, longest-match-first, and only inside link targets** (`rewriteVaultPathsInContent`). The chained-`replaceAll` form is a known data corrupter.
 11. **`kb` is omitted from requests for the default KB** (`withKb`/`kbQuery`). Backend endpoints must therefore default to the default KB.
 12. **Client and backend wikilink resolvers must keep identical precedence** (exact path → suffix path → source-folder relative → basename by proximity) and identical normalisation; autocomplete `insert` targets are chosen so that both resolve to the selected note.
-13. **Inserted attachment markdown conventions are load-bearing**: `![name](url)` for images (ingestion discovers them for Florence), `[📎 name](url)` for files, `[🎤 Voice Recording](url)` for recordings; `parseNoteAttachments`, `MEDIA_RE`, `SegmentedNoteContent` and the backend `_attachment_rels_from_note_body` all key off these shapes.
+13. **Inserted attachment markdown conventions are load-bearing**: `![name](url)` for images (ingestion discovers them for the vision projector), `[📎 name](url)` for files, `[🎤 Voice Recording](url)` for recordings; `parseNoteAttachments`, `MEDIA_RE`, `SegmentedNoteContent` and the backend `_attachment_rels_from_note_body` all key off these shapes.
 14. **`processing_stage` strings are a contract** between backend tracker/watcher and `processing-status.ts`; new stage vocabulary must be classified on both sides.
 15. **External links open outside the app** (`MarkdownAnchor`) and `urlTransform` blocks non-allowlisted schemes; entity links use the `entity://` pseudo-scheme only.
 
@@ -807,13 +814,13 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 - **Search matches title/`rel_path` only**, never the body (bodies live in files; the backend comment says so). Users expecting full-text search should use chat/Meili.
 - **Each `fetchNotes` is two requests** and `GET /notes` also runs a vault sync, so the 300 ms search debounce is doing real work; do not lower it casually.
 - **KB switch drops the search query** (`fetchNotes(undefined, processedFilter)`) but keeps the filter chip; the input still shows the old text until the next keystroke.
-- **`collapsedFolders` is not persisted**; only the last note id is (sessionStorage, per KB, per tab). Reload = all folders open.
+- **Folders start closed**; `expandedFolders` is persisted per KB in `localStorage` (`orb:notes-expanded:<kb>`), the last note id in `sessionStorage` (per KB, per tab).
 - **Empty folders sort with notes**, not with folders, because `sortTree` treats "folder" as `!note && children.length > 0`.
 - **A note without `rel_path` appears at the root with `path = note.id`** and cannot be dragged to a folder position that survives (move needs a file).
 - **Date picker uses UTC for its initial value** (`toISOString().slice(0,16)` into a `datetime-local` input) but interprets the edited value as local time (`new Date(value)`), so opening and saving without change can shift `created_at` by the timezone offset. Nothing is sent unless the input changes, which limits the damage. (f8f527f removed one line here; the UTC slice remains.)
 - **Ingest poll with local edits keeps `content` but not `title`** — a title typed while an ingest finishes may be replaced by the server title.
 - **`handleNoteSelect` for the same note re-GETs and resets baselines**, discarding nothing (dirty note is saved first) but causing a re-render; clicking the open note is effectively a refresh.
-- **Deep link `?note=` early-returns before registering `pageshow`/`visibilitychange` listeners**; they attach only when the effect re-runs (KB change / hydration). Until then, tab-switch refresh does not run for that session.
+- **Deep link `?note=` early-returns before registering `pageshow`/`visibilitychange` listeners**; they attach only when the effect re-runs (KB change). Until then, tab-switch refresh does not run for that session.
 - **`toggleSelectAll` compares against `notes.length`**, while the sidebar may show fewer rows under the "ingesting" filter, so "Select all" can select hidden notes.
 - **Entity decorations use first-match overlap resolution, `injectEntityLinks` uses longest-first** — the editor and the read-only renderer can highlight different spans for nested names.
 - **`WIKILINK_RE` rejects `#`** in targets, so `[[Note#Heading]]` is neither decorated nor completed; the backend `extract_wikilinks` may still record it.
@@ -823,7 +830,7 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 - **`updateNoteOnUnload` silently downgrades to a plain PUT above ~60 KB**, which the browser may kill; the unmount flush (route change) uses the normal request path regardless.
 - **`FilePreviewModal` PDF/`<img>` load from `/vault-files/...`** on the same origin — large files preview fine because responses are streamed.
 - **`ConnectedNotesPanel.onSelectNote` only works for notes present in `list.notes`** (page does a `find`); a neighbour filtered out by the current search cannot be opened from the panel.
-- **`EntityDetailPanel` is positioned `absolute` inside the editor column** and overlays the Connected panel when both are open.
+- **`EntityDetailPanel` and `ConnectedNotesPanel` share the right column**; opening an entity replaces the connected-notes view until it is closed.
 
 ## 22. Extension points
 
@@ -833,8 +840,8 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 - **New attachment kind**: extend `kindForUrl` + `MediaWidget.toDOM` (editor), `makeLinkComponent` (read-only), `handleFileClick` type detection + `FilePreviewModal` branch, and `isXUrl` in `lib/utils.ts`.
 - **New vault operation**: add an `api.*` method (use `kbQuery`), a handler in `useVaultTree` that ends with `fetchNotes(searchQuery, processedFilter)` and `rewriteOpenNotePaths` if paths change, wire through `NotesSidebar` → `VaultFolderTree` props.
 - **New per-note side panel**: mount it in `page.tsx` next to `ConnectedNotesPanel`, key requests on `noteId` (not content) unless debounced, and obtain navigation through `handleNoteSelect`/`handleEntityClick` from the controller.
-- **Persisting UI state** (e.g. collapsed folders): add a key builder to `_lib/storage-keys.ts` and hydrate in the owning hook's `useState` initialiser guarded for SSR (`typeof window`).
-- **Reusing the editor elsewhere**: import `MarkdownNoteEditor` from `@/components/markdown-editor`; it depends only on `api.scanTextEntities`/`api.searchEntities`, `lib/utils` URL helpers and `@/app/notes/_lib/wikilinks` (note the cross-import from `components/` into `app/notes/_lib/`).
+- **Persisting UI state**: add a key builder (see `lastNoteStorageKey` in `_lib/storage-keys.ts` or `expandedKey` in `useVaultTree`), read it with `loadJson` in the owning hook's `useState` initialiser and write with `saveJson` in an effect.
+- **Reusing the editor elsewhere**: import the default export from `@/components/markdown-editor/MarkdownNoteEditor` (there is no barrel); it depends only on `api.scanTextEntities`/`api.searchEntities`, `lib/utils` URL helpers and `@/app/notes/_lib/wikilinks` (note the cross-import from `components/` into `app/notes/_lib/`).
 
 ## 23. History / rationale
 
@@ -845,7 +852,9 @@ There are no page-level shortcuts (no global "new note" or "save" key); saving i
 | `2e3c93b` | 2026-08-04 | Fixed the notes page infinite refresh that blocked title/content saves: stable circular hook bridges in `useNotesPageController`, edit-preserving `refreshSelectedNote`/`syncSelectedNoteFromList`, restore effects only cold-restore (§7.5). |
 | `72413b9` | 2026-08-06 | Title ↔ filename sync: `PUT /notes/{id}` renames the `.md` and rewrites wikilinks; autosave carries `rel_path` over during in-flight edits; `noteDisplayName` prefers the title over stale `Untitled N.md`. |
 | `b35d612` | 2026-08-06 | Obsidian-style `[[` autocomplete with folder hints and path disambiguation (`wikilinkInsertTarget`, `suggestWikilinkNotes`, `wikilinkCompletionSource`, "Create note" option); exact vault paths win first in both resolvers; clicking a missing link creates the note. |
-| `b84ca73` | 2026-08-06 | Performance: virtualised `VaultFolderTree` (flattened rows + `@tanstack/react-virtual`), `visibleLineChunks` viewport-only decoration scans, shared `markdown-entities.tsx` pipeline with scan caching, abortable superseded requests in `fetchNotes`, Connected panel keyed on note id. |
+| `b84ca73` | 2026-08-06 | Performance: flattened `VaultFolderTree` rows (originally behind `@tanstack/react-virtual`, since replaced by `content-visibility: auto`), `visibleLineChunks` viewport-only decoration scans, shared `markdown-entities.tsx` pipeline with scan caching, abortable superseded requests in `fetchNotes`, Connected panel keyed on note id. |
 | `f8f527f` | 2026-08-06 | Audit fixes: autosave no longer wipes in-flight keystrokes (live-vs-snapshot check), single-pass `rewriteVaultPathsInContent`, no per-keystroke neighbour refetch, `WikilinkResolver` folder-proximity disambiguation on client and server, calmer status pollers, `BlobMediaPlayer` direct-first playback, editor OS-file drop handling. |
 
 Earlier history: the notes page was a single ~2k-line `page.tsx` with a textarea-based editor (the `textarea: null` shim in `MarkdownNoteEditorHandle` is a leftover); it was split into `_hooks`/`_components`/`_lib` and moved to CodeMirror 6 before the August 2026 commits above.
+
+2026-09-19/20: attachment links became canonical vault-relative (`attachments/<sub>/<file>`, encoded once by `encodeFileUrl`; `resolveFileUrl` no longer repairs doubled `attachments/attachments/` paths — the backend vault sweep rewrote them once); uploads take a `folder` and group under the note's folder; the vault tree lost its separate media rows and file drags land only on attachment targets; `getNoteStatus` sends `?kb=`; `errMessage` moved from `_lib/api-error.ts` to `lib/utils.ts`; the virtualiser, `framer-motion` modals and the `markdown-editor` barrel were removed.

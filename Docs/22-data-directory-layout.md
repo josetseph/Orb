@@ -1,6 +1,6 @@
 # Data Directory Layout
 
-**What this covers.** Everything Orb writes outside the application bundle: the exact on-disk tree of `DATA_DIR` (SQLite `orb.db`, `runtime_config.json`, `meili_master_key`, per-KB Kuzu files, Qdrant and Meilisearch storage, vaults, logs, downloaded engine binaries, the embedded Firefly III PHP runtime and app), the tree of `MODELS_DIR` (GGUFs, `manifest.json` and its schema, the Florence/Whisper/Marlin snapshots), the Application Support root and `paths.json`, the local download staging/cache directories, the dev fallbacks (`<repo>/data`, `backend/models`), which files are safe to delete and what each admin/reset endpoint removes, and the legacy LifeOS/LiveOS locations still honoured.
+**What this covers.** Everything Orb writes outside the application bundle: the exact on-disk tree of `DATA_DIR` (SQLite `orb.db`, `runtime_config.json`, `meili_master_key`, per-KB Kuzu files, Qdrant and Meilisearch storage, vaults, logs, downloaded engine binaries, the embedded Firefly III PHP runtime and app), the tree of `MODELS_DIR` (GGUFs, `manifest.json` and its schema, the Qwen3-ASR/Marlin snapshots, the vision projector), the Application Support root and `paths.json`, the local download staging/cache directories, the dev fallbacks (`<repo>/data`, `backend/models`), which files are safe to delete and what each admin/reset endpoint removes, and the legacy LifeOS/LiveOS locations (no longer honoured).
 
 **Related docs.** [Desktop shell](04-desktop-shell.md) (who creates binaries, Firefly, logs, `paths.json` on the shell/runtime side) · [Backend core and configuration](06-backend-core-and-configuration.md) (`core/paths.py`) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Notes and vault files](09-notes-wikilinks-and-vault-files.md) · [Local models and inference](12-local-models-and-inference.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Graph storage](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Logging](23-logging-and-observability.md) · [Configuration reference](21-configuration-reference.md) · [Packaging](05-packaging-build-and-release.md) · [Development guide](27-development-guide.md).
 
@@ -18,6 +18,8 @@ Orb has three writable roots plus one bootstrap file. Resolution order is implem
 | **Download staging** | `local_download_staging_dir()`: `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` env → per-OS cache dir | — | `~/Library/Caches/Orb/model-downloads/` |
 
 OS bases: macOS `~/Library/Application Support`; Windows `%APPDATA%` (fallback `~/AppData/Roaming`); Linux `~/.config`. Staging: macOS `~/Library/Caches/Orb`, Windows `%LOCALAPPDATA%\Orb`, Linux `~/.cache/orb`.
+
+`DATA_DIR` must sit on local disk. `desktop_runtime.main()` prints `[desktop] WARNING: data dir <path> is inside a cloud-synced folder; move it to local disk (Settings -> Storage)` when any path component is `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive`: evicted Files-On-Demand placeholders block reads, and sync clients writing under a running engine corrupt SQLite, Kuzu and Qdrant. The default (`<AppSupport>/data`) is local. Only a vault may live in a synced folder, pinned "Always keep on this device".
 
 Under the desktop app nothing injects `ORB_DATA_DIR`/`ORB_MODELS_DIR`: the runtime and the API resolve `paths.json` themselves through `core/paths.py` (the shell only reads it for the log directory), so the `paths.json` branch is the normal desktop path and env overrides are for dev. `settings.DATA_DIR` / `settings.MODELS_DIR` are snapshots taken at import; code that must see a Setup-time change calls `resolve_data_dir()` / `resolve_models_dir()` directly (registry, runtime config, manifest, logs via `resolve_logs_dir()` after `sync_settings_paths` + `reconfigure_logging`).
 
@@ -43,9 +45,9 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 ├── meilisearch/                            Meilisearch --db-path (data.ms layout: indexes/, tasks/, auth/, …)
 ├── vaults/
 │   └── <slug>/                             Orb-provisioned vault (only when no explicit vault_path was given / legacy migration)
-│       ├── attachments/                    uploads: <stem>-<8hex>.<ext>
+│       ├── attachments/<note folder>/      uploads: <stem>-<8hex>.<ext>, grouped by the owning note's folder — the ONLY place non-.md files live; notes link to them vault-root-relative (attachments/…)
 │       ├── <Folder>/.keep                  empty-folder marker written by vault/mkdir
-│       ├── .orb/migrated-v2                marker: vault_sync.migrate_vault_files ran for this vault (see §9.1; a v1 marker may sit beside it)
+│       ├── .orb/migrated-v3                marker: vault_sync.migrate_vault_files ran for this vault (see §9.1; v1/v2 markers from earlier runs may sit beside it)
 │       └── **/*.md                         note bodies (vault-relative path = notes.rel_path)
 │   (the default KB vault is usually OUTSIDE DATA_DIR — wherever paths.json.default_vault_path points)
 ├── logs/
@@ -73,7 +75,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
     └── .tmp/                               Firefly/PHP archive download + extract scratch — transient
 ```
 
-Not present under `DATA_DIR` (by design): model weights (`MODELS_DIR`), the app bundle, the Python runtime, and **cloud API keys** — those live in the OS keychain (`keyring`, service `Orb`), never on disk under Orb's control. `DATA_DIR` is commonly a synced folder (OneDrive/NAS). The exceptions are the Meili master key and Firefly's `runtime.json`/`.env`, which are per-install secrets written owner-only.
+Not present under `DATA_DIR` (by design): model weights (`MODELS_DIR`), the app bundle, the Python runtime, and **cloud API keys** — those live in the OS keychain (`keyring`, service `Orb`), never on disk under Orb's control, so even a `DATA_DIR` a user has (against §1) put in a synced folder leaks nothing. The exceptions are the Meili master key and Firefly's `runtime.json`/`.env`, which are per-install secrets written owner-only.
 
 ## 3. Path-by-path reference
 
@@ -90,7 +92,7 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 | `DATA_DIR/qdrant/` | Qdrant process (spawned by the runtime) | first desktop launch | Yes (loses all vectors for all KBs) — `QdrantService._ensure_collections` recreates empty collections at boot; re-ingest to repopulate. Backend must be restarted so per-KB services re-run `_ensure_collections` |
 | `DATA_DIR/meilisearch/` | Meilisearch process | first desktop launch | Yes (loses keyword indexes for all KBs) — recreated on boot; delete `meili_master_key` at the same time so a fresh random key is generated (see above) |
 | `DATA_DIR/vaults/<slug>/` | `ensure_vault` via `create_kb`/legacy migration/default fallback | KB creation | **No** unless you mean to delete the notes — this *is* the user's content for that KB. Deleting the KB via the API removes it; deleting by hand leaves an orphan registry row |
-| `<vault>/attachments/` | `ensure_vault`, uploads | vault creation | No (loses uploaded files; markdown links dangle) |
+| `<vault>/attachments/` (+ `<note folder>/` subfolders) | `ensure_vault`, uploads (`store_upload`), the v3 sweep (moves stray files in) | vault creation / first upload into a folder | No (loses every attachment; markdown links dangle). Everything non-`.md` lives here — `vault_ops.move_vault_file` refuses moves across the `attachments/` boundary |
 | `<vault>/**/.keep` | `POST /api/v1/vault/mkdir` | folder creation | Yes — only keeps empty folders alive |
 | `DATA_DIR/logs/*.log` | backend `core/log.py` (rotating); shell (`backend.log`) and `desktop_runtime._spawn` (`qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) append | first start | Yes — recreated; the stdio logs grow unbounded, so periodic deletion is reasonable |
 | `DATA_DIR/boot-status.json` | `desktop_runtime.status()` (atomic rewrite) | every desktop launch | Yes — rewritten on next launch; `/admin/maintenance-status` surfaces it while not `Ready` |
@@ -103,7 +105,8 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 | `DATA_DIR/firefly/.tmp/`, `.app-state-stash/` | `desktop_runtime.py` | during install/upgrade | Yes when no upgrade is in progress |
 | `MODELS_DIR/manifest.json` | `local_models.save_manifest` | first GGUF download / model selection | Yes (loses selection) — `gguf_paths_if_present` falls back to the pinned default filenames under `gguf/`; Setup must re-select; `runtime` section is rewritten on next load |
 | `MODELS_DIR/gguf/*.gguf` | `local_models.ensure_gguf` | Setup "Download models" | Yes — re-downloaded (multi-GB) |
-| `MODELS_DIR/florence-2-large/`, `whisper-large-v3-turbo/`, `marlin-2b/` | `multimodal_models.ensure_hf_snapshot` | Setup / `start-multimodal-services` | Yes — re-downloaded (Marlin may be skipped if gated) |
+| `MODELS_DIR/qwen3-asr-1.7b/` (MLX) or `qwen3-asr-1.7b-hf/` (transformers), `marlin-2b/` | `multimodal_models.ensure_hf_snapshot` | Setup / `start-multimodal-services` | Yes — re-downloaded (Marlin may be skipped if gated) |
+| `MODELS_DIR/gguf/mmproj-<chat stem>-f16.gguf` | `local_models.ensure_mmproj` (the `orb-mmproj` boot thread, or Setup) | first boot with a catalog chat model selected | Yes — re-fetched at next boot; without it the local model is text-only (`describe_image` raises "no vision projector") |
 | `~/Library/Caches/Orb/model-downloads/` | `local_download_staging_dir` | first download onto a network volume | Yes — pure staging |
 | `<repo>/data/` | dev fallback `DATA_DIR` | running the backend without `paths.json`/env | Yes in dev (it is the dev instance's data) |
 | `<repo>/backend/models/` | dev fallback `MODELS_DIR` | as above | Yes in dev |
@@ -118,15 +121,14 @@ MODELS_DIR/                                 (e.g. ~/Library/Application Support/
 │   ├── Qwen3-Embedding-0.6B-Q8_0.gguf      embeddings (EMBED_MODEL_ID default; 4B/8B variants selectable)
 │   ├── Qwen3-Reranker-0.6B.Q4_K_M.gguf     cross-encoder reranker (RERANK_MODEL_ID default)
 │   ├── <other catalog GGUFs>.gguf          any additional chat models downloaded (per-KB pins can only use these)
+│   ├── mmproj-<chat stem>-f16.gguf         vision projector paired to a chat GGUF by name only (find_mmproj: mmproj-<stem>-*.gguf beside it)
 │   └── <name>.gguf.partial                 in-flight download (only when MODELS_DIR is local; else staged elsewhere)
-├── florence-2-large/                       HF snapshot of microsoft/Florence-2-large (settings.MODEL_FLORENCE_LOCAL)
-├── whisper-large-v3-turbo/                 HF snapshot of openai/whisper-large-v3-turbo (MODEL_WHISPER_LOCAL)
+├── qwen3-asr-1.7b/  or  qwen3-asr-1.7b-hf/  Qwen3-ASR snapshot — MLX layout on Apple Silicon, transformers layout elsewhere (asr_engine picks; MODEL_ASR_LOCAL pins)
 └── marlin-2b/                              HF snapshot of lunahr/Marlin-2B-ungated (MODEL_MARLIN_LOCAL); may be absent if gated/skipped
 ```
 
 - GGUF filenames are the last path segment of the catalog id `org/repo/file.gguf` (`ensure_gguf` → `MODELS_DIR/gguf/<file>`); a download counts as complete only when the size exceeds `_min_expected_gguf_bytes` for that id. Downloads go to `<file>.partial` and are placed atomically; when `MODELS_DIR` is on a network volume (`looks_like_network_volume`: `/Volumes/*` except the system disk on macOS, `/mnt`, `/media`, `/run/user` on Linux) the `.partial` lives in the staging dir (§6) and is moved in afterwards.
-- HF snapshot directories are what `huggingface_hub.snapshot_download(local_dir=…)` produces (config + weights + tokenizer/processor files, plus a `.cache/` subfolder that Orb removes when staging). `is_hf_snapshot_ready(dir)` = has `config.json`/`model_index.json`/`preprocessor_config.json` **and** weights (`*.safetensors|bin|pt|pth|gguf|onnx`, or > 50 MB total). `GET /api/v1/setup/status.multimodal_ready` is true only when all three are ready.
-- The shell checks `dirHasGguf(models_dir)` at boot to decide whether to open `/setup` instead of `/`.
+- HF snapshot directories are what `huggingface_hub.snapshot_download(local_dir=…)` produces (config + weights + tokenizer/processor files, plus a `.cache/` subfolder that Orb removes when staging). `is_hf_snapshot_ready(dir)` = has `config.json`/`model_index.json`/`preprocessor_config.json` **and** weights (`*.safetensors|bin|pt|pth|gguf|onnx`, or > 50 MB total). `GET /api/v1/setup/status.multimodal_ready` is true only when both the ASR and the Marlin snapshot are ready.
 
 ### `manifest.json` schema (`local_models.load_manifest` / `save_manifest`, pretty-printed JSON)
 
@@ -241,12 +243,12 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 | `<repo>/data/kuzu_graph` (Kuzu file at data root) | no longer moved (removed 2026-09-19); copy it to `<DATA_DIR>/kuzu/kuzu_graph` by hand. |
 | `…/kuzu/<slug>` stored as a **directory** path | healed to `…/kuzu/<slug>/kuzu_graph` by `normalize_kuzu_path` at registry load only (`KBRegistry._load`), persisted to the row. |
 | `notes.content` bodies in SQLite | moved into the vault file (or blanked when the file already exists) by `vault_sync.sync_vault_notes` on the next notes listing / setup; never read by `note_body`, never written. |
-| `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; ORM synonym `meili_index`). The `TYPESENSE_*` env aliases are gone. |
+| `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; raw `sqlite3` in `kb_registry`, no ORM class). The `TYPESENSE_*` env aliases are gone. |
 | Meili master key `orb-dev-key` | used automatically when `meilisearch/` already has data but no `meili_master_key` file exists. |
 | `localStorage` keys `lifeos_current_kb` / `liveos_current_kb` | migrated to `orb_current_kb` on first read. |
 | `DATABASE_BACKEND=postgres` + `DATABASE_*_URL` | removed; SQLite `orb.db` is the only database. `.env.example` still lists them commented out. |
 | `credentials.enc` (Electron `safeStorage` file in the App Support folder) | no longer read or written; keys now live in the OS keychain via `keyring`. Delete it by hand if present. |
-| Alembic migrations (`backend/alembic/versions/d4f891a2b5c3_add_kb_id_to_notes.py`) | removed; schema is `create_all` + ad-hoc `ALTER TABLE … ADD COLUMN` (`_ensure_firefly_columns`, LLM override columns) + `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path`. |
+| Alembic migrations (`backend/alembic/versions/d4f891a2b5c3_add_kb_id_to_notes.py`) | removed; schema is `create_all` + ad-hoc `ALTER TABLE … ADD COLUMN` (`kb_registry._ensure_optional_columns`: Firefly and LLM override columns) + `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path`. |
 | RustFS / S3 uploads | replaced by `local_storage` → `<vault>/attachments/`; `vault_rel_from_url` still maps any `…/attachments/<name>` URL for old bodies. |
 
 ### 9.1 One-time migrations and their gates (2026-09-19)
@@ -255,11 +257,12 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 
 | Migration | Where it runs | Gate / marker | What it does |
 |---|---|---|---|
-| Vault sweep | `vault_sync.migrate_vault_files(vault)` from `sync_vault_notes` (thread) — notes listing / setup | `<vault>/.orb/migrated-v2` (touched after the loop; v1 vaults rerun the idempotent sweep once) | Rewrites note `.md` files in place: collapses `attachments/attachments/` in `/vault-files/<kb>/…` and bare targets, rewrites every `/vault-files/<any kb>/<rel>` in `](…)` targets and `orb:extract src="…"` to the vault-relative `<rel>` with segments re-encoded (`unquote` → `quote(seg, safe="")`), wraps pre-marker enrichment blocks in `<!-- orb:extract -->` markers. Writes go through `mark_self_write`. |
+| Vault sweep (v3) | `vault_sync.migrate_vault_files(vault)` from `sync_vault_notes` (thread) — notes listing / setup | `<vault>/.orb/migrated-v3` (touched after the loop; v1/v2 vaults rerun the idempotent sweep once — every step is a no-op on a clean vault) | 1. Moves every non-hidden non-`.md` file outside `attachments/` to `attachments/<its folder>/` (`unique_rel_path` on collision; `.keep`, `.DS_Store` and dotfiles are skipped by `_iter_rel`) and rewrites links to it with `rewrite_refs_in_text`. 2. Rewrites note `.md` files in place: collapses `attachments/attachments/` in `/vault-files/<kb>/…` and bare targets, rewrites every `/vault-files/<any kb>/<rel>` in `](…)` targets and `orb:extract src="…"` to the vault-relative `<rel>` with segments re-encoded (`unquote` → `quote(seg, safe="")`), wraps pre-marker enrichment blocks in `<!-- orb:extract -->` markers. Writes go through `mark_self_write`; logs `Vault migration v3 (<vault>): N files moved, M files rewritten` to `ingestion.log`. |
 | `rel_path` backslash repair | `core/database.init_db` → `_sqlite_repairs` | none — idempotent `UPDATE notes SET rel_path = replace(rel_path,'\','/') WHERE rel_path LIKE '%\%'` on every start | Rows written as `str(Path)` on Windows; `note_files` now stores `.as_posix()`. |
 | Legacy note bodies | `vault_sync.sync_vault_notes` | none — a row qualifies while `notes.content` is non-empty | Writes the body to the vault file via `persist_note_body` (or blanks the column when the file already has a body). `note_body` never falls back to SQLite. |
 | Kuzu path repair | `kb_registry._load` | none — idempotent; persisted with `UPDATE knowledge_bases SET kuzu_path` when `normalize_kuzu_path` changes it | Directory-shaped `kuzu_path` → `…/kuzu_graph` file path. Removed from `get_kb`/`graph`/`_build_context`/`_cleanup_stores`. |
 | `llm_provider` coercion | `kb_registry._load` | none — idempotent `UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')` | Deprecated provider names in KB rows. |
+| Attachments boundary (invariant enforced after the sweep, not a migration) | `local_storage.store_upload`, `vault_ops.move_vault_file`, the vault tree UI | none | Uploads land in `attachments/<note folder>/`; `move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment → note folder, note → `attachments/`, and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`. Note moves never move attachments, because links are vault-root-relative. |
 | Store scrub | `main._migrate_stores()` at the end of `_background_startup`, per KB | `DATA_DIR/.stores-migrated-v1-<kb_id>`, touched **only after** all three steps succeeded (an unreachable Qdrant/Kuzu leaves it absent, so the KB is retried next boot) | Kuzu: `SEMANTIC_REL {rel_type:'relates_to'}` → `'related_to'` (closed vocabulary default rename); Qdrant: `QdrantService.strip_facts_prefixes()` removes legacy `FACTS: …. ` prefixes from `node_cores` descriptions; Kuzu: `kind='note'` nodes with NULL/`''`/`Unknown`/`Untitled` names are backfilled from `orb.db` (`notes.title`, else the `rel_path` stem). |
 
 

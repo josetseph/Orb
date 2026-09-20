@@ -78,7 +78,7 @@ On save, Orb enriches the note before graph indexing:
 
 ### Local models
 
-- First-run wizard chooses **data dir** and **models dir** (NAS / OneDrive friendly)
+- First-run wizard chooses **data dir** (local disk), **models dir** (NAS friendly) and the notes **vault** (the one folder that may live in OneDrive / iCloud)
 - GGUF chat, embed, and rerank via `llama-cpp-python` in the API process
 - Only one heavy model resident at a time (chat **or** embed **or** rerank **or** transcription/Marlin)
 - Cloud providers (Gemini, OpenAI, Anthropic, …) remain available if you want them
@@ -121,7 +121,7 @@ On save, Orb enriches the note before graph indexing:
 
 </div>
 
-Installers ship as macOS `.dmg` and Windows `.exe` from [GitHub Releases](https://github.com/josetseph/Orb/releases) (tags `desktop-v*`).
+Installers ship as macOS `.dmg`, Windows `.exe` and Linux `.AppImage` / `.deb` from [GitHub Releases](https://github.com/josetseph/Orb/releases) (tags `desktop-v*`).
 
 ---
 
@@ -132,7 +132,9 @@ Installers ship as macOS `.dmg` and Windows `.exe` from [GitHub Releases](https:
 1. Download the latest `.dmg` from [Releases](https://github.com/josetseph/Orb/releases/latest) (`arm64` for Apple Silicon, `x64` for Intel)
 2. Open it and drag **Orb** into Applications
 3. Launch Orb
-4. Complete the first-run wizard — pick a **data directory** and a **models directory**
+4. Complete the first-run wizard — pick a **data directory**, a **models directory** and your notes **vault**
+
+Keep the data directory on your local disk — the default `~/Library/Application Support/Orb/data` is right. Do not put it in iCloud Drive, OneDrive, Dropbox or Google Drive: "online-only" files and sync writes under a running database cause hangs and corruption (Orb logs a warning when it detects such a path). Your notes vault is the only folder that belongs in a synced location; pin it "Always keep on this device".
 
 On first launch the app downloads Qdrant and Meilisearch into your data dir, and you can pull GGUF models from Setup.
 
@@ -147,7 +149,7 @@ open /Applications/Orb.app
 
 1. Download the latest `.exe` installer from [Releases](https://github.com/josetseph/Orb/releases/latest)
 2. Run the installer and open Orb
-3. Complete the first-run wizard (data dir + models dir)
+3. Complete the first-run wizard (data dir on local disk — not OneDrive — plus models dir and vault)
 
 > [!TIP]
 > Unsigned builds may need an extra click through Gatekeeper / SmartScreen until notarization and Authenticode are enabled.
@@ -183,7 +185,7 @@ More detail: [`desktop/README.md`](desktop/README.md).
 
 ```bash
 python3 desktop/build.py prepare   # bundle Python + UI + Firefly seed (~10–20 min)
-python3 desktop/build.py dist      # cargo tauri build → dmg / nsis / AppImage
+python3 desktop/build.py dist      # cargo tauri build → nsis / AppImage / deb; macOS: .app via Tauri, .dmg via hdiutil
 ```
 
 Full packaging notes: [`desktop/PACKAGING.md`](desktop/PACKAGING.md).

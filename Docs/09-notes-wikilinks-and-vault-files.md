@@ -1,6 +1,6 @@
 # Notes, Wikilinks and Vault Files
 
-**What this covers.** The contract between a `notes` row in SQLite and the `.md` file that holds its body inside a Knowledge Base vault: `rel_path`, title ↔ filename synchronisation, sanitisation and collision handling, `created_at` semantics, folders and `.keep`. It documents `note_files.note_body` / `persist_note_body` (and the legacy `notes.content` fallback), every operation in `vault_ops.py` and `vault.py` (create, update, move, rename-for-title, move-to-folder, mkdir, delete attachment with link stripping, note delete with orphan cleanup, batch delete, folder listing, `safe_vault_join` traversal protection, markdown/wikilink reference rewriting on move), the `/vault-files/{kb}/{path}` URL scheme and how it maps to disk, the upload flow and `attachments/` naming, attachment-discovery regexes shared by the editor and the ingestion agent, the enrichment-block markers, the `[[wikilink]]` syntax and resolver (normalisation, exact-path-first disambiguation, folder proximity), `note_links` maintenance, the notes-graph payloads, the autocomplete/hover-preview contract, and the note processing status fields and who writes them.
+**What this covers.** The contract between a `notes` row in SQLite and the `.md` file that holds its body inside a Knowledge Base vault: `rel_path`, title ↔ filename synchronisation, sanitisation and collision handling, `created_at` semantics, folders and `.keep`. It documents `note_files.note_body` / `persist_note_body` (there is no `notes.content` fallback), every operation in `vault_ops.py` and `vault.py` (create, update, move, rename-for-title, move-to-folder, mkdir, delete attachment with link stripping, note delete with orphan cleanup, batch delete, folder listing, `safe_vault_join` traversal protection, markdown/wikilink reference rewriting on move), the `/vault-files/{kb}/{path}` URL scheme and how it maps to disk, the upload flow and `attachments/` naming, attachment-discovery regexes shared by the editor and the ingestion agent, the enrichment-block markers, the `[[wikilink]]` syntax and resolver (normalisation, exact-path-first disambiguation, folder proximity), `note_links` maintenance, the notes-graph payloads, the autocomplete/hover-preview contract, and the note processing status fields and who writes them.
 
 **Related docs.** [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) (KB registry, vault provisioning, vault sync & watcher) · [API reference](07-api-reference.md) (full request/response shapes for every route named here) · [Ingestion pipeline](10-ingestion-pipeline.md) (what happens after ingest is triggered; enrichment blocks) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Frontend notes editor](19-frontend-notes-editor.md) (CodeMirror extensions that consume these contracts) · [Graph storage](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Data directory layout](22-data-directory-layout.md) · [Glossary](28-glossary.md).
 
@@ -31,13 +31,13 @@
 | `backend/app/services/vault.py` | Leaf helpers: sanitising, unique paths, raw file IO, self-write marks, attachment save, wikilink regex | `sanitize_title`, `unique_md_path`, `read_note_file`, `write_note_file`, `delete_note_file`, `save_attachment`, `_faststart_mp4`, `extract_wikilinks`, `WIKILINK_RE`, `title_from_filename`, `mark_self_write`, `is_recent_self_write`, `ensure_vault`, `clear_vault_contents` |
 | `backend/app/services/vault_ops.py` | Move/rename/delete with reference rewriting; path safety | `safe_vault_join`, `unique_rel_path`, `rewrite_refs_in_text`, `rewrite_wikilinks_in_text`, `strip_refs_in_text`, `strip_refs_across_notes`, `delete_vault_file`, `move_vault_file`, `rename_note_file_for_title`, `move_note_to_folder`, `_norm`, `_WIKILINK_TARGET_RE` |
 | `backend/app/services/wikilinks.py` | Link normalisation, `WikilinkResolver`, `note_links` refresh, graph payloads | `_normalize_link`, `_folder_of`, `_folder_proximity`, `WikilinkResolver`, `refresh_note_links`, `refresh_note_links_sync`, `rebuild_kb_note_links`, `notes_graph_payload`, `note_neighborhood_payload` |
-| `backend/app/services/local_storage.py` | Upload → `attachments/`; URL ↔ rel-path mapping | `store_upload`, `remove_upload`, `vault_rel_from_url` |
+| `backend/app/services/local_storage.py` | Upload → `attachments/`; URL ↔ rel-path mapping | `store_upload`, `remove_upload`, `vault_rel_from_url`, `vault_file_url` |
 | `backend/app/services/vault_sync.py` | Folder / attachment listings, one-time sweep (see 08 for the scan) | `list_vault_folders`, `list_attachment_files`, `iter_vault_md_files`, `migrate_vault_files` |
-| `backend/app/api/notes.py` | Note CRUD, ingest trigger, status, batch delete | `create_note`, `update_note`, `get_notes`, `get_note`, `move_note`, `delete_note`, `batch_delete_notes`, `_delete_note_impl`, `_note_response`, `_attachment_rels_from_note_body`, `_parse_date_str` |
+| `backend/app/api/notes.py` | Note CRUD, ingest trigger, status, batch delete | `create_note`, `update_note`, `get_notes`, `get_note`, `move_note`, `delete_note`, `batch_delete_notes`, `_delete_note_impl`, `_note_response`, `_attachment_rels_from_note_body`, `_aware` |
 | `backend/app/api/vault.py` | Vault file routes | `move_vault_path`, `delete_vault_path`, `mkdir_vault_folder`, `list_folders`, `vault_local_path` |
 | `backend/app/api/files.py` | Upload / delete attachment | `upload_file`, `delete_file`, `_transcode_to_m4a` |
 | `backend/app/api_desktop.py` | Notes graph routes, `reingest-vault`, `/vault-files/{kb_id}/{file_path}` | `notes_graph`, `notes_graph_neighbors`, `rebuild_notes_graph`, `reingest_vault`, `serve_vault_file` |
-| `backend/app/workflows/agents/ingestion_agent.py` | Attachment discovery + enrichment-block regex (consumer of this contract) | `_ATTACH_RE`, `_IMAGE_MD_RE`, `_ENRICHMENT_BLOCK_RE`, `_strip_prior_multimedia_enrichment` |
+| `backend/app/workflows/agents/ingestion_agent.py` | Attachment discovery + extraction markers (consumer of this contract) | `_ATTACHMENT_URL`, `ATTACHMENT_LINK_RE`, `IMAGE_LINK_RE`, `attachment_key`, `parse_attachments`, `EXTRACT_BLOCK_RE`, `_ENRICHMENT_BLOCK_RE`, `wrap_legacy_enrichment_blocks`, `_strip_prior_multimedia_enrichment`, `place_extraction` |
 | `backend/app/services/multimedia.py` | `/vault-files/…` → local path for enrichment | `MultimediaService._resolve_vault_local_path` |
 | `frontend/src/app/notes/_lib/wikilinks.ts` | Client mirror of the resolver + autocomplete insert rules | `normalizeLink`, `folderOf`, `noteVaultPath`, `noteDisplayName`, `wikilinkInsertTarget`, `suggestWikilinkNotes`, `parseWikilinkCreateTarget`, `WikilinkResolver`, `resolveNoteByWikilink` |
 | `frontend/src/app/notes/_lib/parse-note-attachments.ts` | Client attachment regex (attachments strip) | `parseNoteAttachments` |
@@ -45,7 +45,7 @@
 | `frontend/src/app/notes/_hooks/useNoteAutosave.ts` | 1.5 s debounced `PUT`; rel_path carry-over after rename | `useNoteAutosave` |
 | `frontend/src/app/notes/_hooks/useNoteMedia.ts` | Upload → markdown insert (`![..](..)` / `[📎 ..](..)` / `[🎤 ..](..)`), attachment delete | `useNoteMedia` |
 | `frontend/src/components/markdown-editor/wikilinkExtension.ts` | CodeMirror `[[` completion source, decorations, click handler | `wikilinkQueryAt`, `wikilinkCompletionSource`, `createWikilinkDecorations`, `wikilinkClickHandler` |
-| `frontend/src/components/markdown-editor/mediaEmbedExtension.ts` | Inline media embeds for attachment links | (regex accepting `📎`/`🖇`/`🎤`) |
+| `frontend/src/components/markdown-editor/mediaEmbedExtension.ts` | Inline media embeds for attachment links | (regex accepting `📎`/`🎤`) |
 | `frontend/src/lib/utils.ts` | `/vault-files` URL helpers | `resolveFileUrl`, `encodeFileUrl`, `isImageUrl`, `isVideoUrl` |
 | `frontend/src/lib/api.ts` | Route wrappers (`createNote`, `updateNote`, `moveNote`, `moveVaultFile`, `deleteVaultFile`, `mkdirVaultFolder`, `listVaultFolders`, `resolveVaultLocalPath`, `deleteNote`, `batchDeleteNotes`, `getNotesGraph`, …) | `api` |
 | `frontend/vite.config.ts` | Dev proxy `/vault-files` → backend (17401) | — |
@@ -110,7 +110,7 @@ So filename and title can legitimately diverge: files created by older builds (`
 
 ### 3.5 `created_at` handling
 
-`CreateNoteInput.created_at: str | None`. `_parse_date_str` uses `datetime.fromisoformat` (ISO 8601 only), coercing naive results to UTC; if that fails it returns **now** (never an error). On `PUT`, `created_at` is only updated when the body provides a non-empty string (the frontend's autosave sends `undefined`; the date picker sends a value). The ingestion `NoteInput.created_at` is fed from this column so temporal extraction uses the user's note date, not the file mtime.
+`CreateNoteInput.created_at: datetime | None` — Pydantic parses ISO 8601 (`Z` and offsets accepted) and rejects anything else with **422**; `_aware` coerces a naive value to UTC. On create, `None` becomes now. On `PUT`, `created_at` is only updated when the body provides a value (the frontend's autosave sends `undefined`; the date picker sends a value). The ingestion `NoteInput.created_at` is fed from this column so temporal extraction uses the user's note date, not the file mtime.
 
 ### 3.6 Folders
 
@@ -192,9 +192,9 @@ Rewrites markdown link/image **targets only** — the pattern is `(\]\(|orb:extr
 
 Uses `_WIKILINK_TARGET_RE = \[\[([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?)\]\]` — unlike `WIKILINK_RE`, this one **does** match `[[Note#Heading]]` and `[[Note#Heading|alias]]`, capturing heading+alias as group 2 so they are preserved verbatim. For each link whose target resolves (via a resolver built from the **pre-move** note list) to `moved_note_id`: targets containing `/` become `path_target`, bare targets become `bare_target`. Unchanged if the new target equals the old.
 
-### 6.4 `strip_refs_in_text(content, rel, kb_id)` / `strip_refs_across_notes(db, kb, rel) -> changed_count`
+### 6.4 `strip_refs_in_text(content, rel)` / `strip_refs_across_notes(db, kb, rel) -> changed_count`
 
-Removes `![..](..)` and `[..](..)` whose target **contains** any of: `rel`, `/vault-files/<kb>/rel`, the basename of `rel`, or the percent-encoded variants. Substring match on the basename means deleting `attachments/a.png` also strips a link to `other/a.png` or an external `https://x/a.png` — accepted. Collapses 3+ newlines to 2. `strip_refs_across_notes` applies this to every note of the KB via `note_body`/`persist_note_body` and returns how many bodies changed (no commit; caller commits).
+Removes `![..](..)` and `[..](..)` whose whole target is `rel` — the same matcher as `rewrite_refs_in_text`: the canonical relative form, its raw or percent-encoded spelling, with or without a legacy `/vault-files/<any kb>/` prefix. Targets are anchored (`](…)` must be exactly the path), so a link to `other/a.png` or an external URL is left alone. Collapses 3+ newlines to 2 only when something was removed, so unrelated notes come back byte-identical. `strip_refs_across_notes` applies this to every note of the KB via `note_body`/`persist_note_body` and returns how many bodies changed (no commit; caller commits).
 
 ### 6.5 `delete_vault_file(db, kb, rel) -> {deleted, links_stripped}`
 
@@ -266,7 +266,7 @@ Batch delete loops this per id, collecting `{id, error}` on exceptions.
 Uploads group by the owning note's folder: the editor sends the note's vault-relative folder as the `folder` query param (empty for root notes) and the file lands at `attachments/<folder>/<name>`. Note moves do **not** move attachments — links are vault-root-relative, so nothing breaks; the grouping is only a filing convention.
 
 1. Whole file read into memory (no server-side size limit; the desktop UI talks to the backend directly on the same origin).
-2. Audio normalisation: if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}` → `_transcode_to_m4a` (`ffmpeg -y -i in -c:a aac -b:a 128k out.m4a`, 60 s, thread). Success → bytes replaced, ext `m4a`, name hint `recording.m4a`; any failure → original bytes kept (name hint `recording.<ext>`). This is what the voice recorder relies on so Whisper and browsers get AAC.
+2. Audio normalisation: if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}` → `_transcode_to_m4a` (`ffmpeg -y -i in -c:a aac -b:a 128k out.m4a`, 60 s, thread). Success → bytes replaced, ext `m4a`, name hint `recording.m4a`; any failure → original bytes kept (name hint `recording.<ext>`). This is what the voice recorder relies on so the transcriber and browsers get AAC.
 3. `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id, folder)`: `ValueError("Invalid folder")` (→ 400) when `folder` is absolute or has a `..` segment, `safe_vault_join(vault, "attachments/<folder>")` as a second guard, then `save_attachment(vault, name, bytes, "attachments/<folder>")` (8.2) → returns `{url: "/vault-files/<kb_id>/<rel>", key: <rel>, filename}`.
 4. Response: `{filename (original), url, rel_path (=key), key, status:"success"}` — `rel_path` is the raw (unencoded) `attachments/<folder>/<name>` the editor encodes and inserts; `url` is the serving URL for immediate preview.
 
@@ -320,13 +320,13 @@ Who parses them:
 
 | Consumer | Pattern | Notes |
 |---|---|---|
-| `ingestion_agent` (module-level `ATTACHMENT_LINK_RE` / `IMAGE_LINK_RE`) | `_ATTACHMENT_URL = (?:https?://\|/vault-files/\|attachments/)(?:[^()\n]|\([^()\n]*\))+`; `ATTACHMENT_LINK_RE = \[(📎\|🎤)\s*(.*?)\]\((URL)\)`; `IMAGE_LINK_RE = !\[([^\]]*)\]\((URL)\)` | URL runs to the closing `)` — spaces/commas allowed (uploaded filenames), and **balanced parentheses** are kept, so `Report (2026).pdf` survives (one nesting level). Dedup by `attachment_key`: lower-cased, unquoted URL sans query with any `/vault-files/<kb>/` prefix dropped — so `/vault-files/<old uuid>/attachments/x.pdf` and `attachments/x.pdf` are one attachment and a pre-sweep extraction block still matches its link. Each item carries `link` (the target as written — what `place_extraction` copies into the marker `src`) and `url` (the serving URL the extractors open, via `vault_file_url` when a `kb_id` is passed). Type is decided by **extension** (`video .mp4 .mov .webm .mkv .avi`; `audio .m4a .mp3 .wav .ogg .aac`; `image .jpg .jpeg .png .webp .gif`; spreadsheets `.xlsx .xls .csv .tsv`; plus PDF/Word handled in the same node) — `🎤` only forces audio when the extension is unknown. Remote `http(s)` URLs are also accepted (guarded against SSRF/oversize elsewhere). `🖇` is **not** recognised by the backend. |
+| `ingestion_agent` (module-level `ATTACHMENT_LINK_RE` / `IMAGE_LINK_RE`) | `_ATTACHMENT_URL = (?:https?://\|/vault-files/\|attachments/)(?:[^()\n]|\([^()\n]*\))+`; `ATTACHMENT_LINK_RE = \[(📎\|🎤)\s*(.*?)\]\((URL)\)`; `IMAGE_LINK_RE = !\[([^\]]*)\]\((URL)\)` | URL runs to the closing `)` — spaces/commas allowed (uploaded filenames), and **balanced parentheses** are kept, so `Report (2026).pdf` survives (one nesting level). Dedup by `attachment_key`: lower-cased, unquoted URL sans query with any `/vault-files/<kb>/` prefix dropped — so `/vault-files/<old uuid>/attachments/x.pdf` and `attachments/x.pdf` are one attachment and a pre-sweep extraction block still matches its link. Each item carries `link` (the target as written — what `place_extraction` copies into the marker `src`) and `url` (the serving URL the extractors open, via `vault_file_url` when a `kb_id` is passed). Type is decided by **extension** (`video .mp4 .mov .webm .mkv .avi`; `audio .m4a .mp3 .wav .ogg .aac`; `image .jpg .jpeg .png .webp .gif`; spreadsheets `.xlsx .xls .csv .tsv`; plus PDF/Word handled in the same node) — `🎤` only forces audio when the extension is unknown. Remote `http(s)` URLs are also accepted (guarded against SSRF/oversize elsewhere). |
 | `api/notes._attachment_rels_from_note_body` (delete) | `!?\[[^\]]*\]\(((?:[^()\s]\|\([^()\s]*\))+)(?:\s+"[^"]*")?\)` | any link/image whose URL maps to a vault rel; balanced parentheses allowed, but still stops at whitespace (so URLs with raw spaces are missed → those attachments are **not** deleted with the note). |
-| `parse-note-attachments.ts` (attachments strip) | `URL_PART = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((URL_PART)\)\|\[([📎🖇🎤][^\]]+)\]\((URL_PART)\))` | label stripped of the leading marker. |
-| `mediaEmbedExtension.ts` (inline embeds) | `MEDIA_URL = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((MEDIA_URL)\)\|\[([📎🖇🎤]?[^\]]*)\]\((MEDIA_URL)\))` | plain links without a marker only embed for YouTube/Vimeo. |
+| `parse-note-attachments.ts` (attachments strip) | `URL_PART = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((URL_PART)\)\|\[([📎🎤][^\]]+)\]\((URL_PART)\))` | label stripped of the leading marker. |
+| `mediaEmbedExtension.ts` (inline embeds) | `MEDIA_URL = (?:[^()\n]|\([^()\n]*\))+`; `(?:!\[([^\]]*)\]\((MEDIA_URL)\)\|\[([📎🎤]?[^\]]*)\]\((MEDIA_URL)\))` | plain links without a marker only embed for YouTube/Vimeo. |
 | `segmented-note-content.tsx`, `chat/page.tsx` | `text.startsWith("📎"/"🎤")` | render attachment buttons / inline media in read views and chat citations. |
 
-**Enrichment blocks.** After multimodal extraction, the ingestion agent appends sections to the note body and persists them into the `.md`. The block headers are the only markers; `_ENRICHMENT_BLOCK_RE` matches the first of:
+**Enrichment blocks.** After multimodal extraction, the ingestion agent places each attachment's extracted text under its link as a delimited block — `<!-- orb:extract src="<link as written>" -->…<!-- /orb:extract -->` (`EXTRACT_OPEN`/`EXTRACT_CLOSE`, matched by `EXTRACT_BLOCK_RE`) — and persists it into the `.md`. The `src` is the link target copied verbatim by `place_extraction`, so `attachment_key` matches block and link even across the legacy/relative URL forms. The bare headers of the pre-marker format are recognised only by `_ENRICHMENT_BLOCK_RE`, which `wrap_legacy_enrichment_blocks` uses to give such blocks markers:
 
 ```
 \n\n[PDF Extraction (<name>)]
@@ -336,6 +336,7 @@ Who parses them:
 \n\n[Video Visual Analysis (<name>)]
 \n\n[Word Extraction (<name>)]
 \n\n[Spreadsheet Extraction (<name>)]
+\n\n[Unsupported (<name>)]
 ```
 
 `_strip_prior_multimedia_enrichment(content, keep=linked)` removes only delimited `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` blocks whose attachment is no longer linked in the note; blocks for attachments still present are kept (and not re-processed), and new attachments get a fresh block placed under their link. Bare headers like the ones above are only produced by pre-marker versions; the one-time vault sweep (§4.3) wraps them in markers so they are handled the same way. Consequences for this layer: user text is never truncated on re-ingest, and a user line that starts with `[Image:` is left alone unless it sits inside a marker pair.
@@ -432,7 +433,7 @@ Phantom nodes are deduped by `missing:<raw target_title>` (case-sensitive raw te
 - **Autocomplete** (`wikilinkExtension.ts`): activates when the cursor is after an unclosed `[[` on the current line (no `]]`/`|` in between); options come from `suggestWikilinkNotes` over the current KB's loaded notes (`getNotes()` — the list from `GET /api/v1/notes`, so a note created in another window is unknown until refresh).
 - **Decorations**: inactive lines render `[[target|alias]]` as a `span.cm-wikilink` widget with `data-wikilink-target` / `data-wikilink-alias`; the active line shows raw syntax with a mark. `wikilinkClickHandler` reads `data-wikilink-target`.
 - **Hover / click** (`useWikilinkPreview.ts`): a `WikilinkResolver` is memoised per notes list. Hover → `{title, content, x, y, missing}` from the resolved note's already-loaded `content` (no request). Click → open the note; if unresolved, **create it**: `parseWikilinkCreateTarget(target)` splits `folder/title` (strips `.md`); bare names are created in the *linking note's folder*; `api.createNote("", now, kb, title, folder)` then refresh + select. A re-entrancy guard prevents double creation.
-- **Attachments**: uploads via `api.uploadFile` (multipart) then markdown insertion per §9; deletes via `POST /api/v1/vault/delete` with the rel path derived from the URL (`/vault-files/<kb>/<rel>` → `<rel>`; bare filenames assumed under `attachments/`). The frontend never calls `DELETE /api/v1/files/{key}`.
+- **Attachments**: uploads via `api.uploadFile` (multipart) then markdown insertion per §9; deletes via `POST /api/v1/vault/delete` with the rel path derived by `vaultRelPath(target)` (`lib/utils.ts`: strips an optional `/vault-files/<kb>/` prefix and decodes each segment). The frontend never calls `DELETE /api/v1/files/{key}`.
 - **KB param**: every call passes `useKB().currentKB` (slug); `/vault-files` URLs embed `kb_id` and are served regardless of the active KB.
 
 ## 13. Note processing status fields
@@ -472,18 +473,18 @@ Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and nev
 | Note file deleted externally | body `""`; watcher marks `External delete detected`; row and links remain until user deletes in-app (which then finds no file, logs, and proceeds). |
 | Vault on a case-insensitive FS, user renames `plan.md` → `Plan.md` externally | watcher sees moved → new row for `Plan.md`, old row marked deleted (see [08 §10.3](08-knowledge-bases-and-vaults.md)). |
 | Non-UTF-8 `.md` in vault | `read_text` raises → the whole `GET /api/v1/notes` fails (500) because bodies are read in a batch. |
-| Upload with ffmpeg missing | audio stored as `.webm`/`.ogg`; Whisper may still handle it; browsers vary. MP4 faststart skipped. |
-| Attachment URL with raw spaces | served fine; found by ingestion (`[^)]+`); **missed** by delete's `[^)\s]+` (file left behind). |
+| Upload with ffmpeg missing | audio stored as `.webm`/`.ogg`; a `.webm` is then classified as video (doc 11 §4.1), `.ogg` still decodes through PyAV; browsers vary. MP4 faststart skipped. |
+| Attachment URL with raw spaces | served fine; found by ingestion (`_ATTACHMENT_URL` runs to the closing `)`); **missed** by delete's `[^()\s]` matcher (file left behind). |
 | `move_vault_file` on a file with 5 000 notes in the KB | reads all 5 000 bodies synchronously on the event loop (no `to_thread`); slow on NAS. |
 | Wikilink to a note in another KB | never resolves (resolver is per KB) → phantom node. |
 | `PUT` with `title: null` | `persist_note_body(title=None)` keeps the existing title; no rename check. `title: ""` → stored as `NULL`, no rename (blank title short-circuits). |
-| `created_at` unparsable | silently becomes now. |
+| `created_at` unparsable | **422** from Pydantic (`datetime | None`); `null`/omitted becomes now on create. |
 
 ## 16. Gotchas
 
 - `unique_md_path` checks the **filesystem**, not SQLite: a stale row pointing at a deleted file does not block reuse of its filename; a new note then "adopts" the old path with a new id, and the old row shows the new body. `sync_vault_notes` will not fix this.
 - `persist_note_body` honours `folder` only when the row has no `rel_path`; passing `folder` on update is ignored (use the move route).
-- `strip_refs_in_text` matches by basename substring — deleting `attachments/a.png` can strip links to any `…a.png` anywhere, including external URLs.
+- `strip_refs_in_text` matches whole link targets only — a note that spells the path some other way (a link title, a query string) keeps a dangling link after the file is deleted.
 - `rewrite_refs_in_text` does not handle `](url "title")` or `?query` targets.
 - After `move_vault_file`, `note_links` is stale until a save/rebuild, and the watcher will not refresh it because the writes are self-marked.
 - The notes graph deduplicates missing targets by **raw** text; `[[foo]]` and `[[Foo]]` are two phantoms but resolve identically once the note exists.
@@ -498,7 +499,7 @@ Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and nev
 ## 17. Extension points
 
 - **New attachment kind in the editor**: keep `[📎 name](url)` or `![alt](url)`; classification is by extension in `multimodal_node`, so extend the extension tuples there and in `mediaEmbedExtension.ts`/`segmented-note-content.tsx` for rendering. Avoid new emoji markers (backend only knows `📎`/`🎤`).
-- **New enrichment section**: add its header to `_ENRICHMENT_BLOCK_RE` or re-ingest will duplicate it.
+- **New enrichment section**: emit it through `place_extraction` so it is wrapped in `orb:extract` markers; `_ENRICHMENT_BLOCK_RE` only needs a new header if the pre-marker format ever produced it.
 - **Heading links (`#`)**: change `WIKILINK_RE` in both `vault.py` and `wikilinkExtension.ts`, extend `extract_wikilinks` to return the fragment, and decide whether `note_links` should store it; `_WIKILINK_TARGET_RE` already preserves it on moves.
 - **Atomic writes**: wrap `write_note_file` in temp-file + `os.replace`; remember `mark_self_write` must cover the final path (it is keyed by resolved path) and that the watcher will see a `moved` event for the temp file (ignored because it is not `.md` unless the temp suffix is `.md`).
 - **Refcounted attachments**: replace step 6 of `_delete_note_impl` with a scan of other notes' bodies (there is no index of attachment usage today).
