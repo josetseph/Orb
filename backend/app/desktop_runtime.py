@@ -960,6 +960,11 @@ def main() -> int:
     models_dir = resolve_models_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     _STATUS_FILE = data_dir / "boot-status.json"
+    # Databases inside a cloud-sync folder hang on evicted files (Files On-Demand)
+    # and can be corrupted by the sync client writing under a running engine.
+    if any(part in {"CloudStorage", "Mobile Documents", "Dropbox", "Google Drive"} for part in data_dir.parts):
+        print(f"[desktop] WARNING: data dir {data_dir} is inside a cloud-synced folder; "
+              "move it to local disk (Settings -> Storage) to avoid hangs and corruption.")
 
     # On-demand packages (torch, transformers, mlx for transcription) install
     # into Python's user site under DATA_DIR, never into the app bundle. The
