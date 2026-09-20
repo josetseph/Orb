@@ -80,3 +80,32 @@ def test_move_rewrites_the_extraction_marker_with_the_link():
     assert out.count("](attachments/Lectures/Audio.m4a)") == 1
     assert out.count('src="attachments/Lectures/Audio.m4a"') == 1
     assert "vault-files" not in out and "attachments/Audio.m4a" not in out
+
+
+class TestStripRefs:
+    """Deleting an attachment removes only its links and leaves other notes byte-identical."""
+
+    def test_removes_every_form_of_the_link(self):
+        from app.services.vault_ops import strip_refs_in_text
+
+        body = (
+            "intro\n\n[📎 a b.pdf](attachments/Q3/a%20b.pdf)\n\n"
+            "![img](/vault-files/6e9ecae6-old/attachments/Q3/a%20b.pdf)\n\n"
+            "[raw](attachments/Q3/a b.pdf)\n\nkeep [other](attachments/Q3/other.pdf)\n"
+        )
+        out = strip_refs_in_text(body, "attachments/Q3/a b.pdf")
+        assert "a%20b.pdf" not in out and "a b.pdf" not in out
+        assert "[other](attachments/Q3/other.pdf)" in out
+        assert "\n\n\n" not in out
+
+    def test_unrelated_note_is_untouched_even_with_blank_runs(self):
+        from app.services.vault_ops import strip_refs_in_text
+
+        body = "para one\n\n\n\npara two [x](attachments/x.pdf)\n"
+        assert strip_refs_in_text(body, "attachments/Q3/a b.pdf") is body
+
+    def test_basename_alone_does_not_match(self):
+        from app.services.vault_ops import strip_refs_in_text
+
+        body = "[same name elsewhere](attachments/Other/a%20b.pdf)\n"
+        assert strip_refs_in_text(body, "attachments/Q3/a b.pdf") == body

@@ -116,41 +116,29 @@ def rewrite_wikilinks_in_text(
     return _WIKILINK_TARGET_RE.sub(_sub, content)
 
 
-def strip_refs_in_text(content: str, rel: str, kb_id: str) -> str:
-    """Remove markdown image/link references that point at ``rel``."""
+def strip_refs_in_text(content: str, rel: str) -> str:
+    """Remove markdown image/link references whose target is ``rel``.
+
+    Same matcher as ``rewrite_refs_in_text``: the canonical relative form, its
+    raw form, or any legacy ``/vault-files/<kb>/`` prefix. Only a removed link
+    justifies touching the note, so unrelated notes come back byte-identical.
+    """
     old = _norm(rel)
     if not old or not content:
         return content
-    targets = {
-        old,
-        f"/vault-files/{kb_id}/{old}",
-        Path(old).name,
-    }
-    # Also match percent-encoded path variants used in markdown
+
     from urllib.parse import quote
 
-    encoded = "/".join(quote(seg, safe="") for seg in old.split("/"))
-    targets.add(encoded)
-    targets.add(f"/vault-files/{kb_id}/{encoded}")
-
-    text = content
-    for target in targets:
-        if not target:
-            continue
-        escaped = re.escape(target)
-        text = re.sub(
-            rf"!\[[^\]]*\]\([^)]*{escaped}[^)]*\)",
-            "",
-            text,
-        )
-        text = re.sub(
-            rf"\[[^\]]*\]\([^)]*{escaped}[^)]*\)",
-            "",
-            text,
-        )
-    # Collapse leftover blank runs from removed embeds
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text
+    encoded_old = "/".join(quote(seg, safe="") for seg in old.split("/"))
+    text = re.sub(
+        rf"!?\[[^\]]*\]\((?:/vault-files/[^/)]+/)?(?:{re.escape(old)}|{re.escape(encoded_old)})\)",
+        "",
+        content,
+    )
+    if text == content:
+        return content
+    # Collapse the blank run a removed embed leaves behind.
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 
 async def strip_refs_across_notes(
@@ -164,7 +152,7 @@ async def strip_refs_across_notes(
     changed = 0
     for note in notes:
         body = note_body(note, kb)
-        updated = strip_refs_in_text(body, rel, kb.kb_id)
+        updated = strip_refs_in_text(body, rel)
         if updated != body:
             persist_note_body(note, kb, updated)
             changed += 1
