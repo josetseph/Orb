@@ -248,7 +248,8 @@ def dist(extra: list[str]) -> None:
     run(["ditto", str(app), str(staging / "Orb.app")])  # ditto keeps signatures/xattrs
     (staging / "Applications").symlink_to("/Applications")
     out.parent.mkdir(parents=True, exist_ok=True)
-    run(["hdiutil", "create", "-volname", "Orb", "-srcfolder", str(staging), "-ov",
+    # HFS+ on purpose: an APFS image compresses to roughly twice the size.
+    run(["hdiutil", "create", "-volname", "Orb", "-srcfolder", str(staging), "-ov", "-fs", "HFS+",
          "-format", "UDZO", "-imagekey", "zlib-level=9", str(out)])
     shutil.rmtree(staging, ignore_errors=True)
     print(f"DMG: {out}")
