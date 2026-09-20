@@ -28,7 +28,7 @@ trees into `target/debug` on every development build.
 
 | Platform | Bundle | Resources |
 |---|---|---|
-| macOS | `bundle/dmg/Orb_<ver>_<arch>.dmg` (+ `bundle/macos/Orb.app`) | `Orb.app/Contents/Resources/{backend,frontend,firefly}` |
+| macOS | `bundle/dmg/Orb_<ver>_<arch>.dmg` (built by `build.py` with `hdiutil create`, not Tauri's DMG script) (+ `bundle/macos/Orb.app`) | `Orb.app/Contents/Resources/{backend,frontend,firefly}` |
 | Windows | `bundle/nsis/Orb_<ver>_x64-setup.exe` (per-user install) | `<install dir>/{backend,frontend,firefly}` |
 | Linux | `bundle/appimage/*.AppImage`, `bundle/deb/*.deb` | `usr/lib/orb/{backend,frontend,firefly}` |
 

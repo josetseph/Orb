@@ -13,6 +13,10 @@ python3 desktop/build.py dist      # preflight + cargo tauri build
 ```
 
 Bundles land in `desktop/src-tauri/target/release/bundle/{dmg,nsis,appimage,deb}/`.
+On macOS `build.py` asks Tauri for the `.app` only and writes the DMG itself with a single
+`hdiutil create` from a staging folder (`Orb.app` + an `Applications` shortcut): Tauri's own
+DMG script mounts a temp image and drives Finder by AppleScript, and its unmount fails
+intermittently with "Resource busy".
 
 ## Stages (`desktop/build.py`)
 

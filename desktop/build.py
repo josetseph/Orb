@@ -229,11 +229,29 @@ def dist(extra: list[str]) -> None:
     # otherwise copy these multi-GB trees into target/debug on every dev build.
     resources = {f"../resources/{name}": name for name in ("backend", "frontend", "firefly")}
     config = json.dumps({"bundle": {"resources": resources}})
-    # A DMG run that died mid-way (Finder AppleScript step) leaves its temp
-    # image mounted, and the next bundle_dmg.sh fails on it. Eject first.
-    for stale in Path("/Volumes").glob("dmg.*"):
-        subprocess.run(["hdiutil", "detach", str(stale)], check=False)
-    run(["cargo", "tauri", "build", "--config", config, *extra], cwd=HERE / "src-tauri")
+    if sys.platform != "darwin":
+        run(["cargo", "tauri", "build", "--config", config, *extra], cwd=HERE / "src-tauri")
+        return
+    # macOS: Tauri's DMG script mounts a temp image, drives Finder by AppleScript
+    # and unmounts; the unmount intermittently fails with "Resource busy" while
+    # Spotlight/Finder hold the fresh volume. Build the .app with Tauri and the
+    # DMG with one hdiutil call from a staging folder instead - no mount at all.
+    run(["cargo", "tauri", "build", "--bundles", "app", "--config", config, *extra], cwd=HERE / "src-tauri")
+    bundle = HERE / "src-tauri" / "target" / "release" / "bundle"
+    app = bundle / "macos" / "Orb.app"
+    version = json.loads((HERE / "src-tauri" / "tauri.conf.json").read_text())["version"]
+    arch = {"arm64": "aarch64", "x86_64": "x64"}.get(os.uname().machine, os.uname().machine)
+    out = bundle / "dmg" / f"Orb_{version}_{arch}.dmg"
+    staging = bundle / "dmg-staging"
+    shutil.rmtree(staging, ignore_errors=True)
+    staging.mkdir(parents=True)
+    run(["ditto", str(app), str(staging / "Orb.app")])  # ditto keeps signatures/xattrs
+    (staging / "Applications").symlink_to("/Applications")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    run(["hdiutil", "create", "-volname", "Orb", "-srcfolder", str(staging), "-ov",
+         "-format", "UDZO", "-imagekey", "zlib-level=9", str(out)])
+    shutil.rmtree(staging, ignore_errors=True)
+    print(f"DMG: {out}")
 
 
 STAGES = {"python": bundle_python, "frontend": build_frontend, "firefly": prefetch_firefly, "check": check}
