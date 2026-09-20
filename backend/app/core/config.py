@@ -120,7 +120,6 @@ class Settings(BaseSettings):
     FIREFLY_API_TOKEN: str | None = None
 
     MODELS_PATH: str = "models"
-    PDF_VISUAL_EXTRACTION_ENABLED: bool = True
     PDF_VISUAL_EXTRACTION_MAX_PAGES: int = 0
     PDF_VISUAL_RENDER_DPI: int = 144
     PDF_VISUAL_TEXT_THRESHOLD: int = 80

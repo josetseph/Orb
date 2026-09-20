@@ -193,7 +193,6 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 
 | Name | Type / default | Effect |
 |---|---|---|
-| `PDF_VISUAL_EXTRACTION_ENABLED` | bool / `True` | Render scanned/sparse pages for the vision model |
 | `PDF_VISUAL_EXTRACTION_MAX_PAGES` | int / `0` | Cap of visually processed pages per PDF; `0` = all qualifying pages |
 | `PDF_VISUAL_RENDER_DPI` | int / `144` | Render DPI (`max(value, 72)`; zoom = dpi/72) |
 | `PDF_VISUAL_TEXT_THRESHOLD` | int / `80` | Pages whose native text length ≥ threshold skip the visual pass |

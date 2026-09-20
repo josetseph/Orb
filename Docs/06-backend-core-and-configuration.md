@@ -334,7 +334,6 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 | `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | str | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `multimodal_models.model_ids("marlin")` → HF repo id and `MODELS_DIR/<local>` folder |
 | `IMAGE_DESCRIBE_MAX_PIXELS` | int | `1500000` | `multimedia.py` via `getattr(settings, "IMAGE_DESCRIBE_MAX_PIXELS", 0) or 1_500_000` — images are downscaled to this before any model (local projector or cloud) sees them; **`0` does not mean "full resolution"**, it falls back to 1.5 MP |
 | `MODEL_RERANKER_LOCAL` | str | `qwen3-reranker-0.6b` | `retrieval.py` (log/progress label only), overwritten from manifest by `sync_embedding_infrastructure` |
-| `PDF_VISUAL_EXTRACTION_ENABLED` | bool | `True` | `multimedia.py` `_page_needs_visual` |
 | `PDF_VISUAL_EXTRACTION_MAX_PAGES` | int | `0` | cap on pages rendered for the vision model per PDF; `0` = unlimited |
 | `PDF_VISUAL_RENDER_DPI` | int | `144` | render DPI, floored at 72 |
 | `PDF_VISUAL_TEXT_THRESHOLD` | int | `80` | pages with ≥ this many native-text chars skip the visual pass |

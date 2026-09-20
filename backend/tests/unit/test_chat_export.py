@@ -33,4 +33,4 @@ def test_markdown_export_one_heading_per_message(rows):
 
     resp = asyncio.run(export_chat("c1", format="markdown"))
     assert resp.media_type == "text/markdown"
-    assert resp.body.decode() == "## user\n\nhi\n\n## assistant\n\nhello\n"
+    assert resp.body.decode() == "## You\n\nhi\n\n## Orb\n\nhello\n"

@@ -382,7 +382,8 @@ async def export_chat(
     messages = await chat_store.list_messages(conversation_id)
     if format == "json":
         return [{k: m[k] for k in ("role", "content", "created_at")} for m in messages]
-    lines = [f"## {m['role']}\n\n{m['content']}\n" for m in messages]
+    label = {"user": "You", "assistant": "Orb"}
+    lines = [f"## {label.get(m['role'], m['role'])}\n\n{m['content']}\n" for m in messages]
     return PlainTextResponse("\n".join(lines), media_type="text/markdown")
 
 

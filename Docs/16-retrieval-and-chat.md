@@ -222,7 +222,7 @@ The `"Gemma4"` model label is a **hard-coded string** in `chat.py`/`retrieval.py
 
 The API layer adds `request_id`, `conversation_id`, `assistant_message_id`. The finance path (`firefly_service.answer_finance_question`) returns the same keys plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source":"finance","summary":...,"kb_id":...}` to `context`; `thinking` is copied from the note-retrieval pass if present.
 
-**Export.** `GET /api/v1/chat/conversations/{conversation_id}/export?format=markdown|json` in `backend/app/api_desktop.py` reads the rows through `chat_store.list_messages(conversation_id)` and returns JSON `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>` blocks. It ignores `kb` and does no ownership check. The chat page's "Export" button calls `api.exportChat(activeConversationId, "markdown")`, builds a Blob download named `chat-<first 8 chars>.md`, and reports a failed request with `alert(errMessage(...))`.
+**Export.** `GET /api/v1/chat/conversations/{conversation_id}/export?format=markdown|json` in `backend/app/api_desktop.py` reads the rows through `chat_store.list_messages(conversation_id)` and returns JSON `[{"role","content","created_at"}]` or a `text/markdown` body of `## You` / `## Orb` blocks. It ignores `kb` and does no ownership check. The chat page's "Export" button calls `api.exportChat(activeConversationId, "markdown")`, builds a Blob download named `chat-<first 8 chars>.md`, and reports a failed request with `alert(errMessage(...))`.
 
 ## 5. Conversation persistence (`chat_store.py`, `models/chat.py`)
 

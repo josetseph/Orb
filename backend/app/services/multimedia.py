@@ -311,8 +311,6 @@ class MultimediaService:
 
     def _pdf_page_needs_render(self, page, native_text: str, image_descriptions: list[str]) -> bool:
         """True when describing a full-page render is useful (scanned / sparse pages)."""
-        if not settings.PDF_VISUAL_EXTRACTION_ENABLED:
-            return False
         if len(native_text.strip()) >= settings.PDF_VISUAL_TEXT_THRESHOLD:
             return False
         # Embedded-image descriptions already covered this page.

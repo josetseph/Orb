@@ -753,9 +753,7 @@ Soft delete (`deleted_at = now`) scoped to the KB. **404** if no row updated. Re
 
 #### GET /api/v1/chat/conversations/{conversation_id}/export
 
-Query: `format: str = "markdown"` (`"json"` for JSON). Reads the rows through `chat_store.list_messages(conversation_id)` and returns `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>
-
-<content>` blocks. It ignores `?kb=` and does no KB ownership check (conversation ids are UUIDs). Pinned by `test_chat_export.py`.
+Query: `format: str = "markdown"` (`"json"` for JSON). Reads the rows through `chat_store.list_messages(conversation_id)` and returns `[{"role","content","created_at"}]` or a `text/markdown` body of `## You` / `## Orb` blocks with the message content under each. It ignores `?kb=` and does no KB ownership check (conversation ids are UUIDs). Pinned by `test_chat_export.py`.
 
 #### POST /api/v1/chat/async
 
