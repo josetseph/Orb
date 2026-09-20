@@ -23,64 +23,41 @@ interface Segment {
     content: string;
 }
 
-// ── Marker parser ────────────────────────────────────────────────────────────
-// Recognises:
-//   [Image: <title>]
-//   [PDF Extraction (<filename>)]:
-//   [Audio Transcript (<title>)]:
+// ── Block parser ──────────────────────────────────────────────────────────────
+// Ingestion wraps every extraction in `<!-- orb:extract src="…" -->` …
+// `<!-- /orb:extract -->`; the first line inside is `[<Kind> (<name>)]:` or
+// `[Image: <title>]`. Splitting on the delimiters means no header list to keep
+// in step with the backend.
 
-const MARKER_RE =
-    /(\[Image:[^\]]+\]|\[PDF Extraction[^\]]*\]:|\[Audio Transcript[^\]]*\]:|\[Video Transcript[^\]]*\]:)/;
+const BLOCK_RE = /<!-- orb:extract src="[^"]*" -->([\s\S]*?)<!-- \/orb:extract -->/g;
+const HEADER_RE = /^\s*\[([^\]:(]+?)(?::\s*([^\]]*)|\s*\(([^)]*)\))?\]:?/;
+
+function segmentTypeFor(kind: string): Exclude<SegmentType, "text"> {
+    const k = kind.toLowerCase();
+    if (k.startsWith("image")) return "image";
+    if (k.startsWith("video")) return "video";
+    if (k.includes("transcript")) return "audio";
+    return "pdf";
+}
 
 function parseSegments(content: string): Segment[] {
-    const parts = content.split(MARKER_RE);
     const segments: Segment[] = [];
-
-    for (let i = 0; i < parts.length; i++) {
-        const part = parts[i];
-        if (!part) continue;
-
-        if (i % 2 === 0) {
-            // Plain text (before/between/after markers)
-            const trimmed = part.trim();
-            if (trimmed) segments.push({ type: "text", label: "", content: trimmed });
-        } else {
-            // This is the marker itself
-            const body = parts[i + 1] ?? "";
-            i++; // consume the content part
-
-            if (part.startsWith("[Image:")) {
-                const m = part.match(/\[Image:\s*([^\]]+)\]/);
-                segments.push({
-                    type: "image",
-                    label: m?.[1]?.trim() || "Image",
-                    content: body.trim(),
-                });
-            } else if (part.includes("PDF Extraction")) {
-                const m = part.match(/\[PDF Extraction\s*\(([^)]+)\)\]/);
-                segments.push({
-                    type: "pdf",
-                    label: m?.[1]?.trim() || "PDF",
-                    content: body.trim(),
-                });
-            } else if (part.includes("Audio Transcript")) {
-                const m = part.match(/\[Audio Transcript\s*\(([^)]+)\)\]/);
-                segments.push({
-                    type: "audio",
-                    label: m?.[1]?.trim() || "Audio",
-                    content: body.trim(),
-                });
-            } else if (part.includes("Video Transcript")) {
-                const m = part.match(/\[Video Transcript\s*\(([^)]+)\)\]/);
-                segments.push({
-                    type: "video",
-                    label: m?.[1]?.trim() || "Video",
-                    content: body.trim(),
-                });
-            }
-        }
+    let last = 0;
+    for (const m of content.matchAll(BLOCK_RE)) {
+        const before = content.slice(last, m.index).trim();
+        if (before) segments.push({ type: "text", label: "", content: before });
+        const inner = m[1];
+        const h = inner.match(HEADER_RE);
+        const kind = h?.[1]?.trim() ?? "Extraction";
+        segments.push({
+            type: h ? segmentTypeFor(kind) : "pdf",
+            label: (h?.[2] ?? h?.[3] ?? kind).trim() || kind,
+            content: (h ? inner.slice(h[0].length) : inner).trim(),
+        });
+        last = (m.index ?? 0) + m[0].length;
     }
-
+    const tail = content.slice(last).trim();
+    if (tail) segments.push({ type: "text", label: "", content: tail });
     return segments;
 }
 
