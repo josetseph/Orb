@@ -245,7 +245,7 @@ The autosave timer is cleared *before* the DELETE so a debounced PUT cannot resu
 3. `api.getNotes(search, processed, failed, currentKB, { signal })` → `GET /notes?search=&processed=&failed=&kb=`.
 4. If `requestId` is stale → return silently. Otherwise `setNotes(data)` then `syncSelectedNoteFromList(data)`.
 5. Then (still guarded by `requestId`) `api.listVaultFolders(currentKB)` → `onVaultListing({folders, attachments, vault_name})`. Failures are ignored ("folders optional").
-6. Prune `ingestingNoteIds` to ids still present **and** `isActiveProcessingNote`. Comment: *"Only keep polling notes the user already queued for ingest — never start 'ingesting' tracking from autosave / vault-watcher markers."*
+6. Rebuild `ingestingNoteIds` from the list: every note for which `isActiveProcessingNote` is true (pipeline stages only, never autosave / vault-watcher markers). The set is page state, so this is what resumes polling after navigating away and back mid-ingest; ids that dropped out fire the "Note ingested" / "Ingestion failed" notification.
 7. Errors other than cancellations (`isRequestCancelled`: a `DOMException` named `AbortError`) are logged. `isLoading` is cleared only by the latest request.
 
 Consequence: every `fetchNotes` is **two** sequential requests (`/notes` then `/vault/folders`), and the vault listing is refreshed on every search keystroke debounce.
