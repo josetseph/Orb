@@ -96,7 +96,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `OPENAI_MODEL` / `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `HUGGINGFACE_MODEL` | str \| None / `None` | `Settings`; `llm.get_chat_model`, `get_ingestion_model`, provider call sites (`_anthropic_*` always use `ANTHROPIC_MODEL`), `multimedia.py` image captions | Per-provider fallback model when `CHAT_MODEL` unset. `HUGGINGFACE_MODEL` is **required** for `huggingface` (`init_clients` raises) | env |
 | `LLM_BASE_URL` | str / `http://127.0.0.1:8080` | `Settings`; `llm.get_base_url()` (system default endpoint for `openai_compat`), `ai_gate` (cloud heuristics), `api/settings.py`, `runtime_config` | The endpoint used when `LLM_PROVIDER=openai_compat` and no per-KB `llm_base_url` is set. Normalised by `credentials.normalize_base_url`; a malformed value is ignored with a warning rather than crashing | runtime (`base_url`), env |
 | `LLM_API_KEY` | str / `"local"` | `Settings`; `ai_gate` only | Treated as "real" when not `local`/`lm-studio`/`ollama` | env |
-| `CHAT_HISTORY_MAX_MESSAGES` | int / `24` | `Settings`; `chat_store.recent_turns` limit, `llm.py` + `retrieval.py` history slicing | Max prior turns loaded/injected | env |
+| `CHAT_HISTORY_MAX_MESSAGES` | int / `24` | `Settings`; `chat_store.get_recent_history`/`refresh_summary` window, `schemas/chat.render_history` slicing | Max prior turns loaded/injected | env |
 
 ### 3.4 LLM — ingestion axis
 

@@ -191,6 +191,12 @@ async def _run_chat_job_serialized(
         })
     async with _chat_job_lock:
         await _run_chat_job(request_id, query, kb, conversation_id, history)
+        # Messages that just left the history window get folded into the
+        # running summary. After the answer is out, so nobody waits on it.
+        try:
+            await chat_store.refresh_summary(conversation_id, kb.llm.summarize_conversation)
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("[Chat] Summary refresh failed: %s", exc)
 
 
 @router.post("/api/v1/chat/async")

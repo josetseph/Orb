@@ -347,29 +347,21 @@ class LLMService:
         model: str | None = None,
     ) -> str:
         """Rewrite a follow-up into a standalone retrieval query using recent chat turns."""
+        from app.schemas.chat import render_history
+
         latest = (latest_query or "").strip()
         if not latest or not history:
             return latest
 
-        lines: list[str] = []
-        for turn in history[-settings.CHAT_HISTORY_MAX_MESSAGES :]:
-            role = (turn.get("role") or "").strip().lower()
-            content = (turn.get("content") or "").strip()
-            if not content or role not in {"user", "assistant"}:
-                continue
-            label = "User" if role == "user" else "Assistant"
-            if len(content) > 600:
-                content = content[:597].rstrip() + "..."
-            lines.append(f"{label}: {content}")
-
-        if not lines:
+        rendered = render_history(history, 600)
+        if not rendered:
             return latest
 
         prompt = (
             "You rewrite follow-up questions into standalone search queries for a "
             "document collection.\n\n"
             "CONVERSATION:\n"
-            + "\n".join(lines)
+            + rendered
             + "\n\n"
             f"LATEST USER MESSAGE: {latest}\n\n"
             "Return ONE standalone search query that captures what the user is asking "
@@ -389,6 +381,33 @@ class LLMService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[LLM] rewrite_follow_up_query failed: {exc}")
         return latest
+
+    def summarize_conversation(
+        self, existing: str | None, turns: list[dict], model: str | None = None
+    ) -> str:
+        """Fold ``turns`` (messages that left the history window) into the
+        running summary of a long chat. One call; the summary stays short."""
+        from app.schemas.chat import render_history
+
+        prompt = (
+            "Update the running summary of a conversation between a user and Orb, "
+            "their notes assistant. Keep every fact, name, decision and open "
+            "question the user may refer back to; drop pleasantries. Plain prose, "
+            "under 200 words.\n\n"
+            f"CURRENT SUMMARY:\n{existing or '(none)'}\n\n"
+            "NEW TURNS:\n" + render_history(turns, 1500) + "\n\nUPDATED SUMMARY:"
+        )
+        text, _ = self._chat(
+            [
+                {
+                    "role": "system",
+                    "content": "You maintain a concise running summary. Output only the summary.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            model=model,
+        )
+        return (text or "").strip() or (existing or "")
 
     def _reason_step_sync(self, prompt: str, model: str | None = None) -> str:
         """Synchronous lightweight reasoning call for query rewrite."""

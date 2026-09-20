@@ -97,7 +97,7 @@
 | **Reranker** | Cross-encoder GGUF (Qwen3-Reranker) scoring query/passage pairs by yes/no logits; keeps `RERANKER_TOP_K`. | [12](12-local-models-and-inference.md) |
 | **Thinking** | Model reasoning text separated from the answer and stored on `chat_messages.thinking`. | [16](16-retrieval-and-chat.md) |
 | **request_id** | Client- or server-generated id for an async chat job, polled at `/chat/status/{request_id}`. | [16](16-retrieval-and-chat.md) |
-| **Conversation** | Persisted chat thread scoped to a KB; history trimmed to `CHAT_HISTORY_MAX_MESSAGES` (24). | [16](16-retrieval-and-chat.md) |
+| **Conversation** | Persisted chat thread scoped to a KB; the last `CHAT_HISTORY_MAX_MESSAGES` (24) messages are prompted verbatim, older ones through a rolling `summary` refreshed after each answer. | [16](16-retrieval-and-chat.md) |
 | **Citation / source** | Reference from an answer back to notes/entities used, rendered inline by the chat page. | [16](16-retrieval-and-chat.md), [20](20-frontend-chat-graph-and-pages.md) |
 
 ## Models and providers

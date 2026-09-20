@@ -26,6 +26,7 @@ Boundary facts that matter when modifying code:
 | `backend/tests/__init__.py`, `backend/tests/unit/__init__.py` | Make `tests` a package so pytest's default (`prepend`) import mode inserts `backend/` on `sys.path`; `app.*` imports then work from any cwd. | — |
 | `backend/tests/unit/conftest.py` | The one shared fixture: the autouse settings patch. | `patch_settings` (autouse, pins `LLM_PROVIDER="local"`) |
 | `backend/tests/unit/test_chat_context.py` | Follow-up query rewrite (`LLMService.rewrite_follow_up_query`). | 6 tests in `TestRewriteFollowUpQuery` |
+| `backend/tests/unit/test_chat_summary.py` | Rolling chat summary: `ChatStore.refresh_summary` window arithmetic over a real SQLite file and `render_history` ordering/truncation. | 2 tests |
 | `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (`None` handling, wrapper unwrapping, the closed `RELATIONSHIP_TYPES` vocabulary — off-list predicates become `related_to`). | 16 tests |
 | `backend/tests/unit/test_graph_layout.py` | Pure geometry in `app/utils/graph_layout.py`. | `TestFibonacciSphere`, `TestDeterministicJitter`, `TestComputeSolarPositions`, `TestComputeSpringLayout3d` |
 | `backend/tests/unit/test_graph_queries.py` | Cypher-shape regression guards for `GraphService.get_related_nodes`. | `_get_graph_service_class()` (imports `app.services.graph` with `kuzu.Database`/`kuzu.Connection` patched), `_make_graph_service()`, `_row()` |
@@ -146,7 +147,7 @@ The pattern the live tests rely on is three idioms, documented in §13:
 Contract pinned for `LLMService.rewrite_follow_up_query(history, latest_query, model=None)` (in `app/services/llm.py`):
 
 - Returns `latest_query` untouched when `history` is empty (no LLM call).
-- Only the last `settings.CHAT_HISTORY_MAX_MESSAGES` turns are used; turns whose `role` is not `user`/`assistant` or whose `content` is empty are dropped from the prompt (`"ignored"` must not appear; `"Fido overview."` must).
+- Only the last `settings.CHAT_HISTORY_MAX_MESSAGES` turns are used (via `schemas/chat.render_history`); turns whose `role` is not `user`/`assistant`/`summary` or whose `content` is empty are dropped from the prompt (`"ignored"` must not appear; `"Fido overview."` must). `test_chat_summary.py` covers the rolling summary: `refresh_summary` runs only for messages that left the window, passes only the uncovered ones, and `get_recent_history` prepends the `summary` turn.
 - Turn content longer than 600 characters is truncated to 597 + `"..."` (test uses 800 × `x`).
 - The rewrite goes through `self._reason_step_sync(prompt, model=model)`; the tests patch that method so no provider is contacted.
 - On any exception from the LLM the original query is returned (never raise into the chat endpoint).

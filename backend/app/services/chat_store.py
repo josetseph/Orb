@@ -3,9 +3,10 @@
 # pylint: disable=wrong-import-order
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
@@ -171,11 +172,68 @@ class ChatStore:
                 .limit(max_messages)
             )
             messages = list(reversed(rows.scalars().all()))
-            return [
+            turns = [
                 ChatTurn(role=m.role, content=m.content)
                 for m in messages
                 if m.content and m.role in ("user", "assistant")
             ]
+            summary = (
+                await session.execute(
+                    select(ChatConversation.summary).where(
+                        ChatConversation.id == conversation_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if summary:
+                turns.insert(0, ChatTurn(role="summary", content=summary))
+            return turns
+
+    async def refresh_summary(
+        self,
+        conversation_id: str,
+        summarize: Callable[[str | None, list[dict]], str],
+    ) -> bool:
+        """Fold the messages that fell out of the recent-history window into
+        the conversation's running summary.
+
+        ``summarize(existing_summary, new_turns) -> str`` is one model call and
+        runs off the event loop. Returns True when it ran (new messages had
+        left the window), False when nothing needed summarising.
+        """
+        window = settings.CHAT_HISTORY_MAX_MESSAGES
+        async with AsyncSessionLocal() as session:
+            conv = await session.get(ChatConversation, conversation_id)
+            if conv is None:
+                return False
+            rows = await session.execute(
+                select(ChatMessage.role, ChatMessage.content)
+                .where(ChatMessage.conversation_id == conversation_id)
+                .order_by(ChatMessage.created_at)
+            )
+            messages = [
+                {"role": role, "content": content}
+                for role, content in rows
+                if content and role in ("user", "assistant")
+            ]
+            existing = conv.summary
+            covered = conv.summary_message_count or 0
+        older = messages[: max(0, len(messages) - window)]
+        if len(older) <= covered:
+            return False
+        summary = await asyncio.to_thread(summarize, existing, older[covered:])
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                update(ChatConversation)
+                .where(ChatConversation.id == conversation_id)
+                .values(summary=summary, summary_message_count=len(older))
+            )
+            await session.commit()
+        logger.info(
+            "[ChatStore] Summary refreshed for %s (%d messages covered)",
+            conversation_id,
+            len(older),
+        )
+        return True
 
     async def ensure_conversation(
         self, conversation_id: str | None, kb_id: str

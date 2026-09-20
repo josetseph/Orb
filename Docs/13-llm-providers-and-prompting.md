@@ -222,6 +222,7 @@ Returns `(content, {"finish_reason", "truncated"})`: Gemini `candidates[0].finis
 | `_reason_step_sync(prompt, model=None)` | sync | all, via `_chat` | `"You are a precise query rewriter. Output only the rewritten query."` | stripped text |
 | `generate_title(text, model=None)` | sync | all three shapes | `"Generate a concise, descriptive title for the provided note content. Do not use quotes."` | title with `"` removed; `"Untitled Note"` for blank input |
 | `rewrite_follow_up_query(history, latest_query, model=None)` | sync | via `_reason_step_sync` | — | rewritten query if non-empty and ≤ 300 chars, else the original |
+| `summarize_conversation(existing, turns, model=None)` | sync | via `_chat` | `"You maintain a concise running summary. Output only the summary."` | updated summary (≤ 200 words asked); `existing` when the model returns nothing; exceptions propagate (the chat job logs them) |
 | `analyze_query(query)` | sync | one JSON chat call via `_chat` (temperature 0), `lru_cache(64)` per `(query, today)` | — | dict (see §9) or safe defaults `{"intent":"search","entities":[],"keywords":query.split(),…}` |
 | `iterative_step(...)` | async (`to_thread(_reason_step, json_mode=True)`) | via `_reason_step` | — | protocol dict (below) |
 | `ingestion_generate[_with_meta](prompt, temperature=0.1, max_tokens=None, json_mode=False)` | async | ingestion clients | none | text (+meta) |
@@ -363,8 +364,14 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 - **Purpose**: turn a follow-up into a standalone retrieval query (pronoun resolution) before retrieval.
 - **Call**: `_reason_step_sync` (system `"You are a precise query rewriter. Output only the rewritten query."`), OpenAI-shaped providers only.
-- **Prompt**: `"You rewrite follow-up questions into standalone search queries for a document collection.e.\n\nCONVERSATION:\n{User:/Assistant: lines, last 24 turns, each content truncated to 600 chars}\n\nLATEST USER MESSAGE: {latest}\n\nReturn ONE standalone search query that captures what the user is asking now, resolving pronouns and references from the conversation.\nDo not answer the question. Do not add explanation.\nReply with only the rewritten query."`
+- **Prompt**: `"You rewrite follow-up questions into standalone search queries for a document collection.e.\n\nCONVERSATION:\n{render_history: summary line, then User:/Assistant: lines for the last 24 turns, each cut at 600 chars}\n\nLATEST USER MESSAGE: {latest}\n\nReturn ONE standalone search query that captures what the user is asking now, resolving pronouns and references from the conversation.\nDo not answer the question. Do not add explanation.\nReply with only the rewritten query."`
 - **Format**: single line; quotes stripped; accepted if ≤ 300 chars; else original query. Skipped entirely when there is no history. Tested in `test_chat_context.py`.
+
+### 9.9a Rolling summary — `LLMService.summarize_conversation(existing, turns)`
+
+- **Purpose**: keep older context available once a chat outgrows `CHAT_HISTORY_MAX_MESSAGES`. Called by `chat_store.refresh_summary` after each answer with only the turns that just left the window.
+- **Prompt**: `"Update the running summary of a conversation between a user and Orb, their notes assistant. Keep every fact, name, decision and open question the user may refer back to; drop pleasantries. Plain prose, under 200 words.\n\nCURRENT SUMMARY:\n{existing or (none)}\n\nNEW TURNS:\n{render_history(turns, 1500)}\n\nUPDATED SUMMARY:"`.
+- **Format**: free prose; stored verbatim in `chat_conversations.summary` and rendered as `Earlier in this conversation (summary): …` on later turns. Tested in `test_chat_summary.py` (store side, with a stub summariser).
 
 ### 9.10 Iterative research step — `LLMService.iterative_step(...)`
 
@@ -375,7 +382,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
   ```
   You are a research assistant solving a multi-hop question step by step.
 
-  {conversation_context}            # from retrieval: "CONVERSATION SO FAR:\n" + "User: …"/"Assistant: …" lines (last 24 turns) + "\n\n"
+  {conversation_context}            # from retrieval: "CONVERSATION SO FAR:\n" + render_history (summary line + last 24 turns, 500 chars each) + "\n\n"
   ORIGINAL QUESTION: {original_question}
 
   PRIOR FINDINGS:\nStep i: Searched for '<q>'\n  Reasoning: <r>\n  Finding: <fa or 'Not found'>   (when accumulated_steps)

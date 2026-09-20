@@ -69,6 +69,13 @@ def _sqlite_repairs(sync_conn) -> None:
             logger.warning("notes.content still holds %d bodies; column kept", left)
         else:
             sync_conn.exec_driver_sql("ALTER TABLE notes DROP COLUMN content")
+    # Rolling chat summary (added after 1.0); create_all never alters a table.
+    cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(chat_conversations)")}
+    if cols and "summary" not in cols:
+        sync_conn.exec_driver_sql("ALTER TABLE chat_conversations ADD COLUMN summary TEXT")
+        sync_conn.exec_driver_sql(
+            "ALTER TABLE chat_conversations ADD COLUMN summary_message_count INTEGER NOT NULL DEFAULT 0"
+        )
 
 
 async def init_db() -> None:

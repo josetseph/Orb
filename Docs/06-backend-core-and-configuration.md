@@ -293,7 +293,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int | `10` | Cap on relationship entries kept per expansion; reranking of neighbours only if more than this many |
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | float | `0` | Applied to neighbour scores only when `> 0` |
 | `MAX_LOOP_ITERATIONS` | int | `3` | Iterations of the multi-hop retrieval loop  |
-| `CHAT_HISTORY_MAX_MESSAGES` | int | `24` | `chat_store.recent_turns` default limit; `llm.py`/`retrieval.py` slice history to the last N turns when building prompts |
+| `CHAT_HISTORY_MAX_MESSAGES` | int | `24` | `chat_store.get_recent_history` window and `refresh_summary` cut-off; `schemas/chat.render_history` slices history to the last N turns when building prompts |
 
 **Feature switches** (ingestion side)
 
@@ -539,6 +539,7 @@ Derived status contract (`api/notes.py get_note_ingestion_status`): `processed �
 | `title` | String | no, default `"New Chat"` | |
 | `created_at` / `updated_at` | DateTime(tz) | — | `updated_at` has `onupdate` |
 | `deleted_at` | DateTime(tz) | yes | Soft delete marker |
+| `summary` / `summary_message_count` | Text / Integer | yes / no (default 0) | Rolling recap of messages older than the history window and how many it covers ([16 §5.4](16-retrieval-and-chat.md)); `_sqlite_repairs` adds both to pre-existing DBs |
 | `messages` | relationship | — | `cascade="all, delete-orphan"`, ordered by `ChatMessage.created_at` |
 
 `ChatMessage`:

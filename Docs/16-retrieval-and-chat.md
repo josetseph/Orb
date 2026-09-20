@@ -240,6 +240,8 @@ Both tables live in the main SQLite database (`DATA_DIR/orb.db`, engine from `ba
 | `created_at` | DateTime(tz) | UTC |
 | `updated_at` | DateTime(tz) | UTC; bumped by `add_message` and by auto-title |
 | `deleted_at` | DateTime(tz), nullable | **soft delete marker** |
+| `summary` | Text, nullable | rolling recap of the messages that fell out of the history window (§5.4); added to existing DBs by `_sqlite_repairs` |
+| `summary_message_count` | Integer, default 0 | how many of the oldest messages `summary` covers |
 
 `chat_messages` (`ChatMessage`):
 
@@ -267,7 +269,8 @@ All methods are `async`, open their own `AsyncSessionLocal()` session, and retur
 | `delete_conversation(id, kb_id=None)` | `UPDATE ... SET deleted_at = now` (no `deleted_at IS NULL` guard, so re-deleting just refreshes the timestamp and still returns `True`); returns `rowcount > 0` |
 | `list_messages(id, kb_id=None)` | If `kb_id` given, first checks ownership + not deleted (returns `[]` otherwise); then all messages ascending |
 | `add_message(conversation_id, role, content, thinking=None, metadata=None)` | Inserts and bumps the conversation's `updated_at` in the same transaction; returns the message dict |
-| `get_recent_history(conversation_id, limit=None)` | Last `limit or settings.CHAT_HISTORY_MAX_MESSAGES` (24) messages by `created_at DESC`, reversed to chronological, filtered to `role in {user, assistant}` with non-empty content, returned as `ChatTurn` objects |
+| `get_recent_history(conversation_id, limit=None)` | Last `limit or settings.CHAT_HISTORY_MAX_MESSAGES` (24) messages by `created_at DESC`, reversed to chronological, filtered to `role in {user, assistant}` with non-empty content, returned as `ChatTurn` objects — preceded by one `role="summary"` turn when the conversation has a summary |
+| `refresh_summary(conversation_id, summarize)` | Called by the chat job after every answer. Computes `older = messages[:-CHAT_HISTORY_MAX_MESSAGES]`; if more of them exist than `summary_message_count` covers, runs `summarize(existing_summary, new_older_turns)` (one model call, off the loop) and stores the result plus the new count. Returns whether it ran |
 | `ensure_conversation(conversation_id, kb_id)` | Reuse if found in this KB and not deleted; `None` for an unknown/deleted/foreign id (the API answers 404); create only when no id is given |
 | `maybe_set_title_from_first_message(conversation_id, user_text)` | See §5.3 |
 
@@ -279,19 +282,23 @@ Titles are **not** LLM-generated (`llm_service.generate_title` exists but is use
 
 ### 5.4 Follow-up context: how history is built and trimmed
 
-History flows through two independent consumers, each with its own truncation:
+History is a fixed window plus a rolling summary of everything older. `schemas/chat.render_history(history, max_chars)` is the one renderer both consumers use: the `summary` turn becomes `Earlier in this conversation (summary): …`, then the last `CHAT_HISTORY_MAX_MESSAGES` user/assistant turns as `User:`/`Assistant:` lines, each cut at `max_chars`.
+
+**Rolling summary.** After each answer the chat job calls `chat_store.refresh_summary(conversation_id, kb.llm.summarize_conversation)`. Messages that have just left the 24-message window are folded into `chat_conversations.summary` by one call to `LLMService.summarize_conversation(existing, turns)` ("Update the running summary … keep every fact, name, decision and open question … under 200 words"); nothing runs while a conversation still fits the window. A failure only logs a warning — the answer is already stored — and the next turn retries because `summary_message_count` was not advanced.
+
+The two consumers of the rendered history:
 
 1. **Follow-up query rewrite** (`LLMService.rewrite_follow_up_query(history, latest_query)`, called synchronously from `ChatWorkflow._retrieve_context` before any stage is emitted):
    - Returns `latest` unchanged when the query is blank/whitespace or history is empty (no LLM call).
-   - Takes `history[-CHAT_HISTORY_MAX_MESSAGES:]`, keeps `user`/`assistant` turns with content, truncates each turn to 600 chars (`[:597] + "..."`), renders `User: ...` / `Assistant: ...` lines.
+   - `render_history(history, 600)`: summary line first, then the window with each turn cut at 600 chars.
    - Prompt: "You rewrite follow-up questions into standalone search queries for a document collection. CONVERSATION: ... LATEST USER MESSAGE: ... Return ONE standalone search query ... Reply with only the rewritten query." System prompt: "You are a precise query rewriter. Output only the rewritten query."
    - Uses `_reason_step_sync`, a thin caller of `_chat` (so it works on every provider, Gemini and Anthropic included).
    - Accepts the result only if non-empty and ≤ 300 chars after stripping quotes; otherwise (or on any exception, logged as a warning) returns the original query. `backend/tests/unit/test_chat_context.py` pins these behaviours (no history → unchanged; LLM failure → unchanged; invalid roles/empty content ignored; 800-char turn truncated with `...`).
    - The rewritten query is what the **entire** retrieval loop sees as `ORIGINAL QUESTION`; the raw user text is only stored and echoed back as `query`.
 
-2. **Loop conversation context** (`retrieve_with_iterative_loop`): the same history (as `[{role, content}]`) is re-sliced to the last `CHAT_HISTORY_MAX_MESSAGES`, each turn truncated to 500 chars (`[:497] + "..."`), and rendered as a `CONVERSATION SO FAR:` block that is prepended to **every** `iterative_step` prompt. This lets the reasoning step answer "what did you just say?" style follow-ups directly from history even if retrieval finds nothing new.
+2. **Loop conversation context** (`retrieve_with_iterative_loop`): the same history through `render_history(history, 500)`, rendered as a `CONVERSATION SO FAR:` block that is prepended to **every** `iterative_step` prompt. This lets the reasoning step answer "what did you just say?" style follow-ups directly from history even if retrieval finds nothing new.
 
-There is no token counting for history; `CHAT_HISTORY_MAX_MESSAGES` (24 messages ≈ 12 turns) × 500–600 chars is the only bound. With long assistant answers, 24 × 600 chars ≈ 14 KB can be prepended to the rewrite prompt.
+There is no token counting for history; `CHAT_HISTORY_MAX_MESSAGES` (24 messages ≈ 12 turns) × 500–600 chars plus the ≤ 200-word summary is the bound, whatever the conversation's length.
 
 ### 5.5 Per-KB LLM override (uncommitted working-tree behaviour)
 
@@ -653,7 +660,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `_search_qdrant_multi_collection` | Qdrant `score_threshold` when the reranker is on |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | `10` | `_expand_relevant_neighbors` | Max (origin, neighbour) pairs kept per iteration; also the trigger — per-pair rerank runs only when more pairs than this exist |
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | `0` | same | If > 0, drop pairs scoring below it after the top-N cut |
-| `CHAT_HISTORY_MAX_MESSAGES` | `24` | `chat_store.get_recent_history`, `rewrite_follow_up_query`, loop context | Messages (not turns) of history fetched and prompted |
+| `CHAT_HISTORY_MAX_MESSAGES` | `24` | `chat_store.get_recent_history`/`refresh_summary`, `render_history` | Messages (not turns) kept verbatim; older ones live on in the rolling summary |
 | `CHAT_MODEL` | `None` | `get_chat_model` | Global chat model override (set by `PATCH /api/v1/settings` / runtime_config); beaten only by a per-KB `llm_model` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `local` / `local-chat` | `LLMService.__init__`, `get_chat_model` | Provider for analysis/reasoning/rewrite; `ollama`/`lm_studio` map to `local` |
 | `OPENAI_MODEL` / `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `HUGGINGFACE_MODEL` (+ `*_API_KEY`) | `None` | `get_chat_model`, `ai_gate` | Provider-specific chat model and gate keys |
@@ -784,7 +791,7 @@ Work from the logs (§15.1) before touching knobs: `retrieval.log` tells you whi
 | "I couldn't find any relevant information" on every question | Reranker missing/disabled with default threshold | Select/download the reranker on the Models page, or set `RERANKER_SCORE_THRESHOLD=0`; look for `[Reranker] No GGUF selected` / `Model returned no scores` |
 | Month/day questions miss ordinary entities | Month mode restricts `node_cores` to `period_key` matches; day mode searches contexts only | Enable temporal digests/communities at ingestion, or rephrase without the date; there is no config knob for this behaviour |
 | Slow turns | Model swaps | Read the `[Timing] chat … model_load=… loads=…` line; raise `ORB_MODEL_IDLE_SECONDS`/set 0 to avoid cold loads, use a cloud chat provider to remove chat-model swaps, reduce `RERANKER_TOP_K` to shorten reranker passes |
-| Follow-ups lose context | History window | `CHAT_HISTORY_MAX_MESSAGES` (also increases rewrite prompt size) |
+| Follow-ups lose context | History window / summary quality | `CHAT_HISTORY_MAX_MESSAGES` (also increases rewrite prompt size); older facts come from the rolling summary, check `llm.log` for the `summarize_conversation` call |
 
 Changing thresholds requires a backend restart (settings are read at import; `runtime_config.json` covers provider/model keys only). The benchmark harness and `Results/` archive live on the `orb-testing` branch.
 
@@ -842,7 +849,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - Embedding and reranking are system-wide even with per-KB LLM overrides (shared embedding dims across KBs' Qdrant collections).
 - One heavy local model resident at a time; every embed/rerank/chat call may swap. Never call `embedding_service` and `llm_service` "in parallel" expecting concurrency — they serialise on the runtime lock and thrash loads.
 - `_chat_job_lock` is process-global: one async chat at a time across all KBs.
-- `get_recent_history` must be called before `add_message(user, …)` (it is); the history never contains the current question.
+- `get_recent_history` must be called before `add_message(user, …)` (it is); the history never contains the current question. `refresh_summary` runs after the answer, inside `_chat_job_lock`, so the next turn's window and summary line up.
 - Stage strings are UI text; `progress_callback` must be cheap and non-blocking (it just writes a dict).
 
 **Gotchas an assistant would get wrong**

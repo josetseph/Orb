@@ -1480,20 +1480,11 @@ class RetrievalService:
 
         conversation_context = ""
         if conversation_history:
-            lines: list[str] = []
-            for turn in conversation_history[-settings.CHAT_HISTORY_MAX_MESSAGES :]:
-                role = (turn.get("role") or "").strip().lower()
-                content = (turn.get("content") or "").strip()
-                if not content or role not in {"user", "assistant"}:
-                    continue
-                label = "User" if role == "user" else "Assistant"
-                if len(content) > 500:
-                    content = content[:497].rstrip() + "..."
-                lines.append(f"{label}: {content}")
-            if lines:
-                conversation_context = (
-                    "CONVERSATION SO FAR:\n" + "\n".join(lines) + "\n\n"
-                )
+            from app.schemas.chat import render_history
+
+            rendered = render_history(conversation_history, 500)
+            if rendered:
+                conversation_context = "CONVERSATION SO FAR:\n" + rendered + "\n\n"
 
         _t_start = time.perf_counter()
         logger.info(

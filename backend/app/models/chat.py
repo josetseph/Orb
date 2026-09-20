@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, ForeignKey, String, Text
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -30,6 +30,10 @@ class ChatConversation(Base):  # pylint: disable=too-few-public-methods
         onupdate=_utcnow,
     )
     deleted_at = Column(DateTime(timezone=True), nullable=True)
+    # Rolling recap of the messages that fell out of the recent-history window,
+    # and how many of the oldest messages it covers.
+    summary = Column(Text, nullable=True)
+    summary_message_count = Column(Integer, nullable=False, default=0)
 
     messages = relationship(
         "ChatMessage",
