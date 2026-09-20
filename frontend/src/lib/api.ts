@@ -135,10 +135,14 @@ export const api = {
 
   // ── File storage ─────────────────────────────────────────────────────────
 
-  async upload(file: File, kb = "default") {
+  async upload(file: File, kb = "default", folder = "") {
     const formData = new FormData();
     formData.append("file", file);
-    return request("POST", `/upload${kbQuery(kb)}`, { body: formData, timeout: 10 * 60 * 1000 });
+    const params = new URLSearchParams();
+    if (kb && kb !== "default") params.set("kb", kb);
+    if (folder) params.set("folder", folder);
+    const qs = params.toString();
+    return request("POST", `/upload${qs ? `?${qs}` : ""}`, { body: formData, timeout: 10 * 60 * 1000 });
   },
 
   // ── Notes (vault markdown + SQLite metadata) ─────────────────────────────
@@ -198,7 +202,6 @@ export const api = {
   async listVaultFolders(kb = "default"): Promise<{
     folders: string[];
     attachments?: Array<{ name: string; rel_path: string }>;
-    media_files?: Array<{ name: string; rel_path: string }>;
     vault_name?: string;
     vault_path?: string;
   }> {

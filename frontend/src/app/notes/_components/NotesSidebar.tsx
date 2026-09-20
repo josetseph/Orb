@@ -18,7 +18,6 @@ type NotesSidebarProps = {
   selectedFolder: string;
   vaultName: string;
   vaultFolders: string[];
-  mediaFiles: VaultFileEntry[];
   attachmentFiles: VaultFileEntry[];
   expandedFolders: Set<string>;
   selectedNoteId: string | null;
@@ -64,7 +63,6 @@ export function NotesSidebar({
   selectedFolder,
   vaultName,
   vaultFolders,
-  mediaFiles,
   attachmentFiles,
   expandedFolders,
   selectedNoteId,
@@ -177,7 +175,6 @@ export function NotesSidebar({
             notes={visibleNotes}
             vaultFolders={vaultFolders}
             vaultName={vaultName}
-            mediaFiles={mediaFiles}
             attachmentFiles={attachmentFiles}
             expandedFolders={expandedFolders}
             selectedFolder={selectedFolder}

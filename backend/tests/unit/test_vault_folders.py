@@ -42,6 +42,23 @@ def test_cannot_move_folder_into_itself(tmp_path):
     assert (tmp_path / "Papers" / "a.pdf").exists()
 
 
+def test_attachments_stay_under_attachments(tmp_path):
+    kb = _kb(tmp_path)
+    (tmp_path / "attachments" / "a").mkdir(parents=True)
+    (tmp_path / "attachments" / "a" / "x.pdf").write_text("x")
+    (tmp_path / "Papers" / "n.md").write_text("n")
+    with pytest.raises(ValueError, match="attachments/ boundary"):
+        asyncio.run(move_vault_file(_NoNotes(), kb, "attachments/a/x.pdf", "Papers/x.pdf"))
+    with pytest.raises(ValueError, match="attachments/ boundary"):
+        asyncio.run(move_vault_file(_NoNotes(), kb, "Papers/n.md", "attachments/n.md"))
+    with pytest.raises(ValueError, match="attachments/ boundary"):
+        asyncio.run(move_vault_file(_NoNotes(), kb, "attachments/a", "Papers/a"))
+    out = asyncio.run(move_vault_file(_NoNotes(), kb, "attachments/a/x.pdf", "attachments/b/x.pdf"))
+    assert out["to"] == "attachments/b/x.pdf" and (tmp_path / "attachments/b/x.pdf").exists()
+    out = asyncio.run(move_vault_file(_NoNotes(), kb, "Papers/n.md", "Archive/n.md"))
+    assert out["to"] == "Archive/n.md"
+
+
 def test_delete_folder_removes_tree(tmp_path):
     kb = _kb(tmp_path)
     out = asyncio.run(delete_vault_file(_NoNotes(), kb, "Papers"))

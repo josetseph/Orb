@@ -51,12 +51,6 @@ def list_attachment_files(vault: Path) -> list[dict[str, str]]:
     return [{"name": p.name, "rel_path": f"attachments/{rel}"} for p, rel in sorted(found, key=lambda t: t[1])]
 
 
-def list_vault_media_files(vault: Path) -> list[dict[str, str]]:
-    """List all non-markdown files in the vault (attachments and elsewhere)."""
-    found = _iter_rel(vault, lambda p, r: p.is_file() and not r.lower().endswith(".md"))
-    return sorted(({"name": p.name, "rel_path": rel} for p, rel in found), key=lambda f: f["rel_path"].lower())
-
-
 def iter_vault_md_files(vault: Path) -> list[str]:
     """Return vault-relative paths for all note markdown files (attachments excluded)."""
     found = _iter_rel(vault, lambda p, r: r.lower().endswith(".md") and "/attachments/" not in f"/{r}/")
@@ -89,15 +83,26 @@ def _normalize_vault_targets(text: str) -> str:
 
 
 def migrate_vault_files(vault: Path) -> int:
-    """One-time in-place rewrite of legacy link shapes; gated by ``.orb/migrated-v2``.
+    """One-time in-place sweep of legacy vault shapes; gated by ``.orb/migrated-v3``.
 
-    v2 added the relative-link rewrite; every step is idempotent, so a vault at
-    v1 simply runs the whole sweep once more.
+    v2 added the relative-link rewrite, v3 moves stray non-markdown files under
+    ``attachments/``; every step is idempotent, so an older vault simply runs
+    the whole sweep once more.
     """
-    marker = vault / ".orb" / "migrated-v2"
+    marker = vault / ".orb" / "migrated-v3"
     if marker.exists():
         return 0
+    from app.services.vault_ops import rewrite_refs_in_text, unique_rel_path
     from app.workflows.agents.ingestion_agent import wrap_legacy_enrichment_blocks
+
+    # Attachments live only under attachments/ — anything else non-markdown moves there.
+    stray = list(_iter_rel(vault, lambda p, r: p.is_file() and not r.lower().endswith(".md") and not r.startswith("attachments/")))
+    moved: list[tuple[str, str]] = []
+    for path, rel in stray:
+        new_rel = unique_rel_path(vault, f"attachments/{rel}")
+        (vault / new_rel).parent.mkdir(parents=True, exist_ok=True)
+        path.rename(vault / new_rel)
+        moved.append((rel, new_rel))
 
     rewritten = 0
     for rel in iter_vault_md_files(vault):
@@ -107,13 +112,15 @@ def migrate_vault_files(vault: Path) -> int:
         except (OSError, UnicodeDecodeError):
             continue
         fixed = wrap_legacy_enrichment_blocks(_normalize_vault_targets(text))
+        for old_rel, new_rel in moved:
+            fixed = rewrite_refs_in_text(fixed, old_rel, new_rel)
         if fixed != text:
             mark_self_write(vault, rel)
             path.write_text(fixed, encoding="utf-8")
             rewritten += 1
     marker.parent.mkdir(exist_ok=True)
     marker.touch()
-    logger.info("Vault migration v2 (%s): %d files rewritten", vault, rewritten)
+    logger.info("Vault migration v3 (%s): %d files moved, %d files rewritten", vault, len(moved), rewritten)
     return rewritten
 
 

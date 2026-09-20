@@ -35,7 +35,7 @@ def test_sweep_rewrites_once(tmp_path, monkeypatch):
     )
     assert clean.read_text() == "nothing to do\n"
     assert "attachments/attachments" in (tmp_path / "attachments" / "x.md").read_text()
-    assert (tmp_path / ".orb" / "migrated-v2").exists()
+    assert (tmp_path / ".orb" / "migrated-v3").exists()
 
     note.write_text("![b](attachments/attachments/b.png)")
     assert vault_sync.migrate_vault_files(tmp_path) == 0
@@ -62,7 +62,39 @@ def test_v2_relativises_links_from_any_workspace_id(tmp_path):
         "![ok](attachments/already.png)\n"
         "[web](https://example.com/vault-files/not/ours.png)\n"
     )
-    assert (tmp_path / ".orb" / "migrated-v2").exists()
+    assert (tmp_path / ".orb" / "migrated-v3").exists()
+    before = note.read_text()
+    assert vault_sync.migrate_vault_files(tmp_path) == 0
+    assert note.read_text() == before
+
+
+def test_v3_moves_stray_files_under_attachments(tmp_path):
+    """Non-markdown files beside notes move to attachments/<folder>/ and links follow."""
+    (tmp_path / ".orb").mkdir()
+    (tmp_path / ".orb" / "migrated-v2").touch()
+    (tmp_path / "Cloud Computing").mkdir()
+    (tmp_path / "Cloud Computing" / "diagram.png").write_bytes(b"png")
+    (tmp_path / "Cloud Computing" / ".DS_Store").write_text("")
+    (tmp_path / "root.pdf").write_text("pdf")
+    (tmp_path / "attachments").mkdir()
+    (tmp_path / "attachments" / "root.pdf").write_text("taken")
+    note = tmp_path / "Cloud Computing" / "n.md"
+    note.write_text(
+        "![d](Cloud%20Computing/diagram.png)\n"
+        "![old](/vault-files/6e9ecae6-0000/Cloud%20Computing/diagram.png)\n"
+        "[r](root.pdf)\n"
+    )
+    assert vault_sync.migrate_vault_files(tmp_path) == 1
+    assert (tmp_path / "attachments" / "Cloud Computing" / "diagram.png").read_bytes() == b"png"
+    assert not (tmp_path / "Cloud Computing" / "diagram.png").exists()
+    assert (tmp_path / "Cloud Computing" / ".DS_Store").exists()
+    assert (tmp_path / "attachments" / "root 2.pdf").read_text() == "pdf"
+    assert note.read_text() == (
+        "![d](attachments/Cloud%20Computing/diagram.png)\n"
+        "![old](attachments/Cloud%20Computing/diagram.png)\n"
+        "[r](attachments/root%202.pdf)\n"
+    )
+    assert (tmp_path / ".orb" / "migrated-v3").exists()
     before = note.read_text()
     assert vault_sync.migrate_vault_files(tmp_path) == 0
     assert note.read_text() == before

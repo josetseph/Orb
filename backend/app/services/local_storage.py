@@ -33,10 +33,18 @@ def vault_file_url(link: str, kb_id: str) -> str:
     return f"/vault-files/{kb_id}/{link}" if link.startswith("attachments/") else link
 
 
-async def store_upload(vault: Path, filename: str, data: bytes, kb_id: str) -> dict:
+async def store_upload(vault: Path, filename: str, data: bytes, kb_id: str, folder: str = "") -> dict:
+    """Store under ``attachments/<folder>/`` (the owning note's folder; flat when empty)."""
+    from app.services.vault_ops import safe_vault_join
+
+    folder = (folder or "").replace("\\", "/")
+    if folder.startswith("/") or ".." in folder.split("/"):
+        raise ValueError("Invalid folder")
+    folder = folder.strip("/")
+    dest = f"attachments/{folder}" if folder else "attachments"
+    safe_vault_join(vault, dest)
     vault.mkdir(parents=True, exist_ok=True)
-    (vault / "attachments").mkdir(parents=True, exist_ok=True)
-    rel = save_attachment(vault, filename, data)
+    rel = save_attachment(vault, filename, data, dest)
     return {"url": vault_file_url(rel, kb_id), "key": rel, "filename": filename}
 
 

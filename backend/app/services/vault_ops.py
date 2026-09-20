@@ -20,6 +20,10 @@ def _norm(rel: str) -> str:
     return (rel or "").replace("\\", "/").lstrip("/")
 
 
+def _in_attachments(rel: str) -> bool:
+    return rel == "attachments" or rel.startswith("attachments/")
+
+
 def safe_vault_join(vault: Path, rel: str) -> Path:
     full = (vault / _norm(rel)).resolve()
     root = vault.resolve()
@@ -246,6 +250,8 @@ async def move_vault_file(
         raise ValueError("from_rel and to_rel are required")
     if ".." in src_rel.split("/") or ".." in dst_rel.split("/"):
         raise ValueError("Invalid path")
+    if _in_attachments(src_rel) != _in_attachments(dst_rel):
+        raise ValueError("Cannot move across the attachments/ boundary")
 
     src = safe_vault_join(vault, src_rel)
     if src.is_dir():

@@ -19,7 +19,6 @@ type VaultFolderTreeProps = {
   notes: Note[];
   vaultFolders: string[];
   vaultName: string;
-  mediaFiles: VaultFileEntry[];
   attachmentFiles: VaultFileEntry[];
   expandedFolders: Set<string>;
   selectedFolder: string;
@@ -59,7 +58,6 @@ type TreeRow =
   | { key: string; kind: "vault-header" }
   | { key: string; kind: "folder"; node: FolderTreeNode; depth: number; count: number }
   | { key: string; kind: "note"; node: FolderTreeNode; depth: number }
-  | { key: string; kind: "media"; file: VaultFileEntry; depth: number; dropTarget: string }
   | { key: string; kind: "attachments-header" }
   | { key: string; kind: "attachments-empty" }
   | { key: string; kind: "attachment"; file: VaultFileEntry; depth: number }
@@ -85,7 +83,6 @@ export function VaultFolderTree({
   notes,
   vaultFolders,
   vaultName,
-  mediaFiles,
   attachmentFiles,
   expandedFolders,
   selectedFolder,
@@ -127,22 +124,6 @@ export function VaultFolderTree({
     );
     const tree = buildFolderTree(notes, noteFolders);
 
-    const mediaByFolder = new Map<string, VaultFileEntry[]>();
-    const rootMedia: VaultFileEntry[] = [];
-    for (const f of mediaFiles) {
-      const rel = f.rel_path;
-      if (rel === "attachments" || rel.startsWith("attachments/")) continue;
-      const slash = rel.lastIndexOf("/");
-      if (slash < 0) {
-        rootMedia.push(f);
-        continue;
-      }
-      const parent = rel.slice(0, slash);
-      const list = mediaByFolder.get(parent) || [];
-      list.push(f);
-      mediaByFolder.set(parent, list);
-    }
-
     const out: TreeRow[] = [{ key: "__vault__", kind: "vault-header" }];
 
     const walk = (node: FolderTreeNode, depth: number) => {
@@ -156,24 +137,12 @@ export function VaultFolderTree({
         });
         if (!expandedFolders.has(node.path)) return;
         for (const child of node.children) walk(child, depth + 1);
-        for (const f of mediaByFolder.get(node.path) || []) {
-          out.push({
-            key: `media:${f.rel_path}`,
-            kind: "media",
-            file: f,
-            depth: depth + 1,
-            dropTarget: node.path,
-          });
-        }
         return;
       }
       out.push({ key: `note:${node.note.id}`, kind: "note", node, depth });
     };
 
     for (const n of tree) walk(n, 0);
-    for (const f of rootMedia) {
-      out.push({ key: `media:${f.rel_path}`, kind: "media", file: f, depth: 0, dropTarget: "" });
-    }
 
     out.push({ key: "__attachments__", kind: "attachments-header" });
     if (attachmentsOpen) {
@@ -228,7 +197,7 @@ export function VaultFolderTree({
       }
     }
     return out;
-  }, [notes, vaultFolders, mediaFiles, attachmentFiles, expandedFolders, attachmentsOpen]);
+  }, [notes, vaultFolders, attachmentFiles, expandedFolders, attachmentsOpen]);
 
   const acceptVaultDrop = (e: DragEvent, folderPath: string) => {
     e.preventDefault();
@@ -246,8 +215,11 @@ export function VaultFolderTree({
     onDragNoteEnd();
     onDragFileEnd();
     setDragFolder(null);
+    // Attachments live only under attachments/; file drags onto note folders are ignored.
+    const toAttachments = folderPath === "attachments" || folderPath.startsWith("attachments/");
     if (folderRel) void onMoveVaultFolder(folderRel, folderPath);
     else if (noteId) void onMoveNoteToFolder(noteId, folderPath);
+    else if (!toAttachments) return;
     else if (fileRels.length > 1) void onMoveVaultFiles(fileRels, folderPath);
     else if (fileRel) void onMoveVaultFile(fileRel, folderPath);
   };
@@ -441,26 +413,6 @@ export function VaultFolderTree({
           </div>
         );
       }
-
-      case "media":
-        return (
-          <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, row.dropTarget)}>
-            <VaultFileRow
-              name={row.file.name}
-              relPath={row.file.rel_path}
-              depth={row.depth}
-              isDragging={dragFileRel === row.file.rel_path}
-              isSelected={selectedFileRels.has(row.file.rel_path)}
-              selectedRels={selectedFileRels}
-              onToggleSelected={onToggleFileSelected}
-              onDragStart={onDragFileStart}
-              onDragEnd={onDragFileEnd}
-              onClick={onFileClick}
-              onRename={onRenameFile}
-              onDelete={onDeleteVaultAttachment}
-            />
-          </div>
-        );
 
       case "attachments-header":
         return (

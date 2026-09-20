@@ -72,7 +72,6 @@ export function useVaultTree({
   const [attachmentFiles, setAttachmentFiles] = useState<VaultFileEntry[]>(
     [],
   );
-  const [mediaFiles, setMediaFiles] = useState<VaultFileEntry[]>([]);
   const [folderDialog, setFolderDialog] = useState<FolderDialogState | null>(
     null,
   );
@@ -83,7 +82,6 @@ export function useVaultTree({
   const applyVaultListing = useCallback((listing: VaultListing) => {
     setVaultFolders(listing.folders || []);
     setAttachmentFiles(listing.attachments || []);
-    setMediaFiles(listing.media_files || []);
     if (listing.vault_name) setVaultName(listing.vault_name);
   }, []);
 
@@ -335,7 +333,6 @@ export function useVaultTree({
     try {
       const folderRes = await api.listVaultFolders(currentKB);
       setAttachmentFiles(folderRes.attachments || []);
-      setMediaFiles(folderRes.media_files || []);
     } catch {
       /* optional */
     }
@@ -395,7 +392,6 @@ export function useVaultTree({
     vaultFolders,
     vaultName,
     attachmentFiles,
-    mediaFiles,
     folderDialog,
     setFolderDialog,
     renameDialog,

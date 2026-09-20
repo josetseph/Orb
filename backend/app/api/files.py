@@ -82,9 +82,10 @@ async def _transcode_to_m4a(content: bytes, src_ext: str) -> tuple[bytes, str]:
 @router.post("/api/v1/upload")
 async def upload_file(
     file: UploadFile = File(...),
+    folder: str = "",
     kb: KBContext = Depends(get_kb),
 ):
-    """Upload a file into the current KB vault attachments folder."""
+    """Upload into ``attachments/<folder>/`` — ``folder`` is the owning note's vault folder."""
     logger.info(f"Uploading file: {file.filename}")
 
     if not kb.vault_path:
@@ -105,7 +106,9 @@ async def upload_file(
     from app.services.local_storage import store_upload
 
     try:
-        result = await store_upload(Path(kb.vault_path), filename_hint, content, kb.kb_id)
+        result = await store_upload(Path(kb.vault_path), filename_hint, content, kb.kb_id, folder)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.exception("Vault upload failed")
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc

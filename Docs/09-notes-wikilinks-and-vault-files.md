@@ -32,7 +32,7 @@
 | `backend/app/services/vault_ops.py` | Move/rename/delete with reference rewriting; path safety | `safe_vault_join`, `unique_rel_path`, `rewrite_refs_in_text`, `rewrite_wikilinks_in_text`, `strip_refs_in_text`, `strip_refs_across_notes`, `delete_vault_file`, `move_vault_file`, `rename_note_file_for_title`, `move_note_to_folder`, `_norm`, `_WIKILINK_TARGET_RE` |
 | `backend/app/services/wikilinks.py` | Link normalisation, `WikilinkResolver`, `note_links` refresh, graph payloads | `_normalize_link`, `_folder_of`, `_folder_proximity`, `WikilinkResolver`, `refresh_note_links`, `refresh_note_links_sync`, `rebuild_kb_note_links`, `notes_graph_payload`, `note_neighborhood_payload` |
 | `backend/app/services/local_storage.py` | Upload → `attachments/`; URL ↔ rel-path mapping | `store_upload`, `remove_upload`, `vault_rel_from_url` |
-| `backend/app/services/vault_sync.py` | Folder / attachment / media listings (see 08 for the scan) | `list_vault_folders`, `list_attachment_files`, `list_vault_media_files`, `iter_vault_md_files` |
+| `backend/app/services/vault_sync.py` | Folder / attachment listings, one-time sweep (see 08 for the scan) | `list_vault_folders`, `list_attachment_files`, `iter_vault_md_files`, `migrate_vault_files` |
 | `backend/app/api/notes.py` | Note CRUD, ingest trigger, status, batch delete | `create_note`, `update_note`, `get_notes`, `get_note`, `move_note`, `delete_note`, `batch_delete_notes`, `_delete_note_impl`, `_note_response`, `_attachment_rels_from_note_body`, `_parse_date_str` |
 | `backend/app/api/vault.py` | Vault file routes | `move_vault_path`, `delete_vault_path`, `mkdir_vault_folder`, `list_folders`, `vault_local_path` |
 | `backend/app/api/files.py` | Upload / delete attachment | `upload_file`, `delete_file`, `_transcode_to_m4a` |
@@ -154,13 +154,14 @@ Callers: `create_note`, `ingest_note` (legacy combined route), `update_note`, `I
 
 `sync_vault_notes(db, kb)` (called by the notes listing and setup) starts with two idempotent repairs before it reconciles rows with files:
 
-1. **`migrate_vault_files(vault)`** (run in a thread), gated by the marker file `<vault>/.orb/migrated-v2` (v1 vaults run the whole idempotent sweep once more) — when it exists the function returns `0` immediately. Otherwise every note `.md` (`iter_vault_md_files`, attachments excluded) is read and rewritten only if it changes, each write going through `mark_self_write` so the watcher ignores it:
+1. **`migrate_vault_files(vault)`** (run in a thread), gated by the marker file `<vault>/.orb/migrated-v3` (v1/v2 vaults run the whole idempotent sweep once more) — when it exists the function returns `0` immediately. Otherwise (v3) every non-hidden, non-`.md` file **outside** `attachments/` is moved to `attachments/<its folder>/<name>` (root files → `attachments/<name>`; an existing destination gets `unique_rel_path`'s ` 2` suffix), then every note `.md` (`iter_vault_md_files`, attachments excluded) is read and rewritten only if it changes, each write going through `mark_self_write` so the watcher ignores it:
    - `_normalize_vault_targets`: in `](…)` targets and `orb:extract src="…"` markers, `attachments/attachments/` is collapsed to `attachments/` for `/vault-files/<kb>/…` URLs and for bare `attachments/attachments/` targets, and (v2) every `/vault-files/<any kb id or slug>/<rel>` target becomes the canonical vault-relative `<rel>`, each segment `unquote`d then `quote(seg, safe="")`d — the form `vault_ops.rewrite_refs_in_text` writes, so a moved attachment's link and its marker keep matching. The kb id is minted per workspace row, so absolute links died with every re-created workspace or restored DB; already-relative targets are left alone.
    - `ingestion_agent.wrap_legacy_enrichment_blocks`: pre-marker enrichment output (`[PDF Extraction (…)]`, `[Image: …]`, transcripts, …) is wrapped in `<!-- orb:extract src="" -->…<!-- /orb:extract -->` so re-ingest can find and drop it (doc 10 §6.2).
-   The marker is touched after the loop (`.orb/` is created if needed) and the count of rewritten files is logged.
+   - `vault_ops.rewrite_refs_in_text(old_rel, new_rel)` for each file the v3 step moved, so `](Cloud%20Computing/diagram.png)` and the old `/vault-files/<id>/Cloud Computing/diagram.png` both become `](attachments/Cloud%20Computing/diagram.png)`.
+   The marker is touched after the loop (`.orb/` is created if needed) and the counts of moved and rewritten files are logged (`Vault migration v3 (…): N files moved, M files rewritten`).
 2. **Legacy SQLite bodies**: for every `Note` of the KB whose `content` is non-empty, `persist_note_body(n, kb, n.content)` writes it to the vault file (choosing a `rel_path` if the row has none) when the file is missing, or the column is simply blanked when `read_note_file` already returns a body. After this `notes.content` is `""` everywhere and `note_body` never consults it.
 
-Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `<vault>/.orb/migrated-v2` re-runs the sweep on the next listing.
+Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `<vault>/.orb/migrated-v3` re-runs the sweep on the next listing.
 
 ## 5. `vault.py` primitives
 
@@ -203,7 +204,7 @@ Attachment delete (route `POST /api/v1/vault/delete`). Rejects empty/`..` (`Valu
 
 Generic move for notes **and** attachments (route `POST /api/v1/vault/move`; also the engine behind title renames and folder moves):
 
-1. Validate both paths (`ValueError` on empty/`..`), `src` must be an existing regular file (`FileNotFoundError`).
+1. Validate both paths (`ValueError` on empty/`..`; `"Cannot move across the attachments/ boundary"` when exactly one side is `attachments` or under `attachments/` — attachments never leave `attachments/`, notes never enter it; checked before the folder branch so a folder move is refused whole), `src` must be an existing regular file (`FileNotFoundError`).
 2. `dst_rel = unique_rel_path(vault, to_rel)` — so a collision silently produces ` 2`; the later `FileExistsError` check is effectively unreachable outside races. Same source and destination → early return with `links_rewritten: 0`.
 3. `mkdir -p`, mark both paths as self-writes, `shutil.move`.
 4. Load **all** notes of the KB.
@@ -260,21 +261,23 @@ Batch delete loops this per id, collecting `{id, error}` on exceptions.
 
 **Canonical stored link form (since sweep v2): vault-relative** — `attachments/<sub>/<file>`, no leading slash, no `/vault-files/<kb>/` prefix, each path segment percent-encoded as `quote(seg, safe="")` (`attachments/Talk%20%281%29.m4a`). The same string is the `src` of the attachment's `orb:extract` marker. `/vault-files/<kb>/…` is now only a *serving* URL: the frontend resolves the relative form to it at render time (`resolveFileUrl`), and every backend reader accepts both forms (`vault_rel_from_url`, `ingestion_agent.attachment_key`, `rewrite_refs_in_text`, `strip_refs_in_text`). The kb id is minted per workspace row, so links that embedded it broke whenever a workspace was re-created or the DB restored.
 
-### 8.1 Upload — `POST /api/v1/upload?kb=` (multipart `file`)
+### 8.1 Upload — `POST /api/v1/upload?kb=&folder=` (multipart `file`)
+
+Uploads group by the owning note's folder: the editor sends the note's vault-relative folder as the `folder` query param (empty for root notes) and the file lands at `attachments/<folder>/<name>`. Note moves do **not** move attachments — links are vault-root-relative, so nothing breaks; the grouping is only a filing convention.
 
 1. Whole file read into memory (no server-side size limit; the desktop UI talks to the backend directly on the same origin).
 2. Audio normalisation: if `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}` → `_transcode_to_m4a` (`ffmpeg -y -i in -c:a aac -b:a 128k out.m4a`, 60 s, thread). Success → bytes replaced, ext `m4a`, name hint `recording.m4a`; any failure → original bytes kept (name hint `recording.<ext>`). This is what the voice recorder relies on so Whisper and browsers get AAC.
-3. `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id)` → `save_attachment` (8.2) → returns `{url: "/vault-files/<kb_id>/<rel>", key: <rel>, filename}`.
-4. Response: `{filename (original), url, rel_path (=key), key, status:"success"}` — `rel_path` is the raw (unencoded) `attachments/<name>` the editor encodes and inserts; `url` is the serving URL for immediate preview.
+3. `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id, folder)`: `ValueError("Invalid folder")` (→ 400) when `folder` is absolute or has a `..` segment, `safe_vault_join(vault, "attachments/<folder>")` as a second guard, then `save_attachment(vault, name, bytes, "attachments/<folder>")` (8.2) → returns `{url: "/vault-files/<kb_id>/<rel>", key: <rel>, filename}`.
+4. Response: `{filename (original), url, rel_path (=key), key, status:"success"}` — `rel_path` is the raw (unencoded) `attachments/<folder>/<name>` the editor encodes and inserts; `url` is the serving URL for immediate preview.
 
 The `<kb_id>` segment in the serving URL is **`kb.kb_id`** — `default` or the UUID — not the slug. `/vault-files/{kb_id}` accepts id, name or slug, and `vault_rel_from_url` ignores whatever the segment is.
 
 ### 8.2 `save_attachment(vault, src_name, data, folder=None) -> rel`
 
-- Folder defaults to `attachments`; `..` or empty resets to `attachments`; `mkdir -p`.
+- Folder defaults to `attachments`; `..` or empty resets to `attachments`; `mkdir -p`. `store_upload` passes `attachments/<note folder>`.
 - Name: `<sanitize_title(stem)[:120]>-<8 hex of uuid4><ext lower>`; e.g. `logo-a1b2c3d4.png`, `recording-9f8e7d6c.m4a`. Collision (practically impossible) → `-2`, `-3` inserted before the extension.
 - `write_bytes`, then `_faststart_mp4`.
-- Returns `attachments/<name>`.
+- Returns `<folder>/<name>`.
 
 Uploads never mark a self-write (the watcher ignores non-`.md` anyway).
 

@@ -16,7 +16,6 @@ import type { ProcessedFilter, VaultFileEntry } from "../_lib/types";
 export type VaultListing = {
   folders: string[];
   attachments: VaultFileEntry[];
-  media_files: VaultFileEntry[];
   vault_name?: string;
 };
 
@@ -89,7 +88,6 @@ export function useNotesList({
             onVaultListing({
               folders: folderRes.folders || [],
               attachments: folderRes.attachments || [],
-              media_files: folderRes.media_files || [],
               vault_name: folderRes.vault_name,
             });
           }

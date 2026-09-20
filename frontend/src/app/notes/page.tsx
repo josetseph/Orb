@@ -189,7 +189,6 @@ export default function NotesPage() {
         selectedFolder={vault.selectedFolder}
         vaultName={vault.vaultName}
         vaultFolders={vault.vaultFolders}
-        mediaFiles={vault.mediaFiles}
         attachmentFiles={vault.attachmentFiles}
         expandedFolders={vault.expandedFolders}
         selectedNoteId={selectedNote?.id ?? null}

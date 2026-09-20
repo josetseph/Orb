@@ -82,17 +82,12 @@ async def mkdir_vault_folder(
 
 @router.get("/api/v1/vault/folders")
 async def list_folders(kb: KBContext = Depends(get_kb)):
-    from app.services.vault_sync import (
-        list_attachment_files,
-        list_vault_folders,
-        list_vault_media_files,
-    )
+    from app.services.vault_sync import list_attachment_files, list_vault_folders
 
     if not kb.vault_path:
         return {
             "folders": [],
             "attachments": [],
-            "media_files": [],
             "vault_name": "",
             "vault_path": "",
         }
@@ -103,7 +98,6 @@ async def list_folders(kb: KBContext = Depends(get_kb)):
         return {
             "folders": list_vault_folders(vault, include_attachments=True),
             "attachments": list_attachment_files(vault),
-            "media_files": list_vault_media_files(vault),
             "vault_name": vault.name,
             "vault_path": str(vault),
         }

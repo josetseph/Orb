@@ -44,8 +44,8 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/app/notes/_lib/media-recorder.ts` | Picks a supported `MediaRecorder` MIME type. | `pickSupportedAudioMimeType` |
 | `frontend/src/app/notes/_lib/storage-keys.ts` | sessionStorage key for last-opened note per KB. | `lastNoteStorageKey` |
 | `frontend/src/app/notes/_components/NotesSidebar.tsx` | Left column: KB header, search, filter bar, batch bar, vault tree, empty state. | `NotesSidebar` |
-| `frontend/src/app/notes/_components/VaultFolderTree.tsx` | Recursive folder/note tree with drag-drop, virtualised flat rows, attachment/media sections. | `VaultFolderTree` |
-| `frontend/src/app/notes/_components/VaultFileRow.tsx` | One attachment/media row (click/rename/delete, draggable). | `VaultFileRow` |
+| `frontend/src/app/notes/_components/VaultFolderTree.tsx` | Recursive folder/note tree with drag-drop, virtualised flat rows, attachments section. | `VaultFolderTree` |
+| `frontend/src/app/notes/_components/VaultFileRow.tsx` | One attachment row (click/rename/delete, draggable). | `VaultFileRow` |
 | `frontend/src/app/notes/_components/NotesFilterBar.tsx` | Processed-state filter chips. | `NotesFilterBar` |
 | `frontend/src/app/notes/_components/NotesBatchBar.tsx` | Select-all / delete-selected bar. | `NotesBatchBar` |
 | `frontend/src/app/notes/_components/NoteStatusBadge.tsx` | Per-note status pill (Saved / Ingesting / Ingested / Failed / Pending). | `NoteStatusBadge` |
@@ -107,7 +107,7 @@ Key composition facts:
 
 | Component | Props (type) | Notes |
 |---|---|---|
-| `NotesSidebar` | `currentKB, currentKBName: string`; `notes: Note[]`; `searchQuery: string`; `processedFilter: ProcessedFilter`; `isLoading, isSaving: boolean`; `selectedFolder, vaultName: string`; `vaultFolders: string[]`; `mediaFiles, attachmentFiles: VaultFileEntry[]`; `collapsedFolders: Set<string>`; `selectedNoteId: string|null`; `selectedNoteIds: Set<string>`; `batchDeleting: boolean`; `dragNoteId, dragFileRel: string|null`; callbacks `onSearchChange, onFilterChange, onReingestVault, onOpenFolderDialog(parent), onCreateNote(folderOverride?), onToggleSelectAll, onBatchDelete, onToggleFolder(path), onSelectFolder(path), onNoteSelect(note), onToggleNoteSelected(id), onMoveNoteToFolder(id, folder), onMoveVaultFile(fromRel, folder), onDragNoteStart/End, onDragFileStart/End, onFileClick(relPath, name), onRenameFile(relPath), onDeleteVaultAttachment(relPath, name)` | Computes `visibleNotes = processedFilter === "ingesting" ? notes.filter(isActiveProcessingNote) : notes`. Shows the KB name line only when `currentKB !== "default"`. New-note button is disabled while `isSaving`. Footer shows `N notes · <selectedFolder or vaultName>` (or `N ingesting`). Empty state only when both `notes` and `vaultFolders` are empty. |
+| `NotesSidebar` | `currentKB, currentKBName: string`; `notes: Note[]`; `searchQuery: string`; `processedFilter: ProcessedFilter`; `isLoading, isSaving: boolean`; `selectedFolder, vaultName: string`; `vaultFolders: string[]`; `attachmentFiles: VaultFileEntry[]`; `collapsedFolders: Set<string>`; `selectedNoteId: string|null`; `selectedNoteIds: Set<string>`; `batchDeleting: boolean`; `dragNoteId, dragFileRel: string|null`; callbacks `onSearchChange, onFilterChange, onReingestVault, onOpenFolderDialog(parent), onCreateNote(folderOverride?), onToggleSelectAll, onBatchDelete, onToggleFolder(path), onSelectFolder(path), onNoteSelect(note), onToggleNoteSelected(id), onMoveNoteToFolder(id, folder), onMoveVaultFile(fromRel, folder), onDragNoteStart/End, onDragFileStart/End, onFileClick(relPath, name), onRenameFile(relPath), onDeleteVaultAttachment(relPath, name)` | Computes `visibleNotes = processedFilter === "ingesting" ? notes.filter(isActiveProcessingNote) : notes`. Shows the KB name line only when `currentKB !== "default"`. New-note button is disabled while `isSaving`. Footer shows `N notes · <selectedFolder or vaultName>` (or `N ingesting`). Empty state only when both `notes` and `vaultFolders` are empty. |
 | `VaultFolderTree` | everything the sidebar forwards plus `scrollRef: RefObject<HTMLDivElement>` and `onCreateNote(folderPath)` | See §9. |
 | `VaultFileRow` | `name, relPath: string; depth: number; isDragging: boolean; onDragStart(relPath); onDragEnd(); onClick(relPath, name); onRename(relPath); onDelete(relPath, name)` | Draggable; sets `dataTransfer` `text/vault-file`. Single-click → `onClick`, double-click → `onRename`. Rename/delete icon buttons appear on hover. Left padding `22 + depth*12`. |
 | `NotesFilterBar` | `processedFilter; onFilterChange` | Five chips in two rows: All / Ingested / Saved, Ingesting / Failed. |
@@ -242,7 +242,7 @@ The autosave timer is cleared *before* the DELETE so a debounced PUT cannot resu
 
 3. `api.getNotes(search, processed, failed, currentKB, { signal })` → `GET /notes?search=&processed=&failed=&kb=`.
 4. If `requestId` is stale → return silently. Otherwise `setNotes(data)` then `syncSelectedNoteFromList(data)`.
-5. Then (still guarded by `requestId`) `api.listVaultFolders(currentKB)` → `onVaultListing({folders, attachments, media_files, vault_name})`. Failures are ignored ("folders optional").
+5. Then (still guarded by `requestId`) `api.listVaultFolders(currentKB)` → `onVaultListing({folders, attachments, vault_name})`. Failures are ignored ("folders optional").
 6. Prune `ingestingNoteIds` to ids still present **and** `isActiveProcessingNote`. Comment: *"Only keep polling notes the user already queued for ingest — never start 'ingesting' tracking from autosave / vault-watcher markers."*
 7. Errors other than cancellations (`isRequestCancelled`: a `DOMException` named `AbortError`) are logged. `isLoading` is cleared only by the latest request.
 
@@ -407,7 +407,7 @@ The header's Ingest button mirrors this: disabled + spinner while active; "Re-in
 ### 9.1 Data sources
 
 - `notes` (from `GET /notes`) — each with `rel_path` such as `Life/Daily Log/2024-07-07.md`.
-- `GET /vault/folders` (called by `fetchNotes` and by `refreshVaultFiles`) → `{folders: string[], attachments: [{name, rel_path}], media_files: [{name, rel_path}], vault_name?, vault_path?}`. `applyVaultListing` stores `vaultFolders`, `attachmentFiles`, `mediaFiles`, and `vaultName` (default `"Vault"`). `vault_path` is ignored by the UI.
+- `GET /vault/folders` (called by `fetchNotes` and by `refreshVaultFiles`) → `{folders: string[], attachments: [{name, rel_path}], vault_name?, vault_path?}`. `applyVaultListing` stores `vaultFolders`, `attachmentFiles`, and `vaultName` (default `"Vault"`). `vault_path` is ignored by the UI.
 
 ### 9.2 `buildFolderTree(notes, extraFolders)`
 
@@ -422,8 +422,8 @@ Pure function producing `FolderTreeNode[]` (`{name, path, note?, children}`):
 The comment in the file records the motivation: *"large vaults previously rendered one DOM node per note and re-built the whole tree per keystroke."* (commit `b84ca73`). The component:
 
 1. Filters `vaultFolders` to exclude `attachments` and `attachments/*` (the attachments folder gets its own section).
-2. Builds the tree, then buckets `mediaFiles` by parent folder (skipping anything under `attachments/`).
-3. Linearises into `TreeRow[]` respecting `collapsedFolders`: `vault-header` → recursive `folder`/`note` rows (media files of a folder are appended after its children) → root media rows → `attachments-header` → (`attachments-empty` | `attachment` rows) when `!collapsedFolders.has("attachments")`.
+2. Builds the tree. Attachments live only under `attachments/`; non-markdown files elsewhere in the vault are not listed.
+3. Linearises into `TreeRow[]` respecting `collapsedFolders`: `vault-header` → recursive `folder`/`note` rows → `attachments-header` → (`attachments-empty` | `attachment` rows) when `!collapsedFolders.has("attachments")`.
 4. Rows render as plain elements with the `.tree-row` class (`content-visibility: auto; contain-intrinsic-size: auto 50px`), so the browser skips layout and paint for off-screen rows without a virtualiser.
 
 Row keys: `folder:<path>`, `note:<id>`, `media:<rel_path>`, `attachment:<rel_path>`, plus fixed keys for headers.
@@ -438,7 +438,7 @@ Row keys: `folder:<path>`, `note:<id>`, `media:<rel_path>`, `attachment:<rel_pat
 | Click note row | `onNoteSelect(note)`; checkbox → `onToggleNoteSelected(id)` (click propagation stopped). |
 | Drag note | `dataTransfer["text/note-id"] = id`, `onDragNoteStart(id)` (row gets 50 % opacity). |
 | Drag file | `dataTransfer["text/vault-file"] = rel_path`, `onDragFileStart`. |
-| Drop on vault header / folder / note row / media row / attachments header / attachment row / container | `acceptVaultDrop(e, target)` where target is `""`, `node.path`, the note's parent folder, the media row's `dropTarget`, `"attachments"`, or `""` respectively. Reads ids from `dataTransfer` falling back to the drag state; ends both drags; then `onMoveNoteToFolder` if a note id is present else `onMoveVaultFile`. |
+| Drop on vault header / folder / note row / attachments header / attachment folder / attachment row / container | `acceptVaultDrop(e, target)` where target is `""`, `node.path`, the note's parent folder, `"attachments"`, the attachment folder's path, the attachment's parent folder, or `""` respectively. Reads ids from `dataTransfer` falling back to the drag state; ends both drags; then `onMoveVaultFolder` if a folder is dragged, `onMoveNoteToFolder` if a note id is present, else — only when the target is `attachments` or under `attachments/` (file drops onto note folders and the vault root are ignored) — `onMoveVaultFile`. |
 | Any drag in progress | folder rows/headers show a teal (notes) or sky (attachments) ring as drop affordance. |
 
 Indent guides: one 1-px vertical line per depth level at `left = 10 + i*12`; folder rows pad `6 + depth*12`, note rows `10 + depth*12`, file rows `22 + depth*12`.
@@ -480,7 +480,7 @@ One effect with deps `[currentKB, openNoteById, refreshSelectedNote]`:
 
 ### 11.1 Upload path
 
-`api.upload(file, kb)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload${kbQuery(kb)}` `` with a 10-minute timeout. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response's `rel_path` (`attachments/<sub>/<file>`, raw) is percent-encoded once with `encodeFileUrl` before it is inserted into the note; the stored link is vault-relative with no leading slash, so it survives the workspace being re-created under a new UUID. `resolveFileUrl` turns it back into `/vault-files/<kb>/…` at render time.
+`api.upload(file, kb, folder)` builds `FormData{file}` and POSTs to `` `${API_BASE_URL}/upload?kb=&folder=` `` with a 10-minute timeout; `folder` is the selected note's vault folder (dirname of `rel_path`, `""` for root notes) so uploads group under `attachments/<folder>/`. The API serves the UI, so the request is same-origin with no proxy in between (formerly the desktop bridge supplied a direct origin to bypassing the Next.js rewrite proxy — the comment: *"so large files aren't truncated by the Next.js rewrite proxy (default 10MB → socket hang up / 500)."* In a plain browser it falls back to `/api/v1`. The response's `rel_path` (`attachments/<sub>/<file>`, raw) is percent-encoded once with `encodeFileUrl` before it is inserted into the note; the stored link is vault-relative with no leading slash, so it survives the workspace being re-created under a new UUID. `resolveFileUrl` turns it back into `/vault-files/<kb>/…` at render time.
 
 ### 11.2 `attachFiles(files)` and `handleFileAttach(e)`
 
@@ -741,12 +741,12 @@ All methods live on the `api` object in `frontend/src/lib/api.ts`; `API_BASE_URL
 | `moveNote(id, folder, kb)` | `POST /notes/{id}/move` | `{folder}` (`""` = root) | `vault_ops.move_note_to_folder`; 409 on `FileExistsError`, 400 on missing/invalid | `{...moved, note: Note}` |
 | `ingestNote(id, kb)` | `POST /notes/{id}/ingest` | — | `require_ai(kb)`; resets `processed/failed`, stage `"Queued for ingestion"`, `processing_model=None`; schedules `ingestion_workflow.process_note` as a BackgroundTask (always force re-ingest) | `{note_id, status:"processing_started", message}` |
 | `reingestVault(kb)` | `POST /notes/reingest-vault` | — | (defined outside `notes.py`; queues every note — see [10](10-ingestion-pipeline.md)) | — |
-| `listVaultFolders(kb)` | `GET /vault/folders` | — | `vault.list_folders`: ensures `attachments/` exists; `list_vault_folders(include_attachments=True)`, `list_attachment_files`, `list_vault_media_files`; empty lists when no vault | `{folders, attachments:[{name, rel_path}], media_files:[…], vault_name, vault_path}` |
+| `listVaultFolders(kb)` | `GET /vault/folders` | — | `vault.list_folders`: ensures `attachments/` exists; `list_vault_folders(include_attachments=True)`, `list_attachment_files`; empty lists when no vault | `{folders, attachments:[{name, rel_path}], vault_name, vault_path}` |
 | `mkdirVaultFolder(path, kb)` | `POST /vault/mkdir` | `{path}` | validates no `..`, `safe_vault_join`, `mkdir -p`, writes a `.keep` file so empty folders survive | `{path, status:"ok"}` |
 | `moveVaultFile(fromRel, toRel, kb)` | `POST /vault/move` | `{from_rel, to_rel}` | `vault_ops.move_vault_file` — moves note **or** attachment and rewrites markdown links in all notes; 409 exists / 404 missing / 400 invalid | `{from, to, …}` (client reads `from`/`to`) |
 | `deleteVaultFile(relPath, kb)` | `POST /vault/delete` | `{rel_path}` | `vault_ops.delete_vault_file` — deletes the file and strips links to it from note bodies; 404 / 400 | `{deleted: <rel>, …}` |
 | `resolveVaultLocalPath(relOrUrl, kb)` | `GET /vault/local-path` | `rel` | accepts a vault-relative path or `/vault-files/...` URL; `safe_vault_join`; 404 if missing | `{rel_path, local_path, vault_path, exists:true}` |
-| `upload(file, kb)` | `POST /upload` (direct FastAPI origin on desktop) | multipart `file` | see [09](09-notes-wikilinks-and-vault-files.md) — stores under `attachments/`, transcodes audio | `{filename, url, rel_path, key, status}` |
+| `upload(file, kb, folder?)` | `POST /upload` (direct FastAPI origin on desktop) | multipart `file`; query `folder=` (note's vault folder) | see [09](09-notes-wikilinks-and-vault-files.md) — stores under `attachments/<folder>/`, transcodes audio | `{filename, url, rel_path, key, status}` |
 | `searchEntities(q, kb, limit=5)` | `GET /graph/entities/search` | `q, limit` | Meili `search_nodes(q, limit*2)`, drops `note`/`community`; `[]` if `q` < 2 chars or AI not configured | `[{node_id, name, node_type}]` |
 | `scanTextEntities(text, kb, {signal})` | `POST /graph/entities/scan-text` | `{text}` | regex candidates (multi-word Capitalised sequences + single Capitalised words ≥ 4 letters), first 40 candidates each searched in Meili (2 hits), kept if the entity name occurs in the text; excludes notes/communities | `[{node_id, name, node_type}]` |
 | `getNoteEntitySubgraph(text, kb)` | `POST /graph/entities/note-subgraph` | `{text}` | scan-text + Kuzu 1-hop edges among the found set | `NotesGraphPayload` (`center_id: null`) |

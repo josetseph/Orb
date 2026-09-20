@@ -173,7 +173,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 
 | Method | Call | Notes |
 |---|---|---|
-| `upload(file, kb)` | `POST {base}/upload?kb=` multipart `file`, `timeout: 10 min` | Same origin (`API_BASE_URL`); no proxy in between (§6.4). |
+| `upload(file, kb, folder?)` | `POST {base}/upload?kb=&folder=` multipart `file`, `timeout: 10 min`; `folder` = the note's vault folder so the file lands under `attachments/<folder>/` | Same origin (`API_BASE_URL`); no proxy in between (§6.4). |
 
 **Notes / vault**
 
@@ -192,7 +192,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 | `reingestVault(kb)` | `POST /notes/reingest-vault?kb=` | |
 | `moveVaultFile(fromRel, toRel, kb)` | `POST /vault/move?kb=` `{from_rel, to_rel}` | |
 | `deleteVaultFile(relPath, kb)` | `POST /vault/delete?kb=` `{rel_path}` | |
-| `listVaultFolders(kb)` | `GET /vault/folders?kb=` | Returns `{folders, attachments?, media_files?, vault_name?, vault_path?}`. |
+| `listVaultFolders(kb)` | `GET /vault/folders?kb=` | Returns `{folders, attachments?, vault_name?, vault_path?}`. |
 | `mkdirVaultFolder(path, kb)` | `POST /vault/mkdir?kb=` `{path}` | |
 | `resolveVaultLocalPath(relOrUrl, kb)` | `GET /vault/local-path?rel=&kb=` | Returns `{rel_path, local_path, vault_path, exists}`; used before `revealInFolder`. |
 
@@ -292,7 +292,7 @@ useEffect(() => {
 
 ### 6.4 Uploads
 
-`api.upload(file, kb)` POSTs multipart to `${API_BASE_URL}/upload` with a 10-minute timeout. There is no separate upload origin any more: the API serves the UI, so uploads are same-origin with no proxy body limit in between.
+`api.upload(file, kb, folder?)` POSTs multipart to `${API_BASE_URL}/upload` (query `kb=` and, when the note is in a folder, `folder=`) with a 10-minute timeout. There is no separate upload origin any more: the API serves the UI, so uploads are same-origin with no proxy body limit in between.
 
 ## 7. Root layout and provider tree
 

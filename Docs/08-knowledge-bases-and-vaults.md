@@ -31,7 +31,7 @@
 | `backend/app/api/deps.py` | FastAPI dependency resolving `?kb=` to a `KBContext` | `get_kb` |
 | `backend/app/api/kb.py` | KB management routes: list/create/empty/delete-non-default/delete/rename | `router`, `CreateKBInput`, `RenameKBInput`, `_purge_kb_sql_notes` |
 | `backend/app/services/vault.py` | Vault filesystem primitives: `ensure_vault`, `clear_vault_contents`, self-write suppression registry, title sanitising, attachment save, wikilink regex | `ensure_vault`, `clear_vault_contents`, `mark_self_write`, `is_recent_self_write`, `sanitize_title`, `unique_md_path`, `read_note_file`, `write_note_file`, `delete_note_file`, `save_attachment`, `extract_wikilinks`, `title_from_filename`, `WIKILINK_RE` |
-| `backend/app/services/vault_sync.py` | Scan vault → create/adopt `notes` rows; list folders / attachments / media files | `sync_vault_notes`, `iter_vault_md_files`, `list_vault_folders`, `list_attachment_files`, `list_vault_media_files` |
+| `backend/app/services/vault_sync.py` | Scan vault → create/adopt `notes` rows; list folders / attachments; one-time vault migrations | `sync_vault_notes`, `migrate_vault_files`, `iter_vault_md_files`, `list_vault_folders`, `list_attachment_files` |
 | `backend/app/services/vault_watcher.py` | watchdog observers per vault; debounced per-file sync into SQLite; stale marking | `start_vault_watchers`, `stop_vault_watchers`, `_sync_vault_file`, `_get_engine` |
 | `backend/app/core/paths.py` | `resolve_data_dir`, `resolve_default_vault_path`, `ensure_data_layout`, `sqlite_url` consumed by the registry | see [06](06-backend-core-and-configuration.md) |
 | `backend/app/core/database.py` | Async engine + `init_db` (`create_all` for `notes`, `note_links`, `knowledge_bases`, chat tables) | `engine`, `AsyncSessionLocal`, `get_db`, `init_db`, `Base` |
@@ -304,7 +304,6 @@ All helpers compute `rel = path.resolve().relative_to(vault.resolve())`, skip an
 | `iter_vault_md_files(vault) -> list[str]` | sorted rel paths of note files | `rglob("*.md")`; skips hidden; skips anything under a top-level `attachments/` **or any folder named `attachments` at any depth** (`"/attachments/" in f"/{rel}/"`) |
 | `list_vault_folders(vault, include_attachments=True)` | sorted set of folder rel paths incl. all ancestors | `rglob("*")` dirs; hidden skipped; `attachments` added explicitly if it exists (it is a real dir so it would be found anyway) |
 | `list_attachment_files(vault)` | `[{name, rel_path}]` for regular files directly in `attachments/` | non-recursive, hidden skipped |
-| `list_vault_media_files(vault)` | `[{name, rel_path}]` for every non-`.md`, non-hidden, non-`.keep` file anywhere | sorted case-insensitively |
 
 `.keep` files are written by `POST /api/v1/vault/mkdir` so empty folders survive; they are hidden from media listings but they *are* dotfiles, so they never appear as notes either.
 

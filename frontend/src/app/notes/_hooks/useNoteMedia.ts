@@ -56,6 +56,9 @@ export function useNoteMedia({
   refreshVaultFiles,
 }: UseNoteMediaArgs) {
   const [isUploading, setIsUploading] = useState(false);
+  // Uploads are grouped under attachments/ by the note's folder ("" for root notes).
+  const noteRel = selectedNote?.rel_path ?? "";
+  const noteFolder = noteRel.slice(0, Math.max(0, noteRel.lastIndexOf("/")));
   const [isRecording, setIsRecording] = useState(false);
   const [filePreview, setFilePreview] = useState<FilePreview | null>(null);
   const [showDatePicker, setShowDatePicker] = useState(false);
@@ -108,7 +111,7 @@ export function useNoteMedia({
         setIsUploading(true);
         const chunks: string[] = [];
         for (const file of list) {
-          const response = await api.upload(file, currentKB);
+          const response = await api.upload(file, currentKB, noteFolder);
           if (!response.rel_path) throw new Error("Upload returned no path");
           const linkUrl = encodeFileUrl(response.rel_path);
 
@@ -141,6 +144,7 @@ export function useNoteMedia({
     },
     [
       selectedNote,
+      noteFolder,
       currentKB,
       editorRef,
       handleContentChange,
@@ -188,7 +192,7 @@ export function useNoteMedia({
 
         try {
           setIsUploading(true);
-          const response = await api.upload(audioFile, currentKB);
+          const response = await api.upload(audioFile, currentKB, noteFolder);
 
           const markdownLink = `[🎤 Voice Recording](${encodeFileUrl(response.rel_path)})`;
           if (editorRef.current) {
@@ -212,7 +216,7 @@ export function useNoteMedia({
       console.error("Error starting recording:", error);
       alert("Failed to access microphone");
     }
-  }, [currentKB, editorRef, selectedNote, handleContentChange]);
+  }, [currentKB, noteFolder, editorRef, selectedNote, handleContentChange]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && isRecording) {

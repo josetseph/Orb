@@ -659,12 +659,14 @@ All require `kb.vault_path`; otherwise **400** `"No vault configured"` (except `
 
 #### POST /api/v1/vault/move
 
-Body (`MoveVaultFileInput`): `from_rel: str`, `to_rel: str`. Calls `vault_ops.move_vault_file`. Errors: `FileExistsError` → **409**, `FileNotFoundError` → **404** (`"Source not found: …"`), `ValueError` → **400** (`"from_rel and to_rel are required"`, `"Invalid path"`, `"Path escapes vault"`).
+Body (`MoveVaultFileInput`): `from_rel: str`, `to_rel: str`. Calls `vault_ops.move_vault_file`. Errors: `FileExistsError` → **409**, `FileNotFoundError` → **404** (`"Source not found: …"`), `ValueError` → **400** (`"from_rel and to_rel are required"`, `"Invalid path"`, `"Cannot move across the attachments/ boundary"`, `"Path escapes vault"`).
+
+**Boundary:** attachments live only under `attachments/`. A path under `attachments/` (file or folder) may only move to another path under `attachments/`, and nothing outside (notes, note folders) may move into it — either direction is the 400 above. Moves *within* `attachments/` (subfolders) and note moves between note folders are unrestricted. Moving a note does not move its attachments (links are vault-root-relative).
 
 Behaviour: destination is uniquified (`unique_rel_path` appends ` 2`, ` 3`… before the suffix, so **409 is effectively unreachable** except under a race); marks both paths as self-writes; `shutil.move`; loads all notes of the KB; if the source is a `.md` with a matching note row, updates `rel_path` (title kept unless blank) and builds a `WikilinkResolver` from the pre-move note set; then for **every** note rewrites markdown link targets (`](old)` → `](new)`, including `/vault-files/<kb>/…` and percent-encoded variants) and, for moved notes, repoints `[[wikilinks]]` (bare names stay bare unless now ambiguous, path-style become the new path); writes changed bodies; commits.
 
 ```json
-{"from": "attachments/a.png", "to": "media/a.png", "note_id": null | "…", "links_rewritten": 2}
+{"from": "attachments/a.png", "to": "attachments/Papers/a.png", "note_id": null | "…", "links_rewritten": 2}
 ```
 
 `to` may differ from the request if uniquified. Same source and destination → 200 with `links_rewritten: 0`.
@@ -679,20 +681,19 @@ Body (`DeleteVaultFileInput`): `rel_path: str`. Calls `vault_ops.delete_vault_fi
 
 #### POST /api/v1/vault/mkdir
 
-Body (`MkdirInput`): `path: str`. **400** `"Invalid folder path"` if empty or contains `..`. `mkdir -p` then writes an empty `.keep` file so empty folders survive vault scans (`list_vault_media_files` hides `.keep`). OS error → **500**. Response `{"path": "Life/Daily Log", "status": "ok"}`.
+Body (`MkdirInput`): `path: str`. **400** `"Invalid folder path"` if empty or contains `..`. `mkdir -p` then writes an empty `.keep` file so empty folders survive vault scans (listings skip dotfiles). OS error → **500**. Response `{"path": "Life/Daily Log", "status": "ok"}`.
 
 #### GET /api/v1/vault/folders
 
-No vault → `{"folders": [], "attachments": [], "media_files": [], "vault_name": "", "vault_path": ""}`. Otherwise (in a thread) **creates `attachments/` if missing**, then:
+No vault → `{"folders": [], "attachments": [], "vault_name": "", "vault_path": ""}`. Otherwise (in a thread) **creates `attachments/` if missing**, then:
 
 ```json
 {"folders": ["Life", "Life/Daily Log", "attachments"],
- "attachments": [{"name": "a.png", "rel_path": "attachments/a.png"}],
- "media_files": [{"name": "clip.mp4", "rel_path": "Life/clip.mp4"}],
+ "attachments": [{"name": "a.png", "rel_path": "attachments/Papers/a.png"}],
  "vault_name": "vault", "vault_path": "/abs/vault"}
 ```
 
-`folders`: every non-hidden directory and all its ancestors (sorted). `attachments`: files directly under `attachments/`. `media_files`: every non-`.md`, non-hidden, non-`.keep` file anywhere in the vault (sorted case-insensitively).
+`folders`: every non-hidden directory and all its ancestors (sorted). `attachments`: every non-hidden file anywhere under `attachments/` (sorted by path). Non-markdown files outside `attachments/` are not a concept — the v3 vault sweep (09 §4.3) moves any it finds into `attachments/`.
 
 #### GET /api/v1/vault/local-path
 
@@ -708,15 +709,15 @@ Query: `rel: str` (required) — vault-relative path, `/vault-files/<kb>/<path>`
 
 #### POST /api/v1/upload
 
-Multipart form, field `file` (required). **400** `"No vault configured for this knowledge base"`.
+Multipart form, field `file` (required). Optional **query** param `folder` — the vault-relative folder of the note the upload belongs to (`Cloud Computing`, `Natural Language Processing/Prosit 1`; omit/empty for root notes). **400** `"No vault configured for this knowledge base"`; **400** `"Invalid folder"` when `folder` is absolute or contains `..`; **400** `"Path escapes vault"` from `safe_vault_join`.
 
 - Reads the whole file into memory.
 - If `content_type ∈ {audio/webm, audio/ogg, audio/opus, audio/x-matroska}` or extension ∈ `{webm, ogg, opus}`: `_transcode_to_m4a` runs `ffmpeg -y -i in -c:a aac -b:a 128k out.m4a` in a thread (60 s timeout). On any failure (ffmpeg missing, timeout, non-zero exit) the original bytes/extension are kept. The stored name hint becomes `recording.<ext>`.
-- `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id)` → `vault.save_attachment`: writes `attachments/<sanitised stem ≤120>-<8 hex><ext>` and, for `.mp4/.m4v/.mov`, re-muxes with `ffmpeg -movflags +faststart` (best-effort, 120 s timeout). Failure → **500** `"Upload failed: …"`.
+- `local_storage.store_upload(vault, filename_hint, bytes, kb.kb_id, folder)` → `vault.save_attachment(…, "attachments/<folder>")`: writes `attachments/<folder>/<sanitised stem ≤120>-<8 hex><ext>` (flat `attachments/<name>` when `folder` is empty) and, for `.mp4/.m4v/.mov`, re-muxes with `ffmpeg -movflags +faststart` (best-effort, 120 s timeout). Failure → **500** `"Upload failed: …"`.
 
 ```json
-{"filename": "voice.webm", "url": "/vault-files/default/attachments/recording-1a2b3c4d.m4a",
- "rel_path": "attachments/recording-1a2b3c4d.m4a", "key": "<same as rel_path>", "status": "success"}
+{"filename": "voice.webm", "url": "/vault-files/default/attachments/Cloud Computing/recording-1a2b3c4d.m4a",
+ "rel_path": "attachments/Cloud Computing/recording-1a2b3c4d.m4a", "key": "<same as rel_path>", "status": "success"}
 ```
 
 `rel_path`/`key` are identical. The `/vault-files/<kb_id>/` prefix uses `kb.kb_id` (`default` or a UUID), which is why `vault_rel_from_url` strips any KB segment. No size limit server-side and no proxy in the desktop path (3.9).

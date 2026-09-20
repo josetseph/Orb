@@ -758,7 +758,7 @@ Replaces the former RustFS/S3 object store. Attachments live at `<vault_path>/at
 | Function | Behaviour |
 |---|---|
 | `vault_rel_from_url(url) -> str \| None` | Normalises backslashes; `/vault-files/<kb>/<rest>` → `<rest>` (`split("/", 3)[3]`); a string already starting with `attachments/` passes through; any URL containing `/attachments/` → `attachments/<tail before ?>`; else `None`. Used when deleting attachments referenced from markdown and by `remove_upload`. |
-| `store_upload(vault, filename, data, kb_id) -> dict` (async) | `mkdir -p` vault and `attachments/`; `rel = vault.save_attachment(vault, filename, data)`; returns `{"url": "/vault-files/<kb_id>/<rel>", "key": rel, "filename": filename}`. The `url` embeds `kb_id` (the KB **id**, e.g. `default` or a UUID — not the slug). |
+| `store_upload(vault, filename, data, kb_id, folder="") -> dict` (async) | Validates `folder` (no `..`, not absolute → `ValueError`), `mkdir -p` `attachments/<folder>`; `rel = vault.save_attachment(...)`; returns `{"url": "/vault-files/<kb_id>/<rel>", "rel_path": rel, "key": rel, "filename": filename}`. `url` is for previewing the upload only; notes store the vault-relative `rel_path`. |
 | `remove_upload(vault, key_or_url)` (async) | Resolves `rel` via `vault_rel_from_url` or uses the input; strips leading `/`; refuses empty or `..` segments; `vault_ops.safe_vault_join` (raises `ValueError` outside the vault → silently return); unlinks if a file. Never raises. |
 
 ## 17. Interfaces with other subsystems
