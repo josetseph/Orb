@@ -98,7 +98,7 @@ backend/
 │   │   ├── multimodal_models.py    HF snapshot downloads into MODELS_DIR
 │   │   ├── multimodal_services.py  readiness + on-demand pip install of torch/transformers
 │   │   ├── multimedia.py       attachment discovery + PDF / image / audio / video / doc enrichment
-│   │   ├── ingestion_tracker.py    ingestion bookkeeping + idle-triggered Leiden recompute
+│   │   ├── ingestion_tracker.py    in-flight ingestion counter + cancel signals for a running rebuild
 │   │   ├── ingestion_checkpoint.py resume a failed ingestion from the model call that broke
 │   │   ├── extraction_budget.py    learn how large an extraction chunk each model handles
 │   │   ├── firefly_service.py  Firefly III HTTP client, per-KB administration scoping

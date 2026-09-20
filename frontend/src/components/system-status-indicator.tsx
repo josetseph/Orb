@@ -40,27 +40,16 @@ function buildStatus(payload: Payload | null): StatusView {
     };
   }
   if (payload.community_detection?.running) {
-    const pending = Number(payload.community_detection.pending_nodes || 0);
     return {
       tone: "community",
       label: "Rebuilding communities",
-      meta: pending > 0 ? `${pending} nodes` : "running",
+      meta: "running",
       detail: "Community detection is running over the graph.",
       busy: true,
     };
   }
   if (payload.temporal_digests?.running) {
     return { tone: "digest", label: "Building digests", meta: "running", detail: "Temporal digest build in progress.", busy: true };
-  }
-  if (payload.community_detection?.timer_armed) {
-    const secs = payload.community_detection.idle_seconds ?? 120;
-    return {
-      tone: "community",
-      label: "Community rebuild queued",
-      meta: `~${secs}s`,
-      detail: "Starts once ingestion has settled.",
-      busy: false,
-    };
   }
   return {
     tone: "idle",
@@ -89,7 +78,6 @@ function useMaintenanceStatus(kb: string) {
         data &&
           (Number(data.ingestion?.active || 0) > 0 ||
             data.community_detection?.running ||
-            data.community_detection?.timer_armed ||
             data.temporal_digests?.running),
       );
 

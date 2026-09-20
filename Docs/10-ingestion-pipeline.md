@@ -1,6 +1,6 @@
 # Ingestion Pipeline
 
-**What this covers.** The end-to-end path a note takes from "saved in a vault" to "queryable knowledge": how ingestion is triggered and queued, the ingestion agent that runs it (`multimodal → extraction → storage → summarization`), the LLM extraction prompt and JSON normalisation, entity resolution against the existing graph, and exactly what gets written to Kuzu, Qdrant, Meilisearch and SQLite at each step. It also covers re-ingest cleanup, the `ingestion_tracker` idle timer that drives community (Leiden-style) recomputation and temporal digests, every config key the pipeline reads, and the failure semantics of each stage. Multimedia attachment handling (Qwen3-ASR for speech, Marlin for video, the ingestion model itself for images and PDF renders) is only summarised here; see the sibling doc for the details.
+**What this covers.** The end-to-end path a note takes from "saved in a vault" to "queryable knowledge": how ingestion is triggered and queued, the ingestion agent that runs it (`multimodal → extraction → storage → summarization`), the LLM extraction prompt and JSON normalisation, entity resolution against the existing graph, and exactly what gets written to Kuzu, Qdrant, Meilisearch and SQLite at each step. It also covers re-ingest cleanup, the `ingestion_tracker` counter and the button-only community (Leiden-style) recomputation and temporal digests, every config key the pipeline reads, and the failure semantics of each stage. Multimedia attachment handling (Qwen3-ASR for speech, Marlin for video, the ingestion model itself for images and PDF renders) is only summarised here; see the sibling doc for the details.
 
 **Related docs:** [Multimedia enrichment](11-multimedia-enrichment.md) · [Notes, wikilinks & vault files](09-notes-wikilinks-and-vault-files.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Local models & inference](12-local-models-and-inference.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [API reference](07-api-reference.md) · [Configuration reference](21-configuration-reference.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -31,7 +31,7 @@
 | `backend/app/workflows/ingestion.py` | Orchestrator: `process_note`, SQLite status writes, `_write_ontology`, `_update_neighborhoods`, `_update_node_summary`, community + digest builders, maintenance status | `IngestionWorkflow`, `ingestion_workflow` (default-KB singleton), `_name_fits_members`, `_derive_fallback_community_name` |
 | `backend/app/workflows/agents/ingestion_agent.py` | `run_ingestion_agent(state)`: `multimodal_node` → `extraction_node` → `storage_node` → `summarization_node`, stopping at the first step that reports `errors`; extraction prompt (lists `RELATIONSHIP_TYPES`); enrichment-block wrapping and stripping; global multimedia semaphore | `run_ingestion_agent`, `IngestionState`, `multimedia_concurrency_limit`, `wrap_legacy_enrichment_blocks`, `_strip_prior_multimedia_enrichment`, `EXTRACT_BLOCK_RE`, `_ENRICHMENT_BLOCK_RE` |
 | `backend/app/workflows/extraction_chunking.py` | Pure, I/O-free helpers for long-note extraction: token budget per chunk, paragraph-bounded splitting, merging of per-chunk `Extraction`s | `chunk_token_budget`, `split_for_extraction`, `merge_extractions`, `MIN_SPLIT_TOKENS` (=400) |
-| `backend/app/services/ingestion_tracker.py` | Process-global counter of active ingestions; idle-timer debounce for community recompute; cooperative cancellation events | `IngestionTrackerService`, `ingestion_tracker`, `COMMUNITY_IDLE_SECONDS` (=120) |
+| `backend/app/services/ingestion_tracker.py` | Process-global counter of active ingestions; cooperative cancellation events for a running rebuild | `IngestionTrackerService`, `ingestion_tracker` |
 | `backend/app/schemas/extraction.py` | Pydantic models + tolerant shape validators for LLM JSON; the closed predicate list; `NoteInput` wire model | `RELATIONSHIP_TYPES`, `Extraction`, `Node`, `ExtractedRelationship`, `NoteInput` |
 | `backend/app/services/multimedia.py` | Attachment → text (PDF/image/audio/video/docx/xlsx/csv); vault path resolution; temp-file rules | `multimedia_service`, `image_data_url` (see [11](11-multimedia-enrichment.md)) |
 | `backend/app/services/ingestion_checkpoint.py` | Per-note on-disk memo of every model call (`DATA_DIR/ingestion_cache/<kb>/<note>/`), so a retry after a failure or cancel replays the calls that already succeeded | `activate`, `clear`, `generate`, `generate_with_meta` |
@@ -105,8 +105,7 @@ sequenceDiagram
     end
     AG-->>WF: final_state
     WF->>DB: processed=true, failed=false, stage="Ingestion complete"
-    WF->>KZ: neighbours of note → tracker.queue_nodes_for_community_recompute
-    WF->>TR: end_ingestion(rebuild_leiden_communities) → idle timer (120 s)
+    WF->>TR: end_ingestion(kb_id) (counter only)
     WF->>WF: log [Timing] line (model_load vs inference); models stay resident
 ```
 
@@ -131,7 +130,7 @@ flowchart TD
     END3 --> R
     X1 --> FAIL
     R -->|yes| FAIL[stage=Ingestion failed, failed=true]
-    R -->|no| OK[_mark_note_processed → _queue_leiden_recompute_if_due]
+    R -->|no| OK[_mark_note_processed]
     OK --> FIN[finally: tracker.end_ingestion; models stay resident]
     FAIL --> FIN
 ```
@@ -177,7 +176,7 @@ Not triggers (common misconception): `POST /api/v1/notes` (create) and `PUT /api
 | `_community_run_state_lock` (`threading.Lock`) + `_community_run_seq/_active_seq/_running` | per workflow | per KB | — | Single-flight for `rebuild_leiden_communities`; newest request wins, older waits/cancels. |
 | `_temporal_digest_timer_lock` + `threading.Timer` | per workflow | per KB | — | Debounce for `build_temporal_digests`. |
 
-The tracker is a **process-global singleton** but keys its state per KB: `begin_ingestion(kb_id)` / `end_ingestion(callback, kb_id)` count notes per KB, each KB has its own debounce task and `rebuild_leiden_communities` callback, and `get_status_snapshot(kb_id)` reports one KB. Only the two cancel events are shared (see Gotchas).
+The tracker is a **process-global singleton** but counts per KB: `begin_ingestion(kb_id)` / `end_ingestion(kb_id)`, read by `active_count(kb_id)` / `has_active_ingestions(kb_id)`. Only the two cancel events are shared (see Gotchas).
 
 ### 4.4 `process_note` contract
 
@@ -186,7 +185,7 @@ async def process_note(self, note_input: NoteInput, note_id: str = None) -> dict
 ```
 
 - `note_id` defaults to a fresh `uuid4` when omitted (only meaningful for the row that already exists; all HTTP callers pass the SQLite id, which is also the Kuzu note-node id).
-- Order of operations: `tracker.begin_ingestion(kb_id)` → stage `"Queued for ingestion"` → **acquire semaphore** → stage `"Starting ingestion"` → `checkpoint.activate(kb_id, note_id)` (routes this task's model calls through the note's on-disk cache; logs how many calls will replay) → `run_ingestion_agent(initial_state)` → `checkpoint.clear(...)` → if `final_state["errors"]` non-empty raise `RuntimeError("Ingestion Agent Failed: …")` → `_mark_note_processed` → `_queue_leiden_recompute_if_due` → return `{"note_id", "extraction": Extraction.model_dump(), "status": "success", "processed_content": final_state["content"]}`.
+- Order of operations: `tracker.begin_ingestion(kb_id)` → stage `"Queued for ingestion"` → **acquire semaphore** → stage `"Starting ingestion"` → `checkpoint.activate(kb_id, note_id)` (routes this task's model calls through the note's on-disk cache; logs how many calls will replay) → `run_ingestion_agent(initial_state)` → `checkpoint.clear(...)` → if `final_state["errors"]` non-empty raise `RuntimeError("Ingestion Agent Failed: …")` → `_mark_note_processed` → return `{"note_id", "extraction": Extraction.model_dump(), "status": "success", "processed_content": final_state["content"]}`.
 - `except Exception`: stage `"Ingestion failed"`, `_mark_note_failed` (sets `failed=True`, `processed=False`, stage `"Ingestion failed"`), re-raise.
 - `finally`: `await tracker.end_ingestion(self.rebuild_leiden_communities, kb_id=self.kb_id)`. Models are **not** unloaded here any more: the GGUF idle watcher (`ORB_MODEL_IDLE_SECONDS`, default 5 min, see [12](12-local-models-and-inference.md)) evicts them, and loading any other family evicts them anyway. (History: originally unloaded per note; commit `f8f527f` moved that to "when the batch drains"; the current working tree removes it entirely because even a single-note ingest re-read multi-GB GGUFs.)
 - Timing: `process_note` snapshots `model_load_clock` before `ainvoke` and afterwards logs one line `[Timing] ingest note_id=… total=…s model_load=…s inference=…s loads=<per-family load seconds> | extraction=… chunks=N` using `final_state["timings"]` (`_log_timing`, which diffs `model_load_clock` snapshots). This is the only place stage timings surface; they are not persisted.
@@ -236,7 +235,7 @@ Status strings below are the exact values written to `notes.processing_stage` / 
 | `process_note` before semaphore | `"Queued for ingestion"` | `None` |
 | after semaphore acquired | `"Starting ingestion"` | `None` |
 
-The tracker is registered **before** waiting for the semaphore so the 120 s community idle timer can never fire while notes are still queued.
+The tracker is registered **before** waiting for the semaphore so a running rebuild is told to yield as soon as a note is queued, not only when it starts.
 
 ### 6.2 `multimodal_node` (summary — full detail in [11-multimedia-enrichment.md](11-multimedia-enrichment.md))
 
@@ -369,7 +368,7 @@ Note the asymmetry: the Qdrant `description` payload and the Meili `isolated_con
 | Outcome | Function | SQLite `notes` update |
 |---|---|---|
 | Agent finished with empty `errors` | `_mark_note_processed` | `processed=True, failed=False, processing_stage="Ingestion complete", processing_model=None` |
-| Agent returned `errors`, or raised, or `_mark_note_processed` / `_queue_leiden_recompute_if_due` raised | `_update_note_processing_status(note_id, "Ingestion failed")` then `_mark_note_failed` | `processed=False, failed=True, processing_stage="Ingestion failed", processing_model=None` |
+| Agent returned `errors`, or raised, or `_mark_note_processed` raised | `_update_note_processing_status(note_id, "Ingestion failed")` then `_mark_note_failed` | `processed=False, failed=True, processing_stage="Ingestion failed", processing_model=None` |
 
 `GET /api/v1/notes/{id}/status` derives `status`: `completed` if `processed`, else `failed` if `failed`, else `processing` — so `"Saved"` notes also report `processing`; clients must read `processing_stage`.
 
@@ -401,27 +400,21 @@ Consequences for anyone reasoning about counts: re-ingesting the same note is a 
 
 ## 8. Post-ingestion triggers: tracker, communities, temporal digests
 
-### 8.1 `_queue_leiden_recompute_if_due(note_id)` (runs after `_mark_note_processed`)
+### 8.1 Nothing runs automatically
 
-- `MATCH (:Node {id:$note_id})-[*1]-(n:Node) WHERE n.kind='indexable' RETURN DISTINCT n.id` → `tracker.queue_nodes_for_community_recompute(ids)`. The ids are only used for logging/status (`pending_community_nodes`); the recompute is always a **full** rebuild.
-- (Re)start a per-workflow `threading.Timer(COMMUNITY_IDLE_SECONDS, self.build_temporal_digests)` (daemon).
+Community detection and temporal digests are started only by the Setup page button (`POST /api/v1/admin/rebuild-communities` then `POST /api/v1/admin/build-temporal-digests`). Ingestion neither queues nor schedules them; it only counts itself in the tracker and, when it starts, tells a running rebuild to stop at its next checkpoint.
 
 ### 8.2 `IngestionTrackerService` (`services/ingestion_tracker.py`, global singleton `ingestion_tracker`)
 
 | Member | Semantics |
 |---|---|
-| `COMMUNITY_IDLE_SECONDS = 120` | Module constant (not an env var). Idle window before community recompute and digest build. |
 | `_active_ingestion_counts[kb_id]` | Notes currently inside `process_note` (queued or running), **per KB**. |
-| `begin_ingestion(kb_id)` (async) | `counts[kb] += 1`; cancel that KB's pending debounce task; **set** the global `cancel_recompute` and `cancel_temporal` events (a running recompute/digest in any KB stops at its next checkpoint). |
-| `end_ingestion(callback, kb_id)` (async) | `counts[kb] = max(0, −1)`; when it reaches 0 and no recompute is running for that KB: `schedule_recompute(callback, kb_id)`. |
-| `queue_nodes_for_community_recompute(count, kb_id)` (async) | `_pending_counts[kb] += count`, sets that KB's `_recompute_needed`; if a recompute is running, sets `cancel_recompute`. Returns the new queue size. |
-| `schedule_recompute(callback, kb_id)` | Debounce per KB: cancel that KB's existing task, `loop.create_task(_debounce_recompute(callback, kb_id))`. Needs a running loop (else warns). |
-| `_debounce_recompute(callback, kb_id)` (async) | `await asyncio.sleep(120)`; skip if a recompute is running or nothing pending and not `_recompute_needed`; else mark running, clear pending, clear `cancel_recompute`, `await asyncio.to_thread(callback)`; afterwards `mark_community_recompute_complete(kb_id)`; if the run was cancelled early (`cancel_recompute` set), set `_recompute_needed` and reschedule if no ingestion is active. |
-| `cancel_recompute`, `cancel_temporal` | Global `threading.Event`s polled by the worker-thread jobs. |
-| `has_active_ingestions(kb_id=None)` | one KB or any |
-| `get_status_snapshot(kb_id)` | `{active_ingestions, pending_community_nodes, community_recompute_running, community_recompute_needed, community_idle_seconds, community_timer_armed}` for that KB |
+| `begin_ingestion(kb_id)` (async) | `counts[kb] += 1`; **set** the global `cancel_recompute` and `cancel_temporal` events (a running recompute/digest in any KB stops at its next checkpoint). |
+| `end_ingestion(kb_id)` (async) | `counts[kb] = max(0, −1)`. |
+| `cancel_recompute`, `cancel_temporal` | Global `threading.Event`s polled by the worker-thread jobs; cleared by the job when it starts. |
+| `active_count(kb_id)`, `has_active_ingestions(kb_id=None)` | one KB or any |
 
-`IngestionWorkflow.get_maintenance_status()` (served by `GET /api/v1/admin/maintenance-status`) wraps that snapshot: `{"community_detection": {running, pending_nodes, needed, timer_armed, idle_seconds}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}`. `running` ORs the per-KB `_community_run_running` with the tracker flag. `pending_nodes` is a count kept by the tracker (the node ids themselves are not queued — the rebuild re-reads every indexable node).
+`IngestionWorkflow.get_maintenance_status()` (served by `GET /api/v1/admin/maintenance-status`) returns `{"community_detection": {"running"}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}` from the per-KB workflow flags and the tracker count.
 
 ### 8.3 `rebuild_leiden_communities()` (sync, worker thread; also `POST /api/v1/admin/rebuild-communities`)
 
@@ -445,7 +438,7 @@ Historical name — the current implementation is a **greedy cosine-threshold me
 - `qdrant.scroll_all_isolated_contexts_with_dates()` → bucket `content` by `note_created_at` into `period` ∈ `month` (`%Y-%m`, default from `TEMPORAL_DIGEST_PERIOD`) | `week` (`%G-W%V`) | `year` (`%Y`).
 - `graph.clear_all_temporal_digests()` + `qdrant.delete_node` + `meili.delete_node` for old digest ids.
 - Per bucket (sorted): concatenate contexts with `\n---\n`, truncate to 12 000 chars, `self._llm.generate_text(system="You are a knowledge synthesis assistant…", user="The following contexts are from notes created during {label}: …")` (fallback summary `"Notes from {label}."`); `node_id = f"digest_{period}_{key}"` with `-`→`_` and `W`→`w` (e.g. `digest_month_2026_05`, `digest_week_2026_w21`); `name = f"{label} — {Period} Digest"` (e.g. `"May 2026 — Month Digest"`); Kuzu `MERGE (d:Node {id}) SET kind='temporal_digest', type='temporal_digest', name`; Qdrant core with `extra_payload={"period_key": key}`; Meili doc `type="temporal_digest"`, `isolated_contexts=[summary]`.
-- Checks `cancel_temporal` between buckets; on cancel reschedules itself after 120 s if no ingestion is active.
+- Checks `cancel_temporal` between buckets; on cancel returns the count built so far (run it again from Setup).
 - Note: the Kuzu module docstring lists `kind ∈ {note, indexable, community}`; `temporal_digest` is a fourth value written by this function.
 
 ## 9. Stage → function → writes → failure behaviour
@@ -459,9 +452,8 @@ Historical name — the current implementation is a **greedy cosine-threshold me
 | 4 | `Writing graph and note metadata` | `storage_node` → `_write_ontology`, `_update_note_title` | Kuzu note node, entity nodes, `REFERENCES`, `SEMANTIC_REL`; Qdrant `node_cores` stubs, `node_relationships`; SQLite `title` | Qdrant stub batch failure → abort (Kuzu nodes already written remain). Relationship errors collected → raise after loop (successful edges remain; Qdrant rel batch skipped); Qdrant rel batch returning `False` → abort. Any exception → `errors` → **failed**; no rollback. |
 | 5 | `Indexing entity contexts` (`Embeddings`) | `summarization_node` → `_update_neighborhoods` → `_update_node_summary` | Kuzu entity MERGE; Qdrant `node_isolated_contexts` (+), `node_cores` (overwrite); Meili doc (replace) | context append shortfall or core upsert `False` → `RuntimeError` → **failed** (earlier entities of the same note are already indexed). Meili errors logged, non-fatal. |
 | 6 | `Ingestion complete` | `_mark_note_processed` | SQLite `processed=1, failed=0` | SQLite failure retried ×3, then note marked failed |
-| 7 | (none) | `_queue_leiden_recompute_if_due` | tracker pending set; digest timer | Kuzu query error → propagates → note marked **failed** even though data is written (edge case) |
 | 8 | `Ingestion failed` | `_mark_note_failed` | SQLite `processed=0, failed=1` | exception re-raised → aborts later `BackgroundTasks` of the same request |
-| 9 | (none) | `tracker.end_ingestion` | debounce task | — |
+| 9 | (none) | `tracker.end_ingestion` | active counter | — |
 
 ## 10. Exactly what is written where
 
@@ -563,7 +555,6 @@ Title prompt (`llm_service.generate_title`): system `"Generate a concise, descri
 | `ORB_LLAMA_N_CTX` (env, via `_default_chat_n_ctx`) | see [12](12-local-models-and-inference.md) | `ingestion_context_tokens` | Local context window → chunk budget and output budget. |
 | `ORB_MODEL_IDLE_SECONDS` (env) | 300 | GGUF idle watcher | When resident models are unloaded after ingestion. |
 | `TEMPORAL_DIGEST_PERIOD` | `"month"` | `build_temporal_digests` | `month` \| `week` \| `year`. |
-| `COMMUNITY_IDLE_SECONDS` | `120` (constant) | tracker, digest timer | Not configurable. |
 | `EMBEDDING_DIMENSIONS` | `1024` (overridden from the local manifest's `embedding_dims`) | `QdrantService._prepare_vector` | Vector length check on every upsert. |
 | `EMBEDDING_MODEL` | `"local-embed"` | `EmbeddingService` | `is_qwen3` (query instruction) derived from its basename. |
 | `QDRANT_COLLECTION_NODE_CORES` / `_RELATIONSHIPS` / `_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | default KB `QdrantService` | Other KBs use `{slug}_…` names from the registry. |
@@ -615,7 +606,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 - **A closed relationship vocabulary** (`RELATIONSHIP_TYPES`): the model picks from 42 listed predicates and the schema coerces anything else to `related_to`, so the graph never accumulates one edge label per note.
 - **Long notes are chunked at paragraph boundaries and merged**; truncated chunk output is split, not repaired (repair only when a chunk is already ≤ 400 tokens).
 - **One heavy model resident at a time**: multimodal phases are ordered (docs) → Qwen3-ASR → Marlin → ingestion model (PDFs, images, image titling, extraction) precisely to minimise swaps; do not interleave LLM calls inside the speech/video phases.
-- **The tracker is registered before the semaphore** so the idle timer cannot fire with queued work.
+- **The tracker is registered before the semaphore** so a queued note already pre-empts a running rebuild.
 - **Community and digest jobs are cooperative and pre-emptible by ingestion**; they must check the cancel events between units of work.
 - **`workflow` must be present in the agent state**; never fall back to the default-KB singleton.
 - Autosave (`PUT`) and vault-watcher events must never trigger ingestion.
@@ -651,10 +642,10 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 5. **Entity `type` is frozen at first sighting in Qdrant/Meili** (`_core_content.type` wins) but overwritten in Kuzu on every ingest.
 6. **No embedding-similarity entity resolution** and no `is_similarity` edges are produced today, despite the schema column and old reports mentioning "similarity detection".
 7. **"Leiden" is agglomerative clustering**; L1 threshold is 0.35 (default arg), not the 0.50 in the comment.
-8. **Community detection and temporal digests always run** once the ingestion queue has been idle for `COMMUNITY_IDLE_SECONDS`; the admin endpoints run them on demand.
+8. **Community detection and temporal digests never run on their own**: only the Setup page button (the two admin endpoints) starts them.
 9. **`multimedia_concurrency_limit` and `_process_semaphore` read settings at import/construction** — changing env at runtime has no effect.
 10. **Per-request sequencing**: `BackgroundTasks` run one after another; `INGESTION_PIPELINE_CONCURRENCY > 1` only helps across separate HTTP requests. And one failure aborts the rest of the request's queue.
-11. **The tracker is one singleton with per-KB state**: counters, idle timers and callbacks are keyed by `kb_id`, but the cancel events are shared — an ingest in any KB cancels a rebuild running in another.
+11. **The tracker is one singleton with per-KB counters**, but the cancel events are shared — an ingest in any KB cancels a rebuild running in another.
 12. **`storage_node` sets `created_at` to `now()` when the input has none** — only `POST /api/v1/ingest` without `created_at` hits this, and even then the endpoint fills it first; so contexts always carry a date.
 13. **Enrichment markers vs frontend**: the frontend segments on the `orb:extract` delimiters, not on a header list, so new section kinds need no frontend change.
 14. **There are no `sentiment`, `type_reasoning` or `reasoning` fields** — the schema and prompt dropped them; do not look for them in any store.
@@ -675,7 +666,6 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 | Change chunking policy | `extraction_chunking.py` constants (`_OUTPUT_TO_INPUT_RATIO`, `_DEFAULT_CHUNK_TOKENS`, `MIN_SPLIT_TOKENS`) or `ORB_EXTRACTION_CHUNK_TOKENS`; `_MAX_SPLIT_DEPTH` in the agent | Keep helpers pure; extend `test_extraction_chunking.py`. |
 | Write to another store | Add to `KBContext`, pass into `IngestionWorkflow.__init__`, write in `_write_ontology`/`_update_node_summary` **after** Qdrant succeeds; add cleanup to `_delete_note_impl`, `reset_ingestion_data`, `clear_all_communities` | Also reset in `admin/reset-ingestion-data`. |
 | Change entity resolution (fuzzy / embedding) | `_write_ontology` step 1 (`find_node_ids_by_names` + Kuzu fallback) and `_update_node_summary` step 1 | Both paths must agree or ids split; keep the stub-seeding invariant. |
-| Make idle windows configurable | `COMMUNITY_IDLE_SECONDS` in `ingestion_tracker.py` is imported by `ingestion.py`; replace with a setting in both places | `get_status_snapshot` reports it. |
 | Per-KB LLM | Already supported via `KBContext.llm` → `IngestionWorkflow(llm=…)`; new LLM calls must use `self._llm` / `_wf._llm`, never the global `llm_service` | Tests can inject a stub. |
 | Resume after crash | Currently none; a startup hook would query `processed=0 AND failed=0 AND processing_stage LIKE 'Queued%' OR 'Starting%'` and re-queue | Ensure `require_ai(kb)` semantics. |
 

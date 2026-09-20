@@ -17,7 +17,6 @@ from app.services.graph import GraphService, graph_service
 from app.services.embedding import embedding_service
 from app.services.ingestion_tracker import (
     ingestion_tracker as _tracker,
-    COMMUNITY_IDLE_SECONDS,
 )
 from app.services import ingestion_checkpoint as checkpoint
 from app.services.llm import llm_service
@@ -98,8 +97,6 @@ class IngestionWorkflow:
         self._community_run_seq = 0
         self._community_run_active_seq = 0
         self._community_run_running = False
-        self._temporal_digest_timer: threading.Timer | None = None
-        self._temporal_digest_timer_lock = threading.Lock()
         self._temporal_digest_running = False
 
     async def process_note(self, note_input: NoteInput, note_id: str = None):
@@ -137,8 +134,8 @@ class IngestionWorkflow:
 
     async def _process_note(self, note_input: NoteInput, note_id: str):
 
-        # Register with the tracker BEFORE the semaphore so the community-detection
-        # idle timer never fires while tasks are queued waiting for a slot.
+        # Register with the tracker BEFORE the semaphore so a running rebuild is
+        # told to yield as soon as a note is queued, not only when it starts.
         await _tracker.begin_ingestion(self.kb_id)
         await self._update_note_processing_status(
             note_id, "Queued for ingestion", None
@@ -205,7 +202,6 @@ class IngestionWorkflow:
 
                 # Mark as processed in SQLite metadata
                 await self._mark_note_processed(note_id)
-                await self._queue_leiden_recompute_if_due(note_id)
 
                 duration = t_end - t_start
                 logger.info(
@@ -226,11 +222,7 @@ class IngestionWorkflow:
                 raise
 
             finally:
-                # Always decrement the active counter and potentially schedule
-                # community recompute, regardless of success or failure.
-                await _tracker.end_ingestion(
-                    self.rebuild_leiden_communities, kb_id=self.kb_id
-                )
+                await _tracker.end_ingestion(kb_id=self.kb_id)
                 # Models stay resident after a note: the idle watcher
                 # (ORB_MODEL_IDLE_SECONDS, default 5 min) unloads them, and
                 # loading any other model evicts them anyway. Unloading here
@@ -751,46 +743,6 @@ class IngestionWorkflow:
             logger.info(f"[Ontology] Removed entity {nid} no longer mentioned by any note")
 
         return title
-
-    async def _queue_leiden_recompute_if_due(self, note_id: str) -> None:
-        """Queue community detection and schedule a temporal digest rebuild after ingestion."""
-
-        # ── Community detection ───────────────────────────────────────────────
-        rows = self._graph.execute_query(
-            """
-            MATCH (:Node {id: $note_id})-[*1]-(n:Node)
-            WHERE n.kind = 'indexable' AND n.id IS NOT NULL
-            RETURN DISTINCT n.id AS node_id
-            """,
-            {"note_id": note_id},
-        )
-        touched = sum(1 for row in rows if row.get("node_id"))
-        if touched:
-            queue_size = await _tracker.queue_nodes_for_community_recompute(
-                touched, kb_id=self.kb_id
-            )
-            logger.info(
-                f"[Community] {touched} node(s) touched — Leiden recompute pending "
-                f"(queue size: {queue_size})"
-            )
-
-        # ── Temporal digests (debounced) ──────────────────────────────────────
-        # Restart a module-level timer on every ingestion.  The rebuild only
-        # fires after _TEMPORAL_DIGEST_IDLE_SECONDS of inactivity, so a burst
-        # of notes produces exactly one rebuild once the system goes quiet.
-        with self._temporal_digest_timer_lock:
-            if self._temporal_digest_timer is not None:
-                self._temporal_digest_timer.cancel()
-            self._temporal_digest_timer = threading.Timer(
-                COMMUNITY_IDLE_SECONDS,
-                self.build_temporal_digests,
-            )
-            self._temporal_digest_timer.daemon = True
-            self._temporal_digest_timer.start()
-        logger.info(
-            f"[TemporalDigest] Digest rebuild scheduled "
-            f"({COMMUNITY_IDLE_SECONDS} s idle window)."
-        )
 
     async def _update_neighborhoods(
         self,
@@ -1314,8 +1266,7 @@ class IngestionWorkflow:
 
         Cooperative cancellation: checks ``_tracker.cancel_recompute`` between every
         cluster summary.  When set, the run exits early (returning the count built so far) so a
-        pending ingestion can proceed.  The tracker resets the flag and reschedules the full run
-        after the next idle window.
+        pending ingestion can proceed.  Run it again from Setup once ingestion is done.
         """
 
         # Register this as the newest requested run. If another run is active, request
@@ -1661,7 +1612,7 @@ class IngestionWorkflow:
                     logger.info(
                         f"[Community] Recompute cancelled at L2 cluster "
                         f"{cluster_index + 1}/{len(l2_clusters)} — "
-                        "ingestion/newer run arrived; will restart after next idle window."
+                        "ingestion/newer run arrived; run it again from Setup."
                     )
                     return created
                 logger.info(
@@ -1712,7 +1663,7 @@ class IngestionWorkflow:
                     logger.info(
                         f"[Community] Recompute cancelled at L1 cluster "
                         f"{cluster_index + 1}/{len(l1_clusters)} — "
-                        "ingestion/newer run arrived; will restart after next idle window."
+                        "ingestion/newer run arrived; run it again from Setup."
                     )
                     return created
 
@@ -1775,7 +1726,7 @@ class IngestionWorkflow:
                     logger.info(
                         f"[Community] Recompute cancelled at L0 cluster "
                         f"{cluster_index + 1}/{len(l0_clusters)} — "
-                        "ingestion/newer run arrived; will restart after next idle window."
+                        "ingestion/newer run arrived; run it again from Setup."
                     )
                     return created
 
@@ -1897,10 +1848,7 @@ class IngestionWorkflow:
 
         # Guard: refuse to start while ingestion is active.
         if _tracker.has_active_ingestions(self.kb_id):
-            logger.info(
-                "[TemporalDigest] Skipping — ingestion is active; "
-                "timer will restart when ingestion completes."
-            )
+            logger.info("[TemporalDigest] Skipping — ingestion is active; run it again later.")
             return 0
 
         _tracker.cancel_temporal.clear()
@@ -1967,28 +1915,10 @@ class IngestionWorkflow:
             # Cooperative cancellation: stop between buckets if ingestion arrived.
             if _tracker.cancel_temporal.is_set():
                 logger.info(
-                    f"[TemporalDigest] Cancelled by ingestion after {built} bucket(s) — "
-                    "rescheduling."
+                    f"[TemporalDigest] Cancelled by ingestion after {built} bucket(s); "
+                    "run it again from Setup once ingestion is done."
                 )
                 self._temporal_digest_running = False
-                if not _tracker.has_active_ingestions(self.kb_id):
-                    with self._temporal_digest_timer_lock:
-                        if self._temporal_digest_timer is not None:
-                            self._temporal_digest_timer.cancel()
-                        self._temporal_digest_timer = threading.Timer(
-                            COMMUNITY_IDLE_SECONDS,
-                            self.build_temporal_digests,
-                        )
-                        self._temporal_digest_timer.daemon = True
-                        self._temporal_digest_timer.start()
-                    logger.info(
-                        f"[TemporalDigest] Rescheduled in {COMMUNITY_IDLE_SECONDS}s."
-                    )
-                else:
-                    logger.info(
-                        "[TemporalDigest] Ingestion still active — "
-                        "timer will restart when last ingestion ends."
-                    )
                 return built
 
             contexts = buckets[period_key]
@@ -2064,18 +1994,10 @@ class IngestionWorkflow:
 
     def get_maintenance_status(self) -> dict:
         """Return the running state of background maintenance jobs for this KB."""
-        tracker = _tracker.get_status_snapshot(self.kb_id)
         return {
-            "community_detection": {
-                "running": self._community_run_running
-                or bool(tracker.get("community_recompute_running")),
-                "pending_nodes": tracker.get("pending_community_nodes", 0),
-                "needed": bool(tracker.get("community_recompute_needed")),
-                "timer_armed": bool(tracker.get("community_timer_armed")),
-                "idle_seconds": tracker.get("community_idle_seconds"),
-            },
+            "community_detection": {"running": self._community_run_running},
             "temporal_digests": {"running": self._temporal_digest_running},
-            "ingestion": {"active": int(tracker.get("active_ingestions") or 0)},
+            "ingestion": {"active": _tracker.active_count(self.kb_id)},
             "healthy": True,
         }
 

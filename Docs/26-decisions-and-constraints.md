@@ -158,10 +158,10 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: transcripts were duplicated on every re-ingest.
 - Enforced: `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` markers; `ingestion_agent._strip_prior_multimedia_enrichment(content, keep=…)` removes only delimited blocks whose attachment is gone (user text is never truncated); pre-marker blocks get markers once from `wrap_legacy_enrichment_blocks` in the vault sweep (`vault_sync.migrate_vault_files`).
 
-### D7. Community detection is idle-triggered, pre-emptible, and off by default
-- Rejected: synchronous recompute after every note.
+### D7. Community detection runs only on request, and is pre-emptible
+- Rejected: synchronous recompute after every note; an idle-timer auto-rebuild (removed after 1.0.0 — it ran whether or not the user wanted the graph regrouped).
 - Rationale: throughput; a new ingestion signals a running recompute to stop early. The algorithm is named "Leiden" throughout code, logs and UI but is implemented with a greedy cosine-threshold centroid merge over node embeddings (plain numpy; see `_embedding_cluster`).
-- Enforced: `ingestion_tracker.COMMUNITY_IDLE_SECONDS=120`, `_community_run_state_lock`; both rebuilds always run once ingestion goes idle.
+- Enforced: `_community_run_state_lock` (single-flight), `ingestion_tracker.cancel_recompute` / `cancel_temporal`; the Setup page button (`POST /admin/rebuild-communities` + `build-temporal-digests`) is the only trigger.
 
 ### D8. Retrieval is a bounded multi-hop loop, `MAX_LOOP_ITERATIONS=3`
 - Rejected: unbounded loops; single-shot vector RAG; the removed "refiner" and "benchmark mode" (`8eba91d`).

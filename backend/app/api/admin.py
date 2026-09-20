@@ -45,8 +45,8 @@ async def rebuild_communities(
     """
     Trigger a full Leiden community detection pass in the background.
 
-    Useful when community detection was cancelled or never ran after ingestion.
-    The job runs asynchronously; poll the server logs for progress.
+    This is the only trigger: nothing runs community detection automatically.
+    The job runs asynchronously; poll `maintenance-status` for progress.
     """
     background_tasks.add_task(kb.get_ingestion_workflow().rebuild_leiden_communities)
     return {

@@ -347,7 +347,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 ### 9.7 Temporal digest — `workflows/ingestion.py::build_temporal_digests`
 
-- **Purpose**: per-period (month/week/year, `TEMPORAL_DIGEST_PERIOD`) summaries of note contexts, rebuilt after ingestion goes idle.
+- **Purpose**: per-period (month/week/year, `TEMPORAL_DIGEST_PERIOD`) summaries of note contexts, rebuilt from the Setup page button (`POST /admin/build-temporal-digests`).
 - **Call**: `self._llm.generate_text(system_prompt, user_prompt)`.
 - **System**: `"You are a knowledge synthesis assistant. Summarize the main topics, events, and themes from the provided …"` (continues with instructions to produce a digest for the labelled period). **User**: the period label (`"May 2024"`, `"Week 12, 2024"`, `"2024"`) plus contexts joined with `\n---\n`, truncated at 12 000 characters + `"\n...[truncated]"`.
 - **Format**: free text stored as the digest node summary.

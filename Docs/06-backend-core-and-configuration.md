@@ -301,7 +301,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 |---|---|---|---|
 | `TEMPORAL_DIGEST_PERIOD` | str | `"month"` | default period for digest builds (`admin.py`, `ingestion.py`) |
 
-Community detection and temporal digests always run after ingestion (idle-triggered) and on demand from the admin endpoints; there are no feature switches.
+Community detection and temporal digests run only from the admin endpoints (the Setup page button); nothing schedules them after ingestion and there are no feature switches.
 
 **Qdrant**
 

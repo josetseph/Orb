@@ -66,9 +66,9 @@
 | **Vision projector (mmproj)** | `mmproj-<chat stem>-*.gguf` beside the chat GGUF that lets the local model describe images (llama.cpp mtmd). `find_mmproj` pairs it by name only; it is bound eagerly at load (`_init_mtmd_context`) and dropped with a warning if it fails so text chat keeps working; the `orb-mmproj` boot thread downloads it for catalog models. | [11](11-multimedia-enrichment.md), [12](12-local-models-and-inference.md) |
 | **Qwen3-ASR** | Qwen3-ASR 1.7B audio/video transcription (`asr_engine.py`: `mlx-qwen3-asr` on Apple Silicon, transformers elsewhere; optional pyannote speaker labels). | [11](11-multimedia-enrichment.md) |
 | **Marlin** | Marlin-2B (Qwen3.5 backbone) video-understanding model. | [11](11-multimedia-enrichment.md) |
-| **ingestion_tracker** | Process-global tracker of in-flight ingestions; triggers a community recompute after `COMMUNITY_IDLE_SECONDS` (120 s, a constant) of idleness, and lets a new ingestion pre-empt a running recompute. | [10](10-ingestion-pipeline.md) |
-| **Community** | Cluster of entities stored as `Node(kind='community')` with `MEMBER_OF`/`CONTAINS` edges and levels. Called "Leiden" in code, logs and UI, but implemented with a greedy cosine-threshold merge over embeddings; runs after ingestion goes idle and on demand. | [14](14-graph-storage-kuzu.md) |
-| **Temporal digest** | Periodic (month/week/year) summary node (`Node(kind='temporal_digest')`, `period_key` in Qdrant payload) built from a period's contexts after ingestion goes idle; used by month-scoped retrieval. | [14](14-graph-storage-kuzu.md) |
+| **ingestion_tracker** | Process-global counter of in-flight ingestions; a new ingestion pre-empts a running community recompute or digest build. | [10](10-ingestion-pipeline.md) |
+| **Community** | Cluster of entities stored as `Node(kind='community')` with `MEMBER_OF`/`CONTAINS` edges and levels. Called "Leiden" in code, logs and UI, but implemented with a greedy cosine-threshold merge over embeddings; runs only from the Setup page button. | [14](14-graph-storage-kuzu.md) |
+| **Temporal digest** | Periodic (month/week/year) summary node (`Node(kind='temporal_digest')`, `period_key` in Qdrant payload) built from a period's contexts when the Setup page button runs it; used by month-scoped retrieval. | [14](14-graph-storage-kuzu.md) |
 
 ## Graph and indexes
 

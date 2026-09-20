@@ -153,7 +153,7 @@ sequenceDiagram
   IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(mention_count, ingested_at)
   IW->>ME: add documents (name, type, contexts, rel text)
   AG->>AG: summarization node — mark processed, stage = done
-  IW->>TR: note finished → idle timer (120 s) → community recompute ("Leiden" = greedy cosine merge) + 3D layout, temporal digests — both feature-flagged, off by default
+  IW->>TR: note finished → end_ingestion (counter only; community recompute and temporal digests run from the Setup button / admin endpoints)
 ```
 
 Every LLM call that expects structured output passes `json_mode=True` to `LLMService._chat`, which asks the provider for a JSON object structurally — `response_format={"type": "json_object"}` for openai/openai_compat/huggingface/local (llama.cpp's JSON grammar), `response_mime_type="application/json"` for Gemini; Anthropic stays prompt-driven — and the reply is still parsed through `_clean_json` (`json_repair`). Relationship types are a closed vocabulary: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates) is listed in the extraction prompts, and anything off-list is coerced to `related_to`.
@@ -235,7 +235,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 7. **Enrichment blocks are idempotent.** Ingestion strips previous enrichment blocks before appending new ones so transcripts are not duplicated on re-ingest.
 8. **Finance requests are scoped to the KB's Firefly administration.** No list endpoint may return rows from another administration.
 9. **Trace IDs.** Every request gets `X-Request-Id` (incoming or generated) via a ContextVar; log lines from the same request can be correlated.
-10. **Community detection is idle-triggered and optional.** New ingestions pre-empt a running recompute; do not call it synchronously from a request. It always runs after the ingestion queue drains, and `POST /admin/rebuild-communities` runs it on demand.
+10. **Community detection runs only on request.** `POST /admin/rebuild-communities` (the Setup page button) is the sole trigger; nothing schedules it after ingestion. New ingestions pre-empt a running recompute; do not call it synchronously from a request.
 11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`.
 12. **Legacy names are read, never emitted.** The `typesense_collection` column name exists only to read old installs; the `LIVEOS_*` env aliases and the `lifeos_current_kb`/`liveos_current_kb` browser-storage fallbacks were removed.
 

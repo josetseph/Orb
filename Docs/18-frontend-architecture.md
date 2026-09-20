@@ -270,7 +270,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 
 | Method | Call | Notes |
 |---|---|---|
-| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running,pending_nodes?,needed?,timer_armed?,idle_seconds?}, temporal_digests:{running}, ingestion?:{active}, boot?:{status,ts?}, healthy?}` |
+| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running}, temporal_digests:{running}, ingestion?:{active}, boot?:{status,ts?}, healthy?}` |
 | `rebuildCommunities(kb)` | `POST /admin/rebuild-communities?kb=` `{}` | |
 | `buildTemporalDigests(period?, kb)` | `POST /admin/build-temporal-digests?kb=` `{period: period ?? null}` | |
 | `resetIngestionData(kb)` | `POST /admin/reset-ingestion-data?kb=` `{}` | |
@@ -568,7 +568,7 @@ Rule of thumb used across pages: `resolveFileUrl(raw, currentKB)` is the canonic
 
 | Condition | Next poll in |
 |---|---|
-| Any job active (`ingestion.active > 0`, `community_detection.running`, `community_detection.timer_armed`, `temporal_digests.running`) | 4 000 ms |
+| Any job active (`ingestion.active > 0`, `community_detection.running`, `temporal_digests.running`) | 4 000 ms |
 | Idle | 30 000 ms |
 | Request failed | 5 000 ms (so a restart shows up quickly) |
 | `document.visibilityState === "hidden"` | skip the request, reschedule in 30 s |
@@ -585,7 +585,6 @@ Displayed state (`buildStatus`) — first match wins:
 | `ingest` (pulsing) | Ingesting N note(s) | `ingestion.active > 0` | "Extracting entities and links into the graph." |
 | `community` (pulsing) | Rebuilding communities | `community_detection.running` | meta shows `pending_nodes` when > 0 |
 | `digest` (pulsing) | Building digests | `temporal_digests.running` | |
-| `community` | Community rebuild queued | `community_detection.timer_armed` | meta `~{idle_seconds ?? 120}s`; "Starts once ingestion has settled." |
 | `idle` | Ready | otherwise | "No ingestion or community jobs running." |
 
 The row shows the dot, label and meta; clicking opens a popover with the detail text, a "Restart backend" button in the error tone (desktop only — `bridge.restartBackend`), and a static line of what runs locally (Chat · Qwen3-ASR · Vision via chat model · the current KB slug).

@@ -873,13 +873,13 @@ Runs `rebuild_kb_note_links` and returns `{"notes": N, "links": M}`.
 `kb.get_ingestion_workflow().get_maintenance_status()`:
 
 ```json
-{"community_detection": {"running": false, "pending_nodes": 0, "needed": false, "timer_armed": false, "idle_seconds": 120},
+{"community_detection": {"running": false},
  "temporal_digests": {"running": false},
  "ingestion": {"active": 0},
  "healthy": true}
 ```
 
-`community_detection.running` OR-s the per-KB workflow flag with the tracker's flag; everything under `ingestion` and the pending/needed/timer fields come from `services/ingestion_tracker.ingestion_tracker.get_status_snapshot(kb_id)` — the singleton keeps its counters, timers and flags per KB, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend sidebar polls this.
+`community_detection.running` and `temporal_digests.running` are the per-KB workflow flags; `ingestion.active` is `ingestion_tracker.active_count(kb_id)`, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend sidebar polls this.
 
 #### POST /api/v1/admin/rebuild-communities
 

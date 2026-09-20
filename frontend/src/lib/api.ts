@@ -754,13 +754,7 @@ export const api = {
   // ── Maintenance ───────────────────────────────────────────────────────────
 
   async getMaintenanceStatus(kb = "default"): Promise<{
-    community_detection: {
-      running: boolean;
-      pending_nodes?: number;
-      needed?: boolean;
-      timer_armed?: boolean;
-      idle_seconds?: number;
-    };
+    community_detection: { running: boolean };
     temporal_digests: { running: boolean };
     ingestion?: {
       active: number;

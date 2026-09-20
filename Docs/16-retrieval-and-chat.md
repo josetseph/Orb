@@ -428,7 +428,7 @@ Log lines: `[Qdrant] Raw hits from search_all_collections: N (threshold=…, rer
 
 **Bi-temporal filtering** (`valid_from`/`valid_to`/`is_active` on relationships, commit `033589d`) **no longer exists**: the current Kuzu `SEMANTIC_REL` schema has `ingested_at`, `last_updated`, `created_at`, `is_similarity` but no validity interval, and retrieval applies no temporal predicate to graph edges. Temporal awareness today = the two Qdrant payload filters above + the `" - <date>"` suffix on isolated-context text that the LLM can read.
 
-**Temporal digests and communities** are ordinary `node_cores` points (type `community` or digest types, with `period_key`) and surface through the vector branch like any node; there is no separate community lookup ("STEP 3" comment in code). Both are built after ingestion goes idle (and on demand from the admin endpoints).
+**Temporal digests and communities** are ordinary `node_cores` points (type `community` or digest types, with `period_key`) and surface through the vector branch like any node; there is no separate community lookup ("STEP 3" comment in code). Both are built only when the Setup page button runs the admin endpoints.
 
 ### 7.5 Merge precedence, variants, and note grounding
 
