@@ -101,5 +101,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft --generate-notes \
-            --title "Orb ${TAG#desktop-v}" bundles/*
+          # Files only: an artifact with several glob paths keeps its subfolders.
+          find bundles -type f | xargs gh release create "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --draft --generate-notes --title "Orb ${TAG#desktop-v}"

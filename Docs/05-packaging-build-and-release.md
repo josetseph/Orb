@@ -69,7 +69,7 @@ cross-compiled: each platform builds on its own runner.
 
 A second job, `release`, runs after the matrix on tag pushes only
 (`startsWith(github.ref, 'refs/tags/desktop-v')`): it downloads the four artifacts with
-`merge-multiple`, then `gh release create "$TAG" --draft --generate-notes --title "Orb <version>" bundles/*`.
+`merge-multiple`, then `find bundles -type f | xargs gh release create "$TAG" --draft --generate-notes --title "Orb <version>"` (files only — the Linux artifact keeps `deb/` and `rpm/` subfolders).
 The release stays a draft until someone has smoke-tested each installer and publishes it by hand.
 
 The release workflow builds only. Tests, lint and `cargo check` run in `.github/workflows/ci.yml` on every push to `main` and every pull request (three jobs: `backend`, `frontend`, `desktop`; details in [Testing](24-testing.md) §7).
