@@ -26,6 +26,7 @@ intermittently with "Resource busy".
 | `frontend` | `resources/frontend/` | `npm ci && npm run build` in `frontend/`, copies `dist/`. Node ships nothing. |
 | `firefly` | `resources/firefly/` | `python -m app.desktop_runtime prefetch-firefly` with the bundled Python — the same code that installs Firefly at runtime. Reused when present; `ORB_REBUILD_FIREFLY=1` refetches. |
 | `check` | — | Trees exist and the bundled Python imports every critical module. |
+| `bump X.Y.Z` | edited version files | Rewrites `tauri.conf.json`, `Cargo.toml`/`Cargo.lock`, `package.json`/`package-lock.json`, `main.py`; prints the commit/tag/push commands. |
 | `dist` | bundles | `check`, then `cargo tauri build --config '{"bundle":{"resources":…}}'`. The resource map is passed here rather than kept in `tauri.conf.json` so dev builds never copy the multi-GB trees. On macOS it passes `--bundles app`, then stages `Orb.app` (`ditto`) + an `Applications` symlink and runs one `hdiutil create` (HFS+, UDZO, zlib-9) → `bundle/dmg/Orb_<ver>_<arch>.dmg`. |
 
 ## Runtime layout
@@ -68,7 +69,8 @@ so its access to the shell's native pickers and notifications is granted by
 
 ## CI
 
-Push a tag matching `desktop-v*` to trigger `.github/workflows/desktop-release.yml`
+`python3 desktop/build.py bump X.Y.Z` sets the version everywhere it lives; commit, then
+push a tag matching `desktop-v*` to trigger `.github/workflows/desktop-release.yml`
 (one matrix job per platform, unsigned artifacts, then a `release` job that drafts the GitHub
 Release from the four artifacts with `gh release create --draft --generate-notes`; publish it by
 hand after smoke-testing each installer).

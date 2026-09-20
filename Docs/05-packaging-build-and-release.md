@@ -74,9 +74,21 @@ The release stays a draft until someone has smoke-tested each installer and publ
 
 The release workflow builds only. Tests, lint and `cargo check` run in `.github/workflows/ci.yml` on every push to `main` and every pull request (three jobs: `backend`, `frontend`, `desktop`; details in [Testing](24-testing.md) §7).
 
-Version locations to bump together (all `1.0.0` today): `desktop/src-tauri/tauri.conf.json` and
-`desktop/src-tauri/Cargo.toml` (`version`), `frontend/package.json`,
-`backend/app/main.py` (`FastAPI(version=…)`). The tag is `desktop-v<version>`.
+Cutting a release is three commands:
+
+```bash
+python3 desktop/build.py bump 1.1.0        # rewrites every file that carries the version
+git commit -am 'Bump Orb to 1.1.0.'
+git tag -a desktop-v1.1.0 -m 'Orb desktop 1.1.0' && git push origin main desktop-v1.1.0
+```
+
+`bump` edits `desktop/src-tauri/tauri.conf.json`, `Cargo.toml` and `Cargo.lock`,
+`frontend/package.json` and `package-lock.json`, and `backend/app/main.py`
+(`FastAPI(version=…)`), refusing to run if any of them does not hold the current
+version where expected (`VERSION_SITES` in `build.py`). The tag must point at a
+commit that already contains the workflow you want to run. About 40 minutes later
+the draft release is waiting with its five installers; replace the generated notes
+and publish.
 
 ## 5. Signing and auto-update
 

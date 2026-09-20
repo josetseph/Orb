@@ -6,6 +6,7 @@ build the React UI in frontend/.
     python3 build.py check      # preflight: trees exist, imports pass
     python3 build.py dist       # check, then `tauri build` (extra args pass through)
     python3 build.py python | frontend | firefly     # one stage
+    python3 build.py bump 1.1.0 # set the version everywhere it lives, then tag
 
 Resources land in desktop/resources/{backend,frontend,firefly}, which
 src-tauri/tauri.conf.json bundles.
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -276,9 +278,44 @@ def dist(extra: list[str]) -> None:
 STAGES = {"python": bundle_python, "frontend": build_frontend, "firefly": prefetch_firefly, "check": check}
 
 
+# Every file that carries the app version: (path, pattern with {v}, occurrences).
+VERSION_SITES = [
+    ("src-tauri/tauri.conf.json", '"version": "{v}"', 1),
+    ("src-tauri/Cargo.toml", 'version = "{v}"', 1),
+    ("src-tauri/Cargo.lock", 'name = "orb"\nversion = "{v}"', 1),
+    ("../frontend/package.json", '"version": "{v}"', 1),
+    ("../frontend/package-lock.json", '"version": "{v}"', 2),  # root + packages[""]
+    ("../backend/app/main.py", 'version="{v}"', 1),
+]
+
+
+def bump(new: str) -> None:
+    """Set the app version in every file that carries it, and say how to tag."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", new):
+        raise SystemExit(f"Version must be MAJOR.MINOR.PATCH, got {new!r}")
+    old = json.loads((HERE / "src-tauri" / "tauri.conf.json").read_text())["version"]
+    for rel, pattern, count in VERSION_SITES:
+        path = HERE / rel
+        text = path.read_text()
+        before, after = pattern.format(v=old), pattern.format(v=new)
+        if text.count(before) < count:
+            raise SystemExit(f"{path}: expected {count}x {before!r}, found {text.count(before)}")
+        path.write_text(text.replace(before, after, count))
+        print(f"{rel}: {old} -> {new}")
+    print(
+        f"\nNext:\n  git commit -am 'Bump Orb to {new}.'\n"
+        f"  git tag -a desktop-v{new} -m 'Orb desktop {new}'\n"
+        f"  git push origin main desktop-v{new}"
+    )
+
+
 def main(argv: list[str]) -> int:
     stage = argv[0] if argv else "prepare"
-    if stage == "prepare":
+    if stage == "bump":
+        if len(argv) != 2:
+            raise SystemExit("usage: build.py bump MAJOR.MINOR.PATCH")
+        bump(argv[1])
+    elif stage == "prepare":
         for name in ("python", "frontend", "firefly"):
             print(f"\n=== {name} ===\n")
             STAGES[name]()
