@@ -111,22 +111,16 @@ _MIN_OUTPUT_TOKENS = 256
 
 
 def _default_chat_n_ctx() -> int:
-    return int(os.environ.get("ORB_LLAMA_N_CTX") or "16384")
+    return int(settings.LLAMA_N_CTX)
 
 
 def _default_chat_max_tokens() -> int | None:
-    """Explicit output cap from env, or None to use whatever context remains.
+    """Explicit output cap from Settings, or None to use whatever context remains.
 
     Unset by default: a fixed cap silently truncates long extractions, so the
     runtime sizes ``max_tokens`` per call from ``n_ctx - prompt_tokens`` instead.
     """
-    raw = os.environ.get("ORB_LLAMA_MAX_TOKENS")
-    if not raw:
-        return None
-    try:
-        return int(raw) or None
-    except ValueError:
-        return None
+    return int(settings.LLAMA_MAX_TOKENS) if settings.LLAMA_MAX_TOKENS else None
 
 
 def _clamp_ctx_to_model(gguf_path: Path, requested_ctx: int) -> int:
@@ -156,24 +150,13 @@ def _clamp_ctx_to_model(gguf_path: Path, requested_ctx: int) -> int:
 
 
 def _default_repeat_penalty() -> float:
-    raw = os.environ.get("ORB_LLAMA_REPEAT_PENALTY") or "1.12"
-    try:
-        return float(raw)
-    except ValueError:
-        return 1.12
+    return float(settings.LLAMA_REPEAT_PENALTY)
 
 
 def model_idle_seconds() -> float:
-    """Seconds of inactivity before unloading in-process GGUFs.
-
-    Override with ORB_MODEL_IDLE_SECONDS (default 300 = 5 minutes).
-    Set to 0 to keep models loaded for the whole app session.
-    """
-    raw = os.environ.get("ORB_MODEL_IDLE_SECONDS") or "300"
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return 300.0
+    """Seconds of inactivity before unloading in-process GGUFs (Settings →
+    Local runtime; 0 keeps models loaded for the whole app session)."""
+    return max(0.0, float(settings.MODEL_IDLE_SECONDS))
 
 
 def release_accelerator_memory() -> None:
@@ -224,17 +207,9 @@ def _llama_metal_safe_kwargs(base: dict) -> dict:
     Flash attention stays off unless explicitly opted in.
     """
     kwargs = dict(base)
-    raw_swa = (os.environ.get("ORB_LLAMA_SWA_FULL") or "" or "").strip().lower()
-    if raw_swa in {"0", "false", "no"}:
-        kwargs["swa_full"] = False
-    else:
-        # Default true (content-machine): stable text over max context.
-        kwargs["swa_full"] = True
-    if (os.environ.get("ORB_LLAMA_FLASH_ATTN") or "" or "").strip().lower() in {
-        "1",
-        "true",
-        "yes",
-    }:
+    # Default true (content-machine): stable text over max context.
+    kwargs["swa_full"] = bool(settings.LLAMA_SWA_FULL)
+    if settings.LLAMA_FLASH_ATTN:
         kwargs["flash_attn"] = True
     return kwargs
 
@@ -954,19 +929,14 @@ def detect_llama_backend() -> dict:
     """
     Pick the best acceleration path for this machine.
 
-    Override with:
-      ORB_LLAMA_BACKEND=metal|cuda|vulkan|cpu|auto
-      ORB_LLAMA_N_GPU_LAYERS=<int>   (-1 = all layers on GPU)
+    Settings → Local runtime can force the backend (metal|cuda|vulkan|cpu|auto)
+    and the GPU layer count (-1 = all layers on GPU).
     """
-    forced = (os.environ.get("ORB_LLAMA_BACKEND") or "auto" or "auto").lower().strip()
-    n_gpu_env = os.environ.get("ORB_LLAMA_N_GPU_LAYERS")
+    forced = (settings.LLAMA_BACKEND or "auto").lower().strip()
 
     def _result(backend: str, n_gpu_layers: int, reason: str) -> dict:
-        if n_gpu_env is not None and n_gpu_env != "":
-            try:
-                n_gpu_layers = int(n_gpu_env)
-            except ValueError:
-                pass
+        if settings.LLAMA_N_GPU_LAYERS is not None:
+            n_gpu_layers = int(settings.LLAMA_N_GPU_LAYERS)
         return {
             "backend": backend,
             "n_gpu_layers": n_gpu_layers,
@@ -976,7 +946,7 @@ def detect_llama_backend() -> dict:
 
     if forced in ("cpu", "metal", "cuda", "vulkan"):
         layers = 0 if forced == "cpu" else -1
-        return _result(forced, layers, f"forced via ORB_LLAMA_BACKEND={forced}")
+        return _result(forced, layers, f"forced in Settings: {forced}")
 
     system = sys.platform
     machine = platform.machine().lower()
@@ -1159,7 +1129,7 @@ class LocalLlamaRuntime:
         # content-machine: 16k + swa_full fits Metal; 32k + swa_full OOMs.
         n_ctx = _default_chat_n_ctx()
         max_tokens = _default_chat_max_tokens()
-        prompt_reserve = int(os.environ.get("ORB_LLAMA_PROMPT_RESERVE") or "4096")
+        prompt_reserve = int(settings.LLAMA_PROMPT_RESERVE)
         min_ctx = (max_tokens + prompt_reserve) if max_tokens else 0
         if n_ctx < min_ctx:
             logger.info(
@@ -1170,17 +1140,13 @@ class LocalLlamaRuntime:
                 prompt_reserve,
             )
             n_ctx = min_ctx
-        n_threads = os.environ.get("ORB_LLAMA_N_THREADS")
         kwargs: dict = {
             "n_ctx": n_ctx,
             "n_gpu_layers": int(self.accel["n_gpu_layers"]),
             "verbose": False,
         }
-        if n_threads:
-            try:
-                kwargs["n_threads"] = int(n_threads)
-            except ValueError:
-                pass
+        if settings.LLAMA_N_THREADS:
+            kwargs["n_threads"] = int(settings.LLAMA_N_THREADS)
         return kwargs
 
     def _unload_peers_for_gguf(self, keep: str | None = None) -> None:
@@ -1325,7 +1291,7 @@ class LocalLlamaRuntime:
         chat_kwargs = self._chat_kwargs()
         embed_kwargs = {
             **{k: v for k, v in chat_kwargs.items() if k != "n_ctx"},
-            "n_ctx": int(os.environ.get("ORB_EMBED_N_CTX") or "8192"),
+            "n_ctx": int(settings.EMBED_N_CTX),
         }
         logger.info(
             "Loading embed GGUF in-process (exclusive, n_ctx=%s): %s",
@@ -1485,7 +1451,7 @@ class LocalLlamaRuntime:
             raise PromptTooLongError(
                 f"Prompt is ~{prompt_tokens} tokens; context window is {n_ctx}. "
                 f"Fewer than {_MIN_OUTPUT_TOKENS} tokens would remain for the answer — "
-                "split the input or raise ORB_LLAMA_N_CTX."
+                "split the input or raise the context size in Settings → Local runtime."
             )
         return remaining
 
@@ -1761,7 +1727,7 @@ class LocalLlamaRuntime:
         if choice.get("finish_reason") == "length":
             logger.warning(
                 "Image description filled the context window (%s tokens); raise "
-                "ORB_LLAMA_N_CTX for longer transcriptions",
+                "the context size in Settings for longer transcriptions",
                 max_tokens,
             )
             text += " […]"
@@ -1826,12 +1792,11 @@ class LocalGgufReranker:
                 self._model = None
                 release_accelerator_memory()
             logger.info(f"Loading reranker GGUF (exclusive): {path}")
-            default_ctx = "8192"
             started = time.perf_counter()
             self._model = _construct_llama(
                 Llama,
                 model_path=str(path),
-                n_ctx=int(os.environ.get("ORB_RERANK_N_CTX") or str(default_ctx)),
+                n_ctx=int(settings.RERANK_N_CTX),
                 n_gpu_layers=int(accel.get("n_gpu_layers", 0)),
                 logits_all=True,
                 verbose=False,

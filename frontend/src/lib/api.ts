@@ -101,6 +101,23 @@ export function isRequestCancelled(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+/** llama.cpp knobs from Settings → Models → Local runtime; null = automatic. */
+export interface LocalRuntimeSettings {
+  llama_n_ctx: number;
+  llama_max_tokens: number | null;
+  llama_swa_full: boolean;
+  llama_flash_attn: boolean;
+  llama_backend: "auto" | "metal" | "cuda" | "vulkan" | "cpu";
+  llama_n_gpu_layers: number | null;
+  llama_n_threads: number | null;
+  llama_repeat_penalty: number;
+  llama_prompt_reserve: number;
+  embed_n_ctx: number;
+  rerank_n_ctx: number;
+  model_idle_seconds: number;
+  extraction_chunk_tokens: number | null;
+}
+
 export const api = {
   // ── Chat ────────────────────────────────────────────────────────────────
 
@@ -749,6 +766,14 @@ export const api = {
   /** Ask an OpenAI-compatible server which models it serves. */
   async getEndpointModels(baseUrl: string): Promise<{ base_url: string; models: string[] }> {
     return http.get("/llm/endpoint-models", { base_url: baseUrl });
+  },
+
+  async getLocalRuntime(): Promise<LocalRuntimeSettings> {
+    return http.get("/settings/local-runtime");
+  },
+
+  async saveLocalRuntime(data: LocalRuntimeSettings): Promise<LocalRuntimeSettings> {
+    return http.put("/settings/local-runtime", data);
   },
 
   // ── Maintenance ───────────────────────────────────────────────────────────

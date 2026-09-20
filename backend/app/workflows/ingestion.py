@@ -224,7 +224,7 @@ class IngestionWorkflow:
             finally:
                 await _tracker.end_ingestion(kb_id=self.kb_id)
                 # Models stay resident after a note: the idle watcher
-                # (ORB_MODEL_IDLE_SECONDS, default 5 min) unloads them, and
+                # (MODEL_IDLE_SECONDS in Settings, default 5 min) unloads them, and
                 # loading any other model evicts them anyway. Unloading here
                 # made every single-note ingest re-read multi-GB GGUFs.
 

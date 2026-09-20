@@ -477,7 +477,7 @@ Three layers:
 
 1. `RetrievalService._apply_reranker_logging(query, candidates, top_n, question_attribute, expected_entity_types, score_threshold)` — builds query + texts, applies scores, sorts, slices, thresholds.
 2. `RerankerService.rerank(query, documents, top_n=None)` (`services/reranker.py`) — async façade: returns `[]` if no documents, if `reranker_gguf_path()` is `None` (logs `No GGUF selected — download/select a reranker on the Models page`), or on any exception (logged at ERROR). Otherwise `await asyncio.to_thread(local_gguf_reranker.rerank, ...)` and the rows are returned as-is (`results or []`).
-3. `LocalGgufReranker.rerank` (`services/local_models.py`) — Qwen3-Reranker GGUF via llama-cpp-python, `n_ctx` from `ORB_RERANK_N_CTX` (default 8192), `logits_all=True`. Each document is scored **one at a time, sequentially** with a 1-token completion (`max_tokens=1, temperature=0, logprobs=5`) of the prompt
+3. `LocalGgufReranker.rerank` (`services/local_models.py`) — Qwen3-Reranker GGUF via llama-cpp-python, `n_ctx` from `RERANK_N_CTX` (default 8192), `logits_all=True`. Each document is scored **one at a time, sequentially** with a 1-token completion (`max_tokens=1, temperature=0, logprobs=5`) of the prompt
    ```
    <|im_start|>system\n{_RERANK_SYSTEM}\n<|im_end|>
    <|im_start|>user\n<Instruct>: Given a question, retrieve relevant passages that answer the question\n<Query>: {query}\n\n<Document>: {document}\n<|im_end|>
@@ -535,7 +535,7 @@ Back in the loop, the expansion docs are reranked a second time as whole documen
 
 ### 9.1 What the LLM sees per iteration (no token budgeting)
 
-`iterative_step` concatenates `doc["text"]` of **every** doc passed for that iteration (≤ 10 reranked candidates + ≤ 10 reranked expansion docs), separated by `\n\n---\n\n`. There is **no token budget, no per-doc truncation and no character cap** anywhere in retrieval or the workflow: the only limiters are `RERANKER_TOP_K` (docs per pass) and the natural length of node summaries/isolated contexts. On the local runtime the safety net is `LocalLlamaRuntime._remaining_output_budget` (working tree): the prompt is token-estimated against `n_ctx` (`ORB_LLAMA_N_CTX`, default 16384) and if fewer than 256 tokens would remain it raises `PromptTooLongError` — which propagates out of `iterative_step` and the loop to the chat job, so the turn fails with that message in the status `error` field (`Prompt is ~N tokens; context window is …`) and in `api.log`.
+`iterative_step` concatenates `doc["text"]` of **every** doc passed for that iteration (≤ 10 reranked candidates + ≤ 10 reranked expansion docs), separated by `\n\n---\n\n`. There is **no token budget, no per-doc truncation and no character cap** anywhere in retrieval or the workflow: the only limiters are `RERANKER_TOP_K` (docs per pass) and the natural length of node summaries/isolated contexts. On the local runtime the safety net is `LocalLlamaRuntime._remaining_output_budget` (working tree): the prompt is token-estimated against `n_ctx` (`LLAMA_N_CTX`, default 16384) and if fewer than 256 tokens would remain it raises `PromptTooLongError` — which propagates out of `iterative_step` and the loop to the chat job, so the turn fails with that message in the status `error` field (`Prompt is ~N tokens; context window is …`) and in `api.log`.
 
 Doc text ordering inside the prompt = reranked order (candidates first, then expansion docs). Each candidate's text is the `_build_node_text` block; there is no per-source header, no score, no citation marker — the LLM never sees note ids, and **citations are not produced by the LLM** (see §9.4).
 
@@ -633,7 +633,7 @@ Local mode keeps **one heavy GGUF resident at a time** (`LocalLlamaRuntime` + `L
 
 So one retrieval iteration in local mode is at minimum **chat → embed → rerank → chat** (three loads), and a full 3-iteration turn that answers on iteration 3 is roughly: rewrite (chat) → analyze (chat) → plan step (chat) → [analyze sub-query (chat) → embed → rerank → chat] × 2. The `analyze_query` cache only helps when the exact same query string recurs (e.g. the same question asked twice in a day, or a sub-query identical to the original). Model load time dominates wall time on machines with slow disks; the benchmark reports in `Results/` measured 2–4 min per HotPotQA question with Gemma 4 E4B and up to 10 iterations before the desktop build reduced `MAX_LOOP_ITERATIONS` to 3.
 
-**Idle unload:** `ORB_MODEL_IDLE_SECONDS` (default 300; `0` = never) unloads whichever GGUF is resident after inactivity, so the first turn after a pause pays a cold chat load before the rewrite call.
+**Idle unload:** `MODEL_IDLE_SECONDS` (default 300; `0` = never) unloads whichever GGUF is resident after inactivity, so the first turn after a pause pays a cold chat load before the rewrite call.
 
 **Timing instrumentation (working tree):** `local_models.model_load_clock` (`ModelLoadClock`) accumulates seconds per kind (`chat`, `embed`, `rerank`) on every load. `ChatWorkflow.chat` / `retrieve_for_query` snapshot it before and after and emit one line to `chat.log`:
 
@@ -670,12 +670,12 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `MEILI_INDEX_NAME` | `orb_nodes` | `MeilisearchService` | BM25 index (per-KB variants) |
 | — | — | `ai_gate` | Chat endpoints 503 only when nothing is reachable: no GGUFs, no cloud key, no `LLM_BASE_URL`. |
 | `LOG_LEVEL` | `INFO` | `core/log.py` | `DEBUG` enables `_log_retrieval_details` (full texts sent to LLM) and per-candidate reranker lines |
-| `ORB_MODEL_IDLE_SECONDS` | `300` | `local_models.model_idle_seconds` | Idle unload of resident GGUF (0 = keep) |
-| `ORB_RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | Reranker context; long candidate texts beyond it are truncated by llama.cpp |
+| `MODEL_IDLE_SECONDS` | `300` | `local_models.model_idle_seconds` | Idle unload of resident GGUF (0 = keep) |
+| `RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | Reranker context; long candidate texts beyond it are truncated by llama.cpp |
 | `ORB_RERANK_GGUF` / `ORB_CHAT_GGUF` / `ORB_EMBED_GGUF` | pinned HF paths | `local_models` | Default model ids (overridden by Setup selection in the models manifest) |
-| `ORB_LLAMA_N_CTX` | `16384` | `LocalLlamaRuntime` | Chat context window; bounds the whole `iterative_step` prompt (docs + history + rules) |
-| `ORB_LLAMA_MAX_TOKENS` | unset (working tree; was `10240`) | `create_chat_completion` | Optional hard output cap; unset ⇒ `n_ctx − prompt − 32` |
-| `ORB_LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | Raises `n_ctx` when a fixed `max_tokens` is set |
+| `LLAMA_N_CTX` | `16384` | `LocalLlamaRuntime` | Chat context window; bounds the whole `iterative_step` prompt (docs + history + rules) |
+| `LLAMA_MAX_TOKENS` | unset (working tree; was `10240`) | `create_chat_completion` | Optional hard output cap; unset ⇒ `n_ctx − prompt − 32` |
+| `LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | Raises `n_ctx` when a fixed `max_tokens` is set |
 | `TEMPORAL_DIGEST_PERIOD` | `month` | ingestion only | Granularity of the digest nodes that retrieval sees; retrieval itself has no switch |
 | KB row `llm_provider` / `llm_model` / `llm_ingestion_model` | `NULL` | `KBContext.llm` | Per-KB override of provider + chat model (working tree) |
 
@@ -790,7 +790,7 @@ Work from the logs (§15.1) before touching knobs: `retrieval.log` tells you whi
 | Answers ignore facts that were retrieved | Prompt too long / weak model | Lower `RERANKER_TOP_K`, or move `LLM_PROVIDER`/KB override to a stronger model; check `llm.log` for `PromptTooLongError` or `hit max_tokens` |
 | "I couldn't find any relevant information" on every question | Reranker missing/disabled with default threshold | Select/download the reranker on the Models page, or set `RERANKER_SCORE_THRESHOLD=0`; look for `[Reranker] No GGUF selected` / `Model returned no scores` |
 | Month/day questions miss ordinary entities | Month mode restricts `node_cores` to `period_key` matches; day mode searches contexts only | Enable temporal digests/communities at ingestion, or rephrase without the date; there is no config knob for this behaviour |
-| Slow turns | Model swaps | Read the `[Timing] chat … model_load=… loads=…` line; raise `ORB_MODEL_IDLE_SECONDS`/set 0 to avoid cold loads, use a cloud chat provider to remove chat-model swaps, reduce `RERANKER_TOP_K` to shorten reranker passes |
+| Slow turns | Model swaps | Read the `[Timing] chat … model_load=… loads=…` line; raise `MODEL_IDLE_SECONDS`/set 0 to avoid cold loads, use a cloud chat provider to remove chat-model swaps, reduce `RERANKER_TOP_K` to shorten reranker passes |
 | Follow-ups lose context | History window / summary quality | `CHAT_HISTORY_MAX_MESSAGES` (also increases rewrite prompt size); older facts come from the rolling summary, check `llm.log` for the `summarize_conversation` call |
 
 Changing thresholds requires a backend restart (settings are read at import; `runtime_config.json` covers provider/model keys only). The benchmark harness and `Results/` archive live on the `orb-testing` branch.

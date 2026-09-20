@@ -145,7 +145,7 @@ Because the bootstrap file is shared, a dev session can silently pick up your re
 - **Every KB-scoped route** declares `kb: KBContext = Depends(get_kb)` and uses `kb.graph`, `kb.qdrant`, `kb.meili`, `kb.retrieval_service`, `kb.ingestion_workflow`, `kb.chat_workflow`. Never import a global graph/qdrant instance for user data.
 - **Blocking I/O off the event loop**: wrap Kuzu, filesystem and llama.cpp calls in `asyncio.to_thread` (see `api/notes.py`, `workflows/ingestion.py`).
 - **Loggers**: `logger = get_logger("<Component>")` with a name present in `core/log.py::COMPONENT_LOG_FILES`; otherwise lines land in the default file. Use `extra={...}` for structured fields.
-- **Settings**: add new knobs to `core/config.py::Settings` with a default and list them in [21](21-configuration-reference.md). Read `settings.X`, not `os.environ`, except for the `ORB_LLAMA_*`-style runtime knobs that are deliberately env-only.
+- **Settings**: add new knobs to `core/config.py::Settings` with a default and list them in [21](21-configuration-reference.md). Read `settings.X`, not `os.environ`; user-tunable knobs also go in `runtime_config.LOCAL_RUNTIME_KEYS`, `api/settings.LocalRuntimeSettings` and the Local runtime card.
 - **Runtime-mutable settings** go through `core/runtime_config.py::MUTABLE_KEYS`; never persist secrets there.
 - **LLM output** is untrusted: parse through the Pydantic schemas in `schemas/extraction.py` (alias-tolerant validators) and the JSON-cleaning helpers in `services/llm.py`.
 - **Style**: pylint config in `backend/.pylintrc`; long modules carry `# pylint: disable=too-many-lines`. Imports are absolute (`from app.services...`). Type hints everywhere; `from __future__ import annotations` in new modules.

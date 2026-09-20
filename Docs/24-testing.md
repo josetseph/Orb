@@ -36,7 +36,7 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_extraction_chunking.py` | Paragraph-bounded chunking, token budget, and extraction merge in `app/workflows/extraction_chunking.py`. | `TestSplitForExtraction`, `TestChunkTokenBudget`, `TestMergeExtractions` |
 | `backend/tests/unit/test_ingestion_chunked_extraction.py` | Chunk/truncate/retry loop and batched image titling in `ingestion_agent`; documents the duck-typed LLM protocol via `_StubLLM`. | 4 async tests |
 | `backend/tests/unit/test_kb_llm_config.py` | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
-| `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `ORB_LLAMA_MAX_TOKENS`, GGUF resolution, `response_format` pass-through in JSON mode, eager projector init dropping a broken projector so text chat still works. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf`, `TestJsonMode`, `TestEagerProjectorInit` (17 tests) |
+| `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `LLAMA_MAX_TOKENS`, GGUF resolution, `response_format` pass-through in JSON mode, eager projector init dropping a broken projector so text chat still works. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf`, `TestJsonMode`, `TestEagerProjectorInit` (17 tests) |
 | `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
 | `backend/tests/unit/test_vault_migration.py` | The one-time vault sweep (`vault_sync.migrate_vault_files`): legacy link shapes fixed in place and the second run is a no-op; v2 relativises `/vault-files/<any kb>/…` links and their markers; v3 moves stray non-`.md` files under `attachments/` and rewrites their links; `.orb/migrated-v3` marker written. | 3 tests |
 | `backend/tests/unit/test_upload_folder.py` | `store_upload` puts a file in `attachments/<note folder>/`, root notes upload flat, and `..`/absolute folders raise `Invalid folder`. | 3 tests |
@@ -94,7 +94,7 @@ In short: the unit tests need the **full** backend environment installed, even t
 - `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "local"` for every test, regardless of the shell environment. Importing `app.core.config` still evaluates `Settings()` once from the process environment (`extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). Exported `Settings` variables in your shell leak into the tests except for the keys individual tests monkeypatch.
 - `test_kb_llm_config.py` has its own autouse fixture that overrides `LLM_PROVIDER` to `"local"` and pins `LLM_MODEL`, `CHAT_MODEL`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL`, `GEMINI_MODEL`, `OPENAI_MODEL` — it runs after `patch_settings` and wins.
 - `normalize_base_url` lives only in `backend/app/services/credentials.py` (the UI sends the raw URL); `test_credentials.py` covers the URL corpus and `test_credentials_keyring.py` the keychain persistence with `keyring` mocked.
-- Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder before running the suite: `app/services/graph.py` opens the configured Kuzu file at import and the running desktop app holds a lock on the real one.
+- Settings read by code under test and controlled via `monkeypatch.setattr(config.settings, …)`: `EXTRACTION_CHUNK_TOKENS`, `LLAMA_MAX_TOKENS`; `test_local_runtime_settings.py` covers the `PUT /settings/local-runtime` round-trip. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder before running the suite: `app/services/graph.py` opens the configured Kuzu file at import and the running desktop app holds a lock on the real one.
 - Nothing writes to disk except `tmp_path` fixtures in `test_local_runtime_budget.py`.
 
 ### 3.4 Observed state of the suite (2026-09-20)
@@ -230,7 +230,7 @@ It imported `can_evolve`, `get_contradicting_types`, `get_expected_relationships
 Targets `app/workflows/extraction_chunking.py`:
 
 - `split_for_extraction(text, budget_tokens, count_tokens) -> list[str]`: short text returned as one chunk; whitespace-only → `[]`; splits on `\n\n` paragraph boundaries first, packing whole paragraphs up to the budget; an oversized paragraph falls back to sentence splitting (chunks end with `.`); no chunk is empty; the concatenation of all chunks preserves every word in order.
-- `chunk_token_budget(context_tokens, expected_output_tokens) -> int`: `budget × 3.5 ≤ context − output` (input plus ~2.5× output must fit the window); capped at **4000**; floored at `MIN_SPLIT_TOKENS`; env `ORB_EXTRACTION_CHUNK_TOKENS` overrides the cap in either direction.
+- `chunk_token_budget(context_tokens, expected_output_tokens) -> int`: `budget × 3.5 ≤ context − output` (input plus ~2.5× output must fit the window); capped at **4000**; floored at `MIN_SPLIT_TOKENS`; the `EXTRACTION_CHUNK_TOKENS` setting overrides the cap in either direction.
 - `merge_extractions(parts) -> Extraction`: `None` parts skipped; nodes deduplicated case-insensitively by name with `isolated_context` concatenated (duplicates not repeated); a generic `"thing"` type is upgraded by a later specific type; relationships deduplicated by case-insensitive `(source, target, relationship_type)`, first occurrence wins (there are no per-edge scores); the first non-empty `title` wins.
 
 ### 5.10 `test_ingestion_chunked_extraction.py` (new) — the agent's chunk/retry loop
@@ -240,7 +240,7 @@ Imports `app.workflows.agents.ingestion_agent` directly (the package `__init__` 
 Contracts for `await agent._extract_with_chunking(llm, note_text, images) -> (Extraction, chunk_count)`:
 
 - A short note is a single LLM call, `chunk_count == 1`.
-- A 1000-word, 20-paragraph note with `ORB_EXTRACTION_CHUNK_TOKENS=400` produces ≥3 chunks, one call per chunk, and the merged extraction has exactly 1000 nodes (nothing lost, nothing duplicated) with the first chunk's title.
+- A 1000-word, 20-paragraph note with `EXTRACTION_CHUNK_TOKENS=400` produces ≥3 chunks, one call per chunk, and the merged extraction has exactly 1000 nodes (nothing lost, nothing duplicated) with the first chunk's title.
 - When a chunk's response comes back `truncated=True` (unparseable JSON, `finish_reason="length"`), the agent halves the chunk and re-extracts **without sleeping** (`asyncio.sleep` is patched and must not be called) and without incrementing `chunk_count`; exactly one oversized call is made.
 - `await agent._batch_image_titles(llm, items) -> dict[token, title]`: parses a JSON array (tolerating leading prose like `"Sure! "`), maps 1-based `index` to the `{{ORB_IMAGE_TITLE_n}}` tokens, drops empty titles and out-of-range indices, and returns `{}` on any exception.
 
@@ -259,7 +259,7 @@ A `_FakeLlama` exposing only `n_ctx()` and `tokenize()` is injected as `runtime.
 
 - `LocalLlamaRuntime._remaining_output_budget(messages)` = `n_ctx − (Σ tokens + 8 per message + 4) − lm._GEN_SAFETY_MARGIN`; raises `lm.PromptTooLongError` when the prompt fills the window.
 - `count_tokens(text)`: with no resident model uses the heuristic `len(text) // 4 + 1` (`""` → 0); with a model uses its tokenizer.
-- `lm._default_chat_max_tokens()`: env `ORB_LLAMA_MAX_TOKENS` — unset → `None` (dynamic budget), integer → that cap, garbage → `None`.
+- `lm._default_chat_max_tokens()`: env `LLAMA_MAX_TOKENS` — unset → `None` (dynamic budget), integer → that cap, garbage → `None`.
 - `resolve_chat_gguf(model_id)`: `None`/`""`/`"local-chat"` → `None` (meaning "use the Setup selection"); known catalog id not on disk → `RuntimeError("… not downloaded")`; known id present (`_gguf_looks_complete` true) → `resolve_models_dir()/gguf/<option.hf_file>`; an embedding id (`qwen3-embed-0.6b-q8`) → `RuntimeError("… not a chat model")`; an explicit existing `.gguf` path → that `Path`; unknown name → `None`.
 
 Why it matters: these are the invariants behind "one heavy model resident at a time" and the dynamic `max_tokens` that keeps long chats from overflowing the context — see [Local models and inference](12-local-models-and-inference.md) and [Data directory layout](22-data-directory-layout.md) for `models_dir/gguf/`.

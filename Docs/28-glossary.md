@@ -109,7 +109,7 @@
 | **Exclusive residency** | Only one heavy model family is loaded at a time; loading one unloads the others. | [12](12-local-models-and-inference.md) |
 | **Model catalog / manifest** | `model_catalog.py` lists downloadable GGUFs; the manifest in `MODELS_DIR` records what is installed/selected. | [12](12-local-models-and-inference.md) |
 | **Staging dir** | Local SSD cache (`~/Library/Caches/Orb/model-downloads`) used before moving downloads onto NAS/cloud-synced `MODELS_DIR`. | [12](12-local-models-and-inference.md) |
-| **SWA / swa_full** | Sliding-window attention; `ORB_LLAMA_SWA_FULL=true` avoids Gemma 4 repetition loops. | [12](12-local-models-and-inference.md) |
+| **SWA / swa_full** | Sliding-window attention; `LLAMA_SWA_FULL=true` avoids Gemma 4 repetition loops. | [12](12-local-models-and-inference.md) |
 | **Ordinal loop** | Failure mode where Gemma 4 repeats ordinals / "or the"; detected and retried. | [12](12-local-models-and-inference.md) |
 | **Provider axes** | Independent chat, ingestion and embedding provider/model settings. | [13](13-llm-providers-and-prompting.md) |
 | **local (alias)** | `LLM_PROVIDER=local` means in-process GGUF; historical alias for the former Ollama/LM Studio paths. | [13](13-llm-providers-and-prompting.md) |

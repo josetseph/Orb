@@ -1002,14 +1002,6 @@ def main() -> int:
     for key, value in {
         "LLM_PROVIDER": "local",
         "EMBEDDING_PROVIDER": "local",
-        # GGUF context / generation (one model loaded at a time). No default
-        # output cap: the API sizes max_tokens per call from the context left.
-        "ORB_LLAMA_N_CTX": "16384",
-        "ORB_LLAMA_SWA_FULL": "true",
-        "ORB_LLAMA_REPEAT_PENALTY": "1.12",
-        "ORB_LLAMA_PROMPT_RESERVE": "4096",
-        "ORB_EMBED_N_CTX": "8192",
-        "ORB_RERANK_N_CTX": "8192",
     }.items():
         os.environ.setdefault(key, value)
 

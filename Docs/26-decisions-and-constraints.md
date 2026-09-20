@@ -53,7 +53,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Enforced: residency manager in `local_models.py` (`_unload_peers_for_gguf`, `ensure_chat_loaded`, `ensure_embed_loaded`), `_unload_multimodal_families`, `multimodal_runtime` single-family policy; `ModelLoadClock` reports load time separately so swaps are visible in stage timings.
 
 ### B3. Chat GGUF defaults: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`, flash-attention opt-in, no fixed output cap
-- Rejected: 32k context (OOMs with full SWA on ~24 GB Metal); compact SWA (causes Gemma 4 "ordinal loops" / "or the" repetition cascades); a fixed `ORB_LLAMA_MAX_TOKENS=10240` (silently truncated long extractions — removed as a default in the current working tree, the runtime now sizes `max_tokens` from the context left after the prompt).
+- Rejected: 32k context (OOMs with full SWA on ~24 GB Metal); compact SWA (causes Gemma 4 "ordinal loops" / "or the" repetition cascades); a fixed `LLAMA_MAX_TOKENS=10240` (silently truncated long extractions — removed as a default in the current working tree, the runtime now sizes `max_tokens` from the context left after the prompt).
 - Enforced: `local_models.py` defaults + repetition-cascade detector with abort/retry; the `os.environ.setdefault` block in `desktop_runtime.main()`.
 
 ### B4. GGUF selection lives in the models manifest; embed dims must match Qdrant
@@ -152,7 +152,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### D5. Long notes are chunked for extraction rather than truncated
 - Rationale: extraction JSON is ~2–3× the input; a single call overflows the context and truncates mid-JSON (working tree module `extraction_chunking.py`, tests `test_extraction_chunking.py`).
-- Enforced: `chunk_token_budget`, `ORB_EXTRACTION_CHUNK_TOKENS`, merge of per-chunk `Extraction`s.
+- Enforced: `chunk_token_budget`, `EXTRACTION_CHUNK_TOKENS`, merge of per-chunk `Extraction`s.
 
 ### D6. Enrichment blocks are stripped before re-ingest
 - Rationale: transcripts were duplicated on every re-ingest.

@@ -50,18 +50,14 @@ class TestOutputBudget:
         assert runtime.count_tokens("one two three") == 3
 
 
-class TestMaxTokensEnv:
+class TestMaxTokensSetting:
     def test_unset_means_dynamic(self, monkeypatch):
-        monkeypatch.delenv("ORB_LLAMA_MAX_TOKENS", raising=False)
+        monkeypatch.setattr(lm.settings, "LLAMA_MAX_TOKENS", None)
         assert lm._default_chat_max_tokens() is None
 
     def test_explicit_cap_is_honoured(self, monkeypatch):
-        monkeypatch.setenv("ORB_LLAMA_MAX_TOKENS", "2048")
+        monkeypatch.setattr(lm.settings, "LLAMA_MAX_TOKENS", 2048)
         assert lm._default_chat_max_tokens() == 2048
-
-    def test_garbage_is_ignored(self, monkeypatch):
-        monkeypatch.setenv("ORB_LLAMA_MAX_TOKENS", "lots")
-        assert lm._default_chat_max_tokens() is None
 
 
 class TestResolveChatGguf:

@@ -106,7 +106,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `INGESTION_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model`, `api/settings.py`, `kb_registry._system_model_for` | Provider-agnostic ingestion model; wins over fallbacks | runtime (`ingestion_model`), env |
 | `INGESTION_LLM_MODEL` | str \| None / `"local-chat"` | `Settings`; `llm.get_ingestion_model` (local branch), `kb_registry._system_model_for` (ignored when equal to the placeholder) | Local ingestion model fallback | env |
 | `INGESTION_GEMINI_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model` (gemini branch) | Gemini ingestion fallback before `GEMINI_MODEL` | env |
-| `ORB_EXTRACTION_CHUNK_TOKENS` (working tree) | int / `4000` ceiling | env — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
+| `EXTRACTION_CHUNK_TOKENS` | int \| None / `None` (learned, `4000` ceiling) | `Settings`, edited in Models → Local runtime — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
 | `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | env |
 | `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | env |
 
@@ -118,7 +118,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `EMBEDDING_MODEL` | str / `"local-embed"` | `Settings`; `embedding.py` (`is_qwen3` substring check → query instruction), overwritten by `sync_embedding_infrastructure`/`ensure_chat_and_embed_models` | Embedding model id (catalog id from manifest) | manifest > env |
 | `EMBEDDING_DIMENSIONS` | int / `1024` | `Settings`; `qdrant_service` (vector size for collection create), `local_models` (manifest sync) | Must match the GGUF's output; changed dims trigger Qdrant collection recreation in `sync_embedding_infrastructure` | manifest > env |
 | `ORB_EMBED_GGUF` | str / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | env (import-time constant `local_models.EMBED_MODEL_ID`) | Legacy default GGUF id used when the manifest has no selection (`gguf_paths_if_present` fallback) | rarely |
-| `ORB_EMBED_N_CTX` | int / `8192` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked` | `n_ctx` for the embed GGUF | runtime (`8192`) |
+| `EMBED_N_CTX` | int / `8192` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked` | `n_ctx` for the embed GGUF | runtime (`8192`) |
 
 ### 3.6 Qdrant
 
@@ -148,28 +148,27 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 Kuzu has no other knobs; per-KB paths, healing of legacy directory paths (`normalize_kuzu_path`) and the schema are in [14](14-graph-storage-kuzu.md).
 
-### 3.9 Local GGUF runtime (`ORB_LLAMA_*`, `ORB_EMBED_*`, `ORB_RERANK_*`, model ids)
+### 3.9 Local GGUF runtime (`LLAMA_*`, `ORB_EMBED_*`, `ORB_RERANK_*`, model ids)
 
 All read in `backend/app/services/local_models.py` (and `model_catalog.py` for the light-weight detector) via `os.environ.get("ORB_X")` **at each model load**, so changing them and reloading the model (idle unload or Setup "select model") takes effect without a restart — except the three `*_GGUF` constants.
 
 | Name (alias) | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `ORB_LLAMA_BACKEND` | `auto` \| `metal` \| `cuda` \| `vulkan` \| `cpu` / `auto` | `local_models.detect_llama_backend`, `model_catalog.detect_accel_backend` (only `ORB_` name) | Forces the llama.cpp accel path. `auto`: macOS → `metal` (`n_gpu_layers=-1`); Linux/Windows with `nvidia-smi` → `cuda` (-1); else `cpu` (0). Forced `cpu` → 0 layers, forced GPU → -1 | rarely |
-| `ORB_LLAMA_N_GPU_LAYERS` | int / per backend (-1 GPU, 0 CPU) | same | Overrides layer offload count | rarely |
-| `ORB_LLAMA_N_CTX` | int / `16384` | `_default_chat_n_ctx` → `_chat_kwargs`, `_remaining_output_budget` fallback, `llm.ingestion_context_tokens` | Chat GGUF context window. Raised automatically to `max_tokens + prompt_reserve` when an explicit `ORB_LLAMA_MAX_TOKENS` is set and `n_ctx` is smaller. Comment: 16k + `swa_full` fits ~24 GB Metal; 32k OOMs | runtime (`16384`) |
-| `ORB_LLAMA_MAX_TOKENS` | int \| unset / **unset** (working tree; was `10240`) | `_default_chat_max_tokens` → `create_chat_completion`, `_chat_kwargs` | Explicit output cap. **When unset (new default), the runtime sizes `max_tokens` per call as `n_ctx − prompt_tokens − 32` (`_GEN_SAFETY_MARGIN`), raising `PromptTooLongError` if fewer than 256 tokens (`_MIN_OUTPUT_TOKENS`) would remain.** `0`/non-int → treated as unset. Supervisor now injects it **only if the parent env has it** (committed code injected `"10240"`) | runtime (pass-through only) |
-| `ORB_LLAMA_PROMPT_RESERVE` | int / `4096` | `_chat_kwargs` | Minimum context reserved for the prompt when computing `min_ctx = max_tokens + prompt_reserve` | runtime (`4096`) |
-| `ORB_LLAMA_SWA_FULL` | bool-ish / `true` | `_llama_metal_safe_kwargs` | `swa_full=False` only for `0`/`false`/`no`; otherwise `True` (required for stable Gemma 4 output; compact SWA causes "or the" ordinal loops, detected by `_ORDINAL_LOOP_RE` → `RepetitionLoopError`) | runtime (`true`) |
-| `ORB_LLAMA_FLASH_ATTN` | bool-ish / off | `_llama_metal_safe_kwargs` | `flash_attn=True` for `1`/`true`/`yes` | rarely |
-| `ORB_LLAMA_REPEAT_PENALTY` | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs | Sampling repeat penalty | runtime (`1.12`) |
-| `ORB_LLAMA_N_THREADS` | int / llama.cpp default | `_chat_kwargs` | CPU threads | rarely |
-| `ORB_EMBED_N_CTX` | int / `8192` | `_load_embed_unlocked` | Embed GGUF context | runtime (`8192`) |
-| `ORB_RERANK_N_CTX` | int / `8192` | `LocalGGUFReranker.ensure_loaded` | Reranker GGUF context | runtime (`8192`) |
-| `ORB_MODEL_IDLE_SECONDS` | float / `300` | `model_idle_seconds` → idle watcher threads for chat/embed and reranker | Seconds of inactivity before in-process GGUFs are unloaded; `0` = never unload; negatives clamp to 0 | rarely |
+| `LLAMA_BACKEND` | `auto` \| `metal` \| `cuda` \| `vulkan` \| `cpu` / `auto` | `local_models.detect_llama_backend`, `model_catalog.detect_accel_backend` (only `ORB_` name) | Forces the llama.cpp accel path. `auto`: macOS → `metal` (`n_gpu_layers=-1`); Linux/Windows with `nvidia-smi` → `cuda` (-1); else `cpu` (0). Forced `cpu` → 0 layers, forced GPU → -1 | rarely |
+| `LLAMA_N_GPU_LAYERS` | int / per backend (-1 GPU, 0 CPU) | same | Overrides layer offload count | rarely |
+| `LLAMA_N_CTX` | int / `16384` | `_default_chat_n_ctx` → `_chat_kwargs`, `_remaining_output_budget` fallback, `llm.ingestion_context_tokens` | Chat GGUF context window. Raised automatically to `max_tokens + prompt_reserve` when an explicit `LLAMA_MAX_TOKENS` is set and `n_ctx` is smaller. Comment: 16k + `swa_full` fits ~24 GB Metal; 32k OOMs | runtime (`16384`) |
+| `LLAMA_MAX_TOKENS` | int \| unset / **unset** (working tree; was `10240`) | `_default_chat_max_tokens` → `create_chat_completion`, `_chat_kwargs` | Explicit output cap. **When unset (new default), the runtime sizes `max_tokens` per call as `n_ctx − prompt_tokens − 32` (`_GEN_SAFETY_MARGIN`), raising `PromptTooLongError` if fewer than 256 tokens (`_MIN_OUTPUT_TOKENS`) would remain.** `0`/non-int → treated as unset. Supervisor now injects it **only if the parent env has it** (committed code injected `"10240"`) | runtime (pass-through only) |
+| `LLAMA_PROMPT_RESERVE` | int / `4096` | `_chat_kwargs` | Minimum context reserved for the prompt when computing `min_ctx = max_tokens + prompt_reserve` | runtime (`4096`) |
+| `LLAMA_SWA_FULL` | bool-ish / `true` | `_llama_metal_safe_kwargs` | `swa_full=False` only for `0`/`false`/`no`; otherwise `True` (required for stable Gemma 4 output; compact SWA causes "or the" ordinal loops, detected by `_ORDINAL_LOOP_RE` → `RepetitionLoopError`) | runtime (`true`) |
+| `LLAMA_FLASH_ATTN` | bool-ish / off | `_llama_metal_safe_kwargs` | `flash_attn=True` for `1`/`true`/`yes` | rarely |
+| `LLAMA_REPEAT_PENALTY` | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs | Sampling repeat penalty | runtime (`1.12`) |
+| `LLAMA_N_THREADS` | int / llama.cpp default | `_chat_kwargs` | CPU threads | rarely |
+| `EMBED_N_CTX` | int / `8192` | `_load_embed_unlocked` | Embed GGUF context | runtime (`8192`) |
+| `RERANK_N_CTX` | int / `8192` | `LocalGGUFReranker.ensure_loaded` | Reranker GGUF context | runtime (`8192`) |
+| `MODEL_IDLE_SECONDS` | float / `300` | `model_idle_seconds` → idle watcher threads for chat/embed and reranker | Seconds of inactivity before in-process GGUFs are unloaded; `0` = never unload; negatives clamp to 0 | rarely |
 | `ORB_CHAT_GGUF` | HF `repo/file` / `bartowski/google_gemma-4-E4B-it-GGUF/google_gemma-4-E4B-it-Q4_K_M.gguf` | import-time `CHAT_MODEL_ID` | Legacy default chat GGUF (used only when the manifest has no selection) | rarely |
 | `ORB_EMBED_GGUF` | / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | `EMBED_MODEL_ID` | Legacy default embed GGUF | rarely |
 | `ORB_RERANK_GGUF` | / `mradermacher/Qwen3-Reranker-0.6B-GGUF/Qwen3-Reranker-0.6B.Q4_K_M.gguf` | `RERANK_MODEL_ID` → `reranker_gguf_path` fallback | Legacy default reranker GGUF | rarely |
-| `ORB_RAM_GB` | float / detected (`os.sysconf`; ctypes on Windows) | `model_catalog.total_ram_gb` | Fakes installed RAM for catalog filtering (which chat GGUFs Setup offers) | tests / rarely |
 | `MODEL_RERANKER_LOCAL` | str / `qwen3-reranker-0.6b` | `Settings`; `retrieval.py` (labels only), overwritten from manifest | Display name of the reranker in logs/progress | manifest > env |
 
 The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_manifest.json` (`selection.chat_path`, `embed_path`, `reranker_path`, `embedding_dims`, ids), written by Setup — not from env. See [12](12-local-models-and-inference.md).
@@ -243,7 +242,7 @@ The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_m
 | `ORB_URL` | `http://127.0.0.1:<ORB_API_PORT>` | `runtime.rs` | Window URL override (Vite dev server on 3700) |
 | `ORB_PATHS_FILE`, `ORB_SKIP_WIZARD`, `ORB_ROOT`, `ORB_PYTHON`, `ORB_USE_RESOURCES` | see [04](04-desktop-shell.md) §6 | `runtime.rs` | Scratch profile, skip setup, dev layout/interpreter overrides |
 | `ORB_QDRANT_VERSION`, `ORB_MEILI_VERSION`, `ORB_SHA256_<ASSET>` | `v1.18.2`, `v1.49.0`, unset | `desktop_runtime.py` | Binary versions fetched into `DATA_DIR/bin`; optional checksum pins |
-| `LLM_PROVIDER`, `EMBEDDING_PROVIDER`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX` | `local` / `local` / see §3.10 | `desktop_runtime.py` `os.environ.setdefault` | Defaults the runtime applies unless already exported |
+| `LLM_PROVIDER`, `EMBEDDING_PROVIDER` | `local` / `local` | `desktop_runtime.py` `os.environ.setdefault` | Defaults the runtime applies unless already exported |
 
 Env the shell sets on the runtime process (`runtime.rs`): `PYTHONPATH=<backend>`, `PATH` (with Homebrew/usr-local bins for ffmpeg), `FRONTEND_DIR` and `ORB_RESOURCES_ROOT` (packaged builds only). Env the runtime sets before importing `Settings` (`desktop_runtime.main()`): `QDRANT_HOST=127.0.0.1`, `QDRANT_PORT`, `MEILI_HOST=127.0.0.1`, `MEILI_PORT`, `MEILI_MASTER_KEY`, `FIREFLY_BASE_URL`, `FIREFLY_RUNTIME_FILE`, plus the `setdefault` block above. Paths come from `paths.json` through `app.core.paths`; `ORB_DATA_DIR`/`ORB_MODELS_DIR` are not injected (they still override when exported).
 

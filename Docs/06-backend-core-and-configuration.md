@@ -740,7 +740,7 @@ Only imported by the multimodal stack (Qwen3-ASR/Marlin in `multimodal_runtime.p
 | `resolve_torch_dtype(device) -> torch.dtype` | `bfloat16` on `mps`/`cuda`, `float32` on CPU. |
 | `prepare_qwen3_5_inference(device)` | Called before `AutoModelForCausalLM.from_pretrained` for Marlin (Qwen3.5-based). If not (`cuda` + flash-linear-attention + causal-conv1d available): logs a warning on CUDA (install hint) or an info on other devices, then sets `transformers.models.qwen3_5.modeling_qwen3_5.is_fast_path_available = True` to silence transformers' misleading install warning while layers still bind the pure-PyTorch fallbacks. Requires `transformers>=5.7` (`requirements-multimodal.txt`). |
 
-This module is distinct from GGUF backend detection (`local_models.detect_llama_backend` / `model_catalog.detect_accel_backend`, driven by `ORB_LLAMA_BACKEND` / `ORB_LLAMA_N_GPU_LAYERS`), documented in [12](12-local-models-and-inference.md) and [21](21-configuration-reference.md).
+This module is distinct from GGUF backend detection (`local_models.detect_llama_backend` / `model_catalog.detect_accel_backend`, driven by `LLAMA_BACKEND` / `LLAMA_N_GPU_LAYERS`), documented in [12](12-local-models-and-inference.md) and [21](21-configuration-reference.md).
 
 ## 16. `local_storage.py` — vault attachments
 
@@ -831,7 +831,7 @@ Replaces the former RustFS/S3 object store. Attachments live only under `<vault_
 - `3f21e08` (2026-08-02) "Ship LifeOS as a Docker-free desktop app" — SQLite + `NullPool`, `paths.json` bootstrap, `api_desktop` router, `AI_SETUP_MODE`, `MAX_LOOP_ITERATIONS` lowered to 3, runtime config file.
 - `fbcafe7` (2026-08-03) "Align codebase with Orb desktop product" — rename to Orb, `TYPESENSE_*` → `MEILI_*` with alias validator, desktop router moved first, `Note.content` deprecated in favour of vault files, `ix_notes_kb_rel_path` manual index.
 - `72413b9` — note title ↔ vault filename sync; `b35d612` — wikilink autocomplete; `8de5cda`/`e14dc67` (0.2.0) — ingestion/retrieval batching.
-- `b4d14cd` / `34b00b3` / `019fd13` (2026-09) — per-KB LLM overrides (`knowledge_bases.llm_*`, `KBContext.llm`, `require_ai(kb)`), chunked extraction (`workflows/extraction_chunking.py`, `ORB_EXTRACTION_CHUNK_TOKENS`), no-default `ORB_LLAMA_MAX_TOKENS`, `ModelLoadClock`, and the finance-chat `time` import fix.
+- `b4d14cd` / `34b00b3` / `019fd13` (2026-09) — per-KB LLM overrides (`knowledge_bases.llm_*`, `KBContext.llm`, `require_ai(kb)`), chunked extraction (`workflows/extraction_chunking.py`, `EXTRACTION_CHUNK_TOKENS`), no-default `LLAMA_MAX_TOKENS`, `ModelLoadClock`, and the finance-chat `time` import fix.
 - `2c122cd` (2026-09) — bring-your-own local GGUFs: `services/gguf_metadata.py` + `services/model_discovery.py`; the curated catalog stops gating selection.
 - `1c4c69d` (2026-09) — cloud API keys moved into the OS keychain: `services/credentials.py`, `api/credentials.py` (the shell-side store that existed then is gone; the backend now talks to the keychain directly via `keyring`).
 - Working tree — `openai_compat` provider: any OpenAI-compatible URL + key + model name, with the endpoint URL as the credential identity (`knowledge_bases.llm_base_url`).

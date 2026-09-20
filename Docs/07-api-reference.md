@@ -479,6 +479,10 @@ Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default
 
 `model` = `llm_service.get_chat_model() or settings.LLM_MODEL`; `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL`.
 
+#### GET / PUT /api/v1/settings/local-runtime
+
+The llama.cpp knobs shown in Models → Local runtime. `GET` returns the thirteen `runtime_config.LOCAL_RUNTIME_KEYS` (`llama_n_ctx`, `llama_max_tokens`, `llama_swa_full`, `llama_flash_attn`, `llama_backend`, `llama_n_gpu_layers`, `llama_n_threads`, `llama_repeat_penalty`, `llama_prompt_reserve`, `embed_n_ctx`, `rerank_n_ctx`, `model_idle_seconds`, `extraction_chunk_tokens`; `null` = automatic). `PUT` takes the full object (`LocalRuntimeSettings`, range-checked → **422**), saves it to `runtime_config.json`, applies it to `settings`, unloads the chat/embed and reranker models so the next request reloads with the new values, and returns the state.
+
 #### PATCH /api/v1/settings
 
 Body (`LLMSettings`, all optional): `provider`, `model`, `ingestion_model`, `base_url`. API keys are **never** accepted here — they go to `PUT /api/v1/credentials`, which keeps them in memory and lets the desktop shell hold the only on-disk copy as keychain ciphertext.
@@ -634,7 +638,7 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 `require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, commits, then `BackgroundTasks.add_task(kb.get_ingestion_workflow().process_note, NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
 
-`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`ORB_MODEL_IDLE_SECONDS`, default 5 min) unloads them.
+`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
 
 #### POST /api/v1/ingest
 

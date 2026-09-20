@@ -76,6 +76,22 @@ class Settings(BaseSettings):
     MAX_LOOP_ITERATIONS: int = 3
     CHAT_HISTORY_MAX_MESSAGES: int = 24
 
+    # Local runtime (llama.cpp). Edited in Settings → Local runtime and saved to
+    # DATA_DIR/runtime_config.json; applied on the next model load.
+    LLAMA_N_CTX: int = 16384
+    LLAMA_MAX_TOKENS: int | None = None  # None = whatever context is left
+    LLAMA_SWA_FULL: bool = True  # full-size cache on sliding-window layers
+    LLAMA_FLASH_ATTN: bool = False
+    LLAMA_BACKEND: str = "auto"  # auto | metal | cuda | vulkan | cpu
+    LLAMA_N_GPU_LAYERS: int | None = None  # None = backend default (-1 = all)
+    LLAMA_N_THREADS: int | None = None
+    LLAMA_REPEAT_PENALTY: float = 1.12
+    LLAMA_PROMPT_RESERVE: int = 4096
+    EMBED_N_CTX: int = 8192
+    RERANK_N_CTX: int = 8192
+    MODEL_IDLE_SECONDS: float = 300  # 0 = keep models loaded
+    EXTRACTION_CHUNK_TOKENS: int | None = None  # None = learned per model
+
     QDRANT_HOST: str = "127.0.0.1"
     QDRANT_PORT: int = 6333
     QDRANT_API_KEY: str | None = None

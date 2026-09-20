@@ -65,7 +65,7 @@ There are **no model HTTP sidecars**. Qwen3-ASR, Marlin, chat (with its vision p
 flowchart LR
   W[First-run setup page<br/>desktop/shell/index.html] -->|save_setup command| PJ[paths.json<br/>App Support/Orb/paths.json]
   PJ --> SUP[desktop_runtime.py / app.core.paths]
-  SUP -->|env: ORB_DATA_DIR, ORB_MODELS_DIR, ORB_PATHS_FILE,<br/>QDRANT_*, MEILI_*, FIREFLY_*, ORB_LLAMA_*| API[backend Settings]
+  SUP -->|env: ORB_DATA_DIR, ORB_MODELS_DIR, ORB_PATHS_FILE,<br/>QDRANT_*, MEILI_*, FIREFLY_*| API[backend Settings]
   RC[DATA_DIR/runtime_config.json<br/>provider/model/ingestion_model/base_url] -->|startup + PATCH /settings| API
 ```
 

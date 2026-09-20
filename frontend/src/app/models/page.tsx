@@ -7,6 +7,7 @@ import { SettingRow, SettingsShell } from "@/components/settings-shell";
 import type { ModelsPageState } from "@/lib/models-types";
 import { endpointName, endpointRequestUrl, setEndpointName } from "@/lib/endpoint-names";
 import { Card, ModelPicker, SavedTick } from "./_components/ModelPicker";
+import { LocalRuntimeCard } from "./_components/LocalRuntimeCard";
 
 type Mode = "local" | "cloud";
 
@@ -523,6 +524,7 @@ export default function ModelsPage() {
             )}
           </div>
         </Card>
+        <LocalRuntimeCard />
       </div>
     </SettingsShell>
   );

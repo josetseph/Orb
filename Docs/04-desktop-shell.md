@@ -64,7 +64,7 @@ leaves nothing behind.
 - **Paths**: `ORB_DATA_DIR` / `ORB_MODELS_DIR` / `paths.json` via `app.core.paths`.
 - **Cloud-sync guard**: `main()` prints `[desktop] WARNING: data dir <path> is inside a cloud-synced folder; move it to local disk (Settings -> Storage)` when any component of the data dir is `CloudStorage`, `Mobile Documents`, `Dropbox` or `Google Drive` — evicted Files-On-Demand placeholders block reads and sync clients corrupt SQLite/Kuzu/Qdrant under a running engine. Keep `DATA_DIR` on local disk (the default `~/Library/Application Support/Orb/data` is); only the markdown vault belongs in a synced folder, pinned "Always keep on this device".
 - **Env defaults** (overridable): `LLM_PROVIDER=local`,
-  `EMBEDDING_PROVIDER=local`, `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`.
+  `EMBEDDING_PROVIDER=local`, `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`.
 - **Sidecars**: Qdrant and Meilisearch binaries are downloaded on first run into
   `DATA_DIR/bin/<platform>/` (optional `ORB_SHA256_<ASSET>` pins). The Meili master
   key lives in `DATA_DIR/meili_master_key`. Firefly: portable PHP + app seeded from

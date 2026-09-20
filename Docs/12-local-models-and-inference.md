@@ -1,6 +1,6 @@
 # Local Models and Inference
 
-**What this covers.** Everything that runs a model *inside the FastAPI process*: the resource-aware GGUF catalog (`model_catalog.py`), the on-disk `MODELS_DIR` layout and `manifest.json`, Hugging Face download/staging flows for GGUFs and HF snapshots, the in-process `llama-cpp-python` runtime for chat / embeddings / cross-encoder reranking (`local_models.py`), the torch/transformers (or MLX) multimodal runtime for Qwen3-ASR / Marlin (`multimodal_runtime.py`, `asr_engine.py`, `multimodal_models.py`, `multimodal_services.py`), the vision projector (`mmproj-*.gguf`) that lets the chat GGUF read images, the "exactly one heavy model resident" residency manager, the Gemma 4 repetition-loop guard, embedding-dimension synchronisation with Qdrant, accelerator detection, and every `ORB_LLAMA_*` / `ORB_EMBED_*` / `ORB_RERANK_*` / `ORB_MODEL_*` environment variable. Cloud providers, prompt catalogues and the `LLMService` abstraction that *consumes* the local runtime are in [13-llm-providers-and-prompting.md](13-llm-providers-and-prompting.md).
+**What this covers.** Everything that runs a model *inside the FastAPI process*: the resource-aware GGUF catalog (`model_catalog.py`), the on-disk `MODELS_DIR` layout and `manifest.json`, Hugging Face download/staging flows for GGUFs and HF snapshots, the in-process `llama-cpp-python` runtime for chat / embeddings / cross-encoder reranking (`local_models.py`), the torch/transformers (or MLX) multimodal runtime for Qwen3-ASR / Marlin (`multimodal_runtime.py`, `asr_engine.py`, `multimodal_models.py`, `multimodal_services.py`), the vision projector (`mmproj-*.gguf`) that lets the chat GGUF read images, the "exactly one heavy model resident" residency manager, the Gemma 4 repetition-loop guard, embedding-dimension synchronisation with Qdrant, accelerator detection, and every `LLAMA_*` / `ORB_EMBED_*` / `ORB_RERANK_*` / `ORB_MODEL_*` environment variable. Cloud providers, prompt catalogues and the `LLMService` abstraction that *consumes* the local runtime are in [13-llm-providers-and-prompting.md](13-llm-providers-and-prompting.md).
 
 **Related docs:** [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Qdrant & Meilisearch](15-search-indexes-qdrant-meilisearch.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Desktop shell](04-desktop-shell.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -54,7 +54,7 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/requirements.txt` | `llama-cpp-python>=0.3.0`, `huggingface_hub>=0.34.0,<1.0`, `av` (video probing). | — |
 | `backend/requirements-multimodal.txt` | torch / `transformers>=5.7.0` / accelerate / einops / safetensors / librosa / pydub / timm / qwen-vl-utils / av / `pyannote.audio>=4.0`, plus `mlx-qwen3-asr>=0.4` under a `sys_platform == 'darwin' and platform_machine == 'arm64'` marker — installed on demand, mirrors `_MULTIMODAL_PIP`. | — |
 | `desktop/binaries/README.md` | Operator notes on the in-process LLM and env overrides (Qdrant/Meili binaries are unrelated to this doc). | — |
-| `backend/app/desktop_runtime.py` | Sets defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER` (`os.environ.setdefault`) and `ORB_MODELS_DIR` before running uvicorn. | — |
+| `backend/app/desktop_runtime.py` | Sets `LLM_PROVIDER`, `EMBEDDING_PROVIDER` (`os.environ.setdefault`) and `ORB_MODELS_DIR` before running uvicorn. | — |
 | `frontend/src/app/setup/page.tsx`, `frontend/src/app/models/page.tsx` | Setup page (folders, `/setup/status`, `/setup/paths`) and the Models page, which drives `/setup/model-catalog`, `/setup/download-models`, `/setup/multimodal-status` and `/api/v1/models`. | — |
 
 ## 3. Architecture and flow
@@ -214,8 +214,8 @@ The env-default `CHAT_MODEL_ID` / `EMBED_MODEL_ID` / `RERANK_MODEL_ID` constants
 
 | Function | Behaviour |
 |---|---|
-| `total_ram_gb()` | `ORB_RAM_GB` env override (float) wins. Else Windows `GlobalMemoryStatusEx` via `ctypes`; every other platform `os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")`. Any failure → **8.0 GB** conservative fallback. |
-| `detect_accel_backend()` | Lightweight duplicate of `local_models.detect_llama_backend` that avoids importing `settings`. Honors `ORB_LLAMA_BACKEND` (`cpu|metal|cuda|vulkan`, else auto) and `ORB_LLAMA_N_GPU_LAYERS`. Auto: darwin → `metal` (-1 layers); `nvidia-smi` on PATH → `cuda` (-1); else `cpu` (0). Returns `{backend, n_gpu_layers, reason}`. **Difference from `detect_llama_backend`:** no `install_hint`. |
+| `total_ram_gb()` | Windows `GlobalMemoryStatusEx` via `ctypes`; every other platform `os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")`. Any failure → **8.0 GB** conservative fallback. |
+| `detect_accel_backend()` | Lightweight duplicate of `local_models.detect_llama_backend` that avoids importing `settings`. Honors `LLAMA_BACKEND` (`cpu|metal|cuda|vulkan`, else auto) and `LLAMA_N_GPU_LAYERS`. Auto: darwin → `metal` (-1 layers); `nvidia-smi` on PATH → `cuda` (-1); else `cpu` (0). Returns `{backend, n_gpu_layers, reason}`. **Difference from `detect_llama_backend`:** no `install_hint`. |
 | `hardware_profile()` | `usable_model_gb = max(4.0, ram*0.88)` on metal/cuda, else `max(3.0, ram*0.75)`. Returns `{ram_gb, usable_model_gb, platform, machine, accel}`. |
 
 ### 4.4 Selection logic
@@ -392,30 +392,30 @@ Frontend wrappers (`frontend/src/lib/api.ts`): `getSetupStatus()`, `getModelCata
 
 | Input | Result `{backend, n_gpu_layers, reason, install_hint}` |
 |---|---|
-| `ORB_LLAMA_BACKEND` ∈ `cpu|metal|cuda|vulkan` | forced; `n_gpu_layers = 0` for cpu else `-1` |
+| `LLAMA_BACKEND` ∈ `cpu|metal|cuda|vulkan` | forced; `n_gpu_layers = 0` for cpu else `-1` |
 | `sys.platform == "darwin"` | `metal`, `-1` ("macOS <machine>: prefer Metal") — no check that the wheel was actually built with Metal |
 | linux/win32 and `nvidia-smi` on PATH | `cuda`, `-1` |
 | otherwise | `cpu`, `0` |
 
-`ORB_LLAMA_N_GPU_LAYERS` (int) overrides `n_gpu_layers` in all branches. `vulkan` is never auto-selected. `install_hint` is the `CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --force-reinstall --no-cache-dir` style string surfaced in errors when `llama_cpp` cannot be imported (`_import_llama` raises `RuntimeError("llama-cpp-python is not installed. …")`).
+`LLAMA_N_GPU_LAYERS` (int) overrides `n_gpu_layers` in all branches. `vulkan` is never auto-selected. `install_hint` is the `CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --force-reinstall --no-cache-dir` style string surfaced in errors when `llama_cpp` cannot be imported (`_import_llama` raises `RuntimeError("llama-cpp-python is not installed. …")`).
 
-The torch device for the multimodal stack is chosen separately by `app.core.inference_device.resolve_torch_device()` (`mps` → `cuda` → `cpu`) and is **not** affected by `ORB_LLAMA_BACKEND`.
+The torch device for the multimodal stack is chosen separately by `app.core.inference_device.resolve_torch_device()` (`mps` → `cuda` → `cpu`) and is **not** affected by `LLAMA_BACKEND`.
 
 ### 7.2 `Llama(...)` constructor parameters
 
 All constructions go through `_construct_llama(Llama, **kwargs)` → `_llama_metal_safe_kwargs`:
 
-- `swa_full = True` unless `ORB_LLAMA_SWA_FULL` ∈ `{0,false,no}`. Rationale (source comment): "Full-size SWA is required for stable Gemma 4 output — compact SWA fits 32k but causes ordinal/'or the' repetition collapse. 16k + swa_full fits ~24GB Metal; 32k + swa_full OOMs."
-- `flash_attn = True` only when `ORB_LLAMA_FLASH_ATTN` ∈ `{1,true,yes}`; otherwise the key is omitted (llama.cpp default).
+- `swa_full = True` unless `LLAMA_SWA_FULL` ∈ `{0,false,no}`. Rationale (source comment): "Full-size SWA is required for stable Gemma 4 output — compact SWA fits 32k but causes ordinal/'or the' repetition collapse. 16k + swa_full fits ~24GB Metal; 32k + swa_full OOMs."
+- `flash_attn = True` only when `LLAMA_FLASH_ATTN` ∈ `{1,true,yes}`; otherwise the key is omitted (llama.cpp default).
 - If `Llama(**kwargs)` raises `TypeError` (older llama-cpp-python without those kwargs), retry once without `swa_full`/`flash_attn` and log a warning; any other exception propagates.
 
 | Model | `model_path` | `embedding` | `n_ctx` | `n_gpu_layers` | `n_threads` | other |
 |---|---|---|---|---|---|---|
-| chat | selected chat GGUF | `False` | `max(ORB_LLAMA_N_CTX (16384), ORB_LLAMA_MAX_TOKENS (10240) + ORB_LLAMA_PROMPT_RESERVE (4096))` | from backend detection | `ORB_LLAMA_N_THREADS` if set | `verbose=False`, `swa_full`, `flash_attn?` |
-| embed | selected embed GGUF | `True` | `ORB_EMBED_N_CTX` (8192) | same | same | same as chat minus `n_ctx` |
-| reranker | selected reranker GGUF | (default False) | `ORB_RERANK_N_CTX` (8192) | `accel["n_gpu_layers"]` | — | `logits_all=True`, `verbose=False`, `swa_full`, `flash_attn?` |
+| chat | selected chat GGUF | `False` | `max(LLAMA_N_CTX (16384), LLAMA_MAX_TOKENS (10240) + LLAMA_PROMPT_RESERVE (4096))` | from backend detection | `LLAMA_N_THREADS` if set | `verbose=False`, `swa_full`, `flash_attn?` |
+| embed | selected embed GGUF | `True` | `EMBED_N_CTX` (8192) | same | same | same as chat minus `n_ctx` |
+| reranker | selected reranker GGUF | (default False) | `RERANK_N_CTX` (8192) | `accel["n_gpu_layers"]` | — | `logits_all=True`, `verbose=False`, `swa_full`, `flash_attn?` |
 
-`n_batch` is **not** set anywhere (llama-cpp-python default, 512). The chat `n_ctx` floor rule means the defaults give `max(16384, 14336) = 16384`; if you raise `ORB_LLAMA_MAX_TOKENS` to 16384 the context is silently raised to 20480 (logged at INFO). The embed model inherits `n_gpu_layers`/`n_threads` from `_chat_kwargs()`.
+`n_batch` is **not** set anywhere (llama-cpp-python default, 512). The chat `n_ctx` floor rule means the defaults give `max(16384, 14336) = 16384`; if you raise `LLAMA_MAX_TOKENS` to 16384 the context is silently raised to 20480 (logged at INFO). The embed model inherits `n_gpu_layers`/`n_threads` from `_chat_kwargs()`.
 
 ### 7.3 `LocalLlamaRuntime` state
 
@@ -450,7 +450,7 @@ Public API summary:
 
 **Vision projector.** `find_mmproj(chat_gguf)` is strict: only `mmproj-<model stem>-*.gguf` beside the chat GGUF counts (a projector is architecture-specific; an unrelated one in the folder is never used). Once per boot, `sync_embedding_infrastructure()` → `_ensure_mmproj_in_background(sel)`: when the manifest's `chat_id` is a catalog id and no matching projector is on disk, `ensure_mmproj(<hf_path>)` runs in a daemon thread (`orb-mmproj`, start / finish / failure logged, never blocks startup). `_load_chat_unlocked` constructs `MTMDChatHandler` and, because llama-cpp-python otherwise binds the projector lazily on the first completion (so a wrong one used to fail *every* completion), calls `handler._init_mtmd_context(llama)` eagerly; on any exception it logs a warning and drops the handler (`chat_handler = None`, `_mmproj_path = None`) so text chat keeps working and `describe_image` raises its "no vision projector" error.
 
-Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon thread `orb-model-idle` that every 30 s calls `unload_if_idle(limit)` on both the runtime and `local_gguf_reranker`, where `limit = model_idle_seconds()` (`ORB_MODEL_IDLE_SECONDS`, default 300; `0` disables idle unload but the thread keeps looping). The multimodal runtime has **no** idle unloader — a transformers-engine Qwen3-ASR or Marlin stays resident until evicted by a GGUF load (or the ingestion agent's explicit `unload` between phases); the MLX transcription path holds nothing between calls. The old "unload everything once the ingest batch drains" block in `workflows/ingestion.py` has been removed in the current tree — models now stay resident after a note and rely on the idle watcher / eviction.
+Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon thread `orb-model-idle` that every 30 s calls `unload_if_idle(limit)` on both the runtime and `local_gguf_reranker`, where `limit = model_idle_seconds()` (`MODEL_IDLE_SECONDS`, default 300; `0` disables idle unload but the thread keeps looping). The multimodal runtime has **no** idle unloader — a transformers-engine Qwen3-ASR or Marlin stays resident until evicted by a GGUF load (or the ingestion agent's explicit `unload` between phases); the MLX transcription path holds nothing between calls. The old "unload everything once the ingest batch drains" block in `workflows/ingestion.py` has been removed in the current tree — models now stay resident after a note and rely on the idle watcher / eviction.
 
 `release_accelerator_memory()` = `gc.collect()` + `torch.cuda.empty_cache()` + (`torch.mps.empty_cache()` only when `driver_allocated_memory() > 0`); silently skips when torch is not installed. `_close_llama_handle` calls `Llama.close()` if present.
 
@@ -464,7 +464,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 `_chat_completion_once(messages, temperature, max_tokens, repeat_penalty)` under `_lock`:
 
-- Parameters passed to `Llama.create_chat_completion`: `messages` (verbatim OpenAI-style dicts; llama.cpp applies the GGUF's embedded **chat template**, there is no Orb-side templating), `temperature`, `max_tokens` (caller's or `ORB_LLAMA_MAX_TOKENS`, **capped to the remaining context budget** computed by `_remaining_output_budget` — see §13.2; with no env cap the budget itself is used), `repeat_penalty` (`ORB_LLAMA_REPEAT_PENALTY`, default **1.12**, invalid → 1.12). `response_format={"type": "json_object"}` is forwarded when the caller asked for `json_mode` (doc 13 §6.1) — it turns on llama.cpp's generic JSON grammar; a JSON *schema* is never passed because schema-constrained sampling empties nested arrays on small GGUFs. No `stop` sequences, no `top_p`/`top_k`/`min_p`, no seed.
+- Parameters passed to `Llama.create_chat_completion`: `messages` (verbatim OpenAI-style dicts; llama.cpp applies the GGUF's embedded **chat template**, there is no Orb-side templating), `temperature`, `max_tokens` (caller's or `LLAMA_MAX_TOKENS`, **capped to the remaining context budget** computed by `_remaining_output_budget` — see §13.2; with no env cap the budget itself is used), `repeat_penalty` (`LLAMA_REPEAT_PENALTY`, default **1.12**, invalid → 1.12). `response_format={"type": "json_object"}` is forwarded when the caller asked for `json_mode` (doc 13 §6.1) — it turns on llama.cpp's generic JSON grammar; a JSON *schema* is never passed because schema-constrained sampling empties nested arrays on small GGUFs. No `stop` sequences, no `top_p`/`top_k`/`min_p`, no seed.
 - Prefers `stream=True` so generation can be **aborted mid-way**: every 32 streamed pieces the concatenated text (content **and** `reasoning_content` deltas) is matched against `_ORDINAL_LOOP_RE`; a match logs "Aborting chat stream: ordinal/or-the repetition detected" and raises `RepetitionLoopError`. The finished text is checked once more with `_raise_if_degeneration`. If `stream=True` raises `TypeError` (very old binding) it falls back to a blocking call and checks the whole output.
 - The streaming branch returns a synthetic dict whose `finish_reason` is the last non-null `finish_reason` seen in the stream (`"length"` when `max_tokens` was hit — also logged as a warning "Chat generation hit max_tokens=… — output is truncated"), else `"stop"`, and **no `usage`** (so `LLMService` never sees token counts for local); the non-streaming branch returns llama.cpp's dict (which includes `usage`).
 - Note the streamed path collapses `reasoning_content` into `content` — for models whose template emits thinking as a separate channel, the thinking text ends up in the answer string and is later stripped by `LLMService` (`<think>` handling, see doc 13).
@@ -477,7 +477,7 @@ _ORDINAL_LOOP_RE = re.compile(r"(?:\bor the\b[\s\S]{0,40}?){12,}", re.IGNORECASE
 
 i.e. twelve or more occurrences of "or the" each within 40 characters of the previous one. Source comment: "Gemma 4 degeneration under compact SWA — same signature as content-machine" (content-machine is the author's sibling project from which the llama.cpp defaults were ported). Because sampling is stochastic (temperature > 0 in most call sites; `temperature=0` calls will loop identically on retry) the retry usually succeeds; with `swa_full=True` the cascade is rare in the first place.
 
-Prompt budgeting: before every generation the runtime estimates the prompt size with the resident tokenizer and sizes `max_tokens` to what is left in `n_ctx` (§13.2). A prompt that leaves fewer than 256 tokens raises `PromptTooLongError` *before* llama.cpp is called. `ORB_LLAMA_PROMPT_RESERVE` (4096) only participates in the `n_ctx` floor computation and only when `ORB_LLAMA_MAX_TOKENS` is set. `LLMService` applies its own character-based trimming for chat history (doc 13 / doc 16) and ingestion splits long notes into chunks (doc 10).
+Prompt budgeting: before every generation the runtime estimates the prompt size with the resident tokenizer and sizes `max_tokens` to what is left in `n_ctx` (§13.2). A prompt that leaves fewer than 256 tokens raises `PromptTooLongError` *before* llama.cpp is called. `LLAMA_PROMPT_RESERVE` (4096) only participates in the `n_ctx` floor computation and only when `LLAMA_MAX_TOKENS` is set. `LLMService` applies its own character-based trimming for chat history (doc 13 / doc 16) and ingestion splits long notes into chunks (doc 10).
 
 ## 9. Embeddings
 
@@ -485,7 +485,7 @@ Prompt budgeting: before every generation the runtime estimates the prompt size 
 
 - `embed(text)` → `ensure_embed_loaded()` → under lock `self._embed.create_embedding(input=text)`; accepts both the OpenAI-shaped `{"data":[{"embedding":[...]}]}` and the legacy `{"embedding": [...]}` return forms; raises `RuntimeError("Unexpected embedding response…")` otherwise.
 - `embed_batch(texts)` (added in `8de5cda`, 2026-08-07): one `create_embedding(input=texts)` call for the whole list — one residency check, one lock acquisition, one llama call. **Fail-closed rule:** if `len(data) != len(texts)` it raises `RuntimeError("Unexpected batch embedding response … expected N vectors, got M")` rather than returning a shorter list, because "a length mismatch would silently mis-pair vectors with texts downstream". Empty input returns `[]` without loading anything.
-- Vectors are returned exactly as llama.cpp produces them. llama-cpp-python normalises pooled embeddings to unit length by default when `embedding=True`; Orb performs **no additional normalisation, truncation (Matryoshka) or dtype conversion**. Batch size is whatever the caller passes (ingestion batches per note / per NL-context group; see [10](10-ingestion-pipeline.md)); there is no internal chunking, so a batch whose total tokens exceed `ORB_EMBED_N_CTX` (8192) fails inside llama.cpp.
+- Vectors are returned exactly as llama.cpp produces them. llama-cpp-python normalises pooled embeddings to unit length by default when `embedding=True`; Orb performs **no additional normalisation, truncation (Matryoshka) or dtype conversion**. Batch size is whatever the caller passes (ingestion batches per note / per NL-context group; see [10](10-ingestion-pipeline.md)); there is no internal chunking, so a batch whose total tokens exceed `EMBED_N_CTX` (8192) fails inside llama.cpp.
 - Dimension is a property of the GGUF (1024 / 2560 / 4096 for the three Qwen3 tiers). `LocalLlamaRuntime.load` probes it once by embedding the literal string `"dimension probe"`.
 
 ### 9.2 `EmbeddingService` (`embedding.py`)
@@ -526,7 +526,7 @@ The contract that keeps `settings.EMBEDDING_DIMENSIONS`, `settings.EMBEDDING_MOD
 
 `LocalGgufReranker` (singleton `local_gguf_reranker`) keeps `_model`, `_path`, `_yes_id`, `_no_id`, `_last_used`, its own `RLock`.
 
-`ensure_loaded() -> bool`: `False` (not an exception) when no reranker GGUF is on disk or `llama_cpp` is missing. If already loaded from the same path → touch, `True`. Otherwise **evicts `local_llama_runtime` (chat+embed) and all multimodal families**, closes any old handle, constructs `Llama(model_path, n_ctx=ORB_RERANK_N_CTX (8192), n_gpu_layers=<accel>, logits_all=True, verbose=False, swa_full…)`, resolves `_yes_id/_no_id` via `tokenize(b"yes"/b"no", add_bos=False)[-1]` (currently unused by scoring — kept for a logits-based path), and starts the shared idle watcher.
+`ensure_loaded() -> bool`: `False` (not an exception) when no reranker GGUF is on disk or `llama_cpp` is missing. If already loaded from the same path → touch, `True`. Otherwise **evicts `local_llama_runtime` (chat+embed) and all multimodal families**, closes any old handle, constructs `Llama(model_path, n_ctx=RERANK_N_CTX (8192), n_gpu_layers=<accel>, logits_all=True, verbose=False, swa_full…)`, resolves `_yes_id/_no_id` via `tokenize(b"yes"/b"no", add_bos=False)[-1]` (currently unused by scoring — kept for a logits-based path), and starts the shared idle watcher.
 
 `_score_one(query, document) -> float` builds the Qwen3-Reranker prompt (ChatML, with an **empty think block** so the model answers immediately):
 
@@ -610,7 +610,7 @@ stateDiagram-v2
     ASR --> Marlin: _unload_except
     Marlin --> ASR
 
-    Chat --> Empty: idle ≥ ORB_MODEL_IDLE_SECONDS\nor unload()
+    Chat --> Empty: idle ≥ MODEL_IDLE_SECONDS\nor unload()
     Embed --> Empty: idle / unload()
     Rerank --> Empty: idle / unload()\nor reranker path changed (sync)
     ASR --> Empty: explicit unload() only\n(no idle timer)
@@ -695,12 +695,12 @@ There is no separate vision model. `LLMService.describe_image` (doc 13 §9.13) r
 |---|---|
 | Chat GGUF | `size_gb` + KV cache. With `swa_full=True` and `n_ctx=16384` Gemma 4 E4B ≈ 5.4 GB weights + ~3–4 GB KV; 12B ≈ 7.7 + ~5 GB. Source comment: "16k + swa_full fits ~24GB Metal; 32k + swa_full OOMs". |
 | Embed GGUF | 0.6 – 4.8 GB weights + small KV (`n_ctx` 8192, no generation). |
-| Reranker GGUF | 0.4 – 5 GB weights; `logits_all=True` allocates a logits buffer of `n_ctx × vocab` floats (8192 × ~152k × 4 B ≈ 5 GB **virtual**, lazily touched) — this is why `ORB_RERANK_N_CTX` matters more than it looks. |
+| Reranker GGUF | 0.4 – 5 GB weights; `logits_all=True` allocates a logits buffer of `n_ctx × vocab` floats (8192 × ~152k × 4 B ≈ 5 GB **virtual**, lazily touched) — this is why `RERANK_N_CTX` matters more than it looks. |
 | Qwen3-ASR / Marlin | see §12.7 |
 
 Only one of these is resident at a time (plus the ~150–200 MB of torch import overhead that `_LazyLLMService` defers until first use — see doc 13). The catalog's `usable_model_gb` (88 % of RAM on Metal/CUDA) is the budget the chat model must fit into *alone*; embed/rerank are only charged a "reserve" of half their sizes because they are never co-resident with chat.
 
-Throughput levers (all env, see §14): `ORB_LLAMA_N_GPU_LAYERS` (−1 = all layers on GPU; CPU fallback is 10–20× slower), `ORB_LLAMA_N_THREADS` (CPU only), `ORB_LLAMA_N_CTX` (KV size; prompt processing is O(n)), `ORB_LLAMA_FLASH_ATTN` (opt-in; faster on CUDA, historically unstable on Metal for Gemma 4 — hence off by default), `ORB_MODEL_IDLE_SECONDS` (0 = keep resident, trading RAM for latency).
+Throughput levers (Models → Local runtime, see §14): `LLAMA_N_GPU_LAYERS` (−1 = all layers on GPU; CPU fallback is 10–20× slower), `LLAMA_N_THREADS` (CPU only), `LLAMA_N_CTX` (KV size; prompt processing is O(n)), `LLAMA_FLASH_ATTN` (opt-in; faster on CUDA, historically unstable on Metal for Gemma 4 — hence off by default), `MODEL_IDLE_SECONDS` (0 = keep resident, trading RAM for latency).
 
 ### 13.2 Per-call output budgeting, per-KB GGUF selection and the model-load clock (uncommitted working-tree additions)
 
@@ -718,11 +718,11 @@ These live in `local_models.py` and are covered by `backend/tests/unit/test_loca
 - **Model refs** are stored `MODELS_DIR`-relative where possible (`gguf/My-Model.gguf`), so a KB's pin survives moving the models directory to a faster disk; files outside it use an absolute path. `LocalLlamaRuntime.resolve_chat_gguf` accepts a catalog id, a relative ref, or an absolute path, and **raises** rather than silently falling back to the Setup selection when a named model cannot be satisfied — a KB pinned to a deleted model must fail loudly, not answer with a different one.
 - **Context clamping.** `_clamp_ctx_to_model` lowers `n_ctx` to the model's trained window when it is smaller than the configured value; with arbitrary GGUFs the 16k default can exceed what a model supports.
 
-**No default output cap.** `_default_chat_max_tokens()` returns `None` unless `ORB_LLAMA_MAX_TOKENS` is set to a positive integer (garbage or `0` → `None`). Rationale (docstring): "a fixed cap silently truncates long extractions, so the runtime sizes `max_tokens` per call from `n_ctx - prompt_tokens` instead." `desktop_runtime.py` sets no default for this variable (it only inherits an explicit one). Consequently the `n_ctx` floor in `_chat_kwargs` (`max_tokens + ORB_LLAMA_PROMPT_RESERVE`) is applied only when a cap is set; by default `n_ctx = ORB_LLAMA_N_CTX = 16384` exactly.
+**No default output cap.** `_default_chat_max_tokens()` returns `None` unless `LLAMA_MAX_TOKENS` is set to a positive integer. Rationale (docstring): "a fixed cap silently truncates long extractions, so the runtime sizes `max_tokens` per call from `n_ctx - prompt_tokens` instead." `desktop_runtime.py` sets no default for this variable (it only inherits an explicit one). Consequently the `n_ctx` floor in `_chat_kwargs` (`max_tokens + LLAMA_PROMPT_RESERVE`) is applied only when a cap is set; by default `n_ctx = LLAMA_N_CTX = 16384` exactly.
 
 **Token counting.** `LocalLlamaRuntime.count_tokens(text)`: uses `tokenize(text.encode(), add_bos=False, special=True)` of whichever GGUF is resident (chat or embed); with nothing resident falls back to `len(text)//4 + 1`. It **never triggers a model load** ("chunk sizing must not trigger a disk read"). `LLMService.ingestion_count_tokens` delegates here for the local provider.
 
-**Output budget.** `_prompt_token_estimate(messages) = 4 + Σ(count_tokens(content) + 8)`; `_remaining_output_budget(messages) = n_ctx - estimate - _GEN_SAFETY_MARGIN(32)` where `n_ctx` comes from the live `Llama.n_ctx()` (fallback `_default_chat_n_ctx()`). If the remainder is `< _MIN_OUTPUT_TOKENS (256)` it raises `PromptTooLongError(RuntimeError)` with the message "Prompt is ~N tokens; context window is C. Fewer than 256 tokens would remain for the answer — split the input or raise ORB_LLAMA_N_CTX." `create_chat_completion` then uses `min(caller_or_env_max_tokens, budget)` or the budget alone. Because the estimate is heuristic (+8 per message for template tokens) llama.cpp can still, rarely, reject a prompt; that still surfaces as a `ValueError` from llama.cpp.
+**Output budget.** `_prompt_token_estimate(messages) = 4 + Σ(count_tokens(content) + 8)`; `_remaining_output_budget(messages) = n_ctx - estimate - _GEN_SAFETY_MARGIN(32)` where `n_ctx` comes from the live `Llama.n_ctx()` (fallback `_default_chat_n_ctx()`). If the remainder is `< _MIN_OUTPUT_TOKENS (256)` it raises `PromptTooLongError(RuntimeError)` with the message "Prompt is ~N tokens; context window is C. Fewer than 256 tokens would remain for the answer — split the input or raise LLAMA_N_CTX." `create_chat_completion` then uses `min(caller_or_env_max_tokens, budget)` or the budget alone. Because the estimate is heuristic (+8 per message for template tokens) llama.cpp can still, rarely, reject a prompt; that still surfaces as a `ValueError` from llama.cpp.
 
 **Per-KB chat GGUF.** `resolve_chat_gguf(model) -> Path | None` maps the OpenAI-style `model` string that `LLMService` passes into a file:
 
@@ -741,7 +741,7 @@ These live in `local_models.py` and are covered by `backend/tests/unit/test_loca
 
 ## 14. Configuration and environment variables
 
-Every variable below is read with `os.environ.get("ORB_…")` at call time (the pre-rename `LIVEOS_*` aliases were removed). Settings-object fields are listed separately.
+Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS` and `EXTRACTION_CHUNK_TOKENS` are **`Settings` fields edited in the app** (Models → Local runtime): `GET`/`PUT /api/v1/settings/local-runtime` validates them, saves them to `DATA_DIR/runtime_config.json` (`runtime_config.LOCAL_RUNTIME_KEYS`), applies them to `settings`, and unloads the chat/embed/reranker models so the next request reloads with the new values. `null` means automatic. The `ORB_*` rows are process plumbing read with `os.environ.get` (paths and download staging), not user knobs.
 
 | Variable | Default | Read by | Effect |
 |---|---|---|---|
@@ -749,20 +749,19 @@ Every variable below is read with `os.environ.get("ORB_…")` at call time (the 
 | `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` | OS cache dir (`~/Library/Caches/Orb/model-downloads` …) | `paths.local_download_staging_dir` | where NAS-bound downloads are staged |
 | `ORB_FORCE_DOWNLOAD_STAGING` | unset | `download_file` | force staging even on local disks (GGUFs only) |
 | `ORB_CHAT_GGUF` / `ORB_EMBED_GGUF` / `ORB_RERANK_GGUF` (ORB-only) | catalog defaults (E4B / embed-0.6B-Q8 / rerank-0.6B) | module constants `*_MODEL_ID` | fallback `org/repo/file` when catalog lookup fails or manifest has no selection |
-| `ORB_LLAMA_BACKEND` | `auto` | `detect_llama_backend`, `model_catalog.detect_accel_backend` (ORB-only there) | `metal|cuda|vulkan|cpu` |
-| `ORB_LLAMA_N_GPU_LAYERS` | `-1` (GPU) / `0` (cpu) | same | layers offloaded; `-1` = all |
-| `ORB_LLAMA_N_CTX` | `16384` | `_chat_kwargs`, `LLMService.ingestion_context_tokens` | chat context window (KV size); also the "context" figure used for extraction chunk sizing |
-| `ORB_LLAMA_MAX_TOKENS` | **unset** (dynamic) | `_default_chat_max_tokens` | hard cap on generated tokens; when set also raises `n_ctx` to `cap + PROMPT_RESERVE` |
-| `ORB_LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | only used with `ORB_LLAMA_MAX_TOKENS` (floor for `n_ctx`); `desktop_runtime.py` still defaults it |
-| `ORB_LLAMA_SWA_FULL` | `true` (`desktop_runtime.py` defaults it to `"true"` explicitly) | `_llama_metal_safe_kwargs` | `swa_full` for every `Llama()`; `0/false/no` disables |
-| `ORB_LLAMA_FLASH_ATTN` | unset (off) | same | `1/true/yes` → `flash_attn=True` |
-| `ORB_LLAMA_REPEAT_PENALTY` | `1.12` | `_default_repeat_penalty` | chat sampling |
-| `ORB_LLAMA_N_THREADS` | unset (llama default) | `_chat_kwargs` | CPU threads for chat/embed |
-| `ORB_EMBED_N_CTX` | `8192` | `_load_embed_unlocked` | embed model context |
-| `ORB_RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | reranker context (also sizes the `logits_all` buffer) |
-| `ORB_MODEL_IDLE_SECONDS` | `300` | `model_idle_seconds` | idle unload for chat/embed/reranker; `0` = never |
-| `ORB_RAM_GB` (ORB-only) | unset | `model_catalog.total_ram_gb` | override detected RAM (testing / VMs) |
-| `ORB_EXTRACTION_CHUNK_TOKENS` (ORB-only) | `4000` ceiling | `workflows/extraction_chunking.chunk_token_budget` | max input tokens per extraction chunk (doc 10) |
+| `LLAMA_BACKEND` | `auto` | `detect_llama_backend`, `model_catalog.detect_accel_backend` (ORB-only there) | `metal|cuda|vulkan|cpu` |
+| `LLAMA_N_GPU_LAYERS` | `-1` (GPU) / `0` (cpu) | same | layers offloaded; `-1` = all |
+| `LLAMA_N_CTX` | `16384` | `_chat_kwargs`, `LLMService.ingestion_context_tokens` | chat context window (KV size); also the "context" figure used for extraction chunk sizing |
+| `LLAMA_MAX_TOKENS` | **unset** (dynamic) | `_default_chat_max_tokens` | hard cap on generated tokens; when set also raises `n_ctx` to `cap + PROMPT_RESERVE` |
+| `LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | only used with `LLAMA_MAX_TOKENS` (floor for `n_ctx`) |
+| `LLAMA_SWA_FULL` | `true` | `_llama_metal_safe_kwargs` | `swa_full` for every `Llama()` |
+| `LLAMA_FLASH_ATTN` | `false` | same | `flash_attn=True` when on |
+| `LLAMA_REPEAT_PENALTY` | `1.12` | `_default_repeat_penalty` | chat sampling |
+| `LLAMA_N_THREADS` | unset (llama default) | `_chat_kwargs` | CPU threads for chat/embed |
+| `EMBED_N_CTX` | `8192` | `_load_embed_unlocked` | embed model context |
+| `RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | reranker context (also sizes the `logits_all` buffer) |
+| `MODEL_IDLE_SECONDS` | `300` | `model_idle_seconds` | idle unload for chat/embed/reranker; `0` = never |
+| `EXTRACTION_CHUNK_TOKENS` (ORB-only) | `4000` ceiling | `workflows/extraction_chunking.chunk_token_budget` | max input tokens per extraction chunk (doc 10) |
 | `HF_TOKEN`, `HF_HUB_*` | — | `huggingface_hub.snapshot_download` (HF snapshots only) | auth / mirrors for Qwen3-ASR / aligner / diarizer / Marlin; GGUF and projector downloads ignore them |
 | `FORCE_QWENVL_VIDEO_READER`, `VIDEO_MAX_PIXELS`, `FPS`, `FPS_MAX_FRAMES`, `FPS_MIN_FRAMES` | `pyav`, `200704`, `2.0`, `240`, `4` (setdefault) | qwen-vl-utils via Marlin | video frame sampling |
 
@@ -794,7 +793,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | `main.startup_event` → `sync_embedding_infrastructure()` | after `runtime_config` overrides are applied; failures logged, never fatal. |
 | `ai_gate.provider_is_configured("local")` → `gguf_paths_if_present()` | "local AI is available" ⇔ chat+embed paths from the manifest exist. |
 | `kb_registry` / `api/kb.py` → `model_catalog.downloaded_chat_models`, `chat_model_downloaded`, `get_option` | only downloaded chat GGUFs may be pinned per KB. |
-| `desktop_runtime.py` → env | sets `ORB_MODELS_DIR` and defaults for `ORB_LLAMA_*`, `ORB_EMBED_N_CTX`, `ORB_RERANK_N_CTX`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. |
+| `desktop_runtime.py` → env | sets `ORB_MODELS_DIR`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. The llama.cpp knobs come from `runtime_config.json`, not env. |
 
 ## 16. Invariants, constraints and locked decisions
 
@@ -836,7 +835,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 ## 18. Gotchas (things an assistant would get wrong)
 
 - **`model` in a chat request is not a no-op for local any more.** It selects a GGUF via `resolve_chat_gguf`. Passing a catalog id that is not downloaded raises.
-- **`ORB_LLAMA_MAX_TOKENS` is unset by default**; `desktop_runtime.py` sets no default for it (per-call sizing).
+- **`LLAMA_MAX_TOKENS` is unset by default**; `desktop_runtime.py` sets no default for it (per-call sizing).
 - **`EmbeddingService.is_qwen3` is computed at construction and in `reconfigure()` only.** `sync_embedding_infrastructure` (startup, `save_selection`, `ensure_chat_and_embed_models`) therefore calls `reconfigure()` at its end; any new code path that sets `settings.EMBEDDING_MODEL` must do the same or query-instruction prefixing stays off.
 - `/setup/status` reports *files on disk*; what is resident is `local.runtime` in `GET /api/v1/models` (`LocalLlamaRuntime.status()`).
 - `/setup/start-local-llm` ends with the **reranker** resident, not chat.
