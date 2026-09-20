@@ -225,8 +225,11 @@ def check() -> None:
 
 # The prebuilt npm CLI when it is on PATH (CI: `npm i -g @tauri-apps/cli`, no
 # 10-30 min source build), otherwise the cargo plugin (dev machines; cargo finds
-# it in ~/.cargo/bin even when that dir is not on PATH).
-TAURI = ["tauri"] if shutil.which("tauri") else ["cargo", "tauri"]
+# it in ~/.cargo/bin even when that dir is not on PATH). The resolved path
+# matters on Windows, where npm installs a `tauri.cmd` shim that CreateProcess
+# cannot launch by bare name.
+_TAURI_BIN = shutil.which("tauri")
+TAURI = [_TAURI_BIN] if _TAURI_BIN else ["cargo", "tauri"]
 # AppImage is deliberately absent: linuxdeploy tries to resolve the shared
 # libraries of every .so under usr/lib, which is where the bundled Python
 # tree lands, and fails on the first one it cannot find.
@@ -238,7 +241,11 @@ def dist(extra: list[str]) -> None:
     # The resource map lives here, not in tauri.conf.json: tauri-build would
     # otherwise copy these multi-GB trees into target/debug on every dev build.
     resources = {f"../resources/{name}": name for name in ("backend", "frontend", "firefly")}
-    config = json.dumps({"bundle": {"resources": resources}})
+    # A file, not inline JSON: on Windows the npm shim goes through cmd.exe,
+    # which mangles quoted arguments.
+    config = HERE / "src-tauri" / "target" / "dist-bundle.json"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(json.dumps({"bundle": {"resources": resources}}))
     if sys.platform != "darwin":
         bundles = BUNDLES[sys.platform]
         run([*TAURI, "build", "--bundles", bundles, "--config", config, *extra], cwd=HERE / "src-tauri")
