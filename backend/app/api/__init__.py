@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.api import (
     admin,
     chat,
+    credentials,
     health,
     kb,
     models,
@@ -16,9 +17,10 @@ from app.api_desktop import router as desktop_router
 
 
 def register_all_routers(app: FastAPI) -> None:
-    """Attach all Orb API routers (including desktop setup)."""
+    """Attach all Orb API routers (including local model setup)."""
     app.include_router(desktop_router)
     app.include_router(health.router)
+    app.include_router(credentials.router)
     app.include_router(models.router)
     app.include_router(chat.router)
     app.include_router(notes.router)

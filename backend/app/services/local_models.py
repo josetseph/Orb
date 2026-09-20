@@ -26,14 +26,6 @@ from app.core.paths import (
 
 logger = get_logger("LocalModels")
 
-def _env_first(*names: str, default: str | None = None) -> str | None:
-    for name in names:
-        val = os.environ.get(name)
-        if val is not None and str(val).strip() != "":
-            return val
-    return default
-
-
 
 # Gemma 4 degeneration under compact SWA — same signature as content-machine.
 _ORDINAL_LOOP_RE = re.compile(
@@ -119,7 +111,7 @@ _MIN_OUTPUT_TOKENS = 256
 
 
 def _default_chat_n_ctx() -> int:
-    return int(_env_first("ORB_LLAMA_N_CTX", "LIVEOS_LLAMA_N_CTX", default="16384"))
+    return int(os.environ.get("ORB_LLAMA_N_CTX") or "16384")
 
 
 def _default_chat_max_tokens() -> int | None:
@@ -128,7 +120,7 @@ def _default_chat_max_tokens() -> int | None:
     Unset by default: a fixed cap silently truncates long extractions, so the
     runtime sizes ``max_tokens`` per call from ``n_ctx - prompt_tokens`` instead.
     """
-    raw = _env_first("ORB_LLAMA_MAX_TOKENS", "LIVEOS_LLAMA_MAX_TOKENS")
+    raw = os.environ.get("ORB_LLAMA_MAX_TOKENS")
     if not raw:
         return None
     try:
@@ -164,7 +156,7 @@ def _clamp_ctx_to_model(gguf_path: Path, requested_ctx: int) -> int:
 
 
 def _default_repeat_penalty() -> float:
-    raw = _env_first("ORB_LLAMA_REPEAT_PENALTY", "LIVEOS_LLAMA_REPEAT_PENALTY", default="1.12")
+    raw = os.environ.get("ORB_LLAMA_REPEAT_PENALTY") or "1.12"
     try:
         return float(raw)
     except ValueError:
@@ -177,7 +169,7 @@ def model_idle_seconds() -> float:
     Override with ORB_MODEL_IDLE_SECONDS (default 300 = 5 minutes).
     Set to 0 to keep models loaded for the whole app session.
     """
-    raw = _env_first("ORB_MODEL_IDLE_SECONDS", "LIVEOS_MODEL_IDLE_SECONDS", default="300")
+    raw = os.environ.get("ORB_MODEL_IDLE_SECONDS") or "300"
     try:
         return max(0.0, float(raw))
     except ValueError:
@@ -232,13 +224,13 @@ def _llama_metal_safe_kwargs(base: dict) -> dict:
     Flash attention stays off unless explicitly opted in.
     """
     kwargs = dict(base)
-    raw_swa = (_env_first("ORB_LLAMA_SWA_FULL", "LIVEOS_LLAMA_SWA_FULL", default="") or "").strip().lower()
+    raw_swa = (os.environ.get("ORB_LLAMA_SWA_FULL") or "" or "").strip().lower()
     if raw_swa in {"0", "false", "no"}:
         kwargs["swa_full"] = False
     else:
         # Default true (content-machine): stable text over max context.
         kwargs["swa_full"] = True
-    if (_env_first("ORB_LLAMA_FLASH_ATTN", "LIVEOS_LLAMA_FLASH_ATTN", default="") or "").strip().lower() in {
+    if (os.environ.get("ORB_LLAMA_FLASH_ATTN") or "" or "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -356,14 +348,9 @@ def _min_expected_gguf_bytes(model_id: str) -> int:
 def _gguf_looks_complete(dest: Path, model_id: str) -> bool:
     if not dest.exists():
         return False
-    size = dest.stat().st_size
-    if size < _min_expected_gguf_bytes(model_id):
-        return False
-    # Truncated downloads often leave a tiny leftover or a half-written file;
-    # also reject leftover .partial siblings that indicate a crashed move.
-    if dest.with_suffix(dest.suffix + ".partial").exists():
-        return False
-    return True
+    # dest is only ever written by an atomic move, so a stale .partial sibling
+    # says nothing about it; size is the one signal of a truncated file.
+    return dest.stat().st_size >= _min_expected_gguf_bytes(model_id)
 
 
 def download_file(url: str, dest: Path, on_progress=None) -> Path:
@@ -440,14 +427,6 @@ def ensure_gguf(model_id: str, on_progress=None) -> Path:
             dest.unlink()
         except OSError:
             pass
-    # Clean up abandoned NAS partials from older direct downloads
-    stale = dest.with_suffix(dest.suffix + ".partial")
-    if stale.exists():
-        logger.info(f"Removing incomplete partial {stale.name} before re-download")
-        try:
-            stale.unlink()
-        except OSError:
-            pass
     url = _hf_file_url(model_id)
     logger.info(f"Downloading model {filename} from Hugging Face…")
     download_file(url, dest, on_progress)
@@ -482,24 +461,20 @@ def mmproj_hf_path(model_hf_path: str) -> str:
 
 
 def find_mmproj(chat_gguf: Path) -> Path | None:
-    """The projector for ``chat_gguf``, if one sits next to it.
+    """The projector for ``chat_gguf``: ``mmproj-<model stem>-*.gguf`` beside it.
 
-    Prefers a file sharing the model's name; a folder holding one model and
-    one projector matches on the projector alone.
+    A projector is architecture-specific, so only a name match counts; an
+    unrelated projector in the folder (another model's) is never used - binding
+    the wrong one breaks every completion, not just image ones.
     """
     folder = Path(chat_gguf).parent
-    if not folder.is_dir():
-        return None
-    candidates = sorted(
-        p for p in folder.glob("*.gguf") if p.name.lower().startswith("mmproj")
-    )
-    if not candidates:
-        return None
     stem = _QUANT_SUFFIX_RE.sub("", Path(chat_gguf).stem).lower()
-    for cand in candidates:
-        if stem and stem in cand.name.lower():
+    if not folder.is_dir() or not stem:
+        return None
+    for cand in sorted(folder.glob("mmproj-*.gguf")):
+        if cand.name.lower().startswith(f"mmproj-{stem}"):
             return cand
-    return candidates[0] if len(candidates) == 1 else None
+    return None
 
 
 def ensure_mmproj(model_id: str, on_progress=None) -> Path | None:
@@ -620,6 +595,10 @@ def sync_embedding_infrastructure(
     # selected catalog id in settings so retrieval logs / UI stay accurate.
     try:
         sel = load_manifest().get("selection") or {}
+        # Once per boot (main.py calls this at startup), not on every read.
+        _heal_selection_paths(sel)
+        _prune_missing_ggufs()
+        _ensure_mmproj_in_background(sel)
         reranker_id = (sel.get("reranker_id") or "").strip()
         if reranker_id:
             _settings.MODEL_RERANKER_LOCAL = reranker_id
@@ -686,6 +665,15 @@ def sync_embedding_infrastructure(
     except Exception as exc:  # pylint: disable=broad-exception-caught
         errors.append(f"registry: {exc}")
         logger.warning("[Models] KB registry sync failed: %s", exc)
+
+    # is_qwen3 (query-instruction prefix) is derived from EMBEDDING_MODEL at
+    # construction; re-derive it now that the model id is final.
+    try:
+        from app.services.embedding import embedding_service
+
+        embedding_service.reconfigure()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[Models] Could not reconfigure embedding service: %s", exc)
 
     logger.info(
         "[Models] Embedding infrastructure synced — dims=%s embed_id=%s kbs=%s",
@@ -868,6 +856,52 @@ def _heal_selection_paths(sel: dict) -> None:
         logger.warning("[LocalModels] Could not repair manifest paths: %s", exc)
 
 
+def _prune_missing_ggufs() -> None:
+    """Drop ``manifest["gguf"]`` records whose file was deleted from disk."""
+    man = load_manifest()
+    entries = man.get("gguf") or {}
+    gone = [
+        name
+        for name, entry in entries.items()
+        if not selected_gguf((entry or {}).get("path") or f"gguf/{name}")
+    ]
+    if not gone:
+        return
+    for name in gone:
+        entries.pop(name)
+    try:
+        save_manifest(man)
+        logger.info("[LocalModels] Manifest dropped deleted GGUFs: %s", ", ".join(gone))
+    except OSError as exc:
+        logger.warning("[LocalModels] Could not prune manifest: %s", exc)
+
+
+def _ensure_mmproj_in_background(sel: dict) -> None:
+    """Fetch the selected catalog chat model's projector when none sits beside it.
+
+    Best-effort and off the boot path: a daemon thread, every outcome logged.
+    """
+    from app.services.model_catalog import get_option
+
+    chat_id = (sel.get("chat_id") or "").strip()
+    opt = get_option(chat_id) if chat_id else None
+    chat = selected_gguf(sel.get("chat_path"))
+    if not opt or not chat or find_mmproj(chat) is not None:
+        return
+
+    def _run() -> None:
+        logger.info("[LocalModels] Fetching vision projector for %s", chat_id)
+        try:
+            got = ensure_mmproj(opt.hf_path)
+            logger.info(
+                "[LocalModels] Vision projector for %s: %s", chat_id, got or "none published"
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("[LocalModels] Vision projector for %s failed: %s", chat_id, exc)
+
+    threading.Thread(target=_run, name="orb-mmproj", daemon=True).start()
+
+
 def gguf_paths_if_present() -> dict[str, Path] | None:
     """Return chat/embed paths from selection/manifest if files exist."""
     man = load_manifest()
@@ -875,7 +909,6 @@ def gguf_paths_if_present() -> dict[str, Path] | None:
     chat = selected_gguf(sel.get("chat_path"))
     embed = selected_gguf(sel.get("embed_path"))
     if chat and embed:
-        _heal_selection_paths(sel)
         if chat.stat().st_size > 1_000_000:
             out = {"chat": chat, "embed": embed}
             rp = selected_gguf(sel.get("reranker_path"))
@@ -883,10 +916,14 @@ def gguf_paths_if_present() -> dict[str, Path] | None:
                 out["reranker"] = rp
             return out
 
-    # Legacy fallback: env defaults
+    # Manifests from before selections were recorded: guess the env defaults
+    # once and persist the guess so this never runs again.
     chat = resolve_models_dir() / "gguf" / CHAT_MODEL_ID.rsplit("/", 1)[-1]
     embed = resolve_models_dir() / "gguf" / EMBED_MODEL_ID.rsplit("/", 1)[-1]
     if chat.exists() and chat.stat().st_size > 1_000_000 and embed.exists():
+        sel.update(chat_path=store_model_path(chat), embed_path=store_model_path(embed))
+        man["selection"] = sel
+        save_manifest(man)
         return {"chat": chat, "embed": embed}
     return None
 
@@ -915,8 +952,8 @@ def detect_llama_backend() -> dict:
       ORB_LLAMA_BACKEND=metal|cuda|vulkan|cpu|auto
       ORB_LLAMA_N_GPU_LAYERS=<int>   (-1 = all layers on GPU)
     """
-    forced = (_env_first("ORB_LLAMA_BACKEND", "LIVEOS_LLAMA_BACKEND", default="auto") or "auto").lower().strip()
-    n_gpu_env = _env_first("ORB_LLAMA_N_GPU_LAYERS", "LIVEOS_LLAMA_N_GPU_LAYERS")
+    forced = (os.environ.get("ORB_LLAMA_BACKEND") or "auto" or "auto").lower().strip()
+    n_gpu_env = os.environ.get("ORB_LLAMA_N_GPU_LAYERS")
 
     def _result(backend: str, n_gpu_layers: int, reason: str) -> dict:
         if n_gpu_env is not None and n_gpu_env != "":
@@ -987,13 +1024,12 @@ class _ChatCompletions:
         messages = kwargs.get("messages") or []
         temperature = kwargs.get("temperature", 0.2)
         max_tokens = kwargs.get("max_tokens") or kwargs.get("max_completion_tokens")
-        # response_format / extra_body accepted for API compat; llama.cpp JSON mode
-        # is prompt-driven for our extraction path.
         return self._runtime.create_chat_completion(
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
             model=kwargs.get("model") or self._model_id,
+            response_format=kwargs.get("response_format"),
         )
 
 
@@ -1018,27 +1054,6 @@ class LocalOpenAICompat:
         self._model_id = model_id or settings.LLM_MODEL or "local-chat"
         self.chat = _ChatNamespace(runtime, self._model_id)
         self.models = _ModelsNamespace([self._model_id])
-
-
-class AsyncLocalOpenAICompat:
-    """Async wrapper — runs sync llama.cpp calls in a thread pool."""
-
-    def __init__(self, runtime: "LocalLlamaRuntime", model_id: str | None = None):
-        self._sync = LocalOpenAICompat(runtime, model_id)
-        self.models = self._sync.models
-
-        class _AsyncCompletions:
-            def __init__(self, sync_client: LocalOpenAICompat):
-                self._sync = sync_client
-
-            async def create(self, **kwargs):
-                return await asyncio.to_thread(self._sync.chat.completions.create, **kwargs)
-
-        class _AsyncChat:
-            def __init__(self, sync_client: LocalOpenAICompat):
-                self.completions = _AsyncCompletions(sync_client)
-
-        self.chat = _AsyncChat(self._sync)
 
 
 class LocalLlamaEmbeddings:
@@ -1117,12 +1132,6 @@ class LocalLlamaRuntime:
                     local_gguf_reranker.unload_if_idle(limit)
                 except Exception as exc:  # pylint: disable=broad-exception-caught
                     logger.warning(f"Reranker idle unload check failed: {exc}")
-                try:
-                    from app.services.chat_runtimes import unload_if_idle
-
-                    unload_if_idle(limit)
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.warning(f"Chat-runtime idle unload check failed: {exc}")
 
         threading.Thread(
             target=_loop, name="orb-model-idle", daemon=True
@@ -1144,7 +1153,7 @@ class LocalLlamaRuntime:
         # content-machine: 16k + swa_full fits Metal; 32k + swa_full OOMs.
         n_ctx = _default_chat_n_ctx()
         max_tokens = _default_chat_max_tokens()
-        prompt_reserve = int(_env_first("ORB_LLAMA_PROMPT_RESERVE", "LIVEOS_LLAMA_PROMPT_RESERVE", default="4096"))
+        prompt_reserve = int(os.environ.get("ORB_LLAMA_PROMPT_RESERVE") or "4096")
         min_ctx = (max_tokens + prompt_reserve) if max_tokens else 0
         if n_ctx < min_ctx:
             logger.info(
@@ -1155,7 +1164,7 @@ class LocalLlamaRuntime:
                 prompt_reserve,
             )
             n_ctx = min_ctx
-        n_threads = _env_first("ORB_LLAMA_N_THREADS", "LIVEOS_LLAMA_N_THREADS")
+        n_threads = os.environ.get("ORB_LLAMA_N_THREADS")
         kwargs: dict = {
             "n_ctx": n_ctx,
             "n_gpu_layers": int(self.accel["n_gpu_layers"]),
@@ -1177,12 +1186,6 @@ class LocalLlamaRuntime:
                 logger.debug("Reranker unload before GGUF skipped: %s", exc)
         if keep != "multimodal":
             _unload_multimodal_families()
-        try:
-            from app.services.chat_runtimes import unload_chat_runtimes
-
-            unload_chat_runtimes()
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.debug("Chat-runtime unload before GGUF skipped: %s", exc)
 
     def load(self, chat_gguf: Path, embed_gguf: Path | None = None) -> dict:
         """Load chat GGUF only (exclusive). Embed loads on demand and replaces chat.
@@ -1290,6 +1293,19 @@ class LocalLlamaRuntime:
             **({"chat_handler": handler} if handler else {}),
             **chat_kwargs,
         )
+        if handler is not None and hasattr(handler, "_init_mtmd_context"):
+            # llama-cpp-python binds the projector on the first completion, so
+            # a wrong one used to fail every completion. Bind it now and drop
+            # it on failure: text chat keeps working, describe_image raises
+            # its "no vision projector" error.
+            try:
+                handler._init_mtmd_context(self._chat)  # pylint: disable=protected-access
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(
+                    "Vision projector %s failed to initialise, text-only: %s", mmproj.name, exc
+                )
+                self._chat.chat_handler = None
+                handler = None
         self._chat_handler = handler
         self._mmproj_path = mmproj if handler else None
         model_load_clock.record("chat", time.perf_counter() - started)
@@ -1303,7 +1319,7 @@ class LocalLlamaRuntime:
         chat_kwargs = self._chat_kwargs()
         embed_kwargs = {
             **{k: v for k, v in chat_kwargs.items() if k != "n_ctx"},
-            "n_ctx": int(_env_first("ORB_EMBED_N_CTX", "LIVEOS_EMBED_N_CTX", default="8192")),
+            "n_ctx": int(os.environ.get("ORB_EMBED_N_CTX") or "8192"),
         }
         logger.info(
             "Loading embed GGUF in-process (exclusive, n_ctx=%s): %s",
@@ -1347,10 +1363,6 @@ class LocalLlamaRuntime:
             "Unexpected batch embedding response from llama-cpp-python "
             f"(expected {len(texts)} vectors, got {len(data) if data else 0})"
         )
-
-    def ensure_loaded(self) -> None:
-        """Back-compat: ensure chat GGUF is loaded (exclusive)."""
-        self.ensure_chat_loaded()
 
     def ensure_chat_loaded(self, chat_gguf: Path | None = None) -> None:
         """Load chat GGUF only — unloads embed / rerank / multimodal first.
@@ -1416,47 +1428,10 @@ class LocalLlamaRuntime:
             if error:
                 raise RuntimeError(error)
             return path_ref
-        # Folders (MLX / safetensors) are resolved by resolve_chat_model.
 
         if name != (settings.LLM_MODEL or ""):
             logger.warning("Unknown local chat model %r — using the Setup selection", name)
         return None
-
-    def resolve_chat_model(self, model: str | None):
-        """``(path, format)`` for any supported layout, or ``(None, None)``.
-
-        Extends :meth:`resolve_chat_gguf` to folders: an MLX bundle or a plain
-        Hugging Face checkpoint resolves here and is served by
-        ``chat_runtimes``. ``(None, None)`` means "use the Setup selection".
-        """
-        from app.services import model_formats
-        from app.services.model_discovery import resolve_model_ref
-
-        name = (model or "").strip()
-        if not name or name == "local-chat":
-            return None, None
-
-        # A catalog id or a .gguf path ref still goes through the GGUF path.
-        try:
-            gguf = self.resolve_chat_gguf(name)
-        except RuntimeError:
-            gguf = None
-            if not Path(name).expanduser().is_dir():
-                raise
-        if gguf is not None:
-            return gguf, model_formats.ModelFormat.GGUF
-
-        candidate = resolve_model_ref(name)
-        if candidate is None:
-            candidate = Path(name).expanduser()
-            if not candidate.is_absolute():
-                candidate = resolve_models_dir() / name
-        described = model_formats.describe(candidate)
-        if described is None:
-            return None, None
-        if not described.runnable:
-            raise RuntimeError(described.unsupported_reason)
-        return model_formats.loadable_path(candidate, described.format), described.format
 
     def count_tokens(self, text: str) -> int:
         """Token count using whichever GGUF is resident; heuristic when none is.
@@ -1599,27 +1574,12 @@ class LocalLlamaRuntime:
         temperature: float = 0.2,
         max_tokens: int | None = None,
         model: str | None = None,
+        response_format: dict | None = None,
     ) -> SimpleNamespace:
-        from app.services import chat_runtimes
-        from app.services.model_formats import ModelFormat
-
-        target, model_format = self.resolve_chat_model(model)
-        if model_format is not None and model_format is not ModelFormat.GGUF:
-            # MLX / safetensors: a different backend answers, with the same
-            # response shape, and evicts the GGUF models as it loads.
-            runtime = chat_runtimes.runtime_for(model_format)
-            runtime.ensure_loaded(target)
-            return _openaiish_chat_response(
-                runtime.create_chat_completion(
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    model=model,
-                ),
-                model or settings.LLM_MODEL or "local-chat",
-            )
-
-        self.ensure_chat_loaded(target)
+        """``response_format={"type": "json_object"}`` turns on llama.cpp's JSON
+        grammar. Never pass a schema: schema-constrained sampling empties nested
+        arrays on small GGUFs."""
+        self.ensure_chat_loaded(self.resolve_chat_gguf(model))
         assert self._chat is not None
         if max_tokens is None:
             max_tokens = _default_chat_max_tokens()
@@ -1638,6 +1598,7 @@ class LocalLlamaRuntime:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     repeat_penalty=repeat_penalty,
+                    response_format=response_format,
                 )
                 return _openaiish_chat_response(raw, model_id)
             except RepetitionLoopError as exc:
@@ -1657,6 +1618,7 @@ class LocalLlamaRuntime:
         temperature: float,
         max_tokens: int,
         repeat_penalty: float,
+        response_format: dict | None = None,
     ) -> dict:
         assert self._chat is not None
         kwargs: dict = {
@@ -1665,6 +1627,8 @@ class LocalLlamaRuntime:
             "max_tokens": max_tokens,
             "repeat_penalty": repeat_penalty,
         }
+        if response_format:
+            kwargs["response_format"] = response_format
         with self._lock:
             # Prefer streaming so we can abort mid-generation on ordinal loops.
             try:
@@ -1758,15 +1722,7 @@ class LocalLlamaRuntime:
         No cap by default: the answer may use everything the context window
         has left, so a dense screenshot is transcribed in full.
         """
-        from app.services.model_formats import ModelFormat
-
-        target, model_format = self.resolve_chat_model(model)
-        if model_format is not None and model_format is not ModelFormat.GGUF:
-            raise RuntimeError(
-                f"{Path(target).name} is not a GGUF. Only GGUF models with a "
-                "vision projector, or a cloud endpoint, can read images."
-            )
-        self.ensure_chat_loaded(target)
+        self.ensure_chat_loaded(self.resolve_chat_gguf(model))
         assert self._chat is not None
         if self._chat_handler is None:
             raise RuntimeError(
@@ -1805,11 +1761,9 @@ class LocalLlamaRuntime:
             text += " […]"
         return text
 
-    def make_chat_clients(self):
-        """Return (chat_client, async_chat_client, extraction_client) OpenAI-compat shims."""
-        sync = LocalOpenAICompat(self)
-        async_client = AsyncLocalOpenAICompat(self)
-        return sync, async_client, sync
+    def make_chat_client(self) -> "LocalOpenAICompat":
+        """OpenAI-compat shim over the in-process runtime."""
+        return LocalOpenAICompat(self)
 
 
 local_llama_runtime = LocalLlamaRuntime()
@@ -1839,18 +1793,20 @@ class LocalGgufReranker:
     def loaded(self) -> bool:
         return self._model is not None
 
-    def ensure_loaded(self) -> bool:
+    def ensure_loaded(self) -> None:
+        """Load the selected reranker GGUF; raises when there is none to load."""
         path = reranker_gguf_path()
         if not path:
-            return False
+            raise RuntimeError(
+                "No reranker GGUF installed — download one on the Models page"
+            )
         if self._model is not None and self._path == path:
             self._last_used = time.monotonic()
-            return True
+            return
         try:
             from llama_cpp import Llama  # type: ignore
-        except ImportError:
-            logger.warning("llama-cpp-python missing; cannot load GGUF reranker")
-            return False
+        except ImportError as exc:
+            raise RuntimeError("llama-cpp-python missing; cannot load GGUF reranker") from exc
         accel = detect_llama_backend()
         with self._lock:
             # Exclusive: drop chat/embed + multimodal before loading reranker.
@@ -1869,7 +1825,7 @@ class LocalGgufReranker:
             self._model = _construct_llama(
                 Llama,
                 model_path=str(path),
-                n_ctx=int(_env_first("ORB_RERANK_N_CTX", "LIVEOS_RERANK_N_CTX", default=str(default_ctx))),
+                n_ctx=int(os.environ.get("ORB_RERANK_N_CTX") or str(default_ctx)),
                 n_gpu_layers=int(accel.get("n_gpu_layers", 0)),
                 logits_all=True,
                 verbose=False,
@@ -1885,7 +1841,6 @@ class LocalGgufReranker:
                 self._no_id = None
             self._last_used = time.monotonic()
             local_llama_runtime._ensure_idle_watcher()  # pylint: disable=protected-access
-        return True
 
     def unload(self) -> None:
         with self._lock:
@@ -1967,20 +1922,11 @@ class LocalGgufReranker:
     ) -> list[dict]:
         if not documents:
             return []
-        if not self.ensure_loaded():
-            return []
+        self.ensure_loaded()
         scored = []
         for i, doc in enumerate(documents):
-            score = self._score_one(query, doc)
-            # Use relevance_score to match the HTTP local-models service contract
-            # (retrieval.py reads r["relevance_score"]).
             scored.append(
-                {
-                    "index": i,
-                    "relevance_score": score,
-                    "score": score,
-                    "document": doc,
-                }
+                {"index": i, "relevance_score": self._score_one(query, doc), "document": doc}
             )
         scored.sort(key=lambda x: x["relevance_score"], reverse=True)
         if top_n is not None:

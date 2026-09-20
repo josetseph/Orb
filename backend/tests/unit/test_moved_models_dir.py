@@ -116,3 +116,45 @@ class TestHealIsIdempotent:
         assert writes == [1], "first read repairs"
         local_models._heal_selection_paths(json.loads(store.read_text())["selection"])
         assert writes == [1], "second read must be a no-op"
+
+
+class TestSelectionWrites:
+    def test_read_never_rewrites_the_manifest(self, models_dir, monkeypatch):
+        """Healing runs once at boot (sync_embedding_infrastructure), not per read."""
+        _manifest(monkeypatch, {"chat_path": "/old/chat.gguf", "embed_path": "/old/embed.gguf"})
+        monkeypatch.setattr(local_models, "save_manifest", lambda m: pytest.fail("wrote on read"))
+        assert local_models.gguf_paths_if_present() is not None
+
+    def test_legacy_guess_is_persisted_once(self, models_dir, monkeypatch):
+        _manifest(monkeypatch, {})
+        monkeypatch.setattr(local_models, "CHAT_MODEL_ID", "org/repo/chat.gguf")
+        monkeypatch.setattr(local_models, "EMBED_MODEL_ID", "org/repo/embed.gguf")
+        writes = []
+        monkeypatch.setattr(local_models, "save_manifest", writes.append)
+        got = local_models.gguf_paths_if_present()
+        assert got == {"chat": models_dir / "gguf" / "chat.gguf", "embed": models_dir / "gguf" / "embed.gguf"}
+        assert writes == [{"selection": {"chat_path": "gguf/chat.gguf", "embed_path": "gguf/embed.gguf"}}]
+
+
+class TestPruneMissingGgufs:
+    """Deleting a GGUF from disk must not leave its manifest record behind."""
+
+    def test_deleted_entries_are_dropped_and_present_ones_kept(self, models_dir, monkeypatch):
+        man = {
+            "gguf": {
+                "chat.gguf": {"path": str(models_dir / "gguf" / "chat.gguf")},
+                "gone.gguf": {"path": str(models_dir / "gguf" / "gone.gguf")},
+                "embed.gguf": {},  # no recorded path: falls back to gguf/<name>
+            }
+        }
+        monkeypatch.setattr(local_models, "load_manifest", lambda: man)
+        writes = []
+        monkeypatch.setattr(local_models, "save_manifest", writes.append)
+        local_models._prune_missing_ggufs()
+        assert writes == [{"gguf": {"chat.gguf": man["gguf"]["chat.gguf"], "embed.gguf": {}}}]
+
+    def test_nothing_missing_writes_nothing(self, models_dir, monkeypatch):
+        man = {"gguf": {"chat.gguf": {"path": "gguf/chat.gguf"}}}
+        monkeypatch.setattr(local_models, "load_manifest", lambda: man)
+        monkeypatch.setattr(local_models, "save_manifest", lambda m: pytest.fail("wrote with nothing to prune"))
+        local_models._prune_missing_ggufs()

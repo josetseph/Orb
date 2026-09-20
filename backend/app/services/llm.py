@@ -1,11 +1,11 @@
-"""Multi-provider LLM service supporting chat, structured extraction, and ingestion routing."""
+"""Multi-provider LLM service supporting chat, generation, and ingestion routing."""
 
-# pylint: disable=too-many-lines,wrong-import-order,import-outside-toplevel
+# pylint: disable=wrong-import-order,import-outside-toplevel
 import asyncio
+import functools
 import re
-from typing import Optional, Type
+from typing import Optional
 
-import instructor
 from app.core.config import settings
 from app.core.log import get_logger
 from app.services.credentials import (
@@ -18,7 +18,8 @@ from app.services.credentials import (
 )
 from google import genai
 from google.genai import types
-from openai import AsyncOpenAI, OpenAI
+from json_repair import repair_json
+from openai import OpenAI
 from pydantic import BaseModel
 
 logger = get_logger("LLMService")
@@ -50,8 +51,18 @@ def describe_call_failure(exc: Exception) -> str:
 ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
 
 
+class _ResearchStep(BaseModel):
+    """One turn of the iterative research loop, as the model returns it."""
+
+    # Small models write null for an empty string field.
+    reasoning: str | None = ""
+    finding: str | None = ""
+    answer: str | None = None
+    next_query: str | None = None
+
+
 class LLMService:
-    """Multi-provider LLM client supporting structured extraction, generation, and ingestion routing."""
+    """Multi-provider LLM client supporting generation and ingestion routing."""
 
     def __init__(
         self,
@@ -62,12 +73,6 @@ class LLMService:
         ingestion_provider: str | None = None,
         base_url: str | None = None,
     ):
-        # Declare client attributes upfront so they are always present on the
-        # instance regardless of which provider branch _init_clients() takes.
-        self.extraction_client = None
-        self.chat_client = None
-        self.async_chat_client = None
-
         # Per-KB instances pin their models here; the global service leaves these
         # unset and reads ``settings`` (Setup / Settings page) instead.
         self._chat_model_override = (chat_model or "").strip() or None
@@ -88,845 +93,252 @@ class LLMService:
             )
             raw = "local"
         self.provider = raw
-        # Explicit-provider instances (fallback services) get no fallback of
-        # their own, so a failing fallback cannot recurse.
-        self.fallback_provider = None if provider else settings.LLM_FALLBACK_PROVIDER
-        self._fallback_service: "LLMService | None" = None
-        # analyze_query memo: the iterative retrieval loop analyses the original
-        # question and hybrid_search re-analyses each sub-query; identical query
-        # strings recur within a session (temperature=0 → deterministic), so a
-        # small per-day cache avoids repeated chat-model calls (and, for local
-        # GGUFs, the model swap they force).
-        self._query_analysis_cache: dict[tuple[str, str], dict] = {}
-
         logger.info(f"Primary LLM Provider: {self.provider.upper()}")
-        if self.fallback_provider:
-            logger.info(f"Fallback LLM Provider: {self.fallback_provider.upper()}")
 
         # Credential version the clients were built against; a key change
         # bumps the store's version and invalidates cached per-KB services.
         self.credentials_version = credentials.version
 
-        # Initialize provider-specific clients
         self.init_clients()
 
-        # Initialize ingestion-specific clients (may be separate provider/server)
-        self._init_ingestion_clients()
+    def init_clients(self):
+        """Build the chat clients for the main provider and the ingestion provider."""
+        self.chat_client, self.gemini_client, self.anthropic_client = self._build_clients(self.provider)
 
-    def init_clients(self):  # pylint: disable=too-many-statements
-        """Initialize clients for the configured provider."""
-        if self.provider == "local":
-            # In-process GGUF via llama-cpp-python (content-machine style; no HTTP server)
+        raw = (self._ingestion_provider_override or settings.INGESTION_PROVIDER or "").strip().lower()
+        if raw in ("ollama", "lm_studio"):
+            logger.warning("INGESTION_PROVIDER=%s is deprecated; using in-process local", raw)
+            raw = "local"
+        self.ingestion_provider = raw or self.provider
+        if self.ingestion_provider == self.provider:
+            # Alias main clients — no extra connections needed.
+            self.i_chat_client, self.i_gemini_client, self.i_anthropic_client = (
+                self.chat_client, self.gemini_client, self.anthropic_client,
+            )
+            logger.info("Ingestion LLM: shared with main (%s)", self.ingestion_provider.upper())
+        else:
+            logger.info("Ingestion LLM: separate provider %s", self.ingestion_provider.upper())
+            self.i_chat_client, self.i_gemini_client, self.i_anthropic_client = self._build_clients(
+                self.ingestion_provider
+            )
+
+    def _build_clients(self, provider: str) -> tuple:  # pylint: disable=too-many-return-statements
+        """``(chat_client, gemini_client, anthropic_client)`` for ``provider``; unused slots are None."""
+        if provider == "local":
+            # In-process GGUF via llama-cpp-python (no HTTP server)
             from app.services.local_models import local_llama_runtime
 
-            accel = local_llama_runtime.accel
             logger.info(
-                f"Initializing in-process llama-cpp-python "
-                f"(backend={accel.get('backend')}, model={settings.LLM_MODEL})"
+                "Initializing in-process llama-cpp-python (backend=%s, model=%s)",
+                local_llama_runtime.accel.get("backend"),
+                settings.LLM_MODEL,
             )
-            sync, async_client, extraction = local_llama_runtime.make_chat_clients()
-            self.chat_client = sync
-            self.async_chat_client = async_client
-            self.extraction_client = extraction
+            return local_llama_runtime.make_chat_client(), None, None
 
-        elif self.provider == "openai_compat":
+        if provider == "openai_compat":
             # Any OpenAI-compatible server: OpenRouter, Groq, Together, vLLM,
             # LM Studio, llama-server, Ollama's /v1 … The endpoint URL is the
             # credential identity, so each server carries its own key.
             base_url = self.get_base_url()
             if not base_url:
-                raise ValueError(
-                    "No endpoint URL set. Add one in Settings -> AI provider."
-                )
-            api_key = self.get_endpoint_key(base_url)
+                raise ValueError("No endpoint URL set. Add one in Settings -> AI provider.")
             logger.info("Initializing OpenAI-compatible endpoint at %s", base_url)
-            self.chat_client = OpenAI(
-                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
+            client = OpenAI(
+                base_url=request_base_url(base_url),
+                api_key=self.get_endpoint_key(base_url),
+                timeout=300.0,
+                max_retries=2,
             )
-            self.async_chat_client = AsyncOpenAI(
-                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
-            )
-            self.extraction_client = instructor.patch(
-                OpenAI(
-                    base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
-                ),
-                mode=instructor.Mode.MD_JSON,
-            )
+            return client, None, None
 
-        elif self.provider == "openai":
+        if provider == "openai":
             if not get_api_key("openai"):
                 raise ValueError("No OpenAI API key. Add one in Settings -> AI provider.")
-            logger.info(f"Initializing OpenAI (Model: {settings.OPENAI_MODEL})")
+            logger.info("Initializing OpenAI (Model: %s)", settings.OPENAI_MODEL)
+            return OpenAI(api_key=get_api_key("openai"), timeout=300.0), None, None
 
-            self.extraction_client = instructor.patch(
-                OpenAI(api_key=get_api_key("openai"), timeout=300.0)
-            )
-            self.chat_client = OpenAI(api_key=get_api_key("openai"), timeout=300.0)
-            # Async client for batch processing
-            self.async_chat_client = AsyncOpenAI(
-                api_key=get_api_key("openai"), timeout=300.0
-            )
-
-        elif self.provider == "gemini":
+        if provider == "gemini":
             if not get_api_key("gemini"):
                 raise ValueError("No Gemini API key. Add one in Settings -> AI provider.")
-            logger.info(f"Initializing Gemini (Model: {settings.GEMINI_MODEL})")
-
-            # Use native Google Gen AI SDK for better rate limits
-            # Timeout: 120 seconds per call — long enough for complex extractions, short
-            # enough to fail fast rather than appear frozen when the API hangs.
-            self.gemini_client = genai.Client(
+            logger.info("Initializing Gemini (Model: %s)", settings.GEMINI_MODEL)
+            # 120s per call: long enough for big prompts, short enough to fail
+            # fast rather than appear frozen when the API hangs.
+            client = genai.Client(
                 api_key=get_api_key("gemini"),
                 http_options=types.HttpOptions(timeout=120000),
             )
+            return None, client, None
 
-            # OpenAI-compatible wrapper so callers that use chat_client still work
-            class GeminiChatWrapper:  # pylint: disable=too-few-public-methods
-                """OpenAI-compatible wrapper that routes completion requests through the native Gemini SDK."""
-
-                def __init__(self, native_client):
-                    self.native_client = native_client
-                    self.chat = self
-
-                class Completions:  # pylint: disable=too-few-public-methods
-                    """Inner completions namespace mirroring the OpenAI Completions interface."""
-
-                    def __init__(self, native_client):
-                        self.native_client = native_client
-
-                    def create(
-                        self,
-                        model,
-                        messages,
-                        _max_tokens=None,
-                        _extra_body=None,
-                        temperature=0.1,
-                    ):
-                        """Execute a synchronous completion request against the Gemini API."""
-                        # Convert OpenAI-style messages to Gemini format
-                        # Combine system + user messages into single prompt
-                        prompt_parts = []
-                        for msg in messages:
-                            if msg["role"] == "system":
-                                prompt_parts.append(msg["content"])
-                            elif msg["role"] == "user":
-                                prompt_parts.append(msg["content"])
-
-                        prompt = "\n\n".join(prompt_parts)
-
-                        # Call native Gemini SDK
-                        response = self.native_client.models.generate_content(
-                            model=model,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=temperature,
-                                thinking_config=types.ThinkingConfig(
-                                    thinking_budget=0,  # thinking_level="MINIMAL"
-                                ),
-                            ),
-                        )
-
-                        # Return OpenAI-compatible response structure
-                        class Choice:  # pylint: disable=too-few-public-methods
-                            """OpenAI-compatible Choice wrapper holding a single candidate message."""
-
-                            def __init__(self, text):
-                                self.message = type("Message", (), {"content": text})()
-
-                        class Response:  # pylint: disable=too-few-public-methods
-                            """OpenAI-compatible response wrapper containing a list of choices."""
-
-                            def __init__(self, text):
-                                self.choices = [Choice(text)]
-
-                        return Response(response.text)
-
-                @property
-                def completions(self):
-                    """Return the inner Completions object for OpenAI-style access."""
-                    return self.Completions(self.native_client)
-
-            self.chat_client = GeminiChatWrapper(self.gemini_client)
-
-        elif self.provider == "anthropic":
+        if provider == "anthropic":
             if not get_api_key("anthropic"):
                 raise ValueError("No Anthropic API key. Add one in Settings -> AI provider.")
-            logger.info(f"Initializing Anthropic (Model: {settings.ANTHROPIC_MODEL})")
-
-            # Anthropic uses instructor for structured outputs (prompt engineering mode)
+            logger.info("Initializing Anthropic (Model: %s)", settings.ANTHROPIC_MODEL)
             from anthropic import Anthropic
 
-            self.anthropic_client = Anthropic(api_key=get_api_key("anthropic"))
+            return None, None, Anthropic(api_key=get_api_key("anthropic"))
 
-            # Create OpenAI-compatible wrapper for backward compatibility
-            # Note: Anthropic doesn't have native structured outputs, so we use instructor
-            self.extraction_client = instructor.from_anthropic(
-                self.anthropic_client,
-                mode=instructor.Mode.ANTHROPIC_JSON,
-            )
-            self.chat_client = self.anthropic_client
-
-        elif self.provider == "huggingface":
+        if provider == "huggingface":
             if not get_api_key("huggingface"):
                 raise ValueError("No Hugging Face API key. Add one in Settings -> AI provider.")
             if not settings.HUGGINGFACE_MODEL:
                 raise ValueError("HUGGINGFACE_MODEL not set in configuration")
-            base_url = "https://router.huggingface.co/v1"
-            logger.info(
-                f"Initializing HuggingFace Inference API "
-                f"(Model: {settings.HUGGINGFACE_MODEL})"
-            )
-            self.chat_client = OpenAI(
-                base_url=base_url,
+            logger.info("Initializing HuggingFace Inference API (Model: %s)", settings.HUGGINGFACE_MODEL)
+            client = OpenAI(
+                base_url="https://router.huggingface.co/v1",
                 api_key=get_api_key("huggingface"),
                 timeout=300.0,
                 max_retries=3,
             )
-            self.async_chat_client = AsyncOpenAI(
-                base_url=base_url,
-                api_key=get_api_key("huggingface"),
-                timeout=300.0,
-                max_retries=3,
-            )
-            # instructor in MD_JSON mode for structured extraction
-            self.extraction_client = instructor.patch(
-                OpenAI(
-                    base_url=base_url,
-                    api_key=get_api_key("huggingface"),
-                    timeout=300.0,
-                    max_retries=3,
-                ),
-                mode=instructor.Mode.MD_JSON,
-            )
+            return client, None, None
 
-        else:
-            raise ValueError(f"Unsupported LLM provider: {self.provider}")
-
-    def _init_ingestion_clients(self):  # pylint: disable=too-many-statements
-        """
-        Set up a separate set of clients for ingestion (extraction/entity reasoning).
-
-        If INGESTION_PROVIDER is not set, the ingestion clients simply alias the
-        main chat clients so there is zero overhead.
-        """
-        raw_provider = (
-            getattr(self, "_ingestion_provider_override", None)
-            or settings.INGESTION_PROVIDER
-            or ""
-        ).strip().lower()
-        if raw_provider in ("ollama", "lm_studio"):
-            logger.warning(
-                "INGESTION_PROVIDER=%s is deprecated; using in-process local",
-                raw_provider,
-            )
-            raw_provider = "local"
-        self.ingestion_provider = raw_provider or self.provider
-
-        # Alias main clients when ingestion uses the same provider.
-        same_provider = self.ingestion_provider == self.provider
-
-        if same_provider:
-            # Alias main clients — no extra connections needed
-            self.i_chat_client = getattr(self, "chat_client", None)
-            self.i_async_chat_client = getattr(self, "async_chat_client", None)
-            self.i_extraction_client = getattr(self, "extraction_client", None)
-            self.i_gemini_client = getattr(self, "gemini_client", None)
-            self.i_anthropic_client = getattr(self, "anthropic_client", None)
-            logger.info(
-                f"Ingestion LLM: shared with main ({self.ingestion_provider.upper()})"
-            )
-            return
-
-        logger.info(
-            f"Ingestion LLM: separate provider {self.ingestion_provider.upper()}"
-        )
-
-        if self.ingestion_provider == "local":
-            from app.services.local_models import local_llama_runtime
-
-            sync, async_client, extraction = local_llama_runtime.make_chat_clients()
-            self.i_chat_client = sync
-            self.i_async_chat_client = async_client
-            self.i_extraction_client = extraction
-            self.i_gemini_client = None
-            self.i_anthropic_client = None
-
-        elif self.ingestion_provider == "openai_compat":
-            base_url = self.get_base_url()
-            if not base_url:
-                raise ValueError(
-                    "No endpoint URL set. Add one in Settings -> AI provider."
-                )
-            api_key = self.get_endpoint_key(base_url)
-            self.i_chat_client = OpenAI(
-                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
-            )
-            self.i_async_chat_client = AsyncOpenAI(
-                base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
-            )
-            self.i_extraction_client = instructor.patch(
-                OpenAI(
-                    base_url=request_base_url(base_url), api_key=api_key, timeout=300.0, max_retries=2
-                ),
-                mode=instructor.Mode.MD_JSON,
-            )
-            self.i_gemini_client = None
-            self.i_anthropic_client = None
-
-        elif self.ingestion_provider == "gemini":
-            if not get_api_key("gemini"):
-                raise ValueError(
-                    "No Gemini API key. Add one in Settings -> AI provider."
-                )
-            self.i_gemini_client = genai.Client(
-                api_key=get_api_key("gemini"),
-                http_options=types.HttpOptions(timeout=120000),
-            )
-            self.i_chat_client = None
-            self.i_async_chat_client = None
-            self.i_extraction_client = None
-            self.i_anthropic_client = None
-
-        elif self.ingestion_provider == "openai":
-            if not get_api_key("openai"):
-                raise ValueError(
-                    "No OpenAI API key. Add one in Settings -> AI provider."
-                )
-            self.i_chat_client = OpenAI(api_key=get_api_key("openai"), timeout=300.0)
-            self.i_async_chat_client = AsyncOpenAI(
-                api_key=get_api_key("openai"), timeout=300.0
-            )
-            self.i_extraction_client = instructor.patch(
-                OpenAI(api_key=get_api_key("openai"), timeout=300.0)
-            )
-            self.i_gemini_client = None
-            self.i_anthropic_client = None
-
-        elif self.ingestion_provider == "anthropic":
-            if not get_api_key("anthropic"):
-                raise ValueError(
-                    "No Anthropic API key. Add one in Settings -> AI provider."
-                )
-            from anthropic import Anthropic
-
-            self.i_anthropic_client = Anthropic(api_key=get_api_key("anthropic"))
-            self.i_extraction_client = instructor.from_anthropic(
-                self.i_anthropic_client, mode=instructor.Mode.ANTHROPIC_JSON
-            )
-            self.i_chat_client = None
-            self.i_async_chat_client = None
-            self.i_gemini_client = None
-
-        elif self.ingestion_provider == "huggingface":
-            if not get_api_key("huggingface"):
-                raise ValueError(
-                    "No Hugging Face API key. Add one in Settings -> AI provider."
-                )
-            base_url = "https://router.huggingface.co/v1"
-            self.i_chat_client = OpenAI(
-                base_url=base_url,
-                api_key=get_api_key("huggingface"),
-                timeout=300.0,
-                max_retries=3,
-            )
-            self.i_async_chat_client = AsyncOpenAI(
-                base_url=base_url,
-                api_key=get_api_key("huggingface"),
-                timeout=300.0,
-                max_retries=3,
-            )
-            self.i_extraction_client = instructor.patch(
-                OpenAI(
-                    base_url=base_url,
-                    api_key=get_api_key("huggingface"),
-                    timeout=300.0,
-                    max_retries=3,
-                ),
-                mode=instructor.Mode.MD_JSON,
-            )
-            self.i_gemini_client = None
-            self.i_anthropic_client = None
-
-        else:
-            raise ValueError(
-                f"Unsupported INGESTION_PROVIDER: {self.ingestion_provider}"
-            )
-
-    def _with_keep_alive(self, extra_body: dict | None = None) -> dict:
-        """Pass-through body for chat completions (in-process local ignores keep_alive)."""
-        return dict(extra_body or {})
-
-    def _with_ingestion_keep_alive(self, extra_body: dict | None = None) -> dict:
-        """Pass-through body for ingestion chat completions."""
-        return dict(extra_body or {})
-
-    def _local_json_response_format(
-        self, _schema: dict | None = None, _schema_name: str = "response"
-    ) -> dict:
-        """Force json_object mode for structured local extraction."""
-        return {"type": "json_object"}
-
-    def _local_text_response_format(self) -> dict:
-        """Fallback when the backend rejects json_object."""
-        return {"type": "text"}
-
-    def _local_response_format_candidates(  # pylint: disable=unused-argument
-        self, schema: dict | None = None, schema_name: str = "response"
-    ) -> list[dict]:
-        """Prefer json_object; fall back to text for compatibility."""
-        mode = settings.LLM_RESPONSE_FORMAT.lower().strip()
-        json_object = {"type": "json_object"}
-        text = {"type": "text"}
-        if mode == "text":
-            return [text]
-        return [json_object, text]
+        raise ValueError(f"Unsupported LLM provider: {provider}")
 
     def _clean_json(self, json_str: str) -> str:
-        """
-        Uses json_repair to robustly fix malformed JSON from LLMs.
-        Also strips markdown code blocks, sanitizes control characters,
-        and normalizes smart/curly quotes to straight quotes.
-        """
-        # 1. Unwrap markdown (Common failure mode)
-        if "```" in json_str:
-            match = re.search(r"```(?:json)?(.*?)```", json_str, re.DOTALL)
-            if match:
-                json_str = match.group(1)
-
-        # 2. Remove control characters (except allowed ones: \n \r \t inside strings are handled by json_repair)
-        # This handles \u0000-\u001F that break JSON parsing
-        json_str = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", json_str)
-
-        # 3. Normalize smart/curly quotes to straight quotes
-        # Single quotes: ' ' ‛ → '
+        """Model output → parseable JSON text: unwrap a code fence, then json_repair."""
+        match = re.search(r"```(?:json)?(.*?)```", json_str, re.DOTALL)
+        if match:
+            json_str = match.group(1)
+        # json_repair escapes stray control characters itself, but it does not
+        # read curly quotes as string delimiters.
         json_str = re.sub(r"[\u2018\u2019\u201B]", "'", json_str)
-        # Double quotes: " " „ → "
         json_str = re.sub(r"[\u201C\u201D\u201E]", '"', json_str)
+        return repair_json(json_str)
 
-        try:
-            from json_repair import repair_json
-
-            return repair_json(json_str)
-        except ImportError:
-            logger.warning("json_repair not installed! Falling back to raw string.")
-            return json_str
-
-    def extract_structured(  # pylint: disable=too-many-return-statements
+    def _chat(  # pylint: disable=too-many-locals,too-many-branches
         self,
-        prompt: str,
-        response_model: Type[BaseModel],
-        temperature: float = 0.1,
+        messages: list[dict],
+        *,
         model: str | None = None,
-    ) -> Optional[BaseModel]:
-        """
-        Provider-agnostic structured extraction with native schema enforcement.
-        Supports: local (in-process GGUF), OpenAI, Gemini, Anthropic (with fallback).
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        ingestion: bool = False,
+        json_mode: bool = False,
+    ) -> tuple[str, dict]:
+        """One chat completion on the main (or ingestion) provider.
 
-        Args:
-            model: Optional model override. When set, uses this model instead of
-                   the default LLM_MODEL (e.g. pass settings.INGESTION_LLM_MODEL
-                   from ingestion callers to use the lighter extraction model).
+        Returns ``(text, meta)`` with ``meta = {"finish_reason", "truncated",
+        "thinking"}``. ``thinking`` is the model's chain-of-thought when the
+        server exposes it (``reasoning_content`` or ``<think>`` tags), stripped
+        from ``text``; ``truncated`` is True when the provider stopped at its
+        output limit.
+
+        ``json_mode`` asks the provider for a JSON object structurally where it
+        can (OpenAI-style ``response_format``, Gemini ``response_mime_type``,
+        llama.cpp's JSON grammar); callers still parse through ``_clean_json``.
         """
+        provider = self.ingestion_provider if ingestion else self.provider
+        model = model or (self.get_ingestion_model() if ingestion else self.get_chat_model())
+        system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
+        user = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
+        if json_mode and "JSON" not in system + user:
+            # OpenAI rejects response_format unless the prompt mentions JSON.
+            messages = [dict(m) for m in messages]
+            last = next(m for m in reversed(messages) if m["role"] == "user")
+            last["content"] += "\n\nRespond with a JSON object."
+            user += "\n\nRespond with a JSON object."
         try:
-            if self.provider == "local":
-                return self._extract_local(
-                    prompt, response_model, temperature, model=model
-                )
-            if self.provider in ("openai", "openai_compat"):
-                # openai_compat speaks the same API; only the model name differs.
-                return self._extract_openai(prompt, response_model, temperature)
-            if self.provider == "gemini":
-                return self._extract_gemini(
-                    prompt, response_model, temperature, model=model
-                )
-            if self.provider == "anthropic":
-                return self._extract_anthropic(prompt, response_model, temperature)
-            if self.provider == "huggingface":
-                return self._extract_huggingface(prompt, response_model, temperature)
-            raise ValueError(f"Unsupported provider: {self.provider}")
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error(f"Extraction failed with {self.provider}: {e}")
-
-            # Try fallback provider if configured. Uses a dedicated service
-            # instance — mutating the shared singleton's provider/clients would
-            # race with concurrent chat/ingestion calls.
-            if self.fallback_provider:
-                logger.info(f"Attempting fallback to {self.fallback_provider}")
-                try:
-                    if self._fallback_service is None:
-                        self._fallback_service = LLMService(
-                            provider=self.fallback_provider
-                        )
-                    return self._fallback_service.extract_structured(
-                        prompt, response_model, temperature
-                    )
-                except (
-                    Exception
-                ) as fallback_error:  # pylint: disable=broad-exception-caught
-                    logger.error(f"Fallback extraction failed: {fallback_error}")
-
-            # Fail closed — empty Extraction would silently corrupt the graph.
-            return None
-
-    def _extract_openai(
-        self, prompt: str, response_model: Type[BaseModel], temperature: float
-    ) -> BaseModel:
-        """OpenAI extraction with native structured outputs."""
-        model = self.get_chat_model()
-        logger.info(f"[OpenAI] Extracting with {model} (structured outputs)")
-
-        # OpenAI's beta structured outputs API
-        response = self.chat_client.beta.chat.completions.parse(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            response_format=response_model,
-            temperature=temperature,
-        )
-
-        return response.choices[0].message.parsed  # Already validated!
-
-    def _extract_local(
-        self,
-        prompt: str,
-        response_model: Type[BaseModel],
-        temperature: float,
-        model: str | None = None,
-        _client=None,
-    ) -> BaseModel:
-        """In-process / OpenAI-compat local extraction via prompt-guided JSON."""
-        import json
-
-        model = model or self.get_chat_model()
-        logger.info("[Local] Extracting with %s (JSON mode)", model)
-
-        # Keep schema compact to reduce prompt-processing overhead.
-        schema_json = json.dumps(
-            response_model.model_json_schema(), separators=(",", ":")
-        )
-        system_prompt = (
-            "You are a structured extraction engine. "
-            "Return ONLY valid JSON with no markdown fences and no extra text. "
-            "The output MUST match this JSON schema exactly:\n"
-            f"{schema_json}"
-        )
-
-        raw_content = self._extract_local_with_fallback(
-            model=model,
-            system_prompt=system_prompt,
-            prompt=prompt,
-            temperature=temperature,
-            schema=None,
-            schema_name=response_model.__name__,
-            _client=_client,
-        )
-        cleaned_json = self._clean_json(raw_content)
-        try:
-            return response_model.model_validate_json(cleaned_json)
-        except Exception:
-            # Some local models wrap result in {"extraction": {...}}.
-            data = json.loads(cleaned_json)
-            if isinstance(data, dict) and isinstance(data.get("extraction"), dict):
-                return response_model.model_validate(data["extraction"])
-            raise
-
-    def _extract_local_with_fallback(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        self,
-        model: str,
-        system_prompt: str,
-        prompt: str,
-        temperature: float,
-        schema: dict | None = None,
-        schema_name: str = "response",
-        _client=None,
-    ) -> str:  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        """
-        Try configured response_format strategy with compatibility fallbacks.
-        ``_client`` allows routing to an ingestion-specific server.
-        """
-        client = _client or self.chat_client
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-        last_error = None
-        for response_format in self._local_response_format_candidates(
-            schema=schema, schema_name=schema_name
-        ):
-            try:
-                response = client.chat.completions.create(
+            if provider == "gemini":
+                client = self.i_gemini_client if ingestion else self.gemini_client
+                response = client.models.generate_content(
                     model=model,
-                    messages=messages,
-                    response_format=response_format,
-                    extra_body=self._with_keep_alive(),
-                    temperature=temperature,
-                )
-                return response.choices[0].message.content
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                last_error = e
-                logger.warning(
-                    f"[Local] response_format={response_format.get('type')} failed: {e}"
-                )
-
-        if last_error:
-            raise last_error
-        raise RuntimeError(
-            "[Local] Extraction failed with no response formats to try"
-        )
-
-    def _extract_huggingface(
-        self, prompt: str, response_model: Type[BaseModel], temperature: float
-    ) -> BaseModel:
-        """HuggingFace Inference API extraction via OpenAI-compatible endpoint.
-
-        Uses prompt-guided JSON mode — json_object is attempted first and falls
-        back to plain text so the method works across all HF-hosted models.
-        """
-        import json
-
-        model = settings.HUGGINGFACE_MODEL
-        logger.info(f"[HuggingFace] Extracting with {model}")
-
-        schema_json = json.dumps(
-            response_model.model_json_schema(), separators=(",", ":")
-        )
-        system_prompt = (
-            "You are a structured extraction engine. "
-            "Return ONLY valid JSON with no markdown fences and no extra text. "
-            "The output MUST match this JSON schema exactly:\n"
-            f"{schema_json}"
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
-        ]
-
-        # Try json_object first; fall back to text if the model rejects it.
-        last_error = None
-        for response_format in [{"type": "json_object"}, {"type": "text"}]:
-            try:
-                response = self.chat_client.chat.completions.create(
-                    model=model,
-                    messages=messages,
-                    response_format=response_format,
-                    temperature=temperature,
-                )
-                raw = response.choices[0].message.content
-                cleaned = self._clean_json(raw)
-                return response_model.model_validate_json(cleaned)
-            except Exception as e:  # pylint: disable=broad-exception-caught
-                last_error = e
-                logger.warning(
-                    f"[HuggingFace] format={response_format['type']} failed: {e}"
-                )
-
-        raise last_error
-
-    @staticmethod
-    def _inline_schema_refs(schema: dict) -> dict:
-        """Inline all $ref references in a JSON schema so Gemini can parse it.
-
-        Gemini's response_schema does not support $ref / $defs — any schema
-        produced by Pydantic for nested models must be fully flattened first.
-        """
-        import copy
-
-        schema = copy.deepcopy(schema)
-        defs = schema.pop("$defs", {})
-
-        def resolve(obj):
-            if not isinstance(obj, dict):
-                return obj
-            if "$ref" in obj:
-                ref_name = obj["$ref"].split("/")[-1]
-                resolved = copy.deepcopy(defs.get(ref_name, obj))
-                return resolve(resolved)
-            return {k: resolve(v) for k, v in obj.items()}
-
-        return resolve(schema)
-
-    def _extract_gemini(  # pylint: disable=too-many-locals
-        self,
-        prompt: str,
-        response_model: Type[BaseModel],
-        temperature: float,
-        model: str | None = None,
-        _gemini_client=None,
-    ) -> BaseModel:
-        """Gemini extraction with native SDK and JSON schema enforcement."""
-        import time
-
-        gemini_client = _gemini_client or self.gemini_client
-        model = model or settings.GEMINI_MODEL
-        logger.info(f"[Gemini] Extracting with {model} (native SDK)")
-
-        _retryable = (
-            "504",
-            "DEADLINE_EXCEEDED",
-            "503",
-            "UNAVAILABLE",
-            "429",
-            "RESOURCE_EXHAUSTED",
-        )
-        max_retries = 3
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                inlined_schema = self._inline_schema_refs(
-                    response_model.model_json_schema()
-                )
-                response = gemini_client.models.generate_content(
-                    model=model,
-                    contents=prompt,
+                    contents=f"{system}\n\n{user}" if system else user,
                     config=types.GenerateContentConfig(
                         temperature=temperature,
-                        response_mime_type="application/json",
-                        response_schema=inlined_schema,
                         thinking_config=types.ThinkingConfig(thinking_budget=0),
-                        automatic_function_calling=types.AutomaticFunctionCallingConfig(
-                            disable=True
-                        ),
+                        response_mime_type="application/json" if json_mode else None,
                     ),
                 )
+                candidates = getattr(response, "candidates", None) or []
+                reason = str(getattr(candidates[0], "finish_reason", "") or "") if candidates else ""
+                return (response.text or "").strip(), {
+                    "finish_reason": reason or None,
+                    "truncated": "MAX_TOKENS" in reason.upper(),
+                    "thinking": None,
+                }
 
-                import json
+            if provider == "anthropic":
+                # json_mode is prompt-driven here: a `{` assistant prefill
+                # returns 400 on every Claude model since 4.6, and structured
+                # output (output_config.format) needs a full JSON schema.
+                # ponytail: thread a pydantic schema through when a caller needs it.
+                client = self.i_anthropic_client if ingestion else self.anthropic_client
+                kwargs = {"system": system} if system else {}
+                if temperature is not None:
+                    kwargs["temperature"] = temperature
+                response = client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens if max_tokens is not None else ANTHROPIC_MAX_OUTPUT_TOKENS,
+                    messages=[{"role": "user", "content": user}],
+                    **kwargs,
+                )
+                reason = getattr(response, "stop_reason", None)
+                return response.content[0].text.strip(), {
+                    "finish_reason": reason,
+                    "truncated": reason == "max_tokens",
+                    "thinking": None,
+                }
 
-                response_data = json.loads(response.text)
-                # Use model_validate (not **kwargs) so model_validator(mode='before') fires
-                return response_model.model_validate(response_data)
-
-            except Exception as e:
-                err = str(e)
-                if "PROHIBITED_CONTENT" in err or "content_filter" in err.lower():
-                    # Fail closed: an empty-but-valid Extraction upstream would
-                    # silently erase entities for this chunk in the graph.
-                    logger.warning("[Gemini] Content filtered; failing extraction.")
-                    raise ValueError("Gemini content filter blocked extraction") from e
-
-                is_retryable = any(code in err for code in _retryable)
-                if is_retryable and attempt < max_retries:
-                    wait = 2**attempt  # 2s, 4s
-                    logger.warning(
-                        f"[Gemini] Retryable error (attempt {attempt}/{max_retries}), "
-                        f"retrying in {wait}s: {err}"
-                    )
-                    time.sleep(wait)
-                    continue
-
-                logger.error(f"[Gemini] Extraction error: {e}")
-                raise
-
-    def _extract_anthropic(
-        self, prompt: str, response_model: Type[BaseModel], temperature: float
-    ) -> BaseModel:
-        """Anthropic extraction with prompt engineering + validation."""
-        model = settings.ANTHROPIC_MODEL
-        logger.info(f"[Anthropic] Extracting with {model} (prompt-based)")
-
-        # Anthropic doesn't have native schema enforcement, use instructor
-        response = self.extraction_client.messages.create(
-            model=model,
-            temperature=temperature,
-            messages=[{"role": "user", "content": prompt}],
-            response_model=response_model,
-        )
-
-        return response
-
-    def _reason_step(self, prompt: str) -> tuple[str, str | None]:
-        """
-        Like reason(), but also returns any model thinking/reasoning content.
-
-        Returns:
-            (content, thinking) where thinking is the model's internal chain-of-thought
-            (from reasoning_content field or <think>…</think> tags), stripped from content.
-            thinking is None if the model produced no separate thinking.
-        """
-        thinking: str | None = None
-
-        if self.provider == "gemini":
-            response = self.gemini_client.models.generate_content(
-                model=self.get_chat_model(),
-                contents=prompt,
+            # local / openai / openai_compat / huggingface. No default max_tokens:
+            # local sizes output from the context left, cloud uses its own limit.
+            client = self.i_chat_client if ingestion else self.chat_client
+            kwargs = {}
+            if temperature is not None:
+                kwargs["temperature"] = temperature
+            if max_tokens is not None:
+                kwargs["max_tokens"] = max_tokens
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            choice = client.chat.completions.create(model=model, messages=messages, **kwargs).choices[0]
+            text = choice.message.content or ""
+            # LM Studio and some OpenAI-compat servers expose thinking in
+            # reasoning_content; others embed <think>…</think> in the content.
+            # An unclosed <think> is reasoning the output limit cut off.
+            thinking = getattr(choice.message, "reasoning_content", None) or None
+            if not thinking and "<think>" in text:
+                match = re.search(r"<think>(.*?)(?:</think>|\Z)", text, re.DOTALL)
+                thinking = match.group(1).strip() or None
+                text = text[: match.start()] + text[match.end() :]
+            reason = getattr(choice, "finish_reason", None)
+            return text.strip(), {
+                "finish_reason": reason,
+                "truncated": reason == "length",
+                "thinking": thinking,
+            }
+        except Exception as e:
+            logger.error(
+                "[LLM] %s call failed via %s: %s",
+                provider,
+                self.get_base_url() or provider,
+                describe_call_failure(e),
             )
-            return response.text or "", None
+            raise
 
-        if self.provider == "anthropic":
-            response = self.chat_client.messages.create(
-                model=self.get_chat_model(),
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text or "", None
+    _REASONING_SYSTEM = (
+        "You are a deep reasoning engine. Analyze the input carefully. "
+        "Detect conflicts, subtleties, or hidden connections."
+    )
 
-        # Local / LM Studio / OpenAI
-        _model = self.get_chat_model()
-        extra_body = self._with_keep_alive()
-
-        response = self.chat_client.chat.completions.create(
-            model=_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a deep reasoning engine. Analyze the input carefully. Detect conflicts, subtleties, or hidden connections.",  # pylint: disable=line-too-long
-                },
+    def _reason_step(self, prompt: str, *, json_mode: bool = False) -> tuple[str, str | None]:
+        """Like reason(), but also returns the model's thinking (None if it produced none)."""
+        text, meta = self._chat(
+            [
+                {"role": "system", "content": self._REASONING_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            extra_body=extra_body,
+            json_mode=json_mode,
         )
-        message = response.choices[0].message
-        content: str = message.content or ""
-
-        # LM Studio (and some OpenAI-compat servers) expose thinking in reasoning_content
-        thinking = getattr(message, "reasoning_content", None) or None
-
-        # Fallback: extract <think>…</think> blocks embedded in content
-        if not thinking and "<think>" in content:
-            think_match = re.search(r"<think>(.*?)</think>", content, re.DOTALL)
-            if think_match:
-                thinking = think_match.group(1).strip()
-                content = re.sub(
-                    r"<think>.*?</think>", "", content, flags=re.DOTALL
-                ).strip()
-
-        return content, thinking
+        return text, meta["thinking"]
 
     def reason(self, prompt: str, model: str | None = None) -> str:
-        """
-        Uses the Reasoning Model for complex logic/refinement.
-        Returns raw text (Chain-of-Thought + Answer).
-        """
-        # Select model based on provider
-        if self.provider == "gemini":
-            response = self.gemini_client.models.generate_content(
-                model=model or self.get_chat_model(),
-                config=types.GenerateContentConfig(
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                ),
-                contents=f"{prompt}",
-            )
-            return response.text
-        if self.provider == "anthropic":
-            response = self.chat_client.messages.create(
-                model=model or self.get_chat_model(),
-                messages=[{"role": "user", "content": prompt}],
-            )
-            return response.content[0].text
-        # Ollama/LM Studio/OpenAI
-        _model = model or self.get_chat_model()
-        extra_body = self._with_keep_alive()
-
-        response = self.chat_client.chat.completions.create(
-            model=_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a deep reasoning engine. Analyze the input carefully. Detect conflicts, subtleties, or hidden connections.",  # pylint: disable=line-too-long
-                },
+        """Uses the Reasoning Model for complex logic/refinement. Returns raw text."""
+        text, _ = self._chat(
+            [
+                {"role": "system", "content": self._REASONING_SYSTEM},
                 {"role": "user", "content": prompt},
             ],
-            extra_body=extra_body,
+            model=model,
         )
-        return response.choices[0].message.content
+        return text
 
     def rewrite_follow_up_query(
         self,
@@ -935,29 +347,21 @@ class LLMService:
         model: str | None = None,
     ) -> str:
         """Rewrite a follow-up into a standalone retrieval query using recent chat turns."""
+        from app.schemas.chat import render_history
+
         latest = (latest_query or "").strip()
         if not latest or not history:
             return latest
 
-        lines: list[str] = []
-        for turn in history[-settings.CHAT_HISTORY_MAX_MESSAGES :]:
-            role = (turn.get("role") or "").strip().lower()
-            content = (turn.get("content") or "").strip()
-            if not content or role not in {"user", "assistant"}:
-                continue
-            label = "User" if role == "user" else "Assistant"
-            if len(content) > 600:
-                content = content[:597].rstrip() + "..."
-            lines.append(f"{label}: {content}")
-
-        if not lines:
+        rendered = render_history(history, 600)
+        if not rendered:
             return latest
 
         prompt = (
             "You rewrite follow-up questions into standalone search queries for a "
             "document collection.\n\n"
             "CONVERSATION:\n"
-            + "\n".join(lines)
+            + rendered
             + "\n\n"
             f"LATEST USER MESSAGE: {latest}\n\n"
             "Return ONE standalone search query that captures what the user is asking "
@@ -978,66 +382,54 @@ class LLMService:
             logger.warning(f"[LLM] rewrite_follow_up_query failed: {exc}")
         return latest
 
-    def _reason_step_sync(self, prompt: str, model: str | None = None) -> str:
-        """Synchronous lightweight reasoning call for query rewrite."""
-        _model = model or self.get_chat_model()
-        extra_body = self._with_keep_alive()
-        response = self.chat_client.chat.completions.create(
-            model=_model,
-            messages=[
+    def summarize_conversation(
+        self, existing: str | None, turns: list[dict], model: str | None = None
+    ) -> str:
+        """Fold ``turns`` (messages that left the history window) into the
+        running summary of a long chat. One call; the summary stays short."""
+        from app.schemas.chat import render_history
+
+        prompt = (
+            "Update the running summary of a conversation between a user and Orb, "
+            "their notes assistant. Keep every fact, name, decision and open "
+            "question the user may refer back to; drop pleasantries. Plain prose, "
+            "under 200 words.\n\n"
+            f"CURRENT SUMMARY:\n{existing or '(none)'}\n\n"
+            "NEW TURNS:\n" + render_history(turns, 1500) + "\n\nUPDATED SUMMARY:"
+        )
+        text, _ = self._chat(
+            [
                 {
                     "role": "system",
-                    "content": (
-                        "You are a precise query rewriter. Output only the rewritten query."
-                    ),
+                    "content": "You maintain a concise running summary. Output only the summary.",
                 },
                 {"role": "user", "content": prompt},
             ],
-            extra_body=extra_body,
+            model=model,
         )
-        return (response.choices[0].message.content or "").strip()
+        return (text or "").strip() or (existing or "")
+
+    def _reason_step_sync(self, prompt: str, model: str | None = None) -> str:
+        """Synchronous lightweight reasoning call for query rewrite."""
+        text, _ = self._chat(
+            [
+                {"role": "system", "content": "You are a precise query rewriter. Output only the rewritten query."},
+                {"role": "user", "content": prompt},
+            ],
+            model=model,
+        )
+        return text
 
     def generate_title(self, text: str, model: str | None = None) -> str:
-        """
-        Generates a concise 3-5 word title for a note.
-        """
+        """Generates a concise 3-5 word title for a note."""
         if not text or not text.strip():
             return "Untitled Note"
-
-        # Select model based on provider
-        if self.provider == "gemini":
-            response = self.gemini_client.models.generate_content(
-                model=model or self.get_chat_model(),
-                contents=f"Generate a concise, descriptive title for this note. Do not use quotes.\n\nNote content:\n{text}\n\nTitle:",  # pylint: disable=line-too-long
-            )
-            return response.text.strip().replace('"', "")
-        if self.provider == "anthropic":
-            response = self.chat_client.messages.create(
-                model=model or self.get_chat_model(),
-                messages=[
-                    {
-                        "role": "user",
-                        "content": f"Generate a concise, descriptive title for this note. Do not use quotes.\n\nNote content:\n{text}\n\nTitle:",  # pylint: disable=line-too-long
-                    }
-                ],
-            )
-            return response.content[0].text.strip().replace('"', "")
-        # Ollama/LM Studio/OpenAI
-        _model = model or self.get_chat_model()
-        extra_body = self._with_keep_alive()
-
-        response = self.chat_client.chat.completions.create(
-            model=_model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": "Generate a concise, descriptive title for the provided note content. Do not use quotes.",  # pylint: disable=line-too-long
-                },
-                {"role": "user", "content": f"Note content:\n{text}\n\nTitle:"},
-            ],
-            extra_body=extra_body,
+        title = self.generate_text(
+            "Generate a concise, descriptive title for the provided note content. Do not use quotes.",
+            f"Note content:\n{text}\n\nTitle:",
+            model=model,
         )
-        return response.choices[0].message.content.strip().replace('"', "")
+        return title.replace('"', "")
 
     def generate_text(
         self,
@@ -1045,43 +437,43 @@ class LLMService:
         user_prompt: str,
         model: str | None = None,
     ) -> str:
-        """Synchronously generate a plain-text response from the LLM.
-
-        Used for tasks that need a free-form text response (e.g. temporal digests)
-        rather than the structured extraction used during ingestion.
-        """
-        if self.provider == "gemini":
-            response = self.gemini_client.models.generate_content(
-                model=model or self.get_chat_model(),
-                contents=f"{system_prompt}\n\n{user_prompt}",
-            )
-            return response.text.strip()
-        if self.provider == "anthropic":
-            response = self.chat_client.messages.create(
-                model=model or self.get_chat_model(),
-                max_tokens=ANTHROPIC_MAX_OUTPUT_TOKENS,
-                messages=[
-                    {"role": "user", "content": f"{system_prompt}\n\n{user_prompt}"}
-                ],
-            )
-            return response.content[0].text.strip()
-        # OpenAI / local (LM Studio, Ollama, vLLM, etc.)
-        _model = model or self.get_chat_model()
-        response = self.chat_client.chat.completions.create(
-            model=_model,
-            messages=[
+        """Synchronously generate a plain-text response from the LLM."""
+        text, _ = self._chat(
+            [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-            extra_body=self._with_keep_alive(),
+            model=model,
         )
-        return response.choices[0].message.content.strip()
+        return text
 
     def analyze_query(self, query: str) -> dict:
-        """
-        Analyzes user query with structured outputs for better retrieval.
-        Uses the same extraction approach as ingestion for consistency.
-        """
+        """Analyzes user query with structured outputs for better retrieval."""
+        from datetime import date
+
+        # The iterative retrieval loop analyses the original question and
+        # hybrid_search re-analyses each sub-query; identical query strings recur
+        # within a session (temperature=0 → deterministic), so a small per-day
+        # cache avoids repeated chat-model calls (and, for local GGUFs, the model
+        # swap they force). The date is part of the key because relative-date
+        # resolution ("yesterday") depends on today; failures raise, so only
+        # successful analyses are cached.
+        try:
+            return dict(self._analyze_query_cached(query, date.today().isoformat()))
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.error(f"Query analysis failed: {e}")
+            return {
+                "intent": "search",
+                "entities": [],
+                "keywords": query.split(),
+                "expected_entity_types": [],
+                "question_attribute": None,
+                "date_filter": None,
+                "period_filter": None,
+            }
+
+    @functools.lru_cache(maxsize=64)
+    def _analyze_query_cached(self, query: str, today: str) -> dict:
         from typing import Literal
 
         from pydantic import Field
@@ -1095,10 +487,6 @@ class LLMService:
             entities: list[str] = Field(
                 default_factory=list,
                 description="Named entities mentioned in the query",
-            )
-            concepts: list[str] = Field(
-                default_factory=list,
-                description="Abstract concepts or topics mentioned",
             )
             keywords: list[str] = Field(
                 default_factory=list,
@@ -1121,23 +509,10 @@ class LLMService:
                 description="ISO year-month (YYYY-MM) if the query asks about a whole month or multi-day period, e.g. 'last month', 'in April'. Mutually exclusive with date_filter. Null if date_filter is set or query is not temporal.",  # pylint: disable=line-too-long
             )
 
-        # Use the same prompt style as ingestion - concrete JSON examples
-        from datetime import date as _date
+        # Same prompt style as ingestion - concrete JSON examples
+        prompt = f"""Analyze the following search query and return a structured JSON object.
 
-        _today = _date.today().isoformat()  # e.g. "2026-05-25"
-
-        # Date is part of the key because relative-date resolution ("yesterday")
-        # depends on today. Only successful analyses are cached.
-        _cache_key = (query, _today)
-        _cached = self._query_analysis_cache.get(_cache_key)
-        if _cached is not None:
-            logger.info("Query analysis cache hit — skipping LLM call")
-            return dict(_cached)
-
-        try:
-            prompt = f"""Analyze the following search query and return a structured JSON object.
-
-            Today's date: {_today}
+            Today's date: {today}
 
             QUERY: "{query}"
 
@@ -1189,31 +564,10 @@ class LLMService:
             Return only the JSON object, no preamble or explanation.
             """
 
-            # Use extract_structured - same as ingestion
-            result = self.extract_structured(prompt, QueryAnalysis, temperature=0)
-            if result:
-                analysis = result.model_dump()
-                if len(self._query_analysis_cache) >= 64:
-                    self._query_analysis_cache.pop(
-                        next(iter(self._query_analysis_cache))
-                    )
-                self._query_analysis_cache[_cache_key] = dict(analysis)
-                return analysis
+        raw, _ = self._chat([{"role": "user", "content": prompt}], temperature=0, json_mode=True)
+        if not raw:
             raise ValueError("Empty extraction result")
-
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error(f"Query analysis failed: {e}")
-            # Return safe defaults
-            return {
-                "intent": "search",
-                "entities": [],
-                "concepts": [],
-                "keywords": query.split(),
-                "expected_entity_types": [],
-                "question_attribute": None,
-                "date_filter": None,
-                "period_filter": None,
-            }
+        return QueryAnalysis.model_validate_json(self._clean_json(raw)).model_dump()
 
     async def generate(
         self,
@@ -1221,73 +575,18 @@ class LLMService:
         temperature: float = 0.1,
         max_tokens: int | None = None,
         model: str | None = None,
+        json_mode: bool = False,
     ) -> str:
-        """
-        Generic text generation - provider-agnostic.
-
-        Use this for simple text generation tasks (alias comparison, classification, etc).
-
-        Args:
-            prompt: The prompt to send to the LLM
-            temperature: Sampling temperature (0=deterministic, 1=creative)
-            max_tokens: Max tokens in response
-
-        Returns:
-            Generated text response
-        """
-        try:
-            if self.provider == "gemini":
-                _gemini_model = model or self.get_chat_model()
-                _gemini_cfg = types.GenerateContentConfig(
-                    temperature=temperature,
-                    thinking_config=types.ThinkingConfig(
-                        thinking_budget=0,  # thinking_level="MINIMAL"
-                    ),
-                )
-                response = await asyncio.to_thread(
-                    self.gemini_client.models.generate_content,
-                    model=_gemini_model,
-                    contents=prompt,
-                    config=_gemini_cfg,
-                )
-                return response.text.strip()
-
-            if self.provider == "anthropic":
-                response = await asyncio.to_thread(
-                    self.chat_client.messages.create,
-                    model=model or self.get_chat_model(),
-                    max_tokens=max_tokens if max_tokens is not None else ANTHROPIC_MAX_OUTPUT_TOKENS,
-                    temperature=temperature,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                return response.content[0].text.strip()
-
-            # OpenAI-compatible local or cloud providers
-            model = model or self.get_chat_model()
-            extra_body = self._with_keep_alive()
-
-            _kwargs = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "extra_body": extra_body,
-            }
-            # No default cap: local sizes output from the context left, cloud
-            # providers use their own model maximum.
-            if max_tokens is not None:
-                _kwargs["max_tokens"] = max_tokens
-            response = await asyncio.to_thread(
-                self.chat_client.chat.completions.create, **_kwargs
-            )
-            return response.choices[0].message.content.strip()
-
-        except Exception as e:
-            logger.error(
-                "[LLM] generate() failed via %s: %s",
-                self.get_base_url() or self.provider,
-                describe_call_failure(e),
-            )
-            raise
+        """Generic text generation - provider-agnostic (alias comparison, classification, etc)."""
+        text, _ = await asyncio.to_thread(
+            self._chat,
+            [{"role": "user", "content": prompt}],
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        return text
 
     async def iterative_step(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches,too-many-statements
         self,
@@ -1321,7 +620,7 @@ class LLMService:
                 "next_query":   str | None,    # next search query (if not can_answer)
             }
         """
-        _non_answers = {"INSUFFICIENT", "NONE", "N/A", "UNKNOWN", "NOT FOUND"}
+        _non_answers = {"INSUFFICIENT", "NONE", "NULL", "N/A", "UNKNOWN", "NOT FOUND"}
 
         # ── Build prior findings block ────────────────────────────────────────
         prior_block = ""
@@ -1366,46 +665,29 @@ class LLMService:
             )
 
         # ── Build task instructions ───────────────────────────────────────────
+        if settings.BENCHMARK_MODE:
+            answer_desc = "the specific fact the ORIGINAL QUESTION asks for"
+            reasoning_rules, output_rules = self._REASONING_RULES, self._OUTPUT_RULES
+        else:
+            answer_desc = "a complete, natural-language answer to the ORIGINAL QUESTION covering everything relevant you found"
+            reasoning_rules, output_rules = self._REASONING_RULES_GENERAL, self._OUTPUT_RULES_GENERAL
         if search_query and docs:
-            if settings.BENCHMARK_MODE:
-                task_instructions = (
-                    "Assess the current results:\n"
-                    "REASONING: <how these documents relate to the question "
-                    "and prior findings>\n"
-                    "FINDING: <the specific fact(s) extracted from these documents, "
-                    "e.g. 'Scott Derrickson is American' or 'Ed Wood was born in 1924'. "
-                    "This is NOT the final answer to the original question — just what "
-                    "this search found. Always write something; use 'Not found' only "
-                    "if nothing in these documents is relevant to the query>\n\n"
-                    "Then decide:\n"
-                    "  If you have enough information to answer the ORIGINAL QUESTION confidently:\n"
-                    "  ANSWER: <the specific answer — see output rules below>\n\n"
-                    "  If you need more information:\n"
-                    "  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n"
-                    f"{self._REASONING_RULES}\n"
-                    f"{self._OUTPUT_RULES}"
-                )
-            else:
-                task_instructions = (
-                    "Assess the current results:\n"
-                    "REASONING: <how these documents relate to the question "
-                    "and what you have found so far>\n"
-                    "FINDING: <a summary of what is relevant in these documents — "
-                    "key facts, entities, relationships. Always write something; "
-                    "use 'Not found' only if truly nothing here is relevant>\n\n"
-                    "Then decide:\n"
-                    "  If you have enough information to answer the ORIGINAL QUESTION:\n"
-                    "  ANSWER: <a complete, natural-language answer covering everything "
-                    "relevant you found — see output rules below>\n\n"
-                    "  If you need more information:\n"
-                    "  NEXT_QUERY: <one specific search query, different from all prior ones>\n\n"
-                    f"{self._REASONING_RULES_GENERAL}\n"
-                    f"{self._OUTPUT_RULES_GENERAL}"
-                )
+            task_instructions = (
+                "Assess the current results and reply with one JSON object with exactly these keys:\n"
+                '{"reasoning": "how these documents relate to the question and what you have found so far",\n'
+                ' "finding": "what is relevant in these documents — key facts, entities, relationships. '
+                "Always write something; 'Not found' only if truly nothing here is relevant\",\n"
+                f' "answer": "{answer_desc} — see output rules below — or null if you need more information",\n'
+                ' "next_query": "one specific search query, different from all prior ones, or null if you answered"}\n'
+                "Set exactly one of answer / next_query.\n\n"
+                f"{reasoning_rules}\n"
+                f"{output_rules}"
+            )
         else:
             task_instructions = (
-                "Output the first search query needed to start answering this question:\n"
-                "NEXT_QUERY: <one specific search query>\n"
+                "Reply with one JSON object: "
+                '{"reasoning": "", "finding": "", "answer": null, '
+                '"next_query": "the first specific search query needed to start answering this question"}\n'
             )
 
         prompt = (
@@ -1416,15 +698,17 @@ class LLMService:
             f"{tried_block}"
             f"{current_block}"
             f"{task_instructions}"
-            "\nReply:"
         )
 
+        # Runtime/provider errors (PromptTooLongError, a missing GGUF, an
+        # outage) propagate so the chat job reports the real cause; only an
+        # unparseable reply is a no-op step.
+        raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt, json_mode=True)
+        logger.info(f"[LLM] iterative_step raw response:\n{raw}")
         try:
-            raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt)
-            raw = raw or ""
-            logger.info(f"[LLM] iterative_step raw response:\n{raw}")
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[LLM] iterative_step failed: {e}")
+            step = _ResearchStep.model_validate_json(self._clean_json(raw or ""))
+        except ValueError as e:  # pydantic ValidationError is a ValueError
+            logger.warning(f"[LLM] iterative_step: unparseable reply: {e}")
             return {
                 "reasoning": "",
                 "full_answer": "",
@@ -1434,137 +718,63 @@ class LLMService:
                 "thinking": None,
             }
 
-        # ── Parse response ────────────────────────────────────────────────────
-        reasoning = ""
-        full_answer = ""
-        can_answer = False
-        final_answer: str | None = None
-        next_query: str | None = None
+        def _real(value: str | None) -> str | None:
+            value = (value or "").strip()
+            return value if value and value.upper() not in _non_answers else None
 
-        # Regex-based section extractor — handles:
-        #   * markdown bold: **ANSWER:** or **FINDING:**
-        #   * multi-line section content (FINDING:\ntext on next line)
-        #   * any mix of the above
-        _section_re = re.compile(
-            r"\*{0,3}(REASONING|FINDING|FULL_ANSWER|ANSWER|NEXT_QUERY)\*{0,3}\s*:[ \t]*(.*?)"
-            r"(?=\*{0,3}(?:REASONING|FINDING|FULL_ANSWER|ANSWER|NEXT_QUERY)\*{0,3}\s*:|\Z)",
-            re.IGNORECASE | re.DOTALL,
-        )
-        sections: dict[str, str] = {}
-        for m in _section_re.finditer(raw):
-            key = m.group(1).upper()
-            val = m.group(2).strip()
-            if key not in sections:  # first occurrence wins
-                sections[key] = val
-
-        def _clean_next_query(value: str) -> str:
-            """Keep only the actual search phrase from a NEXT_QUERY section."""
-            first_line = next((line.strip() for line in value.splitlines() if line.strip()), "")
-            first_line = re.sub(r"^\s*(?:[-*]\s*)+", "", first_line)
-            first_line = re.sub(r"^\*{1,3}|\*{1,3}$", "", first_line).strip()
-            return first_line.strip().strip('"').strip("'").strip()
-
-        reasoning = sections.get("REASONING", "")
-        full_answer = sections.get("FINDING", "") or sections.get("FULL_ANSWER", "")
-        answer_val = sections.get("ANSWER", "")
-        next_query_val = sections.get("NEXT_QUERY", "")
-
-        if answer_val and answer_val.upper() not in _non_answers:
-            can_answer = True
-            final_answer = answer_val
-        elif next_query_val:
-            next_query = _clean_next_query(next_query_val)
-
-        # Some local models occasionally ignore the literal NEXT_QUERY label on
-        # the first planning turn and return only a quoted search phrase, e.g.
-        # `Reply: "Fido meaning and history"`. Treat that as the next query
-        # only before any docs have been retrieved; later turns must use the
-        # explicit ANSWER/NEXT_QUERY protocol.
-        if not can_answer and not next_query and not docs:
-            candidate = raw.strip()
-            candidate = re.sub(r"^\s*(?:reply|query)\s*:\s*", "", candidate, flags=re.I)
-            candidate = candidate.strip().strip('"').strip("'").strip()
-            if (
-                candidate
-                and "\n" not in candidate
-                and len(candidate) <= 200
-                and candidate.upper() not in _non_answers
-            ):
-                logger.info(
-                    "[LLM] iterative_step unlabeled NEXT_QUERY fallback: "
-                    f"'{candidate}'"
-                )
-                next_query = candidate
-
-        # ── Post-process ANSWER ───────────────────────────────────────────────
-        # Fallback: if the LLM committed FULL_ANSWER but gave neither ANSWER nor
-        # NEXT_QUERY, it found the information but forgot to switch to the
-        # terminating format.  Treat FULL_ANSWER as the final answer.
-        _not_found_vals = {"not found", "none", "insufficient", "n/a", "unknown"}
-        if (
-            not can_answer
-            and not next_query
-            and full_answer
-            and full_answer.lower().strip() not in _not_found_vals
-        ):
-            logger.info(
-                "[LLM] iterative_step FULL_ANSWER fallback (no ANSWER/NEXT_QUERY): "
-                f"'{full_answer}'"
-            )
-            can_answer = True
-            final_answer = full_answer
-
+        final_answer = _real(step.answer)
         return {
-            "reasoning": reasoning,
-            "full_answer": full_answer,
-            "can_answer": can_answer,
+            "reasoning": step.reasoning or "",
+            "full_answer": step.finding or "",
+            "can_answer": final_answer is not None,
             "final_answer": final_answer,
-            "next_query": next_query,
+            "next_query": None if final_answer else _real(step.next_query),
             "thinking": step_thinking,
         }
 
-    # Reasoning rules ported from benchmark v4/v5 (the 0.74-scoring pipeline).
-    # Enforces correct answer-type discipline, comparison direction, specificity, and past/present.
+    # Benchmark-mode rules (BENCHMARK_MODE=True): the HotPotQA/MuSiQue answer
+    # discipline from the 0.74-scoring pipeline — answer type, comparison
+    # direction, specificity, exact extraction, past/present.
     _REASONING_RULES = """
         REASONING RULES — apply these before writing your answer:
 
         CHAIN TRACING
-        - For multi-hop questions, trace findings in order. The bridge entity (answer to an 
+        - For multi-hop questions, trace findings in order. The bridge entity (answer to an
         intermediate step) is not the final answer — use it to reach what was actually asked.
         - Explicitly name the bridge entity first, then derive the final answer from it.
 
         COMPARISON & YES/NO
-        - For yes/no comparisons: extract the relevant value per entity, compare, then output 
+        - For yes/no comparisons: extract the relevant value per entity, compare, then output
         YES or NO — never the compared value itself.
-        - For "which of X or Y is more/older/greater": output the winner's full name, not the 
+        - For "which of X or Y is more/older/greater": output the winner's full name, not the
         metric. Older = earlier birth year.
-        - If the question asks whether two entities BOTH share a property: verify each 
+        - If the question asks whether two entities BOTH share a property: verify each
         separately. YES only if both are confirmed.
         - "Was X founded by the person who did Y?" → output the name, not YES.
         Only output YES/NO for explicit comparisons or shared-property questions.
-        - For yes/no questions: your ANSWER line must be YES or NO — never an intermediate 
-        value like a nationality, number, or name. Derive the YES/NO conclusion yourself 
-        from the evidence before writing ANSWER.
+        - For yes/no questions: "answer" must be YES or NO — never an intermediate
+        value like a nationality, number, or name. Derive the YES/NO conclusion yourself
+        from the evidence before writing it.
 
         ANSWER TYPE
         - Match exactly what the question asks for.
-        Common traps: song ≠ person; show ≠ character; position ≠ person holding it; 
+        Common traps: song ≠ person; show ≠ character; position ≠ person holding it;
         city ≠ building; number ≠ demonym; animal ≠ person named after it.
         - Before writing your answer, verify it matches the type asked for.
 
         SPECIFICITY & SCOPE
         - Use the most specific value the evidence supports. Do not broaden:
         neighborhood → city, city → country, person → organization.
-        - If two entities share a parent region, output the parent. Only list sub-locations 
+        - If two entities share a parent region, output the parent. Only list sub-locations
         when they differ.
         - One answer only. Do not list alternatives or add caveats.
 
         EXACT EXTRACTION
         - Do NOT add: parent geography, org prefix, or qualifiers not implied by the question.
         - Do NOT strip: first names, suffixes, units, or qualifiers that are part of the answer.
-        - For time spans: copy the exact phrase from the source including connectives 
+        - For time spans: copy the exact phrase from the source including connectives
         (from/until/through/between). Do not normalize — if the source says "until", keep "until".
-        - For qualified quantities (e.g. "net", "peak", "opening", "seat"): use the figure 
+        - For qualified quantities (e.g. "net", "peak", "opening", "seat"): use the figure
         carrying that exact qualifier, not a broader or unqualified figure.
 
         TEMPORAL
@@ -1573,7 +783,7 @@ class LLMService:
 
     _OUTPUT_RULES = """
         OUTPUT RULES:
-        - Return only the specific fact the question asks for — nothing else
+        - "answer" is only the specific fact the question asks for — nothing else
         - Yes/no question → YES or NO
         - Comparison / either-or → exactly one of the options given
         - Name → full name as it appears in the source
@@ -1582,7 +792,7 @@ class LLMService:
         - Role, title, or position → the role/title only, never the person holding it
         - Location → exact place name as it appears in the source
         - Never answer "Neither" or "Both" unless the question explicitly asks for it
-        - If you cannot answer yet → output NEXT_QUERY, not ANSWER
+        - If you cannot answer yet → set "next_query", leave "answer" null
         """
 
     # ── General KB mode rules (BENCHMARK_MODE=False) ──────────────────────────
@@ -1607,7 +817,7 @@ class LLMService:
         - Stick strictly to what the documents say — do not invent or infer beyond the evidence
         - If something relevant could not be found, acknowledge it briefly
         - Do not pad with filler phrases — every sentence should add information
-        - If you cannot answer yet → output NEXT_QUERY, not ANSWER
+        - If you cannot answer yet → set "next_query", leave "answer" null
         """
 
     def get_base_url(self) -> str | None:
@@ -1672,8 +882,6 @@ class LLMService:
         ingestion_model_map = {
             "local": _local,
             "openai_compat": settings.LLM_MODEL or None,
-            "ollama": _local,  # deprecated alias
-            "lm_studio": _local,  # deprecated alias
             "gemini": settings.INGESTION_GEMINI_MODEL or settings.GEMINI_MODEL or None,
             "openai": settings.OPENAI_MODEL or None,
             "anthropic": settings.ANTHROPIC_MODEL or None,
@@ -1688,13 +896,14 @@ class LLMService:
         prompt: str,
         temperature: float = 0.1,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> str:
         """
         Like ``generate()`` but always routes to the ingestion provider/server.
         Use this for all LLM calls inside the ingestion pipeline.
         """
         content, _meta = await self.ingestion_generate_with_meta(
-            prompt, temperature=temperature, max_tokens=max_tokens
+            prompt, temperature=temperature, max_tokens=max_tokens, json_mode=json_mode
         )
         return content
 
@@ -1703,6 +912,7 @@ class LLMService:
         prompt: str,
         temperature: float = 0.1,
         max_tokens: int | None = None,
+        json_mode: bool = False,
     ) -> tuple[str, dict]:
         """``ingestion_generate`` plus ``{"finish_reason", "truncated"}``.
 
@@ -1710,77 +920,21 @@ class LLMService:
         callers that parse JSON must treat that as an incomplete result, not
         as a malformed one to retry blindly.
         """
-        model = self.get_ingestion_model()
-        try:
-            if self.ingestion_provider == "gemini":
-                _gemini_model = model or settings.GEMINI_MODEL
-                _gemini_cfg = types.GenerateContentConfig(
-                    temperature=temperature,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0),
-                )
-                response = await asyncio.to_thread(
-                    self.i_gemini_client.models.generate_content,
-                    model=_gemini_model,
-                    contents=prompt,
-                    config=_gemini_cfg,
-                )
-                reason = None
-                try:
-                    reason = str(response.candidates[0].finish_reason or "")
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
-                return (response.text or "").strip(), {
-                    "finish_reason": reason,
-                    "truncated": bool(reason and "MAX_TOKENS" in reason.upper()),
-                }
-
-            if self.ingestion_provider == "anthropic":
-                response = await asyncio.to_thread(
-                    self.i_anthropic_client.messages.create,
-                    model=settings.ANTHROPIC_MODEL,
-                    max_tokens=max_tokens if max_tokens is not None else ANTHROPIC_MAX_OUTPUT_TOKENS,
-                    temperature=temperature,
-                    messages=[{"role": "user", "content": prompt}],
-                )
-                reason = getattr(response, "stop_reason", None)
-                return response.content[0].text.strip(), {
-                    "finish_reason": reason,
-                    "truncated": reason == "max_tokens",
-                }
-
-            # local / openai / huggingface
-            _kwargs = {
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-                "extra_body": self._with_ingestion_keep_alive(),
-            }
-            if max_tokens is not None:
-                _kwargs["max_tokens"] = max_tokens
-            response = await asyncio.to_thread(
-                self.i_chat_client.chat.completions.create, **_kwargs
+        text, meta = await asyncio.to_thread(
+            self._chat,
+            [{"role": "user", "content": prompt}],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            ingestion=True,
+            json_mode=json_mode,
+        )
+        if not text:
+            raise ValueError(
+                "LLM returned empty content (0 output tokens). Possible causes: "
+                "context overflow, KV cache pressure, or model crash. Check local "
+                "GGUF / API server logs."
             )
-            choice = response.choices[0]
-            content = choice.message.content
-            if not content or not content.strip():
-                raise ValueError(
-                    "Local LLM returned empty content (0 output tokens). "
-                    "Possible causes: context overflow, KV cache pressure, or "
-                    "model crash. Check local GGUF / API server logs."
-                )
-            reason = getattr(choice, "finish_reason", None)
-            return content.strip(), {
-                "finish_reason": reason,
-                "truncated": reason == "length",
-            }
-
-        except Exception as e:
-            logger.error(
-                "[LLM] ingestion_generate() failed via %s: %s",
-                self.get_base_url() or self.ingestion_provider,
-                describe_call_failure(e),
-            )
-            raise
+        return text, meta
 
     def ingestion_count_tokens(self, text: str) -> int:
         """Token estimate for ``text`` on the ingestion model (no model load)."""
@@ -1819,54 +973,6 @@ class LLMService:
     )
     # No output cap: a transcription is cut short only by what the provider
     # itself allows, never by a number chosen here.
-
-    def ingestion_extract_structured(  # pylint: disable=too-many-return-statements
-        self,
-        prompt: str,
-        response_model: Type[BaseModel],
-        temperature: float = 0.1,
-    ):
-        """
-        Like ``extract_structured()`` but always routes to the ingestion provider/server.
-        Use this for all structured extraction inside the ingestion pipeline.
-        """
-        model = self.get_ingestion_model()
-        try:
-            if self.ingestion_provider == "local":
-                return self._extract_local(
-                    prompt,
-                    response_model,
-                    temperature,
-                    model=model,
-                    _client=self.i_chat_client,
-                )
-            if self.ingestion_provider == "gemini":
-                return self._extract_gemini(
-                    prompt,
-                    response_model,
-                    temperature,
-                    model=model,
-                    _gemini_client=self.i_gemini_client,
-                )
-            if self.ingestion_provider == "openai":
-                # Reuse main OpenAI extraction (uses i_chat_client via beta parse)
-                return self._extract_openai(prompt, response_model, temperature)
-            if self.ingestion_provider == "anthropic":
-                return self._extract_anthropic(prompt, response_model, temperature)
-            if self.ingestion_provider == "huggingface":
-                return self._extract_huggingface(prompt, response_model, temperature)
-            raise ValueError(
-                f"Unsupported ingestion provider: {self.ingestion_provider}"
-            )
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.error(
-                f"Ingestion extraction failed ({self.ingestion_provider}): {e}"
-            )
-            try:
-                return response_model()
-            except Exception:  # pylint: disable=broad-exception-caught
-                return None
-
 
 class _LazyLLMService:
     """Proxy that defers LLMService construction until first attribute access.

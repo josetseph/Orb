@@ -1,4 +1,4 @@
-"""Async SQLAlchemy engine — SQLite (desktop) or PostgreSQL (contributor Docker)."""
+"""Async SQLAlchemy engine over the desktop SQLite database."""
 
 from __future__ import annotations
 
@@ -15,41 +15,24 @@ logger = get_logger("DatabaseService")
 
 ensure_data_layout()
 
-_backend = (settings.DATABASE_BACKEND or "sqlite").lower()
-if _backend == "postgres" and settings.DATABASE_TRANSACTION_POOLER_URL:
-    DATABASE_URL = settings.DATABASE_TRANSACTION_POOLER_URL
-    if DATABASE_URL.startswith("postgresql://"):
-        DATABASE_URL = DATABASE_URL.replace(
-            "postgresql://", "postgresql+asyncpg://", 1
-        )
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        future=True,
-        pool_size=10,
-        max_overflow=20,
-        pool_timeout=30,
-        pool_pre_ping=True,
-        connect_args={"statement_cache_size": 0},
-    )
-    logger.info("Using PostgreSQL database backend")
-else:
-    DATABASE_URL = sqlite_url()
-    engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        future=True,
-        poolclass=NullPool,
-        connect_args={"check_same_thread": False},
-    )
+DATABASE_URL = sqlite_url()
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    future=True,
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},
+)
 
-    @event.listens_for(engine.sync_engine, "connect")
-    def _set_sqlite_pragma(dbapi_connection, connection_record):
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.close()
 
-    logger.info("Using SQLite database at %s", DATABASE_URL)
+@event.listens_for(engine.sync_engine, "connect")
+def _set_sqlite_pragma(dbapi_connection, _connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.close()
+
+
+logger.info("Using SQLite database at %s", DATABASE_URL)
 
 AsyncSessionLocal = async_sessionmaker(
     bind=engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
@@ -64,23 +47,45 @@ async def get_db():
         yield session
 
 
+# create_all skips new indexes on existing SQLite tables — ensure key ones.
+def _sqlite_repairs(sync_conn) -> None:
+    if sync_conn.dialect.name != "sqlite":
+        return
+    sync_conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)"
+    )
+    # rel_path was once str(Path) — backslashes on Windows.
+    sync_conn.exec_driver_sql(
+        "UPDATE notes SET rel_path = replace(rel_path, '\\', '/') "
+        "WHERE rel_path LIKE '%\\%'"
+    )
+    # Bodies moved to vault files; drop the column once nothing is left in it.
+    cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(notes)")}
+    if "content" in cols:
+        left = sync_conn.exec_driver_sql(
+            "SELECT count(*) FROM notes WHERE content IS NOT NULL AND content != ''"
+        ).scalar()
+        if left:
+            logger.warning("notes.content still holds %d bodies; column kept", left)
+        else:
+            sync_conn.exec_driver_sql("ALTER TABLE notes DROP COLUMN content")
+    # Rolling chat summary (added after 1.0); create_all never alters a table.
+    cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(chat_conversations)")}
+    if cols and "summary" not in cols:
+        sync_conn.exec_driver_sql("ALTER TABLE chat_conversations ADD COLUMN summary TEXT")
+        sync_conn.exec_driver_sql(
+            "ALTER TABLE chat_conversations ADD COLUMN summary_message_count INTEGER NOT NULL DEFAULT 0"
+        )
+
+
 async def init_db() -> None:
     """Create tables if they do not exist (SQLite-friendly bootstrap)."""
-    # Import models so metadata is populated
-    import app.models.kb  # noqa: F401
+    # Import models so metadata is populated (finance = Firefly, not local tables)
     import app.models.note  # noqa: F401
     import app.models.wikilink  # noqa: F401
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        # create_all skips new indexes on existing SQLite tables — ensure key ones.
-        def _ensure_sqlite_indexes(sync_conn) -> None:
-            if sync_conn.dialect.name != "sqlite":
-                return
-            sync_conn.exec_driver_sql(
-                "CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)"
-            )
-
-        await conn.run_sync(_ensure_sqlite_indexes)
+        await conn.run_sync(_sqlite_repairs)
     logger.info("Database schema ensured (create_all)")

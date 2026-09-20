@@ -7,13 +7,23 @@ from collections.abc import Callable
 from app.core.database import AsyncSessionLocal
 from app.core.log import get_logger
 from app.models.note import Note
-from app.schemas.chat import ChatTurn
+from app.schemas.chat import ChatSource, ChatTurn
 from app.services.llm import llm_service
+from app.services.local_models import ModelLoadClock, model_load_clock
 from app.services.retrieval import RetrievalService, retrieval_service
-from app.services.timing import load_snapshot, log_stage_timing
 from sqlalchemy import select
 
 logger = get_logger("ChatWorkflow")
+
+
+def _log_timing(kind: str, total: float, load_before: dict, docs: int) -> None:
+    """Split wall time into model loads vs. inference — a slow disk and a slow model look alike otherwise."""
+    delta = ModelLoadClock.diff(load_before, model_load_clock.snapshot())
+    load = delta["total_seconds"]
+    logger.info(
+        "[Timing] %s total=%.1fs model_load=%.1fs inference=%.1fs loads=%s docs=%d",
+        kind, total, load, max(0.0, total - load), ModelLoadClock.describe(delta), docs,
+    )
 
 
 def _doc_passage(doc: dict) -> str:
@@ -90,7 +100,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
 
         _progress("Planning retrieval", "Gemma4")
         final_answer, all_docs, thinking = (
-            await self._retrieval.retrieve_with_self_correction(
+            await self._retrieval.retrieve_with_iterative_loop(
                 rewritten_query,
                 top_k=50,
                 progress_callback=progress_callback,
@@ -109,7 +119,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
     ) -> dict:
         """Research-style retrieval loop with final answer + note references."""
         start_time = time.perf_counter()
-        load_before = load_snapshot()
+        load_before = model_load_clock.snapshot()
         logger.info(f"\n[Chat] Started processing query: '{user_query}'")
         rewritten_query, final_answer, unique_docs, thinking = (
             await self._retrieve_context(
@@ -146,19 +156,18 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             )
             logger.info("[Chat] Iterative loop exhausted — no answer produced.")
 
-        references = await self._extract_references(unique_docs)
+        sources = await self._extract_references(unique_docs)
         if progress_callback:
             progress_callback("Formatting answer", None)
-        if references:
-            answer += "\n\n### References\n" + "\n".join(references)
 
         total = time.perf_counter() - start_time
         logger.info(f"[Chat] Total pipeline duration: {total:.2f}s\n")
-        log_stage_timing(logger, "chat", total, load_before, docs=len(unique_docs))
+        _log_timing("chat", total, load_before, len(unique_docs))
         return {
             "query": user_query,
             "rewritten_query": rewritten_query,
             "answer": answer,
+            "sources": [s.model_dump() for s in sources],
             "context": unique_docs,
             "thinking": thinking,
         }
@@ -171,19 +180,13 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
     ) -> dict:
         """Retrieve note context without synthesizing a final answer."""
         start_time = time.perf_counter()
-        load_before = load_snapshot()
+        load_before = model_load_clock.snapshot()
         rewritten_query, _final_answer, unique_docs, thinking = (
             await self._retrieve_context(
                 user_query, history, progress_callback, max_context_docs=12
             )
         )
-        log_stage_timing(
-            logger,
-            "retrieve",
-            time.perf_counter() - start_time,
-            load_before,
-            docs=len(unique_docs),
-        )
+        _log_timing("retrieve", time.perf_counter() - start_time, load_before, len(unique_docs))
         return {
             "query": user_query,
             "rewritten_query": rewritten_query,
@@ -191,8 +194,8 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             "thinking": thinking,
         }
 
-    async def _extract_references(self, docs: list) -> list:
-        """Extract unique note references, preferring SQLite titles over graph titles."""
+    async def _extract_references(self, docs: list) -> list[ChatSource]:
+        """Unique note sources, preferring SQLite titles over graph titles."""
         seen_refs: set[str] = set()
         id_to_title: dict[str, str | None] = {}
 
@@ -214,13 +217,13 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             except Exception as e:  # pylint: disable=broad-exception-caught
                 logger.debug(f"[Chat] Note title lookup failed: {e}")
 
-        references = []
+        references: list[ChatSource] = []
         for d in docs:
             for linked_note in d.get("linked_notes", []):
                 lnid = linked_note.get("id")
                 if lnid and lnid not in seen_refs:
                     ltitle = id_to_title.get(lnid) or "Untitled Note"
-                    references.append(f"- [{ltitle}](/notes/{lnid})")
+                    references.append(ChatSource(id=lnid, title=ltitle))
                     seen_refs.add(lnid)
 
         logger.info(f"[Chat] Found {len(references)} references for response")

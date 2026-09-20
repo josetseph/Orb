@@ -8,7 +8,7 @@ import time
 import uuid
 from collections import defaultdict
 
-from tenacity import retry, stop_after_attempt, wait_exponential
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.log import get_logger
@@ -21,11 +21,28 @@ from app.services.ingestion_tracker import (
 )
 from app.services import ingestion_checkpoint as checkpoint
 from app.services.llm import llm_service
+from app.services.local_models import ModelLoadClock, model_load_clock
 from app.services.qdrant_service import QdrantService, qdrant_service
 from app.services.meilisearch_service import MeilisearchService, meilisearch_service
-from app.workflows.agents.ingestion_agent import ingestion_agent
+from app.workflows.agents.ingestion_agent import run_ingestion_agent
+from app.workflows.extraction_chunking import sentences_about
 
 logger = get_logger("IngestionPipeline")
+
+
+class _CommunityName(BaseModel):
+    name: str = ""
+    summary: str = ""
+
+
+#: Contexts read back from Qdrant as "{content} - {note_created_at}"; dedup
+#: compares the content alone.
+_CTX_DATE_SUFFIX = re.compile(r" - \d{4}-\d{2}-\d{2}\S*$")
+
+
+def _context_key(text: str) -> str:
+    return _CTX_DATE_SUFFIX.sub("", (text or "").strip())
+
 
 #: Pipelines in flight, by (kb_id, note_id) — what the Cancel button stops.
 _running_ingestions: dict[tuple[str, str], asyncio.Task] = {}
@@ -38,7 +55,7 @@ def _failure_reason(exc: BaseException) -> str:
         return "the model provider is overloaded (503) — retry in a few minutes"
     if "429" in text or "rate limit" in text.lower():
         return "the model provider rate-limited us (429) — retry in a minute"
-    text = re.sub(r"^Ingestion Agent Failed: \[?['\"]?", "", text).strip("[]'\" ")
+    text = getattr(exc, "reason", text)
     return (text[:157] + "…") if len(text) > 160 else text
 
 
@@ -49,56 +66,6 @@ def cancel_ingestion(kb_id: str, note_id: str) -> bool:
         return False
     task.cancel()
     return True
-
-
-def clean_rel_type(rel_type: str, source_name: str, target_name: str) -> str:
-    """Remove entity name tokens from a relationship predicate.
-
-    LLMs frequently embed the object (or subject) name into the predicate,
-    e.g. "plays_corliss_archer" instead of just "plays".  This function
-    strips any token that appears verbatim (case-insensitive) in either
-    entity name, then collapses consecutive underscores left by the removal.
-
-    Examples:
-        clean_rel_type("plays_corliss_archer", "shirley temple", "corliss archer")
-        → "plays"
-        clean_rel_type("is_directed_by", "film", "director")
-        → "is_directed_by"   (no entity tokens present)
-    """
-    if not rel_type:
-        return rel_type
-
-    # Tokenise entity names into individual words (ignore single-char tokens)
-    entity_tokens: set[str] = set()
-    for name in (source_name, target_name):
-        for token in re.split(r"[\s_\-]+", name.lower()):
-            if len(token) > 1:
-                entity_tokens.add(token)
-
-    if not entity_tokens:
-        return rel_type
-
-    # Tokenise the predicate, drop entity tokens, rejoin
-    parts = re.split(r"_", rel_type.lower())
-    cleaned = [p for p in parts if p not in entity_tokens]
-    if not cleaned:
-        # Entire predicate was entity names — fall back to "relates_to"
-        return "relates_to"
-    return "_".join(cleaned)
-
-
-class EntityLockManager:  # pylint: disable=too-few-public-methods
-    """
-    Manages per-entity locks to prevent race conditions during summary updates.
-    Ensures that multiple notes updating the same entity wait for each other.
-    """
-
-    def __init__(self):
-        self._locks = defaultdict(asyncio.Lock)
-
-    def get_lock(self, label: str, name: str):
-        """Return the asyncio lock for a given (label, name) entity pair."""
-        return self._locks[(label, name.lower().strip())]
 
 
 class IngestionWorkflow:
@@ -126,7 +93,7 @@ class IngestionWorkflow:
         self._process_semaphore = asyncio.Semaphore(
             settings.INGESTION_PIPELINE_CONCURRENCY
         )
-        self._entity_locks = EntityLockManager()
+        self._entity_locks = defaultdict(asyncio.Lock)
         self._community_run_state_lock = threading.Lock()
         self._community_run_seq = 0
         self._community_run_active_seq = 0
@@ -191,7 +158,6 @@ class IngestionWorkflow:
                 f"{'='*70}"
             )
 
-            # Trigger the LangGraph Agent
             initial_state = {
                 "input": note_input,
                 "content": "",
@@ -202,14 +168,13 @@ class IngestionWorkflow:
                 "workflow": self,  # KB-specific instance so agent nodes write to the right stores
             }
 
-            # Use ainvoke because the graph contains async nodes
             t_start = time.perf_counter()
-            load_before = self._load_snapshot()
+            load_before = model_load_clock.snapshot()
             try:
                 saved = checkpoint.activate(self.kb_id, note_id)
                 if saved:
                     logger.info(f"[Ingestion] resuming note_id={note_id}: {saved} model call(s) replay from disk")
-                final_state = await ingestion_agent.ainvoke(initial_state)
+                final_state = await run_ingestion_agent(initial_state)
                 checkpoint.clear(self.kb_id, note_id)
                 t_end = time.perf_counter()
                 self._log_timing(note_id, t_end - t_start, load_before, final_state)
@@ -218,9 +183,11 @@ class IngestionWorkflow:
                     logger.error(
                         f"[Ingestion] FAILURE note_id={note_id}: {final_state['errors']}"
                     )
-                    raise RuntimeError(
+                    failed = RuntimeError(
                         f"Ingestion Agent Failed: {final_state['errors']}"
                     )
+                    failed.reason = "; ".join(map(str, final_state["errors"]))
+                    raise failed
 
                 extraction = final_state.get("extraction")
                 if extraction:
@@ -233,8 +200,7 @@ class IngestionWorkflow:
                         logger.debug(f"  [Extraction] node: '{n.name}' type='{n.type}'")
                     for r in getattr(extraction, "relationships", []):
                         logger.debug(
-                            f"  [Extraction] rel: '{r.source_name}' --[{r.relationship_type}]--> '{r.target_name}' "
-                            f"(strength={r.strength}, confidence={r.confidence}, relevance={r.relevance})"
+                            f"  [Extraction] rel: '{r.source_name}' --[{r.relationship_type}]--> '{r.target_name}'"
                         )
 
                 # Mark as processed in SQLite metadata
@@ -271,26 +237,11 @@ class IngestionWorkflow:
                 # made every single-note ingest re-read multi-GB GGUFs.
 
     @staticmethod
-    def _load_snapshot() -> dict:
-        try:
-            from app.services.local_models import model_load_clock
-
-            return model_load_clock.snapshot()
-        except Exception:  # pylint: disable=broad-exception-caught
-            return {}
-
-    @staticmethod
     def _log_timing(note_id: str, total: float, load_before: dict, final_state: dict) -> None:
         """One line per note: wall time split into model loads vs. everything else,
         plus per-stage seconds — so a slow disk and a slow model stop looking alike."""
-        try:
-            from app.services.local_models import ModelLoadClock, model_load_clock
-
-            delta = model_load_clock.diff(load_before, model_load_clock.snapshot())
-            loads = ModelLoadClock.describe(delta)
-        except Exception:  # pylint: disable=broad-exception-caught
-            delta, loads = {"total_seconds": 0.0}, "none"
-        load = float(delta.get("total_seconds") or 0.0)
+        delta = ModelLoadClock.diff(load_before, model_load_clock.snapshot())
+        load = delta["total_seconds"]
         stages = final_state.get("timings") or {}
         stage_text = " ".join(
             f"{k}={float(v):.1f}"
@@ -305,7 +256,7 @@ class IngestionWorkflow:
             total,
             load,
             max(0.0, total - load),
-            loads,
+            ModelLoadClock.describe(delta),
             stage_text,
             f" chunks={int(chunks)}" if chunks else "",
         )
@@ -337,9 +288,6 @@ class IngestionWorkflow:
             note_id, "", processing_stage=stage, processing_model=model
         )
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _persist_note_body(self, note_id: str, content: str):
         """Persist enriched note body to the vault ``.md`` (source of truth)."""
         from sqlalchemy import select
@@ -370,11 +318,8 @@ class IngestionWorkflow:
                 await session.commit()
             except Exception as e:
                 logger.error(f"Error updating note content: {e}")
-                raise e  # Re-raise for tenacity
+                raise
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _update_note_title(self, note_id: str, title: str):
         """Update the note title in SQLite metadata."""
         await self._update_note_fields(
@@ -383,9 +328,6 @@ class IngestionWorkflow:
             title=title,
         )
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _mark_note_processed(self, note_id: str):
         """Set processed=True in SQLite metadata to prevent re-runs."""
         await self._update_note_fields(
@@ -397,9 +339,6 @@ class IngestionWorkflow:
             processing_model=None,
         )
 
-    @retry(
-        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
-    )
     async def _mark_note_failed(self, note_id: str, reason: str | None = None):
         """Set failed=True in SQLite; the stage carries why, so the UI can say."""
         await self._update_note_fields(
@@ -420,6 +359,11 @@ class IngestionWorkflow:
         custom_title: str = None,
     ):
         logger.info(f"[Ontology] Writing ontology for note {note_id}")
+        # Re-ingest: take back what this note asserted last time. The entities
+        # it alone kept alive are swept at the end, after the new extraction is
+        # written, so ones still mentioned keep their ids.
+        prior = self._graph.clear_note_contribution(note_id)
+        self._qdrant.delete_relationships(prior["relationship_ids"])
         # 0. Resolve title: user-provided > extracted by LLM during extraction > separate LLM call
         if custom_title:
             title = custom_title
@@ -657,9 +601,7 @@ class IngestionWorkflow:
             # Diagnostics counters for end-of-note summary log.
             _rel_total = len(extraction.relationships)
             _rel_written = 0
-            _rel_skip_no_name = 0
-            _rel_skip_no_source = 0
-            _rel_skip_no_target = 0
+            _rel_skipped = 0
             for rel in extraction.relationships:
                 try:
                     # Validate required fields
@@ -668,32 +610,11 @@ class IngestionWorkflow:
                             f"[Relationship] Skipping - missing source or target name: "
                             f"{rel.source_name} -> {rel.target_name}"
                         )
-                        _rel_skip_no_name += 1
+                        _rel_skipped += 1
                         continue
 
-                    # Default to "relates_to" if no relationship type provided
-                    rel_type = (
-                        rel.relationship_type.strip() if rel.relationship_type else ""
-                    )
-                    if not rel_type:
-                        rel_type = "relates_to"
-                        logger.warning(
-                            f"[Relationship] No type provided for {rel.source_name} -> {rel.target_name}, "
-                            f"defaulting to 'relates_to'"
-                        )
-
-                    # Strip entity name tokens from the predicate.
-                    # LLMs sometimes embed the object into the verb, e.g.
-                    # "plays_corliss_archer" → should be just "plays".
-                    cleaned_rel_type = clean_rel_type(
-                        rel_type, rel.source_name, rel.target_name
-                    )
-                    if cleaned_rel_type != rel_type:
-                        logger.debug(
-                            f"[Relationship] Predicate cleaned: '{rel_type}' → '{cleaned_rel_type}' "
-                            f"({rel.source_name} → {rel.target_name})"
-                        )
-                        rel_type = cleaned_rel_type
+                    # Validated against RELATIONSHIP_TYPES on the way in.
+                    rel_type = rel.relationship_type
 
                     source_label = "Indexable"
                     target_label = "Indexable"
@@ -720,20 +641,19 @@ class IngestionWorkflow:
                             f"  [Ontology] Relationship skipped — source '{source_name_normalized}' "
                             f"not found in name_to_id or Qdrant"
                         )
-                        _rel_skip_no_source += 1
+                        _rel_skipped += 1
                         continue
                     if not tgt_node_id:
                         logger.warning(
                             f"  [Ontology] Relationship skipped — target '{target_name_normalized}' "
                             f"not found in name_to_id or Qdrant"
                         )
-                        _rel_skip_no_target += 1
+                        _rel_skipped += 1
                         continue
 
                     logger.debug(
                         f"  [Ontology] Creating rel: '{source_name_normalized}' "
                         f"--[{rel_type}]--> '{target_name_normalized}' "
-                        f"(strength={rel.strength}, confidence={rel.confidence}, relevance={rel.relevance}) "
                         f"NL: '{(rel.natural_language or '')}'"
                     )
 
@@ -744,10 +664,7 @@ class IngestionWorkflow:
                         target_name=target_name_normalized,
                         target_label=target_label,
                         relationship_type=rel_type,
-                        confidence=rel.confidence,
-                        strength=rel.strength,
-                        relevance=rel.relevance,
-                        natural_language=(rel.natural_language or "").replace("_", " "),
+                        natural_language=rel.natural_language or "",
                         note_id=note_id,
                         source_id=src_node_id,
                         target_id=tgt_node_id,
@@ -766,8 +683,6 @@ class IngestionWorkflow:
                         nl_text = result.get("natural_language") or rel_type.replace(
                             "_", " "
                         )
-                        # Ensure natural language never contains underscores.
-                        nl_text = nl_text.replace("_", " ")
                         _qdrant_rel_pending.append(
                             (result, nl_text, src_node_id, tgt_node_id)
                         )
@@ -800,7 +715,7 @@ class IngestionWorkflow:
             if _qdrant_rel_pending:
                 _nl_batch = [item[1] for item in _qdrant_rel_pending]
                 _nl_vectors = embedding_service.embed_documents(_nl_batch)
-                self._qdrant.upsert_node_relationships(
+                rels_ok = self._qdrant.upsert_node_relationships(
                     [
                         {
                             "relationship_id": result["relationship_id"],
@@ -814,76 +729,83 @@ class IngestionWorkflow:
                         )
                     ]
                 )
+                if not rels_ok:
+                    raise RuntimeError(
+                        f"Failed to write {len(_qdrant_rel_pending)} Qdrant "
+                        "node_relationships point(s) — aborting ingest so the "
+                        "edges are not invisible to search. Qdrant said: "
+                        f"{getattr(self._qdrant, '_last_upsert_error', None) or 'no further detail'}"
+                    )
                 logger.debug(
                     f"  [Ontology] Qdrant rels written: {len(_qdrant_rel_pending)}"
                 )
 
-            # Emit a compact per-note relationship summary for observability.
-            _rel_skip_total = (
-                _rel_skip_no_name + _rel_skip_no_source + _rel_skip_no_target
-            )
             logger.info(
                 f"[Relationship] note_id={note_id} total={_rel_total} "
-                f"written={_rel_written} skipped={_rel_skip_total} "
-                f"(no_name={_rel_skip_no_name} "
-                f"no_source={_rel_skip_no_source} "
-                f"no_target={_rel_skip_no_target})"
+                f"written={_rel_written} skipped={_rel_skipped}"
             )
+
+        for nid in self._graph.delete_orphan_entities(prior["entity_ids"]):
+            self._qdrant.delete_node(nid)
+            self._meili.delete_node(nid)
+            logger.info(f"[Ontology] Removed entity {nid} no longer mentioned by any note")
 
         return title
 
     async def _queue_leiden_recompute_if_due(self, note_id: str) -> None:
-        """Queue community detection and/or schedule a temporal digest rebuild after ingestion.
-
-        Both features gate on their respective config switches independently so that
-        disabling one does not suppress the other.
-        """
-        from app.core.config import settings as _settings
+        """Queue community detection and schedule a temporal digest rebuild after ingestion."""
 
         # ── Community detection ───────────────────────────────────────────────
-        if _settings.COMMUNITY_DETECTION_ENABLED:
-            rows = self._graph.execute_query(
-                """
-                MATCH (:Node {id: $note_id})-[*1]-(n:Node)
-                WHERE n.kind = 'indexable' AND n.id IS NOT NULL
-                RETURN DISTINCT n.id AS node_id
-                """,
-                {"note_id": note_id},
+        rows = self._graph.execute_query(
+            """
+            MATCH (:Node {id: $note_id})-[*1]-(n:Node)
+            WHERE n.kind = 'indexable' AND n.id IS NOT NULL
+            RETURN DISTINCT n.id AS node_id
+            """,
+            {"note_id": note_id},
+        )
+        touched = sum(1 for row in rows if row.get("node_id"))
+        if touched:
+            queue_size = await _tracker.queue_nodes_for_community_recompute(
+                touched, kb_id=self.kb_id
             )
-            node_ids = [row["node_id"] for row in rows if row.get("node_id")]
-            if node_ids:
-                _, queue_size = await _tracker.queue_nodes_for_community_recompute(
-                    node_ids, kb_id=self.kb_id
-                )
-                logger.info(
-                    f"[Community] Queued {len(node_ids)} node IDs for Leiden recompute "
-                    f"(queue size: {queue_size}) — IDs: {node_ids}{'...' if len(node_ids) > 10 else ''}"
-                )
+            logger.info(
+                f"[Community] {touched} node(s) touched — Leiden recompute pending "
+                f"(queue size: {queue_size})"
+            )
 
         # ── Temporal digests (debounced) ──────────────────────────────────────
         # Restart a module-level timer on every ingestion.  The rebuild only
         # fires after _TEMPORAL_DIGEST_IDLE_SECONDS of inactivity, so a burst
         # of notes produces exactly one rebuild once the system goes quiet.
-        if _settings.TEMPORAL_DIGESTS_ENABLED:
-            with self._temporal_digest_timer_lock:
-                if self._temporal_digest_timer is not None:
-                    self._temporal_digest_timer.cancel()
-                self._temporal_digest_timer = threading.Timer(
-                    COMMUNITY_IDLE_SECONDS,
-                    self.build_temporal_digests,
-                )
-                self._temporal_digest_timer.daemon = True
-                self._temporal_digest_timer.start()
-            logger.info(
-                f"[TemporalDigest] Digest rebuild scheduled "
-                f"({COMMUNITY_IDLE_SECONDS} s idle window)."
+        with self._temporal_digest_timer_lock:
+            if self._temporal_digest_timer is not None:
+                self._temporal_digest_timer.cancel()
+            self._temporal_digest_timer = threading.Timer(
+                COMMUNITY_IDLE_SECONDS,
+                self.build_temporal_digests,
             )
+            self._temporal_digest_timer.daemon = True
+            self._temporal_digest_timer.start()
+        logger.info(
+            f"[TemporalDigest] Digest rebuild scheduled "
+            f"({COMMUNITY_IDLE_SECONDS} s idle window)."
+        )
 
     async def _update_neighborhoods(
-        self, nodes, new_content: str, note_created_at: str | None = None
+        self,
+        nodes,
+        new_content: str,
+        note_created_at: str | None = None,
+        note_id: str | None = None,
     ):
         """
         Refreshes isolated contexts for all nodes affected by this note.
+
+        The note's previous contexts are removed first, so a re-ingest replaces
+        what this note said about each entity rather than appending a second
+        copy; entities the new run no longer mentions are re-indexed from what
+        other notes still say about them.
         Runs with concurrency=4 and uses entity-level locks to prevent races
         when multiple ingestion runs touch the same node.
 
@@ -900,7 +822,11 @@ class IngestionWorkflow:
             name = (node.name or "").lstrip("#").strip().lower()
             if not name:
                 continue
-            context = getattr(node, "isolated_context", "") or new_content
+            # No context from the model: the sentences that mention the entity,
+            # never the whole note (which is what this used to store).
+            context = getattr(node, "isolated_context", "") or sentences_about(
+                node.name or "", new_content
+            )
             ntype = (getattr(node, "type", "") or "").lower().strip() or "thing"
             ctx_key = (context or "").strip()
             if name not in name_to_contexts:
@@ -915,18 +841,28 @@ class IngestionWorkflow:
             (name, ctxs, name_to_type[name]) for name, ctxs in name_to_contexts.items()
         ]
 
+        stale: set[str] = set()
+        if note_id:
+            stale = await asyncio.to_thread(self._qdrant.node_ids_for_note, note_id)
+            await asyncio.to_thread(self._qdrant.delete_note_contexts, note_id)
+            if stale:
+                logger.info(f"[Neighborhood] Dropped this note's earlier contexts on {len(stale)} node(s)")
+
+        touched: set[str] = set()
         if nodes_to_update:
             _sem = asyncio.Semaphore(4)
 
             async def _run_summary(name, new_contexts, ntype):
                 async with _sem:
-                    await self._update_node_summary(
-                        "Indexable",
+                    nid = await self._update_node_summary(
                         name,
                         new_contexts,
                         node_type=ntype,
                         note_created_at=note_created_at,
+                        note_id=note_id,
                     )
+                    if nid:
+                        touched.add(nid)
 
             logger.info(
                 f"[Neighborhood] Updating {len(nodes_to_update)} unique node summaries "
@@ -939,27 +875,61 @@ class IngestionWorkflow:
                 f"[Neighborhood] {len(nodes_to_update)} node context updates complete."
             )
 
+        # Entities this note used to mention but no longer does: rebuild them
+        # from whatever contexts remain (possibly none).
+        for nid in stale - touched:
+            await self._reindex_node(nid)
+
+    async def _reindex_node(self, node_id: str) -> None:
+        """Rewrite a node's merged vector and search document from its stored contexts."""
+        core = await asyncio.to_thread(self._qdrant.get_node_content_by_id, node_id) or {}
+        name = (core.get("name") or "").strip()
+        if not name:
+            return
+        node_type = core.get("type") or "thing"
+        contexts = [c for c in core.get("isolated_contexts", []) if c and c.strip()]
+        merged = " ".join(contexts)
+
+        def _write():
+            # With no contexts left the name keeps the node findable by vector search.
+            vector = embedding_service.embed_documents([merged or name])[0]
+            self._qdrant.upsert_node_core(
+                node_id=node_id, name=name, node_type=node_type,
+                description_vector=vector, description=merged,
+            )
+            rel_nl = " ".join(
+                r.get("natural_language", "")
+                for r in self._qdrant.get_relationships_for_node_ids([node_id])
+                if r.get("natural_language")
+            )
+            self._meili.index_node(
+                node_id=node_id, name=name, node_type=node_type,
+                isolated_contexts=contexts, relationship_natural_language=rel_nl,
+            )
+
+        await asyncio.to_thread(_write)
+        logger.info(f"[Neighborhood] '{name}' re-indexed from {len(contexts)} remaining context(s)")
+
     async def _update_node_summary(  # pylint: disable=too-many-locals,too-many-statements,too-many-arguments,too-many-positional-arguments
         self,
-        label: str,
         name: str,
         new_contexts: list[str],
         node_type: str = "",
         note_created_at: str | None = None,
-    ):
+        note_id: str | None = None,
+    ) -> str | None:
         """
-        Updates a node by accumulating isolated contexts only.
+        Updates a node by accumulating isolated contexts only. Returns the node id.
 
         This path intentionally does NOT generate description/facts/questions.
         Ingestion stores verbatim isolated contexts and their embeddings, and keeps
         structural nodes + relationships in the graph.
 
         Args:
-            label: Node label (Entity, Concept, Task, etc.)
             name: Node identifier
             new_contexts: Contexts extracted for this node in the current ingestion run
         """
-        async with self._entity_locks.get_lock(label, name):
+        async with self._entity_locks[name.lower().strip()]:
             # 1. Resolve node_id. Qdrant is the primary lookup, but if it misses
             # while Kuzu already has a structural node with this name, reuse that
             # existing graph ID to avoid minting duplicate same-name nodes.
@@ -1046,10 +1016,10 @@ class IngestionWorkflow:
             # 2. Append all new contexts that aren't already stored (dedup against existing).
             # Collecting all of them before the LLM call means one summary generation
             # per ingestion run regardless of how many contexts this node received.
-            _existing_stripped = {c.strip() for c in existing_contexts if c}
+            _existing_stripped = {_context_key(c) for c in existing_contexts if c}
             _contexts_to_add: list[str] = []
             for _nc in new_contexts or []:
-                _nc_stripped = _nc.strip() if _nc else ""
+                _nc_stripped = _context_key(_nc)
                 if _nc_stripped and _nc_stripped not in _existing_stripped:
                     existing_contexts.append(_nc)
                     _existing_stripped.add(_nc_stripped)
@@ -1122,6 +1092,7 @@ class IngestionWorkflow:
                         content=_ctx_text,
                         vector=_ctx_vector,
                         note_created_at=note_created_at,
+                        note_id=note_id,
                     ):
                         wrote += 1
                 return wrote
@@ -1181,22 +1152,20 @@ class IngestionWorkflow:
                     for r in rel_qdrant
                     if r.get("natural_language")
                 )
-                contexts_text = " ".join(
-                    ctx for ctx in existing_contexts if ctx and ctx.strip()
-                )
+                contexts = [ctx for ctx in existing_contexts if ctx and ctx.strip()]
                 # Defense-in-depth: if we somehow ended up with no contexts, fetch
                 # what Meilisearch already has so we don't wipe it with a blank upsert.
-                if not contexts_text:
+                if not contexts:
                     try:
                         existing_meili = self._meili.get_node(node_id) or {}
-                        contexts_text = existing_meili.get("isolated_contexts", "")
+                        contexts = list(existing_meili.get("isolated_contexts") or [])
                     except Exception:  # pylint: disable=broad-exception-caught
                         pass
                 self._meili.index_node(
                     node_id=node_id,
                     name=name,
                     node_type=node_type,
-                    isolated_contexts_text=contexts_text,
+                    isolated_contexts=contexts,
                     relationship_natural_language=rel_nl,
                 )
 
@@ -1206,120 +1175,30 @@ class IngestionWorkflow:
             logger.info(
                 f"  [NodeSummary] ✓ COMPLETE: '{name}' (type='{node_type}', id={node_id})"
             )
+            return node_id
 
-    @staticmethod
-    def _parse_name_summary(raw: str) -> tuple[str | None, str | None]:
-        """Parse ``NAME: ...\nSUMMARY: ...`` LLM output into (name, summary)."""
-        name: str | None = None
-        summary_lines: list[str] = []
-        in_summary = False
-        for line in raw.splitlines():
-            stripped = line.strip()
-            if stripped.upper().startswith("NAME:") and not in_summary:
-                name = stripped.split(":", 1)[1].strip()
-            elif stripped.upper().startswith("SUMMARY:"):
-                in_summary = True
-                first = stripped.split(":", 1)[1].strip()
-                if first:
-                    summary_lines.append(first)
-            elif in_summary:
-                summary_lines.append(stripped)
-        summary = " ".join(s for s in summary_lines if s) or None
-        return name, summary
+    def _name_and_summary(self, prompt: str) -> tuple[str | None, str | None]:
+        """One ingestion-model call, parsed as ``{"name", "summary"}``.
 
-    @staticmethod
-    def _is_generic_community_name(  # pylint: disable=too-many-return-statements
-        name: str | None,
-    ) -> bool:
-        """Heuristic guardrail for low-quality community names.
-
-        Rejects template-like names that are not useful to end users.
+        Runs on the community worker thread, which has no event loop of its own.
         """
-        if not name:
-            return True
-
-        normalized = re.sub(r"\s+", " ", name.strip()).lower()
-        if not normalized:
-            return True
-
-        if re.fullmatch(r"community\s+l\d+[-\s]?\d+", normalized):
-            return True
-        if normalized.startswith("community "):
-            return True
-
-        banned_phrases = (
-            "isolated conceptual node cluster",
-            "isolated conceptual cluster",
-            "isolated conceptual fragment",
-            "isolated conceptual echo",
-            "isolated conceptual echoes",
-            "isolated conceptual anomaly",
-            "isolated conceptual collection",
-            "isolated conceptual core",
-            "isolated node community",
-            "isolated node cluster",
-            "isolated core node cluster",
-            "isolated single node community",
-            "isolated concept",
-            "potential anomaly",
-            "initial state",
-            "provisional",
-            "minimal connection",
+        raw = asyncio.run(
+            self._llm.ingestion_generate(prompt, temperature=0.1, json_mode=True)
         )
-        if any(phrase in normalized for phrase in banned_phrases):
-            return True
+        got = _CommunityName.model_validate_json(self._llm._clean_json(raw or ""))
+        return got.name.strip() or None, got.summary.strip() or None
 
-        # Names made only of generic words are not user-friendly.
-        generic_tokens = {
-            "isolated",
-            "conceptual",
-            "node",
-            "nodes",
-            "cluster",
-            "community",
-            "core",
-            "collection",
-            "fragment",
-            "echo",
-            "echoes",
-            "anomaly",
-            "pair",
-            "transient",
-            # Additional filler words the LLM uses for empty/thin clusters:
-            "temporal",
-            "reflection",
-            "reflections",
-            "potential",
-            "seeds",
-            "seed",
-            "observation",
-            "observations",
-            "silent",
-            "silence",
-            "unresolved",
-            "statistical",
-            "minimal",
-            "interest",
-            "inquiry",
-            "shadow",
-            "shadows",
-            "whisper",
-            "whispers",
-            "remnant",
-            "remnants",
-            "trace",
-            "traces",
-            "fleeting",
-            "ephemeral",
-            "abstract",
-            "nascent",
-            "liminal",
-        }
-        words = [w for w in re.split(r"[^a-z0-9]+", normalized) if w]
-        if words and all(w in generic_tokens for w in words):
-            return True
+    @staticmethod
+    def _name_fits_members(name: str | None, member_rows: list[dict]) -> bool:
+        """A usable community name shares a real word with at least one member.
 
-        return False
+        Anything the model invents from thin air — "Transient Echoes", "Node
+        Cluster 3" — fails this; a name anchored in the entities passes.
+        """
+        words = {w for w in re.split(r"[^a-z0-9]+", (name or "").lower()) if len(w) >= 3}
+        members = " ".join(str(row.get("name") or "") for row in member_rows).lower()
+        member_words = set(re.split(r"[^a-z0-9]+", members))
+        return bool(words & member_words)
 
     @staticmethod
     def _derive_fallback_community_name(member_rows: list[dict]) -> str:
@@ -1375,23 +1254,14 @@ class IngestionWorkflow:
             "- Anchor the name in concrete topics drawn from the entities themselves\n"
             "- Do NOT use meta-labels like 'Node Cluster', 'Isolated Group', 'Cluster L2-14', or any variant\n"
             "- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\n"
-            "Reply in EXACTLY this format — no preamble, no trailing text:\n"
-            "NAME: <name>\n"
-            "SUMMARY: <summary>"
+            'Return ONLY this JSON: {"name": "<name>", "summary": "<summary>"}'
         )
         if strict_naming:
             prompt += (
                 "\n\nThis is a retry because the previous name was too generic. "
-                "The NAME must be specific and user-facing."
+                "The name must be specific and user-facing."
             )
-        raw = (
-            self._llm.reason(
-                prompt,
-                model=self._llm.get_ingestion_model(),
-            )
-            or ""
-        )
-        return self._parse_name_summary(raw)
+        return self._name_and_summary(prompt)
 
     def _build_rollup_summary(
         self,
@@ -1428,23 +1298,14 @@ class IngestionWorkflow:
             "- Anchor the name in concrete topics drawn from the group descriptions\n"
             "- Do NOT use meta-labels like 'Node Cluster', 'Isolated Group', or any variant\n"
             "- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\n"
-            "Reply in EXACTLY this format — no preamble, no trailing text:\n"
-            "NAME: <name>\n"
-            "SUMMARY: <summary>"
+            'Return ONLY this JSON: {"name": "<name>", "summary": "<summary>"}'
         )
         if strict_naming:
             prompt += (
                 "\n\nThis is a retry because the previous name was too generic. "
-                "The NAME must be specific and user-facing."
+                "The name must be specific and user-facing."
             )
-        raw = (
-            self._llm.reason(
-                prompt,
-                model=self._llm.get_ingestion_model(),
-            )
-            or ""
-        )
-        return self._parse_name_summary(raw)
+        return self._name_and_summary(prompt)
 
     def rebuild_leiden_communities(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         self,
@@ -1570,7 +1431,6 @@ class IngestionWorkflow:
                 to be grouped together. No need to pre-specify cluster count.
                 """
                 import numpy as np
-                from sklearn.cluster import AgglomerativeClustering
 
                 if not item_ids:
                     return []
@@ -1586,18 +1446,24 @@ class IngestionWorkflow:
                 norms[norms == 0] = 1.0
                 arr /= norms
 
-                clustering = AgglomerativeClustering(
-                    n_clusters=None,
-                    distance_threshold=distance_threshold,
-                    metric="cosine",
-                    linkage="average",
-                )
-                labels = clustering.fit_predict(arr)
-
-                clusters: dict[int, list[str]] = {}
-                for item_id, label in zip(item_ids, labels):
-                    clusters.setdefault(int(label), []).append(item_id)
-                return list(clusters.values())
+                # Greedy merge: each item joins the first cluster whose centroid is
+                # within the threshold, else starts its own.
+                # ponytail: O(n·k) single pass, not average-linkage; swap back to
+                # agglomerative clustering if L2 cluster quality visibly drops.
+                centroids: list[np.ndarray] = []
+                clusters: list[list[str]] = []
+                for item_id, vec in zip(item_ids, arr):
+                    if centroids:
+                        cents = np.stack(centroids)
+                        cents /= np.linalg.norm(cents, axis=1, keepdims=True)
+                        best = int(np.argmax(cents @ vec))
+                        if 1.0 - float(cents[best] @ vec) <= distance_threshold:
+                            clusters[best].append(item_id)
+                            centroids[best] = centroids[best] + vec
+                            continue
+                    centroids.append(vec.copy())
+                    clusters.append([item_id])
+                return clusters
 
             def _commit_community(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
                 community_level: int,
@@ -1650,7 +1516,7 @@ class IngestionWorkflow:
 
                 # Reject generic names and retry up to 2 times.
                 for retry_idx in range(2):
-                    if name and not self._is_generic_community_name(name):
+                    if self._name_fits_members(name, member_rows):
                         break
                     if _tracker.cancel_recompute.is_set():
                         return None
@@ -1678,9 +1544,7 @@ class IngestionWorkflow:
                             f"[Community] {cluster_label}: name retry failed: {_retry_err}"
                         )
 
-                if not name:
-                    name = self._derive_fallback_community_name(member_rows)
-                elif self._is_generic_community_name(name):
+                if not self._name_fits_members(name, member_rows):
                     logger.warning(
                         f"[Community] {cluster_label}: using fallback name after generic output '{name}'"
                     )
@@ -1997,23 +1861,6 @@ class IngestionWorkflow:
                 )
             self._meili.update_nodes_community(community_rows)
 
-            # ── Compute & store 3D positions for the new layout ──────────────────
-            try:
-                from app.utils.graph_layout import compute_spring_layout_3d
-
-                # After Leiden has created communities, rerun spring layout so
-                # community nodes are pulled into the correct positions by their members.
-                spring_node_ids, spring_edges = self._graph.get_all_node_ids_and_edges()
-                positions = compute_spring_layout_3d(spring_node_ids, spring_edges)
-                self._graph.store_node_positions(positions)
-                logger.info(
-                    f"[Community] Spring layout recomputed after Leiden: "
-                    f"{len(positions)} nodes, {len(spring_edges)} edges"
-                )
-            except Exception as _layout_err:  # pylint: disable=broad-exception-caught
-                logger.warning(
-                    f"[Community] 3D layout computation failed (non-fatal): {_layout_err}"
-                )
 
             logger.info(
                 f"\n{'='*70}\n"
@@ -2047,12 +1894,6 @@ class IngestionWorkflow:
         from datetime import datetime
 
         from app.core.config import settings as _settings
-
-        if not _settings.TEMPORAL_DIGESTS_ENABLED:
-            logger.info(
-                "[TemporalDigest] Feature disabled via TEMPORAL_DIGESTS_ENABLED — skipping."
-            )
-            return 0
 
         # Guard: refuse to start while ingestion is active.
         if _tracker.has_active_ingestions(self.kb_id):
@@ -2212,7 +2053,7 @@ class IngestionWorkflow:
                 node_id=node_id,
                 name=node_name,
                 node_type="temporal_digest",
-                isolated_contexts_text=summary,
+                isolated_contexts=[summary],
             )
             logger.info(f"[TemporalDigest] Built '{node_name}'")
             built += 1
@@ -2234,10 +2075,7 @@ class IngestionWorkflow:
                 "idle_seconds": tracker.get("community_idle_seconds"),
             },
             "temporal_digests": {"running": self._temporal_digest_running},
-            "ingestion": {
-                "active": int(tracker.get("active_ingestions") or 0),
-                "last_completed_at": tracker.get("last_ingestion_at"),
-            },
+            "ingestion": {"active": int(tracker.get("active_ingestions") or 0)},
             "healthy": True,
         }
 

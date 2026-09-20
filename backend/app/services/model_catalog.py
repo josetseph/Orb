@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import os
 import platform
-import re
 import shutil
-import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from typing import Literal
@@ -298,27 +296,20 @@ def total_ram_gb() -> float:
         except ValueError:
             pass
     try:
-        if sys.platform == "darwin":
-            out = subprocess.check_output(["sysctl", "-n", "hw.memsize"], text=True)
-            return int(out.strip()) / (1024**3)
         if sys.platform == "win32":
-            out = subprocess.check_output(
-                ["wmic", "ComputerSystem", "get", "TotalPhysicalMemory"],
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            nums = re.findall(r"\d+", out)
-            if nums:
-                return int(nums[-1]) / (1024**3)
-        if os.path.exists("/proc/meminfo"):
-            with open("/proc/meminfo", encoding="utf-8") as f:
-                for line in f:
-                    if line.startswith("MemTotal:"):
-                        kb = int(line.split()[1])
-                        return kb / (1024**2)
+            import ctypes
+
+            class _MemStatus(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                    (n, ctypes.c_ulonglong) for n in ("total", "avail", "tp", "ap", "tv", "av", "ave")
+                ]
+
+            status = _MemStatus(dwLength=ctypes.sizeof(_MemStatus))
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+            return status.total / (1024**3)
+        return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / (1024**3)
     except Exception:  # pylint: disable=broad-exception-caught
-        pass
-    return 8.0  # conservative fallback
+        return 8.0  # conservative fallback
 
 
 def detect_accel_backend() -> dict:

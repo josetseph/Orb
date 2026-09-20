@@ -11,12 +11,7 @@ def provider_is_configured(provider: str | None, base_url: str | None = None) ->
     """Can ``provider`` answer right now (endpoint set / key present / GGUFs on disk)?"""
     name = (provider or "").lower().strip()
     if name in ("local", "ollama", "lm_studio"):
-        try:
-            from app.services.local_models import gguf_paths_if_present
-
-            return gguf_paths_if_present() is not None
-        except Exception:  # pylint: disable=broad-exception-caught
-            return False
+        return _local_models_present()
     if name == "openai_compat":
         # An endpoint's credential is stored under "endpoint:<url>", never under
         # the literal "openai_compat", so the credential lookup below always
@@ -84,17 +79,6 @@ def ai_is_configured(kb=None) -> bool:
     if any(credentials.has(p) for p in CLOUD_PROVIDERS):
         return True
     return _endpoint_is_configured()
-
-
-def derived_setup_mode() -> str:
-    """What Setup used to ask for, reported back as an observation.
-
-    ``local`` / ``cloud`` / ``none`` purely for display and for callers that
-    still record a mode; nothing gates on it.
-    """
-    if not ai_is_configured():
-        return "none"
-    return "local" if chat_is_local_only() and _local_models_present() else "cloud"
 
 
 def require_ai(kb=None) -> None:

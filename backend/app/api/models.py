@@ -40,6 +40,7 @@ def _local_state() -> dict:
     """Installed models, what can be downloaded, and the fixed support models."""
     from app.core.paths import resolve_models_dir
     from app.services.model_catalog import recommend_stack
+    from app.services.local_models import local_llama_runtime
     from app.services.model_discovery import discover_chat_models
 
     stack = recommend_stack()
@@ -68,9 +69,11 @@ def _local_state() -> dict:
         "downloadable": downloadable,
         "hardware": stack.get("hardware"),
         "budget_note": stack.get("budget_note"),
-        # Chosen automatically from RAM.
+        # Chosen automatically from RAM; shown read-only so the page explains
+        # what search and media use without offering a footgun.
         "embed": stack.get("embed"),
         "reranker": stack.get("reranker"),
+        "runtime": local_llama_runtime.status(),
     }
 
 
@@ -137,19 +140,19 @@ async def inspect_local_model(body: InspectPathInput):
     Answers "can Orb run this, and if not, why" so the page can refuse with a
     specific reason instead of failing later inside a loader.
     """
-    from app.services.model_discovery import inspect_any_chat_model, model_ref_for
+    from app.services.model_discovery import chat_warnings, inspect_chat_model, model_ref_for
+    from app.services.model_formats import loadable_path
 
-    path = Path(body.path).expanduser()
-    described, error = inspect_any_chat_model(path)
+    # A folder resolves to the GGUF inside it, so the stored ref is always a file.
+    path = loadable_path(Path(body.path).expanduser())
+    info, error = inspect_chat_model(path)
     if error:
         raise HTTPException(status_code=400, detail=error)
 
-    fmt = getattr(described, "format", None)
     return {
         "ref": model_ref_for(path),
         "path": str(path),
-        "name": getattr(described, "name", None) or getattr(described, "display_name", path.stem),
-        "format": fmt.value if hasattr(fmt, "value") else "gguf",
-        "size_gb": getattr(described, "size_gb", 0),
-        "warnings": list(getattr(described, "warnings", ()) or ()),
+        "name": info.display_name,
+        "size_gb": info.size_gb,
+        "warnings": chat_warnings(info),
     }

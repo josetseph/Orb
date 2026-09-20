@@ -17,8 +17,13 @@ echo BENCHMARK_MODE=true >> .env           # short factual answers + the benchma
 python run.py                              # downloads Qdrant + Meilisearch once, starts both, then the API on :8000
 ```
 
-No Docker. Data (SQLite, Kuzu, Qdrant, Meili, vault, logs) goes to `../data`, or `ORB_DATA_DIR`.
+No Docker. `run.py` reads `backend/.env` itself (the app no longer does), seeds cloud keys
+from `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `HUGGINGFACE_API_KEY` into the
+keychain-backed credential store, and `LLM_BASE_URL` points at any OpenAI-compatible server.
+Data (SQLite, Kuzu, Qdrant, Meili, vault, logs) goes to `../data`, or `ORB_DATA_DIR`.
 Use a fresh `ORB_DATA_DIR` per experiment so runs never share an index.
+
+The pipeline code is `main`'s as of `63c602e`; to pick up newer pipeline work see *Syncing* below.
 
 ## Benchmark loop
 
@@ -64,7 +69,8 @@ Docs per stage under [Docs/](Docs/): ingestion (10), local models (12), promptin
 
 ## Syncing with `main`
 
-Pull pipeline changes in: `git merge main`, then drop the shell files it
-brings back (`git rm -r -q desktop frontend "Platform Images" .github`) and commit.
-Push a winning variation out: `git cherry-pick <commit>` onto `main` — only
-`backend/` differs, so it applies cleanly.
+This branch is `main`'s `backend/` with the product-only code cut out (desktop shell,
+finance, multimedia, chat history, attachments). To resync, take `main`'s `backend/`
+wholesale and re-cut, keeping `backend/run.py`, `backend/tests/benchmark/` and `BENCHMARK_MODE`
+in `llm.py` / `config.py`. To push a pipeline win to `main`, `git cherry-pick` the commit;
+shared pipeline files apply cleanly.

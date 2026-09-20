@@ -12,7 +12,6 @@ from app.utils.graph_layout import (
     _deterministic_jitter,
     _fibonacci_sphere,
     compute_solar_positions,
-    compute_spring_layout_3d,
 )
 
 
@@ -133,27 +132,3 @@ class TestComputeSolarPositions:
         positions = compute_solar_positions([], {}, ["x", "y"])
         assert "x" in positions
         assert "y" in positions
-
-
-# ── compute_spring_layout_3d ──────────────────────────────────────────────────
-
-
-class TestComputeSpringLayout3d:
-    def test_empty(self):
-        assert compute_spring_layout_3d([], []) == {}
-
-    def test_single_node(self):
-        assert compute_spring_layout_3d(["a"], []) == {"a": (0.0, 0.0, 0.0)}
-
-    def test_deterministic(self):
-        nodes = ["a", "b", "c"]
-        edges = [("a", "b"), ("b", "c")]
-        first = compute_spring_layout_3d(nodes, edges, iterations=20)
-        second = compute_spring_layout_3d(nodes, edges, iterations=20)
-        assert first == second
-
-    def test_all_nodes_positioned(self):
-        nodes = ["a", "b", "c", "d"]
-        edges = [("a", "b"), ("c", "d")]
-        positions = compute_spring_layout_3d(nodes, edges, iterations=10)
-        assert set(positions) == set(nodes)

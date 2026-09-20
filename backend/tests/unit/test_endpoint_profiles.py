@@ -2,7 +2,6 @@
 
 from app.services.credentials import (
     endpoint_credential_id,
-    endpoint_profile,
     normalize_base_url,
     request_base_url,
 )
@@ -27,8 +26,3 @@ def test_profile_spelling_is_canonical():
 def test_requests_never_carry_the_profile():
     assert request_base_url(f"{GOOGLE}#Work") == GOOGLE
     assert request_base_url(f"{GOOGLE}/") == GOOGLE
-
-
-def test_profile_is_readable():
-    assert endpoint_profile(f"{GOOGLE}#Work") == "Work"
-    assert endpoint_profile(GOOGLE) == ""

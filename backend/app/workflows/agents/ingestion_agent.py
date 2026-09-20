@@ -1,4 +1,4 @@
-"""LangGraph ingestion agent: extraction → storage → indexing."""
+"""Ingestion agent: extraction → storage → indexing."""
 
 # pylint: disable=import-outside-toplevel,protected-access
 import asyncio
@@ -7,11 +7,10 @@ import uuid
 from datetime import datetime
 from typing import Any, List, Optional, TypedDict
 
-from langgraph.graph import END, StateGraph
-
 from app.core.log import get_logger
 from app.services import ingestion_checkpoint as checkpoint
 from app.schemas.extraction import (
+    RELATIONSHIP_TYPES,
     ContextPass,
     EntityPass,
     Extraction,
@@ -40,6 +39,118 @@ def _require_workflow(state: "IngestionState"):
         )
     return wf
 
+# Blocks appended by multimodal_node — strip before re-processing so re-ingest
+# does not duplicate vision/transcription/Marlin output in the vault .md.
+# Extraction output is delimited and carries the attachment it came from, so a
+# block can be found, replaced or removed on its own — and can sit directly
+# under its attachment instead of being piled at the end of the note. HTML
+# comments render as nothing, so the note reads as if they were not there.
+EXTRACT_OPEN = '<!-- orb:extract src="{src}" -->'
+EXTRACT_CLOSE = "<!-- /orb:extract -->"
+EXTRACT_BLOCK_RE = re.compile(
+    r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->",
+    re.S,
+)
+_EXTRACT_SRC_RE = re.compile(r'<!-- orb:extract src="([^"]*)" -->')
+
+# Pre-marker format: blocks were appended with no closing delimiter. Only
+# ``wrap_legacy_enrichment_blocks`` reads this, to give such blocks markers.
+_ENRICHMENT_BLOCK_RE = re.compile(
+    r"\n\n\[(?:"
+    r"PDF Extraction \([^\]]+\)|"
+    r"Image:[^\]]+|"
+    r"Audio Transcript \([^\]]+\)|"
+    r"Video Audio Transcript \([^\]]+\)|"
+    r"Video Visual Analysis \([^\]]+\)|"
+    r"Word Extraction \([^\]]+\)|"
+    r"Spreadsheet Extraction \([^\]]+\)|"
+    r"Unsupported \([^\]]+\)"
+    r")\]"
+)
+
+
+def attachment_key(url: str) -> str:
+    """Canonical identity of an attachment URL: no query, unquoted, lowercase.
+
+    The legacy ``/vault-files/<kb>/`` prefix is dropped, so the old absolute
+    form and the canonical relative form of one file share a key — an
+    extraction block written before the vault sweep still matches its link.
+    """
+    from urllib.parse import unquote
+
+    raw = (url or "").strip().split("?", 1)[0]
+    return unquote(re.sub(r"^/vault-files/[^/]+/", "", raw)).lower()
+
+
+def extraction_srcs(content: str) -> set[str]:
+    """Keys of every attachment that already has an extraction block."""
+    return {attachment_key(s) for s in _EXTRACT_SRC_RE.findall(content or "")}
+
+
+def _block_key(block: str) -> str:
+    m = _EXTRACT_SRC_RE.search(block)
+    return attachment_key(m.group(1)) if m else ""
+
+
+def wrap_legacy_enrichment_blocks(content: str) -> str:
+    """Give pre-marker enrichment blocks the delimiters newer ones carry.
+
+    Each legacy header and the text up to the next header, the next delimited
+    block, or the end of the note becomes one ``orb:extract`` block with an
+    empty ``src`` — so it is found, kept or dropped by the same rules as any
+    other block. Text already inside a delimited block is left alone, which
+    also makes this idempotent.
+    """
+    if not content:
+        return content or ""
+
+    def _wrap_run(text: str) -> str:
+        heads = list(_ENRICHMENT_BLOCK_RE.finditer(text))
+        if not heads:
+            return text
+        parts = [text[: heads[0].start()]]
+        for i, head in enumerate(heads):
+            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+            body = text[head.start() : end].strip("\n")
+            parts.append(f"\n\n{EXTRACT_OPEN.format(src='')}\n{body}\n{EXTRACT_CLOSE}")
+        return "".join(parts)
+
+    out: list[str] = []
+    last = 0
+    for m in EXTRACT_BLOCK_RE.finditer(content):
+        out.append(_wrap_run(content[last : m.start()]))
+        out.append(m.group(0))
+        last = m.end()
+    out.append(_wrap_run(content[last:]))
+    return "".join(out)
+
+
+def remove_extraction(content: str, src_url: str) -> str:
+    """Drop the extraction block(s) for one attachment, leaving the rest as is."""
+    key = attachment_key(src_url)
+    return EXTRACT_BLOCK_RE.sub(
+        lambda m: "" if _block_key(m.group(0)) == key else m.group(0),
+        content or "",
+    )
+
+
+def place_extraction(content: str, src_url: str, section: str) -> str:
+    """Put one extraction block directly beneath the attachment it came from.
+
+    Falls back to appending when the link cannot be located — a note edited
+    mid-ingest, or an attachment reached by a different spelling of its URL.
+    """
+    body = section.strip("\n")
+    if not body.strip():
+        return content
+    block = f"\n\n{EXTRACT_OPEN.format(src=src_url)}\n{body}\n{EXTRACT_CLOSE}"
+    idx = content.find(src_url) if src_url else -1
+    if idx == -1:
+        return content.rstrip() + block
+    line_end = content.find("\n", idx)
+    if line_end == -1:
+        return content.rstrip() + block
+    return content[:line_end] + block + content[line_end:]
 
 def _build_extraction_prompt(extraction_content: str) -> str:
     """Knowledge Architect prompt for one note (or one chunk of a long note)."""
@@ -80,9 +191,12 @@ Identify every distinct entity in the note. For each, assign:
 List every relationship between entities. For each:
 - `source_name`: The entity the relationship originates from.
 - `target_name`: The entity the relationship points to.
-- `relationship_type`: A concise snake_case verb phrase (e.g. `attends`, `lives_in`, `is_friends_with`).
+- `relationship_type`: exactly one of the allowed predicates listed below. Use `related_to` when none fits.
 - `natural_language`: A short natural-language description of the relationship (e.g. "attends school").
 - Only include what the text explicitly states or directly implies.
+
+Allowed `relationship_type` values (no others):
+{", ".join(RELATIONSHIP_TYPES)}
 
 ### STEP 3 — Node Context Generation
 For each node, write a tightly focused contextual description using **only information from the note**.
@@ -113,7 +227,7 @@ Return a single JSON object structured exactly like this:
     {{
       "source_name": "string — the entity the relationship originates from",
       "target_name": "string — the entity the relationship points to",
-      "relationship_type": "string — concise snake_case verb phrase (e.g. attends, lives_in, is_friends_with)",
+      "relationship_type": "string — one of the allowed predicates, or related_to",
       "natural_language": "string — short natural-language description of the relationship"
     }}
   ]
@@ -162,14 +276,14 @@ Return a single JSON object structured exactly like this:
     }}
   ],
   "relationships": [
-    {{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "is_friends_with", "natural_language": "are mutual friends"}},
+    {{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "friend_of", "natural_language": "are mutual friends"}},
     {{"source_name": "Ama", "target_name": "Primary School", "relationship_type": "attends", "natural_language": "attends school"}},
     {{"source_name": "Ama", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives in the neighborhood"}},
-    {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_and_plays_in", "natural_language": "lives and plays in the neighborhood"}},
-    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Kofi during the weekend"}},
-    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Ama during the weekend"}},
-    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "completes_before_play", "natural_language": "completes homework before weekend play"}},
-    {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precondition_for", "natural_language": "must be completed before weekend play begins"}}
+    {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives and plays in the neighborhood"}},
+    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "related_to", "natural_language": "plays with Kofi during the weekend"}},
+    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "related_to", "natural_language": "plays with Ama during the weekend"}},
+    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "related_to", "natural_language": "completes homework before weekend play"}},
+    {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precedes", "natural_language": "must be completed before weekend play begins"}}
   ]
 }}
 
@@ -181,8 +295,9 @@ Now apply this entire process to the following note and return only the JSON out
 """
 
 
-# Unified file link parsing (vault-files + optional remote http(s)):
-#   [📎 Filename](/vault-files/...) · [🎤 Voice Recording](...) · ![alt](...)
+# Unified file link parsing (canonical ``attachments/…``, legacy ``/vault-files/…``
+# and optional remote http(s)):
+#   [📎 Filename](attachments/...) · [🎤 Voice Recording](...) · ![alt](...)
 #
 # URLs may contain unencoded spaces and commas (common for uploaded filenames),
 # so the pattern does not stop at whitespace. They may also contain *balanced*
@@ -190,7 +305,7 @@ Now apply this entire process to the following note and return only the JSON out
 # the first ")" truncated the URL, so the attachment was silently dropped: the
 # file never reached PDF/image extraction and never rendered in the note. One
 # level of nesting covers real filenames.
-_ATTACHMENT_URL = r"(?:https?://|/vault-files/)(?:[^()\n]|\([^()\n]*\))+"
+_ATTACHMENT_URL = r"(?:https?://|/vault-files/|attachments/)(?:[^()\n]|\([^()\n]*\))+"
 ATTACHMENT_LINK_RE = re.compile(rf"\[(📎|🎤)\s*(.*?)\]\(({_ATTACHMENT_URL})\)")
 IMAGE_LINK_RE = re.compile(rf"!\[([^\]]*)\]\(({_ATTACHMENT_URL})\)")
 
@@ -222,10 +337,10 @@ def _build_entity_prompt(content: str) -> str:
 `type` examples (not exhaustive — judge from the note): Person, Place, Organization, Event, Work, Thing, Concept, Time Period.
 
 Return ONLY this JSON:
-{{{{
+{{
   "title": "string — descriptive title capturing the main subject of the note",
-  "nodes": [{{{{"name": "canonical entity name", "type": "most fitting type"}}}}]
-}}}}
+  "nodes": [{{"name": "canonical entity name", "type": "most fitting type"}}]
+}}
 
 NOTE:
 {content}"""
@@ -239,19 +354,21 @@ def _build_relationship_prompt(content: str, entity_lines: str) -> str:
 - Use **only** names from the entity list, spelled exactly as given.
 - Only state what the text says or directly implies. Do not invent relationships.
 - Relationships spanning distant parts of the note are expected — you can see all of it.
+- `relationship_type` must be one of these, with `related_to` when none fits:
+  {", ".join(RELATIONSHIP_TYPES)}
 
 ENTITIES:
 {entity_lines}
 
 Return ONLY this JSON:
-{{{{
-  "relationships": [{{{{
+{{
+  "relationships": [{{
     "source_name": "entity the relationship starts from",
     "target_name": "entity it points to",
-    "relationship_type": "concise snake_case verb phrase (e.g. attends, lives_in)",
+    "relationship_type": "one of the allowed predicates",
     "natural_language": "short natural-language description"
-  }}}}]
-}}}}
+  }}]
+}}
 
 NOTE:
 {content}"""
@@ -269,9 +386,9 @@ ENTITIES:
 {entity_lines}
 
 Return ONLY this JSON:
-{{{{
-  "contexts": [{{{{"name": "entity name exactly as listed", "isolated_context": "entity-centric description"}}}}]
-}}}}
+{{
+  "contexts": [{{"name": "entity name exactly as listed", "isolated_context": "entity-centric description"}}]
+}}
 
 TEXT:
 {content}"""
@@ -361,7 +478,7 @@ async def _extract_chunk(
             # Free-form generate + JSON clean (not grammar-constrained sampling),
             # which small models often empty out for nested relationship arrays.
             raw, meta = await checkpoint.generate_with_meta(
-                llm, _build_extraction_prompt(text), temperature=0.1
+                llm, _build_extraction_prompt(text), temperature=0.1, json_mode=True
             )
             tokens = count_tokens(text)
             model_name = llm.get_ingestion_model()
@@ -409,7 +526,9 @@ async def _extract_chunk(
 async def _call_pass(llm, prompt: str, model_cls, label: str):
     """One task-split call, parsed into ``model_cls``. Never raises."""
     try:
-        raw, meta = await checkpoint.generate_with_meta(llm, prompt, temperature=0.1)
+        raw, meta = await checkpoint.generate_with_meta(
+            llm, prompt, temperature=0.1, json_mode=True
+        )
         if meta.get("truncated"):
             logger.warning("[Extraction] %s truncated — result may be partial", label)
         return model_cls.model_validate_json(llm._clean_json(raw))
@@ -677,11 +796,9 @@ async def extraction_node(
         )
         try:
             rename_resp = await checkpoint.generate(
-                _llm,
-                rename_prompt,
-                temperature=0.0,
+                _llm, rename_prompt, temperature=0.0, json_mode=True
             )
-            match = _re.search(r"\[.*?\]", rename_resp, _re.DOTALL)
+            match = _re.search(r"\[.*\]", rename_resp, _re.DOTALL)
             if match:
                 name_list = _json.loads(match.group())
                 name_map = {
@@ -813,6 +930,7 @@ async def summarization_node(state: IngestionState):
             state["extraction"].nodes,
             state["content"],
             note_created_at=state.get("created_at"),
+            note_id=state.get("note_id"),
         )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"[Agent] Context indexing failed: {e}", exc_info=True)
@@ -835,31 +953,10 @@ async def summarization_node(state: IngestionState):
     }
 
 
-def should_route_after_extraction(state: IngestionState):
-    """Route the graph after extraction: 'end' on error, 'store' otherwise."""
-    if state.get("errors"):
-        return "end"
-    return "store"
-
-
-# 3. Build Graph
-workflow = StateGraph(IngestionState)
-
-# Add Nodes
-workflow.add_node("extraction", extraction_node)
-workflow.add_node("storage", storage_node)
-workflow.add_node("summarization", summarization_node)
-
-# Define Edges
-workflow.set_entry_point("extraction")
-workflow.add_conditional_edges(
-    "extraction",
-    should_route_after_extraction,
-    {"store": "storage", "end": END},
-)
-
-workflow.add_edge("storage", "summarization")
-workflow.add_edge("summarization", END)
-
-# Compile
-ingestion_agent = workflow.compile()
+async def run_ingestion_agent(state: IngestionState) -> IngestionState:
+    """Run the three stages in order, stopping at the first that reports an error."""
+    for node in (extraction_node, storage_node, summarization_node):
+        state.update(await node(state))
+        if state.get("errors"):
+            break
+    return state

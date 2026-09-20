@@ -155,35 +155,8 @@ async def refresh_note_links(
     resolver: WikilinkResolver | None = None,
 ) -> None:
     """Replace all outgoing wikilinks for a note."""
-    if notes is None:
-        notes = list(
-            (await db.execute(select(Note).where(Note.kb_id == kb_id))).scalars().all()
-        )
-    if resolver is None:
-        resolver = WikilinkResolver(notes)
-
-    await db.execute(
-        delete(NoteLink).where(
-            NoteLink.kb_id == kb_id,
-            NoteLink.source_note_id == source_note_id,
-        )
-    )
-
-    def add_link(target_title: str, target_note_id: str | None) -> None:
-        db.add(
-            NoteLink(
-                kb_id=kb_id,
-                source_note_id=source_note_id,
-                target_title=target_title,
-                target_note_id=target_note_id,
-            )
-        )
-
-    _apply_note_links(
-        source_note_id=source_note_id,
-        content=content,
-        resolver=resolver,
-        add_link=add_link,
+    await db.run_sync(
+        refresh_note_links_sync, kb_id, source_note_id, content, notes=notes, resolver=resolver
     )
 
 

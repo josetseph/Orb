@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import meilisearch
@@ -23,39 +24,50 @@ _FILTERABLE = ["type", "community_level"]
 class MeilisearchService:
     """Meilisearch client managing per-KB node indexes for keyword search."""
 
-    def __init__(self, collection_name: str | None = None) -> None:
-        self._enabled = True
-        # Keep attribute name `collection` for call-site compatibility
-        self.collection = collection_name or settings.MEILI_INDEX_NAME
-        self.client = None
+    def __init__(self, index_name: str | None = None) -> None:
+        self.index_name = index_name or settings.MEILI_INDEX_NAME
+        self._client = None
+        self._retry_at = 0.0
+        self._connect()
+
+    @property
+    def client(self):
+        """(Re)connect lazily: the desktop runtime boots Meilisearch after the API is up."""
+        if self._client is None and time.monotonic() >= self._retry_at:
+            self._connect()
+        return self._client
+
+    @property
+    def _enabled(self) -> bool:
+        return self._client is not None
+
+    def _connect(self) -> None:
         try:
-            host = settings.MEILI_HOST
-            port = settings.MEILI_PORT
-            key = settings.MEILI_MASTER_KEY
-            url = f"http://{host}:{port}"
-            self.client = meilisearch.Client(url, key)
+            client = meilisearch.Client(
+                f"http://{settings.MEILI_HOST}:{settings.MEILI_PORT}", settings.MEILI_MASTER_KEY
+            )
+            client.health()
+            self._client = client
             self._ensure_collection()
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._enabled = False
-            self.client = None
-            logger.warning(
-                f"Meilisearch client init failed, disabling search path: {exc}"
-            )
+            self._client = None
+            self._retry_at = time.monotonic() + 5
+            logger.warning(f"Meilisearch not reachable yet (retrying on use): {exc}")
 
     def _index(self):
-        return self.client.index(self.collection)
+        return self.client.index(self.index_name)
 
     def _ensure_collection(self) -> None:
         """Create the index if it does not already exist and apply settings."""
         try:
-            self.client.get_index(self.collection)
+            self.client.get_index(self.index_name)
         except MeilisearchApiError:
             try:
                 task = self.client.create_index(
-                    self.collection, {"primaryKey": "node_id"}
+                    self.index_name, {"primaryKey": "node_id"}
                 )
                 self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
-                logger.info(f"[Meili] Created index '{self.collection}'")
+                logger.info(f"[Meili] Created index '{self.index_name}'")
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 logger.warning(f"[Meili] Index creation failed: {exc}")
                 return
@@ -73,7 +85,7 @@ class MeilisearchService:
             logger.debug(f"[Meili] Settings update: {exc}")
 
     def is_available(self) -> bool:
-        if not self._enabled or not self.client:
+        if not self.client:
             return False
         try:
             self.client.health()
@@ -82,16 +94,16 @@ class MeilisearchService:
             return False
 
     def reset_all(self) -> None:
-        if not self._enabled or not self.client:
+        if not self.client:
             return
         try:
-            task = self.client.delete_index(self.collection)
+            task = self.client.delete_index(self.index_name)
             self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
-            logger.info(f"[Meili] Deleted index '{self.collection}'")
+            logger.info(f"[Meili] Deleted index '{self.index_name}'")
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[Meili] Could not delete index '{self.collection}': {exc}")
+            logger.warning(f"[Meili] Could not delete index '{self.index_name}': {exc}")
         self._ensure_collection()
-        logger.info(f"[Meili] Index '{self.collection}' reset.")
+        logger.info(f"[Meili] Index '{self.index_name}' reset.")
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Fetch one document by node id."""
@@ -158,7 +170,7 @@ class MeilisearchService:
         node_id: str,
         name: str,
         node_type: str,
-        isolated_contexts_text: str = "",
+        isolated_contexts: list[str] | None = None,
         relationship_natural_language: str = "",
         community_level: int | None = None,
     ) -> None:
@@ -169,8 +181,8 @@ class MeilisearchService:
             "name": name,
             "type": node_type,
         }
-        if isolated_contexts_text:
-            doc["isolated_contexts"] = isolated_contexts_text
+        if isolated_contexts:
+            doc["isolated_contexts"] = list(isolated_contexts)
         if relationship_natural_language:
             doc["relationship_natural_language"] = relationship_natural_language
         if community_level is not None:
@@ -180,22 +192,6 @@ class MeilisearchService:
             self.client.wait_for_task(task.task_uid, timeout_in_ms=5000)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Meili index_node failed for {node_id}: {exc}")
-
-    def update_node_community(
-        self,
-        node_id: str,
-        relationship_natural_language: str = "",
-        name: str = "",
-    ) -> None:
-        self.update_nodes_community(
-            [
-                {
-                    "node_id": node_id,
-                    "relationship_natural_language": relationship_natural_language,
-                    "name": name,
-                }
-            ]
-        )
 
     def update_nodes_community(self, rows: list[dict]) -> None:
         """Batch community-field refresh: one add_documents call (and one task

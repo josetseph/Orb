@@ -281,8 +281,9 @@ def extract_contexts_from_response(
         # Evidence dicts only carry {"id": uuid} — resolve title from map.
         linked_notes = item.get("linked_notes", [])
         for note in linked_notes:
-            note_id = note.get("id", "")
-            title = note.get("title", "") or _title_map.get(note_id, "")
+            # Current API sends bare note ids; older builds sent {"id", "title"} dicts.
+            note_id = note if isinstance(note, str) else note.get("id", "")
+            title = ("" if isinstance(note, str) else note.get("title", "")) or _title_map.get(note_id, "")
             if note_id and note_id not in note_ids:  # Deduplicate
                 note_ids.append(note_id)
             if title and title not in titles:  # Deduplicate
@@ -296,6 +297,13 @@ def extract_contexts_from_response(
         if direct_title and direct_title not in titles:
             titles.append(direct_title)
 
+    # ``sources`` names the notes the answer actually drew on ({"id", "title"}).
+    for src in response.get("sources") or []:
+        sid, stitle = src.get("id", ""), src.get("title", "") or _title_map.get(src.get("id", ""), "")
+        if sid and sid not in note_ids:
+            note_ids.append(sid)
+        if stitle and stitle not in titles:
+            titles.append(stitle)
     return contexts, titles, note_ids
 
 

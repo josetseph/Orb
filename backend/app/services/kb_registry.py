@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 import sqlite3
@@ -12,7 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
-from app.core.config import REPO_ROOT, settings
+from app.core.config import settings
 from app.core.log import get_logger
 from app.core.paths import ensure_data_layout, resolve_data_dir, resolve_default_vault_path
 from app.services.graph import GraphService, graph_service
@@ -26,7 +25,6 @@ from app.workflows.ingestion import IngestionWorkflow
 logger = get_logger("KBRegistry")
 
 DEFAULT_KB_ID = "default"
-_LEGACY_REGISTRY = REPO_ROOT / "data" / "kb_registry.json"
 
 # Providers a KB may pin. Embed / rerank / multimodal are deliberately not
 # per-KB: embed dims are shared across every KB's Qdrant collections.
@@ -176,11 +174,10 @@ class KBContext:
     @property
     def graph(self) -> GraphService:
         if self._graph is None:
-            path = normalize_kuzu_path(self._kuzu_path) or self._kuzu_path
+            path = self._kuzu_path
             if not path:
                 raise RuntimeError(f"No Kuzu path configured for KB '{self.name}'")
             Path(path).parent.mkdir(parents=True, exist_ok=True)
-            self._kuzu_path = path
             self._graph = GraphService(db_path=path, qdrant=self.qdrant)
         return self._graph
 
@@ -253,10 +250,6 @@ class KBContext:
             )
         if self.chat_workflow is None:
             self.chat_workflow = ChatWorkflow(retrieval=self.retrieval_service, llm=llm)
-
-    def get_retrieval_service(self):
-        self._ensure_lazy()
-        return self.retrieval_service
 
     def get_ingestion_workflow(self):
         self._ensure_lazy()
@@ -367,8 +360,7 @@ class KBRegistry:
                         "qdrant_col_cores": settings.QDRANT_COLLECTION_NODE_CORES,
                         "qdrant_col_rels": settings.QDRANT_COLLECTION_NODE_RELATIONSHIPS,
                         "qdrant_col_contexts": settings.QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS,
-                        "typesense_collection": settings.MEILI_INDEX_NAME
-                        or settings.TYPESENSE_COLLECTION_NAME,
+                        "typesense_collection": settings.MEILI_INDEX_NAME,
                         "created_at": datetime.utcnow().isoformat(),
                     }
                     conn.execute(
@@ -400,55 +392,13 @@ class KBRegistry:
                 conn.close()
 
     def _load(self) -> None:
-        # Migrate legacy JSON once
-        if _LEGACY_REGISTRY.exists():
-            try:
-                data = json.loads(_LEGACY_REGISTRY.read_text(encoding="utf-8"))
-                conn = _connect()
-                for entry in data.get("knowledge_bases", []):
-                    if "vault_path" not in entry:
-                        entry["vault_path"] = str(
-                            resolve_data_dir() / "vaults" / entry.get("slug", entry["id"])
-                        )
-                        ensure_vault(entry["vault_path"])
-                    # Fix kuzu under DATA_DIR — must be a file path, not a directory
-                    slug = entry.get("slug", entry["id"])
-                    entry["kuzu_path"] = str(
-                        _kuzu_db_file(resolve_data_dir(), slug)
-                    )
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO knowledge_bases
-                        (id, name, slug, vault_path, kuzu_path, qdrant_col_cores,
-                         qdrant_col_rels, qdrant_col_contexts, typesense_collection, created_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            entry["id"],
-                            entry["name"],
-                            entry.get("slug", entry["id"]),
-                            entry["vault_path"],
-                            entry["kuzu_path"],
-                            entry.get("qdrant_col_cores", f"{slug}_node_cores"),
-                            entry.get("qdrant_col_rels", f"{slug}_node_relationships"),
-                            entry.get(
-                                "qdrant_col_contexts", f"{slug}_node_isolated_contexts"
-                            ),
-                            entry.get("typesense_collection", f"{slug}_nodes"),
-                            entry.get("created_at"),
-                        ),
-                    )
-                conn.commit()
-                conn.close()
-                _LEGACY_REGISTRY.rename(
-                    _LEGACY_REGISTRY.with_suffix(".json.migrated")
-                )
-                logger.info("[KBRegistry] Migrated kb_registry.json → SQLite")
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.warning(f"[KBRegistry] JSON migrate failed: {exc}")
-
         try:
             conn = _connect()
+            conn.execute(
+                "UPDATE knowledge_bases SET llm_provider = 'local' "
+                "WHERE llm_provider IN ('ollama', 'lm_studio')"
+            )
+            conn.commit()
             rows = conn.execute("SELECT * FROM knowledge_bases").fetchall()
             conn.close()
             for row in rows:
@@ -491,9 +441,7 @@ class KBRegistry:
                         meili=meilisearch_service,
                         vault_path=meta["vault_path"],
                         _graph=graph_service,
-                        _kuzu_path=normalize_kuzu_path(
-                            meta.get("kuzu_path") or str(settings.KUZU_DB_PATH)
-                        ),
+                        _kuzu_path=meta.get("kuzu_path") or str(settings.KUZU_DB_PATH),
                         llm_provider=_clean_override(meta.get("llm_provider")),
                         llm_model=_clean_override(meta.get("llm_model")),
                         llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
@@ -607,24 +555,7 @@ class KBRegistry:
                 return self._cache[kb_id]
             if kb_id not in self._metadata:
                 return None
-            meta = self._metadata[kb_id]
-            # Heal legacy ``…/kuzu/<slug>`` directory paths so notes/finance
-            # work even if create_kb stored a directory before the fix.
-            fixed = normalize_kuzu_path(meta.get("kuzu_path") or "")
-            if fixed and fixed != meta.get("kuzu_path"):
-                meta["kuzu_path"] = fixed
-                try:
-                    self._save_row(meta)
-                    logger.info(
-                        "[KBRegistry] Repaired kuzu_path for '%s' → %s",
-                        meta.get("name"),
-                        fixed,
-                    )
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.warning(
-                        "[KBRegistry] Could not persist kuzu_path repair: %s", exc
-                    )
-            ctx = self._build_context(kb_id, meta)
+            ctx = self._build_context(kb_id, self._metadata[kb_id])
             self._cache[kb_id] = ctx
             return ctx
 
@@ -657,14 +588,12 @@ class KBRegistry:
             ctx = self._cache.pop(kb_id, None)
             if meta is None:
                 return False
-            # Close Kuzu before deleting files on disk.
-            if ctx is not None:
+            # Close Kuzu before deleting files on disk — only if it was ever
+            # opened (``ctx.graph`` would open it just to close it).
+            graph = getattr(ctx, "_graph", None)
+            if graph is not None:
                 try:
-                    closer = getattr(ctx, "close", None) or getattr(
-                        getattr(ctx, "graph", None), "close", None
-                    )
-                    if callable(closer):
-                        closer()
+                    graph.close()
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass
             meta.pop("firefly_group_id", None)
@@ -749,8 +678,6 @@ class KBRegistry:
         provider = _clean_override(provider)
         if provider is not None:
             provider = provider.lower()
-            if provider in ("ollama", "lm_studio"):
-                provider = "local"
             if provider not in LLM_PROVIDERS:
                 raise ValueError(
                     f"Unsupported provider '{provider}'. Choose one of: {', '.join(LLM_PROVIDERS)}"
@@ -809,20 +736,6 @@ class KBRegistry:
             )
             return dict(meta)
 
-    def finance_enabled(self, kb_id: str) -> bool:
-        with self._lock:
-            meta = self._metadata.get(kb_id)
-        return True if meta is None else finance_enabled_for(meta)
-
-    def effective_llm(self, kb_id: str) -> dict | None:
-        with self._lock:
-            meta = self._metadata.get(kb_id)
-        if meta is None:
-            if kb_id != DEFAULT_KB_ID:
-                return None
-            meta = {}
-        return effective_llm_config(meta)
-
     def set_vault_path(self, kb_id: str, vault_path: str) -> KBContext | None:
         """Point a KB at a different notes folder (creates folder if needed)."""
         vault_str = str(ensure_vault(vault_path))
@@ -843,15 +756,13 @@ class KBRegistry:
             return self._cache[kb_id]
 
     def _build_context(self, kb_id: str, meta: dict) -> KBContext:
-        kuzu_path = normalize_kuzu_path(meta.get("kuzu_path") or "")
-        if kuzu_path and kuzu_path != meta.get("kuzu_path"):
-            meta["kuzu_path"] = kuzu_path
+        kuzu_path = meta.get("kuzu_path") or ""
         qdrant = QdrantService(
             col_cores=meta["qdrant_col_cores"],
             col_relationships=meta["qdrant_col_rels"],
             col_contexts=meta["qdrant_col_contexts"],
         )
-        ms = MeilisearchService(collection_name=meta["typesense_collection"])
+        ms = MeilisearchService(index_name=meta["typesense_collection"])
         # Do not open Kuzu here — notes/finance only need vault_path + kb_id.
         if kuzu_path:
             Path(kuzu_path).parent.mkdir(parents=True, exist_ok=True)
@@ -861,7 +772,7 @@ class KBRegistry:
             qdrant=qdrant,
             meili=ms,
             vault_path=meta.get("vault_path", ""),
-            _kuzu_path=kuzu_path or meta.get("kuzu_path", ""),
+            _kuzu_path=kuzu_path,
             llm_provider=_clean_override(meta.get("llm_provider")),
             llm_model=_clean_override(meta.get("llm_model")),
             llm_ingestion_model=_clean_override(meta.get("llm_ingestion_model")),
@@ -871,19 +782,16 @@ class KBRegistry:
 
     def _cleanup_stores(self, meta: dict) -> None:
         try:
-            qs = QdrantService(
-                col_cores=meta["qdrant_col_cores"],
-                col_relationships=meta["qdrant_col_rels"],
-                col_contexts=meta["qdrant_col_contexts"],
-            )
-            if qs.is_available() and qs.client:
+            # Any client reaches the same server; a per-KB QdrantService would
+            # recreate the collections in its constructor right before this.
+            if qdrant_service.is_available():
                 for col in [
                     meta["qdrant_col_cores"],
                     meta["qdrant_col_rels"],
                     meta["qdrant_col_contexts"],
                 ]:
                     try:
-                        qs.client.delete_collection(col)
+                        qdrant_service.client.delete_collection(col)
                     except Exception:  # pylint: disable=broad-exception-caught
                         pass
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -893,7 +801,7 @@ class KBRegistry:
             from app.services.meilisearch_service import MeilisearchService
 
             index_name = meta.get("typesense_collection")
-            ms = MeilisearchService(collection_name=index_name)
+            ms = MeilisearchService(index_name=index_name)
             if ms.is_available() and ms.client:
                 try:
                     task = ms.client.delete_index(index_name)
@@ -906,7 +814,7 @@ class KBRegistry:
             logger.warning(f"[KBRegistry] Meilisearch cleanup failed: {exc}")
 
         try:
-            kuzu_path = Path(normalize_kuzu_path(meta["kuzu_path"])).resolve()
+            kuzu_path = Path(meta["kuzu_path"]).resolve()
             kuzu_root = (resolve_data_dir() / "kuzu").resolve()
             if kuzu_root not in kuzu_path.parents:
                 # A crafted KB name used to be able to point this at arbitrary

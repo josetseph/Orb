@@ -1,0 +1,27 @@
+[MAIN]
+# Add the backend directory to sys.path so pylint can resolve app.* imports.
+init-hook='import sys; sys.path.insert(0, ".")'
+
+[MESSAGES CONTROL]
+disable=
+    # ── Logging ───────────────────────────────────────────────────────────────
+    # INTENTIONAL DECISION: f-string interpolation in logging calls is kept
+    # throughout the codebase for readability. The lazy-% alternative is a
+    # micro-optimisation relevant only when log levels are suppressed at high
+    # call frequency — neither condition applies here. Removing these rules
+    # avoids hundreds of noisy inline disables for no practical benefit.
+    logging-fstring-interpolation,
+    logging-not-lazy,
+
+[FORMAT]
+# Match the line length used throughout the codebase.
+max-line-length=120
+
+[DESIGN]
+# Allow larger classes for service singletons.
+max-attributes=20
+max-public-methods=30
+
+[SIMILARITIES]
+# Minimum lines to detect code duplication.
+min-similarity-lines=10

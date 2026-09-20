@@ -19,3 +19,5 @@ def get_kb(
     if ctx is None:
         raise HTTPException(status_code=404, detail=f"Knowledge base '{kb}' not found")
     return ctx
+
+

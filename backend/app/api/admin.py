@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_kb
+from app.core.config import settings
 from app.core.database import get_db
 from app.core.log import get_logger
 from app.models.note import Note
@@ -29,8 +31,6 @@ async def rebuild_communities(
 
     Useful when community detection was cancelled or never ran after ingestion.
     The job runs asynchronously; poll the server logs for progress.
-    COMMUNITY_DETECTION_ENABLED only controls the automatic post-ingestion trigger;
-    this manual endpoint is always available.
     """
     background_tasks.add_task(kb.get_ingestion_workflow().rebuild_leiden_communities)
     return {
@@ -59,12 +59,17 @@ async def build_temporal_digests(
     Groups all ``isolated_context`` chunks that carry a ``note_created_at`` date
     by the requested time period, summarises each bucket with the LLM, and stores
     the results as ``temporal_digest`` nodes in the knowledge graph.
-    TEMPORAL_DIGESTS_ENABLED only controls the automatic post-ingestion trigger;
-    this manual endpoint is always available.
+    ``IngestionWorkflow.build_temporal_digests`` is a no-op while an ingestion
+    is running, so instead of answering "started" for a job that will do
+    nothing this returns **409**.
     """
-    from app.core.config import settings as _settings
+    from app.services.ingestion_tracker import ingestion_tracker
 
-    _period = body.period or _settings.TEMPORAL_DIGEST_PERIOD
+    if ingestion_tracker.has_active_ingestions(kb.kb_id):
+        raise HTTPException(
+            status_code=409, detail="An ingestion is running; retry when it finishes."
+        )
+    _period = body.period or settings.TEMPORAL_DIGEST_PERIOD
     background_tasks.add_task(
         kb.get_ingestion_workflow().build_temporal_digests, _period
     )

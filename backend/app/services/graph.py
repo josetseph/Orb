@@ -3,8 +3,7 @@
 Schema
 ------
 Node table:
-    Node(id STRING PRIMARY KEY, kind STRING, name STRING, type STRING,
-         pos_x DOUBLE, pos_y DOUBLE, pos_z DOUBLE)
+    Node(id STRING PRIMARY KEY, kind STRING, name STRING, type STRING)
 
   kind values: 'note' | 'indexable' | 'community'
 
@@ -16,8 +15,11 @@ Relationship tables:
         rel_type STRING, confidence DOUBLE, strength DOUBLE,
         relevance DOUBLE, edge_weight DOUBLE, relationship_id STRING,
         ingested_at STRING, last_updated STRING, mention_count INT64,
-        note_id STRING,
-        is_similarity BOOLEAN, created_at STRING)
+        note_id STRING)
+
+  ``pos_x/pos_y/pos_z``, ``is_similarity`` and ``created_at`` may still exist
+  in databases created before they were dropped; nothing reads or writes them.
+  Layout is computed per request by ``get_full_3d_graph``.
 
 Cypher translation notes
 ------------------------
@@ -45,12 +47,7 @@ from app.services.qdrant_service import QdrantService, qdrant_service
 logger = get_logger("GraphService")
 
 
-def _strip_facts_prefix(text: str) -> str:
-    """Strip the legacy 'FACTS: k=v | k=v. Prose...' prefix from stored descriptions."""
-    if not text or not text.startswith("FACTS:"):
-        return text
-    m = re.search(r"^FACTS:.*?[.]\s+(.*)", text, re.DOTALL)
-    return m.group(1).strip() if m else ""
+_SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +60,6 @@ _SCHEMA_STMTS = [
         kind STRING,
         name STRING,
         type STRING,
-        pos_x DOUBLE,
-        pos_y DOUBLE,
-        pos_z DOUBLE,
         PRIMARY KEY(id)
     )""",
     """CREATE REL TABLE IF NOT EXISTS REFERENCES(
@@ -90,9 +84,7 @@ _SCHEMA_STMTS = [
         ingested_at STRING,
         last_updated STRING,
         mention_count INT64,
-        note_id STRING,
-        is_similarity BOOLEAN,
-        created_at STRING
+        note_id STRING
     )""",
 ]
 
@@ -106,33 +98,11 @@ class GraphService:
         if not _db_path.is_absolute():
             _db_path = REPO_ROOT / _db_path
         _db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._migrate_legacy_db_path(_db_path)
 
         self.db = kuzu.Database(str(_db_path))
         self.conn = kuzu.Connection(self.db)
         self._lock = threading.RLock()
         self._init_schema()
-
-    def _migrate_legacy_db_path(self, db_path: Path) -> None:
-        """Move legacy Kuzu files from data root into the dedicated kuzu folder."""
-        legacy_db_path = REPO_ROOT / "data" / "kuzu_graph"
-        if db_path == legacy_db_path or db_path.exists():
-            return
-
-        legacy_wal_path = Path(f"{legacy_db_path}.wal")
-        target_wal_path = Path(f"{db_path}.wal")
-        if not legacy_db_path.exists() and not legacy_wal_path.exists():
-            return
-
-        try:
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            if legacy_db_path.exists() and not db_path.exists():
-                legacy_db_path.rename(db_path)
-            if legacy_wal_path.exists() and not target_wal_path.exists():
-                legacy_wal_path.rename(target_wal_path)
-            logger.info(f"[Graph] Migrated Kuzu data to '{db_path}'.")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[Graph] Legacy Kuzu migration skipped: {exc}")
 
     def _init_schema(self) -> None:
         """Create all tables if they do not exist."""
@@ -239,7 +209,6 @@ class GraphService:
     def find_name_variants(self, base_name: str, limit: int = 5) -> list[dict]:
         """Return name variants for a node using regexp case-insensitive prefix matching."""
         base_lower = base_name.lower().strip()
-        _SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"  # pylint: disable=invalid-name
         query = """
         MATCH (n:Node)
         WHERE n.kind IN ['indexable', 'note']
@@ -278,7 +247,6 @@ class GraphService:
         )
         if not normalized:
             return {}
-        _SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"  # pylint: disable=invalid-name
         query = """
         UNWIND $base_names AS base
         MATCH (n:Node)
@@ -477,7 +445,7 @@ class GraphService:
         return {"community_id": community_id}
 
     def get_node_storage_payload(self, node_id: str) -> dict | None:
-        """Return the full storage payload (name, type, contexts, facts) for a node."""
+        """Return the full storage payload (name, type, contexts) for a node."""
         rows = self.execute_query(
             "MATCH (n:Node {id: $node_id}) RETURN n.id AS node_id, [n.kind] AS labels",
             {"node_id": node_id},
@@ -506,9 +474,7 @@ class GraphService:
             relationship_natural_language = []
 
         row["name"] = (content or {}).get("name", "")
-        row["description"] = _strip_facts_prefix((content or {}).get("description", ""))
-        row["facts"] = (content or {}).get("facts", [])
-        row["potential_questions"] = (content or {}).get("potential_questions", [])
+        row["description"] = (content or {}).get("description", "")
         row["isolated_contexts"] = (content or {}).get("isolated_contexts", [])
         row["community_level"] = (content or {}).get("community_level")
         row["relationship_natural_language"] = relationship_natural_language
@@ -580,17 +546,13 @@ class GraphService:
         target_name: str,
         target_label: str,
         relationship_type: str,
-        confidence: float = 1.0,
-        strength: float = 5.0,
-        relevance: float = 5.0,
         natural_language: str = "",
         relationship_id: str = None,
-        context: str = "",
         note_id: str = None,
         source_id: str = "",
         target_id: str = "",
     ) -> dict:  # pylint: disable=too-many-arguments,too-many-positional-arguments
-        """Upsert a SEMANTIC_REL edge between two nodes, merging weights on conflict."""
+        """Upsert a SEMANTIC_REL edge between two nodes."""
         import uuid as _uuid
         from datetime import datetime
 
@@ -603,10 +565,6 @@ class GraphService:
 
         if not relationship_id:
             relationship_id = str(_uuid.uuid4())
-
-        edge_weight = round(
-            (strength * 0.5) + (confidence * 0.3) + (relevance * 0.2), 4
-        )
 
         if not source_id and source_name:
             source_id = self.resolve_node_id(source_name.lower().strip()) or ""
@@ -624,10 +582,6 @@ class GraphService:
                 "source": source_name,
                 "target": target_name,
                 "relationship_type": relationship_type,
-                "confidence": confidence,
-                "strength": strength,
-                "relevance": relevance,
-                "edge_weight": edge_weight,
                 "natural_language": natural_language,
                 "relationship_id": relationship_id,
                 "previous_type": None,
@@ -639,7 +593,7 @@ class GraphService:
             """
             MATCH (source:Node {id: $source_id})-[r:SEMANTIC_REL]->(target:Node {id: $target_id})
             WHERE r.rel_type = $rel_type
-            RETURN r.rel_type AS current_type, r.confidence AS current_confidence
+            RETURN r.rel_type AS current_type
             LIMIT 1
             """,
             {
@@ -659,28 +613,17 @@ class GraphService:
                 WHERE r.rel_type = $rel_type
                 SET r.last_updated = $ingestion_time,
                     r.mention_count = coalesce(r.mention_count, 0) + 1,
-                    r.confidence = CASE
-                        WHEN $confidence > coalesce(r.confidence, 0.0) THEN $confidence
-                        ELSE r.confidence
-                    END,
                     r.relationship_id = CASE
                         WHEN r.relationship_id IS NULL THEN $relationship_id
                         ELSE r.relationship_id
-                    END,
-                    r.strength = CASE WHEN r.strength IS NULL THEN $strength ELSE r.strength END,
-                    r.relevance = CASE WHEN r.relevance IS NULL THEN $relevance ELSE r.relevance END,
-                    r.edge_weight = CASE WHEN r.edge_weight IS NULL THEN $edge_weight ELSE r.edge_weight END
+                    END
                 """,
                 {
                     "source_id": source_id,
                     "target_id": target_id,
                     "rel_type": relationship_type,
-                    "confidence": confidence,
                     "ingestion_time": ingestion_time,
                     "relationship_id": relationship_id,
-                    "strength": strength,
-                    "relevance": relevance,
-                    "edge_weight": edge_weight,
                 },
             )
         else:
@@ -698,10 +641,6 @@ class GraphService:
                 MATCH (target:Node {id: $target_id})
                 CREATE (source)-[r:SEMANTIC_REL]->(target)
                 SET r.rel_type = $rel_type,
-                    r.confidence = $confidence,
-                    r.strength = $strength,
-                    r.relevance = $relevance,
-                    r.edge_weight = $edge_weight,
                     r.relationship_id = $relationship_id,
                     r.ingested_at = $ingestion_time,
                     r.last_updated = $ingestion_time,
@@ -712,10 +651,6 @@ class GraphService:
                     "source_id": source_id,
                     "target_id": target_id,
                     "rel_type": relationship_type,
-                    "confidence": confidence,
-                    "strength": strength,
-                    "relevance": relevance,
-                    "edge_weight": edge_weight,
                     "relationship_id": relationship_id,
                     "ingestion_time": ingestion_time,
                     "note_id": note_id,
@@ -732,13 +667,82 @@ class GraphService:
             "source": source_name,
             "target": target_name,
             "relationship_type": relationship_type,
-            "confidence": confidence,
-            "strength": strength,
-            "relevance": relevance,
-            "edge_weight": edge_weight,
             "natural_language": natural_language,
             "relationship_id": relationship_id,
         }
+
+    # ---- Re-ingest cleanup ---------------------------------------------------
+
+    def clear_note_contribution(self, note_id: str) -> dict:
+        """Take back what one note asserted, so re-ingesting it starts clean.
+
+        Drops the note's REFERENCES edges and un-counts its SEMANTIC_REL
+        assertions, deleting edges no other note restated. Returns the ids of
+        the entities it referenced (``entity_ids`` — sweep them with
+        ``delete_orphan_entities`` once the new extraction is written) and of
+        the deleted edges (``relationship_ids`` — their Qdrant points go too).
+        """
+        params = {"note_id": note_id}
+        entity_ids = [
+            r["id"]
+            for r in self.execute_query(
+                "MATCH (:Node {id: $note_id})-[:REFERENCES]->(e:Node) "
+                "RETURN DISTINCT e.id AS id",
+                params,
+            )
+            if r.get("id")
+        ]
+        self.execute_query(
+            "MATCH (:Node {id: $note_id})-[r:REFERENCES]->(:Node) DELETE r", params
+        )
+        # ponytail: an edge records only its first asserting note, so a note that
+        # merely reinforced one is not un-counted here; keep note_ids as a list
+        # on the edge if mention_count ever has to be exact.
+        gone = "WHERE r.note_id = $note_id AND coalesce(r.mention_count, 1) <= 1"
+        relationship_ids = [
+            r["rid"]
+            for r in self.execute_query(
+                f"MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) {gone} "
+                "RETURN r.relationship_id AS rid",
+                params,
+            )
+            if r.get("rid")
+        ]
+        self.execute_query(
+            f"MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) {gone} DELETE r", params
+        )
+        self.execute_query(
+            "MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) WHERE r.note_id = $note_id "
+            "SET r.mention_count = r.mention_count - 1",
+            params,
+        )
+        return {"entity_ids": entity_ids, "relationship_ids": relationship_ids}
+
+    def delete_orphan_entities(self, candidate_ids: list[str]) -> list[str]:
+        """DETACH DELETE the candidates no note references and no edge touches.
+
+        Returns the ids removed so the caller can drop their Qdrant/Meili docs.
+        """
+        if not candidate_ids:
+            return []
+        rows = self.execute_query(
+            """
+            UNWIND $ids AS cid
+            MATCH (n:Node {id: cid})
+            WHERE n.kind = 'indexable'
+              AND NOT EXISTS { MATCH (:Node)-[:REFERENCES]->(n) }
+              AND NOT EXISTS { MATCH (n)-[:SEMANTIC_REL]-(:Node) }
+            RETURN n.id AS id
+            """,
+            {"ids": candidate_ids},
+        )
+        orphans = [r["id"] for r in rows if r.get("id")]
+        if orphans:
+            self.execute_query(
+                "UNWIND $ids AS oid MATCH (n:Node {id: oid}) DETACH DELETE n",
+                {"ids": orphans},
+            )
+        return orphans
 
     def _hop_query(self, direction: str) -> str:
         """Return a Cypher query template for a 1-hop neighbour expansion.
@@ -829,39 +833,6 @@ class GraphService:
         return self.execute_query(query, {"node_id": node_id})
 
     # ---- 3D spatial layout --------------------------------------------------
-
-    def get_all_node_ids_and_edges(
-        self,
-    ) -> tuple[list[str], list[tuple[str, str]]]:
-        """Return all node IDs and SEMANTIC_REL / MEMBER_OF edge pairs for layout computation."""
-        node_rows = self.execute_query(
-            """
-            MATCH (n:Node)
-            WHERE n.kind IN ['indexable', 'note', 'community']
-              AND n.id IS NOT NULL
-            RETURN n.id AS node_id
-            """,
-            {},
-        )
-        node_ids = [r["node_id"] for r in node_rows if r.get("node_id")]
-
-        edge_rows = self.execute_query(
-            """
-            MATCH (a:Node)-[r:SEMANTIC_REL]->(b:Node)
-            WHERE a.id IS NOT NULL AND b.id IS NOT NULL
-            RETURN DISTINCT a.id AS src, b.id AS tgt
-            UNION
-            MATCH (n:Node)-[:MEMBER_OF]->(c:Node)
-            WHERE n.id IS NOT NULL AND c.id IS NOT NULL
-            RETURN DISTINCT n.id AS src, c.id AS tgt
-            LIMIT 5000
-            """,
-            {},
-        )
-        edges = [
-            (r["src"], r["tgt"]) for r in edge_rows if r.get("src") and r.get("tgt")
-        ]
-        return node_ids, edges
 
     def get_full_3d_graph(self) -> dict:  # pylint: disable=too-many-locals
         """Build the full 3-D graph payload (nodes + edges) for the canvas renderer."""
@@ -1002,53 +973,6 @@ class GraphService:
         ]
         return {"nodes": nodes, "edges": edges}
 
-    def store_node_positions(
-        self, positions: dict[str, tuple[float, float, float]]
-    ) -> None:
-        """Persist pre-computed 3-D (x, y, z) positions for a batch of nodes.
-
-        Writes are batched via UNWIND (one statement per chunk instead of one
-        per node); if a batch fails we fall back to per-node writes for that
-        chunk so a single bad row can't drop the whole layout.
-        """
-        if not positions:
-            return
-        rows = [
-            {
-                "node_id": nid,
-                "x": float(xyz[0]),
-                "y": float(xyz[1]),
-                "z": float(xyz[2]),
-            }
-            for nid, xyz in positions.items()
-        ]
-        batch_query = """
-            UNWIND $rows AS row
-            MATCH (n:Node {id: row.node_id})
-            SET n.pos_x = row.x, n.pos_y = row.y, n.pos_z = row.z
-        """
-        single_query = """
-            MATCH (n:Node {id: $node_id})
-            SET n.pos_x = $x, n.pos_y = $y, n.pos_z = $z
-        """
-        chunk_size = 500
-        for i in range(0, len(rows), chunk_size):
-            chunk = rows[i : i + chunk_size]
-            try:
-                self.execute_query(batch_query, {"rows": chunk})
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.debug(
-                    f"[Graph] store_node_positions batch of {len(chunk)} failed "
-                    f"({exc}); retrying per-node"
-                )
-                for row in chunk:
-                    try:
-                        self.execute_query(single_query, row)
-                    except Exception as row_exc:  # pylint: disable=broad-exception-caught
-                        logger.debug(
-                            f"[Graph] store_node_positions skipped {row['node_id']}: {row_exc}"
-                        )
-
     def get_node_connections(self, node_id: str, *, limit: int = 16) -> list[dict]:
         """1-hop neighbours for a node id (semantic + REFERENCES)."""
         if not node_id:
@@ -1091,7 +1015,7 @@ class GraphService:
         ]
 
     def get_node_detail(self, node_id: str) -> dict | None:
-        """Return detailed content for a single node, including contexts, facts, and community membership."""
+        """Return detailed content for a single node, including contexts and community membership."""
         rows = self.execute_query(
             """
             MATCH (n:Node {id: $nid})
@@ -1138,16 +1062,11 @@ class GraphService:
             "node_id": nid,
             "name": c.get("name") or row.get("name") or "",
             "node_type": row.get("node_type") or "unknown",
-            "description": _strip_facts_prefix(c.get("description") or ""),
+            "description": c.get("description") or "",
             "isolated_contexts": c.get("isolated_contexts") or [],
-            "facts": c.get("facts") or [],
-            "domain": c.get("domain"),
-            "status": c.get("status"),
             "community_id": row.get("community_id"),
             "community_name": row.get("community_name"),
-            "summary": _strip_facts_prefix(c.get("description") or ""),
-            "themes": c.get("themes") or [],
-            "member_count": c.get("member_count") or 0,
+            "summary": c.get("description") or "",
             "connections": [
                 {
                     "node_id": conn.get("node_id"),

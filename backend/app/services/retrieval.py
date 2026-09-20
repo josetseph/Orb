@@ -3,6 +3,7 @@
 # pylint: disable=too-many-lines,import-outside-toplevel
 import asyncio
 import calendar
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -48,63 +49,24 @@ class RetrievalService:
 
         return llm_service
 
-    def _log_retrieval_details(
-        self,
-        query: str,
-        results: List[dict],
-        query_entities: List[str],
-        query_concepts: List[str],
-    ):
-        """
-        Log detailed retrieval results to dedicated file for debugging.
-        Includes full node summaries, not truncated versions.
-        """
-        logger.debug("=" * 100)
-        logger.debug(f"RETRIEVAL SESSION: {datetime.now().isoformat()}")
-        logger.debug(f"QUERY: {query}")
-        logger.debug(f"EXTRACTED ENTITIES: {query_entities}")
-        logger.debug(f"EXTRACTED CONCEPTS: {query_concepts}")
-        logger.debug("=" * 100)
-
-        for i, doc in enumerate(results):
-            logger.debug(f"\n--- RESULT {i+1} ---")
-            logger.debug(f"TYPE: {doc.get('type', 'unknown')}")
-            logger.debug(f"SCORE: {doc.get('final_score', 0):.2f}")
-            logger.debug(f"BOOSTS: {doc.get('boosts', {})}")
-            logger.debug(f"SYMBOLIC IMMUNE: {doc.get('symbolic_immune', False)}")
-
-            # Get node details from original object
-            original = doc.get("original_obj", {})
-            if original:
-                logger.debug(f"NODE NAME: {original.get('name', 'N/A')}")
-                logger.debug(f"NODE LABELS: {original.get('labels', [])}")
-                logger.debug(f"NODE TYPE: {original.get('entity_type', 'N/A')}")
-
-                # Full summary - not truncated!
-                summary = original.get("summary") or original.get("description") or ""
-                logger.debug(f"FULL SUMMARY ({len(summary)} chars):")
-                logger.debug(summary if summary else "(empty)")
-
-                # Isolated context if available
-                isolated = original.get("isolated_context") or ""
-                if isolated:
-                    logger.debug(f"ISOLATED CONTEXT ({len(isolated)} chars):")
-                    logger.debug(isolated)
-
-            # Linked notes
-            linked_notes = doc.get("linked_notes", [])
-            if linked_notes:
-                logger.debug(f"LINKED NOTES ({len(linked_notes)}):")
-                for note in linked_notes:
-                    logger.debug(
-                        f"  - {note.get('title', 'Untitled')} ({note.get('id', 'N/A')})"
-                    )
-
-            # Full text sent to LLM
-            logger.debug(f"TEXT SENT TO LLM ({len(doc.get('text', ''))} chars):")
-            logger.debug(doc.get("text", ""))
-
-        logger.debug("\n" + "=" * 100 + "\n")  # pylint: disable=logging-not-lazy
+    def _log_retrieval_details(self, query: str, results: List[dict], query_entities: List[str]):
+        """One DEBUG line per retrieval: what came back and the text handed to the LLM."""
+        summary = {
+            "query": query,
+            "entities": query_entities,
+            "results": [
+                {
+                    "name": doc.get("original_obj", {}).get("name"),
+                    "type": doc.get("type"),
+                    "score": doc.get("final_score"),
+                    "boosts": doc.get("boosts"),
+                    "linked_notes": [n.get("id") for n in doc.get("linked_notes", [])],
+                    "text": doc.get("text", ""),
+                }
+                for doc in results
+            ],
+        }
+        logger.debug(json.dumps(summary, default=str))
 
     def _get_node_relationships(  # pylint: disable=too-many-locals,too-many-branches
         self, node: dict, max_relationships: int = 5
@@ -295,18 +257,13 @@ class RetrievalService:
                     _tgt_name = entry["neighbor"].get("name", "")
                     nl = _nl_lookup.get((_src, _tgt))
                     if nl:
-                        entry["nl_sentence"] = self._extract_predicate(
-                            nl, _src_name, _tgt_name
-                        )
+                        entry["nl_sentence"] = nl
                         entry["_nl_is_reverse"] = False
                     else:
                         nl = _nl_lookup.get((_tgt, _src))
                         if nl:
-                            # Predicate was written from the neighbor's perspective;
-                            # strip names from the NL text it was stored as.
-                            entry["nl_sentence"] = self._extract_predicate(
-                                nl, _tgt_name, _src_name
-                            )
+                            # Predicate was written from the neighbor's perspective.
+                            entry["nl_sentence"] = nl
                             entry["_nl_is_reverse"] = True
         except Exception as _qdrant_err:  # pylint: disable=broad-exception-caught
             logger.debug(f"  [GraphExpand] Qdrant NL lookup failed: {_qdrant_err}")
@@ -372,10 +329,7 @@ class RetrievalService:
         # Rank each (root, neighbor) pair individually with the reranker, then
         # keep only the top N — so the merged root doc only contains the neighbors
         # the reranker considers relevant to this question.
-        if (
-            settings.RERANKER_ENABLED
-            and len(relationship_entries) > settings.GRAPH_EXPAND_TOP_NEIGHBORS
-        ):
+        if len(relationship_entries) > settings.GRAPH_EXPAND_TOP_NEIGHBORS:
             from app.services.reranker import reranker_service
 
             _per_neighbor_texts: list[str] = []
@@ -405,9 +359,7 @@ class RetrievalService:
             _scores = await reranker_service.rerank(question, _per_neighbor_texts)
             _score_map: dict[int, float] = (
                 {
-                    r["index"]: float(
-                        r.get("relevance_score", r.get("score", 0.0)) or 0.0
-                    )
+                    r["index"]: float(r.get("relevance_score") or 0.0)
                     for r in _scores
                     if "index" in r
                 }
@@ -573,26 +525,6 @@ class RetrievalService:
             )
         return result
 
-    @staticmethod
-    def _extract_predicate(nl: str, src_name: str, tgt_name: str) -> str:
-        """Strip entity names from the start/end of a stored NL text.
-
-        Qdrant may store a full sentence ("scott derrickson directed doctor
-        strange") when the LLM returned an empty natural_language and the
-        ingestion fallback fired.  Strip the known entity names so that
-        _build_node_text doesn't end up with names doubled.
-        """
-        text = nl.strip().rstrip(". ")
-        for name in (src_name, tgt_name):
-            if not name:
-                continue
-            name_l = name.lower()
-            if text.lower().startswith(name_l):
-                text = text[len(name) :].lstrip(" ")
-            if text.lower().endswith(name_l):
-                text = text[: -len(name)].rstrip(" ")
-        return text.strip() or nl
-
     def _build_node_text(  # pylint: disable=too-many-branches
         self, node: dict, relationships: list[dict], brief_root: bool = False
     ) -> str:
@@ -699,14 +631,10 @@ class RetrievalService:
         used directly; otherwise the hit is skipped so the caller's dedup
         logic stays consistent.
         """
-        # When the reranker is enabled it re-scores all candidates — use the lower
-        # pre-rerank threshold so borderline-but-relevant nodes aren't discarded
-        # before the reranker even sees them.
-        _threshold = (
-            settings.VECTOR_PRE_RERANK_THRESHOLD
-            if settings.RERANKER_ENABLED
-            else settings.VECTOR_SIMILARITY_THRESHOLD
-        )
+        # The reranker re-scores all candidates — use the lower pre-rerank
+        # threshold so borderline-but-relevant nodes aren't discarded before
+        # the reranker even sees them.
+        _threshold = settings.VECTOR_PRE_RERANK_THRESHOLD
         _contexts_filter: Filter | None = None
         _period_key_filter: str | None = None
         _day_only: bool = False
@@ -761,7 +689,7 @@ class RetrievalService:
             return []
         logger.info(
             f"  [Qdrant] Raw hits from search_all_collections: {len(hits)} "
-            f"(threshold={_threshold}, reranker={'on' if settings.RERANKER_ENABLED else 'off'})"
+            f"(threshold={_threshold})"
         )
         merged: dict[str, dict] = {}
         unresolved_node_ids: set[str] = set()
@@ -986,39 +914,17 @@ class RetrievalService:
         ]
         question_attribute = query_analysis.get("question_attribute", None)
         query_keywords = query_analysis.get("keywords", [])
-        query_concepts = query_analysis.get("concepts", [])
 
         # Build an enriched query string for vector embedding and reranking.
         # Appending the question attribute sharpens semantic focus — e.g.
         # "Were Scott Derrickson and Ed Wood of the same nationality?"
         # becomes "...nationality" so vectors cluster around nationality facts.
-        _extra_terms = " ".join(
-            t for t in ([question_attribute] + query_concepts) if t
-        ).strip()
-        enriched_query = f"{query} {_extra_terms}".strip() if _extra_terms else query
+        enriched_query = f"{query} {question_attribute}" if question_attribute else query
 
         # ============ ENTITY EXTRACTION ============
         # The LLM is the sole source of entity names from the query.
         # No regex/TitleCase fallback — the LLM already handles multi-word names.
-        llm_entities_raw = query_analysis.get("entities", [])
-
-        # Strip stopwords and single-character tokens that match everything
-        filtered_by_length = []
-        filtered_by_stopwords = []
-
-        query_entities = list(llm_entities_raw)
-
-        if filtered_by_stopwords or filtered_by_length:
-            logger.info(f"  [Entity Filter] Raw LLM entities: {llm_entities_raw}")
-            if filtered_by_stopwords:
-                logger.info(
-                    f"  [Entity Filter] Removed by stopwords: {filtered_by_stopwords}"
-                )
-            if filtered_by_length:
-                logger.info(
-                    f"  [Entity Filter] Removed by length (<2): {filtered_by_length}"
-                )
-            logger.info(f"  [Entity Filter] Final entities: {query_entities}")
+        query_entities = list(query_analysis.get("entities", []))
 
         logger.info(
             f"  [LLM Analysis] Intent: {query_analysis.get('intent')}, "
@@ -1164,11 +1070,9 @@ class RetrievalService:
             return _unique_candidates
 
         async def _meili_branch() -> list[dict]:
-            """STEP 1b: BM25 keyword search over query + keywords/concepts (parallel per term)."""
+            """STEP 1b: BM25 keyword search over query + keywords (parallel per term)."""
             _meili_queries = [query] + [
-                t
-                for t in query_keywords + query_concepts
-                if t and t.lower() not in query.lower()
+                t for t in query_keywords if t and t.lower() not in query.lower()
             ]
             _per_term = await asyncio.gather(
                 *[self._search_meili_by_keyword(_ts_q) for _ts_q in _meili_queries]
@@ -1435,12 +1339,7 @@ class RetrievalService:
             logger.info(f"    {i+1}. [{dtype}] {name} (rerank={score:.4f})")
 
         # Detailed logging to file (full summaries, not truncated)
-        self._log_retrieval_details(
-            query,
-            combined_results,
-            query_entities,
-            [],  # Pass extracted entities for logging
-        )
+        self._log_retrieval_details(query, combined_results, query_entities)
 
         t_total = time.perf_counter() - t_start
         logger.info(
@@ -1449,21 +1348,6 @@ class RetrievalService:
         )
 
         return combined_results
-
-    async def retrieve_with_self_correction(
-        self,
-        query: str,
-        top_k: int = 50,
-        progress_callback: Callable[[str, str | None], None] | None = None,
-        conversation_history: list[dict] | None = None,
-    ) -> tuple[str | None, list[dict], str | None]:
-        """Entry-point alias for the primary structured sub-question pipeline."""
-        return await self.retrieve_with_iterative_loop(
-            query,
-            top_k=top_k,
-            progress_callback=progress_callback,
-            conversation_history=conversation_history,
-        )
 
     async def _apply_reranker_logging(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals,too-many-branches
         self,
@@ -1476,9 +1360,9 @@ class RetrievalService:
     ) -> list[dict]:  # pylint: disable=too-many-arguments,too-many-positional-arguments
         """Rank candidates and return the top_n highest-scoring ones.
 
-        When RERANKER_ENABLED is True, scores using the local model
-        (``settings.MODEL_RERANKER_LOCAL``).  Falls back to a keyword-overlap
-        heuristic when the model is disabled or unavailable.
+        Scores with the local reranker (``settings.MODEL_RERANKER_LOCAL``).
+        The reranker is mandatory: a missing GGUF, a load failure or a run that
+        returns no scores raises, and the chat job reports that error.
 
         Args:
             top_n: After ranking, slice to this many results.  None = no cutoff.
@@ -1520,29 +1404,20 @@ class RetrievalService:
                 text = (candidate.get("text") or "").strip()
             texts.append(text)
 
-        use_model = settings.RERANKER_ENABLED
-        model_scores: dict[int, float] = {}
+        from app.services.reranker import reranker_service
 
-        if use_model:
-            from app.services.reranker import reranker_service
-
-            results = await reranker_service.rerank(rerank_query, texts)
-            if results:
-                for r in results:
-                    if "index" not in r:
-                        continue
-                    model_scores[r["index"]] = float(
-                        r.get("relevance_score", r.get("score", 0.0)) or 0.0
-                    )
-                if model_scores:
-                    logger.info(
-                        f"  [Reranker] {settings.MODEL_RERANKER_LOCAL} scored {len(model_scores)} "
-                        f"candidates (top score: {max(model_scores.values()):.4f})"
-                    )
-            else:
-                logger.warning(
-                    "  [Reranker] Model returned no scores, skipping candidate scoring"
-                )
+        results = await reranker_service.rerank(rerank_query, texts)
+        model_scores = {
+            r["index"]: float(r.get("relevance_score") or 0.0)
+            for r in results
+            if "index" in r
+        }
+        if not model_scores:
+            raise RuntimeError("Reranker returned no scores")
+        logger.info(
+            f"  [Reranker] {settings.MODEL_RERANKER_LOCAL} scored {len(model_scores)} "
+            f"candidates (top score: {max(model_scores.values()):.4f})"
+        )
 
         for idx, candidate in enumerate(candidates):
             rerank_score = model_scores.get(idx, 0.0)
@@ -1605,20 +1480,11 @@ class RetrievalService:
 
         conversation_context = ""
         if conversation_history:
-            lines: list[str] = []
-            for turn in conversation_history[-settings.CHAT_HISTORY_MAX_MESSAGES :]:
-                role = (turn.get("role") or "").strip().lower()
-                content = (turn.get("content") or "").strip()
-                if not content or role not in {"user", "assistant"}:
-                    continue
-                label = "User" if role == "user" else "Assistant"
-                if len(content) > 500:
-                    content = content[:497].rstrip() + "..."
-                lines.append(f"{label}: {content}")
-            if lines:
-                conversation_context = (
-                    "CONVERSATION SO FAR:\n" + "\n".join(lines) + "\n\n"
-                )
+            from app.schemas.chat import render_history
+
+            rendered = render_history(conversation_history, 500)
+            if rendered:
+                conversation_context = "CONVERSATION SO FAR:\n" + rendered + "\n\n"
 
         _t_start = time.perf_counter()
         logger.info(
@@ -1700,18 +1566,27 @@ class RetrievalService:
 
                 docs = selected_docs + expanded
 
-                # Accumulate unique docs into all_docs
-                seen_all_names = {
-                    (d.get("original_obj") or {}).get("name") or d.get("name", "")
+                # Accumulate unique docs into all_docs. A graph_expansion doc
+                # carries its origin node's name, which selected_docs already
+                # put here — fold its neighbour notes into that doc so they
+                # stay citable in ``sources``.
+                by_name = {
+                    (d.get("original_obj") or {}).get("name") or d.get("name", ""): d
                     for d in all_docs
                 }
                 for d in docs:
                     name = (d.get("original_obj") or {}).get("name") or d.get(
                         "name", ""
                     )
-                    if name not in seen_all_names:
+                    kept = by_name.get(name)
+                    if kept is None:
                         all_docs.append(d)
-                        seen_all_names.add(name)
+                        by_name[name] = d
+                        continue
+                    known = {n.get("id") for n in kept.get("linked_notes", [])}
+                    kept["linked_notes"] = kept.get("linked_notes", []) + [
+                        n for n in d.get("linked_notes", []) if n.get("id") not in known
+                    ]
             else:
                 docs = []
 

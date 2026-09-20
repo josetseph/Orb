@@ -20,6 +20,10 @@ def _norm(rel: str) -> str:
     return (rel or "").replace("\\", "/").lstrip("/")
 
 
+def _in_attachments(rel: str) -> bool:
+    return rel == "attachments" or rel.startswith("attachments/")
+
+
 def safe_vault_join(vault: Path, rel: str) -> Path:
     full = (vault / _norm(rel)).resolve()
     root = vault.resolve()
@@ -49,12 +53,14 @@ def unique_rel_path(vault: Path, desired_rel: str) -> str:
         n += 1
 
 
-def rewrite_refs_in_text(content: str, old_rel: str, new_rel: str, kb_id: str) -> str:
+def rewrite_refs_in_text(content: str, old_rel: str, new_rel: str) -> str:
     """Rewrite attachment / vault-file links when a file moves.
 
     Only rewrites markdown link/image *targets* — never a bare substring replace,
-    which would turn ``/vault-files/kb/attachments/x.mp4`` into
-    ``…/attachments/attachments/x.mp4`` when ``old_rel`` is just the filename.
+    which would turn ``attachments/x.mp4`` into ``attachments/attachments/x.mp4``
+    when ``old_rel`` is just the filename. Matches the canonical vault-relative
+    form and any legacy ``/vault-files/<kb>/`` prefix (whatever kb id it holds);
+    always emits the canonical form: relative, each segment ``quote(seg, safe="")``.
     """
     old = _norm(old_rel)
     new = _norm(new_rel)
@@ -66,31 +72,16 @@ def rewrite_refs_in_text(content: str, old_rel: str, new_rel: str, kb_id: str) -
     encoded_old = "/".join(quote(seg, safe="") for seg in old.split("/"))
     encoded_new = "/".join(quote(seg, safe="") for seg in new.split("/"))
 
-    text = content
-    # ](...target...) and the extraction marker's src="..." — cover vault-files
-    # URLs and relative vault paths. The marker must follow the link: it is how
-    # ingestion and the media widget know the attachment was already processed,
-    # and a stale one meant a moved recording got transcribed all over again.
-    for src, dst in (
-        (f"/vault-files/{kb_id}/{old}", f"/vault-files/{kb_id}/{new}"),
-        (f"/vault-files/{kb_id}/{encoded_old}", f"/vault-files/{kb_id}/{encoded_new}"),
-        (old, new),
-        (encoded_old, encoded_new),
-    ):
-        if not src or src == dst:
-            continue
-        text = re.sub(
-            rf"(\]\(|orb:extract src=\")({re.escape(src)})(\)|\")",
-            rf"\1{dst}\3",
-            text,
-        )
-    # Collapse accidental doubled attachments/ from older buggy rewrites
-    text = re.sub(
-        r"(/vault-files/[^/]+/)attachments/attachments/",
-        r"\1attachments/",
-        text,
+    # ](...target...) and the extraction marker's src="..." — the marker must
+    # follow the link: it is how ingestion and the media widget know the
+    # attachment was already processed, and a stale one meant a moved
+    # recording got transcribed all over again.
+    return re.sub(
+        rf'(\]\(|orb:extract src=")(?:/vault-files/[^/)"]+/)?'
+        rf'(?:{re.escape(old)}|{re.escape(encoded_old)})(\)|")',
+        lambda m: f"{m.group(1)}{encoded_new}{m.group(2)}",
+        content,
     )
-    return text
 
 
 _WIKILINK_TARGET_RE = re.compile(r"\[\[([^\]|#]+)((?:#[^\]|]*)?(?:\|[^\]]*)?)\]\]")
@@ -125,41 +116,29 @@ def rewrite_wikilinks_in_text(
     return _WIKILINK_TARGET_RE.sub(_sub, content)
 
 
-def strip_refs_in_text(content: str, rel: str, kb_id: str) -> str:
-    """Remove markdown image/link references that point at ``rel``."""
+def strip_refs_in_text(content: str, rel: str) -> str:
+    """Remove markdown image/link references whose target is ``rel``.
+
+    Same matcher as ``rewrite_refs_in_text``: the canonical relative form, its
+    raw form, or any legacy ``/vault-files/<kb>/`` prefix. Only a removed link
+    justifies touching the note, so unrelated notes come back byte-identical.
+    """
     old = _norm(rel)
     if not old or not content:
         return content
-    targets = {
-        old,
-        f"/vault-files/{kb_id}/{old}",
-        Path(old).name,
-    }
-    # Also match percent-encoded path variants used in markdown
+
     from urllib.parse import quote
 
-    encoded = "/".join(quote(seg, safe="") for seg in old.split("/"))
-    targets.add(encoded)
-    targets.add(f"/vault-files/{kb_id}/{encoded}")
-
-    text = content
-    for target in targets:
-        if not target:
-            continue
-        escaped = re.escape(target)
-        text = re.sub(
-            rf"!\[[^\]]*\]\([^)]*{escaped}[^)]*\)",
-            "",
-            text,
-        )
-        text = re.sub(
-            rf"\[[^\]]*\]\([^)]*{escaped}[^)]*\)",
-            "",
-            text,
-        )
-    # Collapse leftover blank runs from removed embeds
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text
+    encoded_old = "/".join(quote(seg, safe="") for seg in old.split("/"))
+    text = re.sub(
+        rf"!?\[[^\]]*\]\((?:/vault-files/[^/)]+/)?(?:{re.escape(old)}|{re.escape(encoded_old)})\)",
+        "",
+        content,
+    )
+    if text == content:
+        return content
+    # Collapse the blank run a removed embed leaves behind.
+    return re.sub(r"\n{3,}", "\n\n", text)
 
 
 async def strip_refs_across_notes(
@@ -173,7 +152,7 @@ async def strip_refs_across_notes(
     changed = 0
     for note in notes:
         body = note_body(note, kb)
-        updated = strip_refs_in_text(body, rel, kb.kb_id)
+        updated = strip_refs_in_text(body, rel)
         if updated != body:
             persist_note_body(note, kb, updated)
             changed += 1
@@ -259,6 +238,8 @@ async def move_vault_file(
         raise ValueError("from_rel and to_rel are required")
     if ".." in src_rel.split("/") or ".." in dst_rel.split("/"):
         raise ValueError("Invalid path")
+    if _in_attachments(src_rel) != _in_attachments(dst_rel):
+        raise ValueError("Cannot move across the attachments/ boundary")
 
     src = safe_vault_join(vault, src_rel)
     if src.is_dir():
@@ -324,7 +305,7 @@ async def move_vault_file(
     rewritten = 0
     for n in all_notes:
         body = note_body(n, kb)
-        updated = rewrite_refs_in_text(body, src_rel, dst_rel, kb.kb_id)
+        updated = rewrite_refs_in_text(body, src_rel, dst_rel)
         if note_row and resolver:
             updated = rewrite_wikilinks_in_text(
                 updated, resolver, n.rel_path, note_row.id, bare_target, path_target

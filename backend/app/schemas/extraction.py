@@ -6,62 +6,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-_SCORE_LABELS = {
-    "very high": 9.0,
-    "high": 8.0,
-    "medium": 6.0,
-    "moderate": 6.0,
-    "low": 4.0,
-    "very low": 2.0,
-}
-
-
-def _normalize_score(value: Any, default: float) -> float:
-    """Coerce LLM score noise (None, labels, 0–1 floats) onto the 1–10 scale."""
-    if value is None:
-        return default
-    if isinstance(value, str):
-        key = value.strip().lower()
-        if key in _SCORE_LABELS:
-            return _SCORE_LABELS[key]
-        try:
-            value = float(key)
-        except ValueError:
-            return default
-    try:
-        score = float(value)
-    except (TypeError, ValueError):
-        return default
-    if 0.0 <= score <= 1.0:
-        score *= 10.0
-    return max(1.0, min(10.0, score))
-
-
 class Node(BaseModel):
     """Single uniform node — LLM sets ``type`` freely (e.g. person, song, event)."""
 
     name: str = ""
     type: str = "thing"
     isolated_context: str = ""
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        """Map common LLM key aliases onto canonical fields."""
-        if not isinstance(data, dict):
-            return data
-        out = dict(data)
-        if not out.get("name"):
-            if out.get("trait"):
-                out["name"] = out["trait"]
-            elif out.get("title"):
-                out["name"] = out["title"]
-        if not out.get("isolated_context"):
-            if out.get("evidence_quote"):
-                out["isolated_context"] = out["evidence_quote"]
-            elif out.get("context"):
-                out["isolated_context"] = out["context"]
-        return out
 
     @field_validator("*", mode="before")
     @classmethod
@@ -74,62 +24,74 @@ class Node(BaseModel):
         return v
 
 
+#: The only predicates the graph stores. The model is shown this list; anything
+#: else it returns collapses to ``related_to`` rather than minting a new edge
+#: label per note.
+RELATIONSHIP_TYPES: tuple[str, ...] = (
+    "related_to",
+    "works_at",
+    "works_with",
+    "reports_to",
+    "manages",
+    "leads",
+    "founded",
+    "owns",
+    "part_of",
+    "member_of",
+    "instance_of",
+    "has_property",
+    "located_in",
+    "lives_in",
+    "born_in",
+    "occurs_at",
+    "attends",
+    "participates_in",
+    "created",
+    "authored",
+    "produces",
+    "uses",
+    "depends_on",
+    "mentions",
+    "discusses",
+    "causes",
+    "precedes",
+    "follows",
+    "knows",
+    "friend_of",
+    "married_to",
+    "parent_of",
+    "child_of",
+    "sibling_of",
+    "studied_at",
+    "teaches",
+    "competes_with",
+    "partners_with",
+    "invests_in",
+    "funds",
+    "sells",
+    "buys",
+)
+
+
 class ExtractedRelationship(BaseModel):
     """Relationship between two nodes extracted from content."""
 
     source_name: str = ""
     target_name: str = ""
-    relationship_type: str = "relates_to"
-    # All three scores on the 1–10 scale.
-    # edge_weight = (strength × 0.5) + (confidence × 0.3) + (relevance × 0.2)
-    strength: float = 5.0
-    confidence: float = 7.0
-    relevance: float = 5.0
+    relationship_type: str = "related_to"
     natural_language: str = ""
-    context: str = ""
 
-    @model_validator(mode="before")
+    @field_validator("source_name", "target_name", "natural_language", mode="before")
     @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        """Map common LLM key aliases onto canonical fields."""
-        if not isinstance(data, dict):
-            return data
-        out = dict(data)
-        if not out.get("source_name") and out.get("entity1"):
-            out["source_name"] = out["entity1"]
-        if not out.get("target_name") and out.get("entity2"):
-            out["target_name"] = out["entity2"]
-        if not out.get("natural_language") and out.get("description"):
-            out["natural_language"] = out["description"]
-        return out
+    def handle_none_strings(cls, v: Any) -> Any:
+        return "" if v is None else v
 
-    @field_validator("strength", "confidence", "relevance", mode="before")
+    @field_validator("relationship_type", mode="before")
     @classmethod
-    def normalize_scores(cls, v: Any, info) -> float:
-        defaults = {"confidence": 7.0, "strength": 5.0, "relevance": 5.0}
-        return _normalize_score(v, defaults.get(info.field_name, 5.0))
-
-    @field_validator(
-        "source_name",
-        "target_name",
-        "relationship_type",
-        "natural_language",
-        "context",
-        mode="before",
-    )
-    @classmethod
-    def handle_none_strings(cls, v: Any, info) -> Any:
-        if v is None:
-            if info.field_name == "relationship_type":
-                return "relates_to"
-            return ""
-        if (
-            info.field_name == "relationship_type"
-            and isinstance(v, str)
-            and not v.strip()
-        ):
-            return "relates_to"
-        return v
+    def closed_vocabulary(cls, v: Any) -> str:
+        """Normalise spelling, then reject anything off the list — no fuzzy matching."""
+        key = "_".join(str(v or "").strip().lower().split())
+        return key if key in RELATIONSHIP_TYPES else "related_to"
 
 
 class Extraction(BaseModel):
@@ -137,7 +99,6 @@ class Extraction(BaseModel):
 
     nodes: list[Node] = Field(default_factory=list)
     relationships: list[ExtractedRelationship] = Field(default_factory=list)
-    sentiment: str = "Neutral"
     title: str | None = None
 
     @model_validator(mode="before")
@@ -203,11 +164,6 @@ class Extraction(BaseModel):
                 for item in v
             ]
         return v
-
-    @field_validator("sentiment", mode="before")
-    @classmethod
-    def handle_sentiment_none(cls, v: Any) -> Any:
-        return v if v else "Neutral"
 
 
 class NoteInput(BaseModel):

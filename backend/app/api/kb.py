@@ -144,7 +144,7 @@ async def update_kb_llm(kb_id: str, body: KBLLMInput):
     """Pin (or clear) the chat / ingestion LLM for one knowledge base.
 
     Validates up front so a KB never points at a model it cannot run: local
-    ids must be downloaded, cloud providers need their API key in ``.env``.
+    ids must be downloaded, cloud providers need their API key in Settings.
     """
     from app.services.ai_gate import provider_is_configured
     from app.services.model_catalog import chat_model_downloaded, get_option

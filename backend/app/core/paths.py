@@ -15,37 +15,17 @@ _PATHS_CACHE: dict | None = None
 
 
 def _default_app_support() -> Path:
-    """OS-specific Application Support / AppData directory for Orb.
-
-    Prefers Orb; falls back to LifeOS / LiveOS if those already have paths.json.
-    """
+    """OS-specific Application Support / AppData directory for Orb."""
     if sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
-        candidates = [base / "Orb", base / "LifeOS", base / "LiveOS"]
-    elif sys.platform == "win32":
-        root = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
-        base = Path(root)
-        candidates = [base / "Orb", base / "LifeOS", base / "LiveOS"]
-    else:
-        base = Path.home() / ".config"
-        candidates = [base / "Orb", base / "LifeOS", base / "LiveOS"]
-    for candidate in candidates:
-        if (candidate / "paths.json").exists():
-            return candidate
-    return candidates[0]
-
-
-def _env_first(*names: str) -> str | None:
-    for name in names:
-        value = os.environ.get(name)
-        if value:
-            return value
-    return None
+        return Path.home() / "Library" / "Application Support" / "Orb"
+    if sys.platform == "win32":
+        return Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming") / "Orb"
+    return Path.home() / ".config" / "Orb"
 
 
 def paths_json_location() -> Path:
     """Bootstrap file that only stores data_dir / models_dir / default_vault_path."""
-    override = _env_first("ORB_PATHS_FILE", "LIVEOS_PATHS_FILE")
+    override = os.environ.get("ORB_PATHS_FILE")
     if override:
         return Path(override)
     return _default_app_support() / "paths.json"
@@ -71,12 +51,11 @@ def save_paths_file(
     data_dir: str | Path,
     models_dir: str | Path,
     default_vault_path: str | Path | None = None,
-    ai_setup_mode: str | None = None,
 ) -> Path:
     """Write bootstrap paths.json and clear cache.
 
-    If ``default_vault_path`` / ``ai_setup_mode`` are omitted, keep any existing
-    values so a later Setup save does not wipe them.
+    If ``default_vault_path`` is omitted, keep any existing value so a later
+    Setup save does not wipe it.
     """
     global _PATHS_CACHE  # noqa: PLW0603
     loc = paths_json_location()
@@ -96,9 +75,6 @@ def save_paths_file(
     )
     if vault:
         payload["default_vault_path"] = str(Path(str(vault)).expanduser().resolve())
-    mode = ai_setup_mode if ai_setup_mode is not None else existing.get("ai_setup_mode")
-    if mode:
-        payload["ai_setup_mode"] = mode
     loc.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     _PATHS_CACHE = payload
     return loc
@@ -106,7 +82,7 @@ def save_paths_file(
 
 def resolve_data_dir() -> Path:
     """DATA_DIR: env > paths.json > repo data/ (dev fallback)."""
-    env = _env_first("ORB_DATA_DIR", "LIVEOS_DATA_DIR", "DATA_DIR")
+    env = os.environ.get("ORB_DATA_DIR") or os.environ.get("DATA_DIR")
     if env:
         return Path(env).expanduser().resolve()
     file_paths = load_paths_file()
@@ -117,7 +93,7 @@ def resolve_data_dir() -> Path:
 
 def resolve_models_dir() -> Path:
     """MODELS_DIR: env > paths.json > backend/models (dev fallback)."""
-    env = _env_first("ORB_MODELS_DIR", "LIVEOS_MODELS_DIR", "MODELS_DIR")
+    env = os.environ.get("ORB_MODELS_DIR") or os.environ.get("MODELS_DIR")
     if env:
         return Path(env).expanduser().resolve()
     file_paths = load_paths_file()
@@ -130,7 +106,7 @@ def resolve_default_vault_path() -> Path | None:
     file_paths = load_paths_file()
     if file_paths.get("default_vault_path"):
         return Path(file_paths["default_vault_path"]).expanduser().resolve()
-    env = _env_first("ORB_DEFAULT_VAULT", "LIVEOS_DEFAULT_VAULT")
+    env = os.environ.get("ORB_DEFAULT_VAULT")
     if env:
         return Path(env).expanduser().resolve()
     return None
@@ -157,12 +133,7 @@ def local_download_staging_dir() -> Path:
     Hugging Face + large GGUF downloads are unreliable directly onto SMB/NAS;
     we stage here then copy/move to the user's chosen models directory.
     """
-    override = _env_first(
-        "ORB_HF_STAGING",
-        "ORB_DOWNLOAD_STAGING",
-        "LIVEOS_HF_STAGING",
-        "LIVEOS_DOWNLOAD_STAGING",
-    )
+    override = os.environ.get("ORB_HF_STAGING") or os.environ.get("ORB_DOWNLOAD_STAGING")
     if override:
         p = Path(override).expanduser().resolve()
         p.mkdir(parents=True, exist_ok=True)
@@ -193,17 +164,11 @@ def ensure_data_layout(data_dir: Path | None = None) -> Path:
     return root
 
 
-def sqlite_url(data_dir: Path | None = None) -> str:
+def sqlite_url(data_dir: Path | None = None, driver: str = "aiosqlite") -> str:
     root = data_dir or resolve_data_dir()
     root.mkdir(parents=True, exist_ok=True)
     db_path = (root / "orb.db").resolve()
-    return f"sqlite+aiosqlite:///{db_path}"
-
-
-def clear_paths_cache() -> None:
-    """Drop the in-memory paths.json cache (tests / after external edits)."""
-    global _PATHS_CACHE  # noqa: PLW0603
-    _PATHS_CACHE = None
+    return f"sqlite+{driver}:///{db_path}"
 
 
 def sync_settings_paths(settings_obj=None) -> None:
@@ -221,5 +186,4 @@ def sync_settings_paths(settings_obj=None) -> None:
     settings_obj.DATA_DIR = str(data)
     settings_obj.MODELS_DIR = str(models)
     settings_obj.MODELS_PATH = str(models)
-    settings_obj.KUZU_DB_PATH = str(data / "kuzu" / "kuzu_graph")
     ensure_data_layout(data)

@@ -1,19 +1,16 @@
 """Local model setup routes: catalogue, download, select, load."""
 
+from __future__ import annotations
+
 import asyncio
 
 from fastapi import APIRouter, HTTPException
-
 from pydantic import BaseModel
-
 
 router = APIRouter()
 
 
-# ── Local model setup ─────────────────────────────────────────────────────────
-
-
-class DownloadModelsInput(BaseModel):
+class ChatModelInput(BaseModel):
     chat_id: str | None = None
 
 
@@ -26,7 +23,7 @@ async def model_catalog(chat_id: str | None = None):
 
 
 @router.post("/api/v1/setup/download-models")
-async def download_models(body: DownloadModelsInput | None = None):
+async def download_models(body: ChatModelInput | None = None):
     """Download the chat/embed/rerank GGUFs for the selected chat model."""
     from app.services.local_models import ensure_chat_and_embed_models
 
@@ -37,12 +34,9 @@ async def download_models(body: DownloadModelsInput | None = None):
         progress.append({"model": label, "percent": pct})
 
     try:
-        paths = await asyncio.to_thread(
-            ensure_chat_and_embed_models, on_progress, chat_id=chat_id
-        )
+        paths = await asyncio.to_thread(ensure_chat_and_embed_models, on_progress, chat_id=chat_id)
     except Exception as exc:  # pylint: disable=broad-exception-caught
         raise HTTPException(status_code=500, detail=f"GGUF download failed: {exc}") from exc
-
     return {
         "status": "ok",
         "chat": str(paths.get("chat", "")),
@@ -53,7 +47,7 @@ async def download_models(body: DownloadModelsInput | None = None):
 
 
 @router.post("/api/v1/setup/select-chat-model")
-async def select_chat_model(body: DownloadModelsInput | None = None):
+async def select_chat_model(body: ChatModelInput | None = None):
     """Persist chat selection (+ auto embed/rerank ids) without downloading.
 
     Also resizes Qdrant collections to match the embed model's dimensions.
@@ -62,8 +56,6 @@ async def select_chat_model(body: DownloadModelsInput | None = None):
 
     chat_id = body.chat_id if body else None
     if not chat_id:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail="chat_id required")
     resolved = resolve_selected_hf_paths(chat_id)
     infra = save_selection(
@@ -85,7 +77,7 @@ async def select_chat_model(body: DownloadModelsInput | None = None):
 
 
 @router.post("/api/v1/setup/start-local-llm")
-async def start_local_llm(body: DownloadModelsInput | None = None):
+async def start_local_llm(body: ChatModelInput | None = None):
     """Download (if needed) and load selected GGUFs in-process."""
     from app.services.embedding import embedding_service
     from app.services.llm import llm_service
@@ -113,12 +105,7 @@ async def start_local_llm(body: DownloadModelsInput | None = None):
     try:
         result = await asyncio.to_thread(_load)
     except RuntimeError as exc:
-        return {
-            "started": False,
-            "loaded": False,
-            "reason": str(exc),
-            "accel": detect_llama_backend(),
-        }
+        return {"started": False, "loaded": False, "reason": str(exc), "accel": detect_llama_backend()}
     llm_service.provider = "local"
     llm_service.init_clients()
     embedding_service.reconfigure()

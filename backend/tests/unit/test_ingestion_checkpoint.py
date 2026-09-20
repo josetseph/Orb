@@ -13,7 +13,7 @@ class FakeLLM:
     def get_ingestion_model(self):
         return "test-model"
 
-    async def ingestion_generate_with_meta(self, prompt, temperature=0.1):
+    async def ingestion_generate_with_meta(self, prompt, temperature=0.1, **_kw):
         self.calls.append(prompt)
         if prompt == self.fail_on:
             raise RuntimeError("503 high demand")

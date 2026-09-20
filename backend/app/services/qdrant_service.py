@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import os
+import re
+import time
 import uuid
 from typing import Any
 
@@ -46,19 +48,35 @@ class QdrantService:
         self._col_contexts = (
             col_contexts or settings.QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS
         )
-        self._enabled = True
+        self._client: QdrantClient | None = None
+        self._retry_at = 0.0
+        self._connect()
+
+    @property
+    def client(self) -> QdrantClient | None:
+        """(Re)connect lazily: the desktop runtime boots Qdrant after the API is up."""
+        if self._client is None and time.monotonic() >= self._retry_at:
+            self._connect()
+        return self._client
+
+    @property
+    def _enabled(self) -> bool:
+        return self._client is not None
+
+    def _connect(self) -> None:
         try:
-            self.client = QdrantClient(
+            client = QdrantClient(
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
                 api_key=settings.QDRANT_API_KEY,
             )
+            client.get_collections()  # the constructor never touches the network
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            self._enabled = False
-            self.client = None
-            logger.warning(f"Qdrant client init failed, disabling Qdrant path: {exc}")
+            self._client = None
+            self._retry_at = time.monotonic() + 5
+            logger.warning(f"Qdrant not reachable yet (retrying on use): {exc}")
             return
-
+        self._client = client
         # Prefer the selected local embed model's dims before creating collections.
         try:
             from app.services.local_models import load_manifest
@@ -227,7 +245,7 @@ class QdrantService:
 
     def is_available(self) -> bool:
         """Return True if Qdrant is reachable and the service is enabled."""
-        if not self._enabled or not self.client:
+        if not self.client:
             return False
         try:
             self.client.get_collections()
@@ -237,7 +255,7 @@ class QdrantService:
 
     def reset_all(self) -> None:
         """Delete and recreate all Qdrant collections for this KB, wiping all vectors."""
-        if not self._enabled or not self.client:
+        if not self.client:
             return
         for name in (self._col_cores, self._col_rels, self._col_contexts):
             try:
@@ -274,6 +292,17 @@ class QdrantService:
                         )
                     ]
                 )
+            elif collection == self._col_cores and day_only:
+                # Entity descriptions still match a day-scoped query; only the
+                # month-level summaries (communities, digests) are excluded.
+                query_filter = Filter(
+                    must_not=[
+                        FieldCondition(
+                            key="type",
+                            match=MatchAny(any=["community", "temporal_digest"]),
+                        )
+                    ]
+                )
 
             try:
                 result = self.client.query_points(
@@ -296,27 +325,11 @@ class QdrantService:
                 logger.debug(f"Qdrant search failed for {collection}: {exc}")
                 return []
 
-        targets = [
-            c
-            for c in self.collections
-            if not (day_only and c != self._col_contexts)
-        ]
-        if not targets:
-            return []
-        if len(targets) == 1:
-            return _search_one(targets[0])
-
-        # Query collections concurrently — each is an independent network call.
-        # Results are flattened in self.collections order so downstream merge
-        # behaviour is identical to the previous sequential loop.
-        from concurrent.futures import ThreadPoolExecutor
-
-        with ThreadPoolExecutor(max_workers=len(targets)) as pool:
-            per_collection = list(pool.map(_search_one, targets))
-
+        # ponytail: sequential over 3 local collections; fan out with a thread pool
+        # if Qdrant ever moves off localhost.
         hits: list[dict[str, Any]] = []
-        for chunk in per_collection:
-            hits.extend(chunk)
+        for collection in self.collections:
+            hits.extend(_search_one(collection))
         return hits
 
     def search_node_cores(  # pylint: disable=too-many-arguments,too-many-positional-arguments
@@ -456,19 +469,23 @@ class QdrantService:
             self._last_upsert_error = str(exc)
             return False
 
-    def upsert_node_relationships(self, rels: list[dict[str, Any]]) -> None:
+    def upsert_node_relationships(self, rels: list[dict[str, Any]]) -> bool:
         """Batch-upsert node_relationships points in a single Qdrant call.
 
         Each entry takes the same fields as ``upsert_node_relationship``:
         relationship_id, natural_language, nl_vector, source_node_id,
-        target_node_id, and optional is_community_rel.
+        target_node_id, and optional is_community_rel. Returns True when all
+        points stored.
         """
-        if not rels or not self.is_available() or not self.client:
-            return
+        if not rels:
+            return True
+        if not self.is_available() or not self.client:
+            return False
         points: list[PointStruct] = []
         for rel in rels:
             vector = self._prepare_vector(rel["nl_vector"])
             payload: dict[str, Any] = {
+                "relationship_id": rel["relationship_id"],
                 "natural_language": rel["natural_language"],
                 "source_node_id": rel["source_node_id"],
                 "target_node_id": rel["target_node_id"],
@@ -484,12 +501,15 @@ class QdrantService:
             )
         try:
             self._upsert_batched(self._col_rels, points)
+            return True
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(
                 "Qdrant upsert_node_relationships failed for %d point(s): %s",
                 len(points),
                 exc,
             )
+            self._last_upsert_error = str(exc)
+            return False
 
     def upsert_node_items(
         self,
@@ -557,6 +577,7 @@ class QdrantService:
         content: str,
         vector: list[float],
         note_created_at: str | None = None,
+        note_id: str | None = None,
     ) -> bool:
         """Append a single new item to a sub-item collection without touching existing points.
 
@@ -568,6 +589,10 @@ class QdrantService:
         vector = self._prepare_vector(vector) or vector
         point_id = str(uuid.uuid4())
         payload: dict[str, Any] = {"parent_node_id": node_id, "content": content}
+        if note_id:
+            # Which note said it — so re-ingesting or deleting that note can
+            # take its contexts back out instead of piling new ones on top.
+            payload["note_id"] = note_id
         if note_created_at:
             payload["note_created_at"] = note_created_at
         point = PointStruct(id=point_id, vector=vector, payload=payload)
@@ -599,6 +624,7 @@ class QdrantService:
         nl_vector = self._prepare_vector(nl_vector) or nl_vector
         collection = self._col_rels
         payload: dict[str, Any] = {
+            "relationship_id": relationship_id,
             "natural_language": natural_language,
             "source_node_id": source_node_id,
             "target_node_id": target_node_id,
@@ -703,6 +729,35 @@ class QdrantService:
             "community_level": core_payload.get("community_level"),
             "isolated_contexts": _scroll_contents(self._col_contexts),
         }
+
+    def strip_facts_prefixes(self) -> int:
+        """One-time: drop the legacy ``FACTS: k=v. `` prefix from stored descriptions.
+
+        Raises when Qdrant is unreachable so the caller does not mark it done.
+        """
+        fixed = 0
+        offset = None
+        while True:
+            points, offset = self.client.scroll(
+                collection_name=self._col_cores,
+                limit=500,
+                offset=offset,
+                with_payload=["description"],
+                with_vectors=False,
+            )
+            for point in points:
+                desc = (point.payload or {}).get("description") or ""
+                if not desc.startswith("FACTS:"):
+                    continue
+                m = re.search(r"^FACTS:.*?[.]\s+(.*)", desc, re.DOTALL)
+                self.client.set_payload(
+                    collection_name=self._col_cores,
+                    payload={"description": m.group(1).strip() if m else ""},
+                    points=[point.id],
+                )
+                fixed += 1
+            if offset is None:
+                return fixed
 
     def get_nodes_content_by_ids(self, node_ids: list[str]) -> dict[str, dict]:
         """Bulk-fetch content for multiple nodes from Qdrant.
@@ -936,8 +991,8 @@ class QdrantService:
     def get_relationships_for_node_ids(self, node_ids: list[str]) -> list[dict]:
         """Fetch all relationship points from node_relationships where source or target is in node_ids.
 
-        Returns list of dicts: {natural_language, source_node_id, target_node_id,
-        source_node_name, target_node_name}.
+        Returns list of dicts: {relationship_id, natural_language, source_node_id,
+        target_node_id}, one per edge.
         """
         if not self.is_available() or not self.client or not node_ids:
             return []
@@ -966,6 +1021,7 @@ class QdrantService:
                         payload = point.payload or {}
                         results.append(
                             {
+                                "relationship_id": payload.get("relationship_id", ""),
                                 "natural_language": payload.get("natural_language", ""),
                                 "source_node_id": payload.get("source_node_id", ""),
                                 "target_node_id": payload.get("target_node_id", ""),
@@ -974,11 +1030,12 @@ class QdrantService:
                     if next_offset is None:
                         break
                     offset = next_offset
-            # Deduplicate by natural_language
+            # One row per edge; points written before relationship_id was in
+            # the payload fall back to their sentence.
             seen: set[str] = set()
             unique: list[dict] = []
             for r in results:
-                key = r["natural_language"]
+                key = r["relationship_id"] or r["natural_language"]
                 if key and key not in seen:
                     seen.add(key)
                     unique.append(r)
@@ -988,7 +1045,7 @@ class QdrantService:
             return []
 
     def delete_node(self, node_id: str) -> None:
-        """Delete a node core and all child items keyed by parent_node_id."""
+        """Delete a node's core, its contexts, and every relationship point touching it."""
         if not self.is_available() or not self.client:
             return
 
@@ -997,22 +1054,88 @@ class QdrantService:
                 collection_name=self._col_cores,
                 points_selector=[str(uuid.uuid5(uuid.NAMESPACE_OID, node_id))],
             )
-            for collection_name in (self._col_contexts,):
-                self.client.delete(
-                    collection_name=collection_name,
-                    points_selector=FilterSelector(
-                        filter=Filter(
-                            must=[
-                                FieldCondition(
-                                    key="parent_node_id",
-                                    match=MatchValue(value=node_id),
-                                )
-                            ]
-                        )
-                    ),
-                )
+            self.client.delete(
+                collection_name=self._col_contexts,
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        must=[
+                            FieldCondition(
+                                key="parent_node_id",
+                                match=MatchValue(value=node_id),
+                            )
+                        ]
+                    )
+                ),
+            )
+            self.client.delete(
+                collection_name=self._col_rels,
+                points_selector=FilterSelector(
+                    filter=Filter(
+                        should=[
+                            FieldCondition(key=k, match=MatchValue(value=node_id))
+                            for k in ("source_node_id", "target_node_id")
+                        ]
+                    )
+                ),
+            )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Qdrant delete_node failed for {node_id}: {exc}")
+
+    def delete_relationships(self, relationship_ids: list[str]) -> None:
+        """Drop the relationship points for edges that no longer exist in Kuzu."""
+        if not relationship_ids or not self.is_available() or not self.client:
+            return
+        try:
+            self.client.delete(
+                collection_name=self._col_rels,
+                points_selector=[
+                    str(uuid.uuid5(uuid.NAMESPACE_OID, rid)) for rid in relationship_ids
+                ],
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Qdrant delete_relationships failed: {exc}")
+
+    def node_ids_for_note(self, note_id: str) -> set[str]:
+        """Nodes holding a context that came from this note."""
+        if not self.is_available() or not self.client or not note_id:
+            return set()
+        out: set[str] = set()
+        offset = None
+        try:
+            while True:
+                points, offset = self.client.scroll(
+                    collection_name=self._col_contexts,
+                    scroll_filter=Filter(
+                        must=[FieldCondition(key="note_id", match=MatchValue(value=note_id))]
+                    ),
+                    limit=500,
+                    offset=offset,
+                    with_payload=["parent_node_id"],
+                    with_vectors=False,
+                )
+                for point in points:
+                    pid = (point.payload or {}).get("parent_node_id")
+                    if pid:
+                        out.add(pid)
+                if not points or offset is None:
+                    break
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[Qdrant] node_ids_for_note failed: {exc}")
+        return out
+
+    def delete_note_contexts(self, note_id: str) -> None:
+        """Drop every context this note contributed, on every node."""
+        if not self.is_available() or not self.client or not note_id:
+            return
+        try:
+            self.client.delete(
+                collection_name=self._col_contexts,
+                points_selector=FilterSelector(
+                    filter=Filter(must=[FieldCondition(key="note_id", match=MatchValue(value=note_id))])
+                ),
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Qdrant delete_note_contexts failed for {note_id}: {exc}")
 
     def scroll_all_isolated_contexts_with_dates(self) -> list[dict]:
         """Return payload dicts for every isolated_context point that has a note_created_at field.

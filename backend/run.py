@@ -151,8 +151,23 @@ def stop_sidecars() -> None:
     _children.clear()
 
 
+def load_dotenv(path: Path) -> None:
+    """Settings no longer read .env themselves; KEY=VALUE lines here seed the environment."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        value = value.split(" #", 1)[0].strip().strip("'\"")
+        os.environ.setdefault(key.strip(), value)
+
+
 def main() -> int:
-    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    here = Path(__file__).resolve().parent
+    sys.path.insert(0, str(here))
+    load_dotenv(here / ".env")
     from app.core.paths import ensure_data_layout, resolve_data_dir
 
     data_dir = ensure_data_layout(resolve_data_dir())
@@ -160,6 +175,15 @@ def main() -> int:
     os.environ.update(QDRANT_HOST="127.0.0.1", QDRANT_PORT=str(QDRANT_PORT), MEILI_HOST="127.0.0.1",
                       MEILI_PORT=str(MEILI_PORT), MEILI_MASTER_KEY=MEILI_MASTER_KEY)
     log(f"DATA_DIR={data_dir}")
+    # Cloud keys live in the OS keychain (no env fallback in the app): seed the
+    # store from OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / HUGGINGFACE_API_KEY.
+    from app.services.credentials import CLOUD_PROVIDERS, credentials
+
+    for name in CLOUD_PROVIDERS:
+        key = os.environ.get(f"{name.upper()}_API_KEY")
+        if key and credentials.get(name) != key:
+            credentials.set(name, key)
+            log(f"Stored {name} API key from the environment")
     try:
         start_sidecars(data_dir)
         import uvicorn

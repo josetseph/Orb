@@ -25,8 +25,6 @@ async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
     def _progress(stage: str, model: str | None = None) -> None:
         logger.info("[Chat %s] %s%s", request_id[:8], stage, f" ({model})" if model else "")
 
-    result = await kb.get_chat_workflow().chat(
-        body.query, history=[], progress_callback=_progress
-    )
+    result = await kb.get_chat_workflow().chat(body.query, history=[], progress_callback=_progress)
     result["request_id"] = request_id
     return result

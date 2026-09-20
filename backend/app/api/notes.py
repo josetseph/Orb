@@ -27,34 +27,40 @@ logger = get_logger("API")
 router = APIRouter()
 
 
-def _parse_date_str(s: str) -> datetime:
-    """Parse a date string, trying ISO format first then dateparser.
+def _aware(dt: datetime) -> datetime:
+    """A naive datetime is taken as UTC."""
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
-    Always returns a timezone-aware datetime. Falls back to ``datetime.now(UTC)``
-    when every parse attempt fails so callers never receive a bare None.
+
+async def _get_note_or_404(db: AsyncSession, kb: KBContext, note_id: str) -> Note:
+    result = await db.execute(
+        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
+    )
+    note = result.scalar_one_or_none()
+    if not note:
+        raise HTTPException(status_code=404, detail="Note not found")
+    return note
+
+
+# Stages that mean "nothing is running" (same rule as main.startup_event).
+_IDLE_STAGES = ("Saved", "Ingestion complete", "Ingestion failed", "Changed on disk", "External")
+
+
+def note_status(processed: bool, failed: bool, stage: str | None) -> str:
+    """Derive one status word from a note row.
+
+    ``completed`` | ``failed`` | ``not_ingested`` | ``queued`` | ``processing``.
     """
-    from dateutil import parser as dateutil_parser
-
-    try:
-        dt = dateutil_parser.isoparse(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-    try:
-        import dateparser
-
-        dt = dateparser.parse(s)
-        if dt:
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            return dt
-    except Exception:  # pylint: disable=broad-exception-caught
-        pass
-
-    return datetime.now(timezone.utc)
+    if processed:
+        return "completed"
+    if failed:
+        return "failed"
+    stage = (stage or "").strip()
+    if not stage or stage.startswith(_IDLE_STAGES) or "pending" in stage:
+        return "not_ingested"
+    if stage.startswith("Queued"):
+        return "queued"
+    return "processing"
 
 
 def _note_response(note: Note, kb: KBContext) -> dict:
@@ -82,15 +88,10 @@ async def create_note(
 ):
     """Create a note as a vault .md file + metadata row (no ingest)."""
     note_id = str(uuid.uuid4())
-    c_at = (
-        _parse_date_str(note_input.created_at)
-        if note_input.created_at
-        else datetime.now(timezone.utc)
-    )
+    c_at = _aware(note_input.created_at or datetime.now(timezone.utc))
 
     new_note = Note(
         id=note_id,
-        content="",
         created_at=c_at,
         processed=False,
         processing_stage="Saved",
@@ -125,12 +126,7 @@ async def dismiss_note_failure(
     Leaves processed alone — the note is simply not ingested, which is a
     legitimate state, not an error.
     """
-    result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
-    )
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = await _get_note_or_404(db, kb, note_id)
     note.failed = False
     note.processing_stage = "Saved"
     note.processing_model = None
@@ -151,12 +147,7 @@ async def ingest_existing_note(
     regardless of prior ingestion status.
     """
     require_ai(kb)
-    result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
-    )
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = await _get_note_or_404(db, kb, note_id)
 
     # Reset flags so the pipeline treats this as a fresh ingestion.
     note.processed = False
@@ -183,10 +174,13 @@ async def ingest_existing_note(
 
 
 @router.post("/api/v1/notes/{note_id}/ingest/cancel")
-async def cancel_note_ingestion(note_id: str, kb: KBContext = Depends(get_kb)):
+async def cancel_note_ingestion(
+    note_id: str, db: AsyncSession = Depends(get_db), kb: KBContext = Depends(get_kb)
+):
     """Stop this note's ingestion; the note goes back to plain "Saved"."""
     from app.workflows.ingestion import cancel_ingestion
 
+    await _get_note_or_404(db, kb, note_id)
     stopped = cancel_ingestion(kb.kb_id, note_id)
     return {"note_id": note_id, "status": "cancelling" if stopped else "not_running"}
 
@@ -243,12 +237,7 @@ async def get_note(
     kb: KBContext = Depends(get_kb),
 ):
     """Get a specific note by ID with vault-backed content."""
-    result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
-    )
-    note = result.scalar_one_or_none()
-    if not note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    note = await _get_note_or_404(db, kb, note_id)
     return _note_response(note, kb)
 
 
@@ -265,7 +254,9 @@ async def get_note_ingestion_status(
     Returns:
       - processed: true once ingestion completes successfully
       - failed: true if the ingestion pipeline encountered a permanent error
-      - status: "completed" | "failed" | "processing"
+      - status: "completed" | "failed" | "not_ingested" | "queued" | "processing"
+        (derived from the row by ``note_status``; a note that was only saved
+        is ``not_ingested``, never ``processing``)
       - processing_stage: user-facing current stage
       - processing_model: in-process model name currently in use, if any
     """
@@ -289,18 +280,11 @@ async def get_note_ingestion_status(
         raise HTTPException(status_code=404, detail="Note not found")
 
     note_id, processed, failed, processing_stage, processing_model = row
-    if processed:
-        status = "completed"
-    elif failed:
-        status = "failed"
-    else:
-        status = "processing"
-
     return {
         "id": note_id,
         "processed": processed,
         "failed": failed,
-        "status": status,
+        "status": note_status(processed, failed, processing_stage),
         "processing_stage": processing_stage,
         "processing_model": processing_model,
     }
@@ -318,12 +302,7 @@ async def update_note(
     Does NOT trigger re-ingestion or change processed status.
     Use POST /api/v1/notes/{id}/ingest to re-ingest after updating.
     """
-    result = await db.execute(
-        select(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id)
-    )
-    existing_note = result.scalar_one_or_none()
-    if not existing_note:
-        raise HTTPException(status_code=404, detail="Note not found")
+    existing_note = await _get_note_or_404(db, kb, note_id)
 
     persist_note_body(
         existing_note,
@@ -340,7 +319,7 @@ async def update_note(
         await rename_note_file_for_title(db, kb, existing_note, note_input.title)
 
     if note_input.created_at:
-        existing_note.created_at = _parse_date_str(note_input.created_at)
+        existing_note.created_at = _aware(note_input.created_at)
 
     existing_note.updated_at = datetime.now(timezone.utc)
     # Autosave must never start ingestion. Clear watcher false-positives while
@@ -463,26 +442,9 @@ async def _delete_note_impl(
     await db.execute(delete(Note).where(Note.id == note_id, Note.kb_id == kb.kb_id))
     await db.commit()
 
-    orphan_ids: list[str] = []
+    contribution: dict = {"entity_ids": [], "relationship_ids": []}
     try:
-        rows = await asyncio.to_thread(
-            kb.graph.execute_query,
-            """
-            MATCH (note:Node {id: $note_id, kind: 'note'})-[:REFERENCES]->(entity:Node)
-            WHERE entity.kind <> 'note'
-              AND NOT EXISTS {
-                MATCH (other:Node {kind: 'note'})-[:REFERENCES]->(entity)
-                WHERE other.id <> $note_id
-              }
-            RETURN entity.id AS entity_id
-            """,
-            {"note_id": note_id},
-        )
-        orphan_ids = [r["entity_id"] for r in (rows or []) if r.get("entity_id")]
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.warning("[delete_note] Graph orphan query failed: %s", exc)
-
-    try:
+        contribution = await asyncio.to_thread(kb.graph.clear_note_contribution, note_id)
         await asyncio.to_thread(
             kb.graph.execute_query,
             "MATCH (n:Node {id: $id}) WHERE n.kind = 'note' DETACH DELETE n",
@@ -493,18 +455,26 @@ async def _delete_note_impl(
 
     await asyncio.to_thread(_best_effort_delete_index_node, kb, note_id, "note")
 
+    orphan_ids: list[str] = []
+    try:
+        await asyncio.to_thread(kb.qdrant.delete_relationships, contribution["relationship_ids"])
+        orphan_ids = await asyncio.to_thread(
+            kb.graph.delete_orphan_entities, contribution["entity_ids"]
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[delete_note] Graph orphan delete failed: %s", exc)
     for entity_id in orphan_ids:
-        try:
-            await asyncio.to_thread(
-                kb.graph.execute_query,
-                "MATCH (n:Node {id: $id}) DETACH DELETE n",
-                {"id": entity_id},
-            )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(
-                "[delete_note] Graph orphan delete failed (%s): %s", entity_id, exc
-            )
         await asyncio.to_thread(_best_effort_delete_index_node, kb, entity_id, "orphan")
+
+    # What this note said about entities that survive it goes too.
+    try:
+        stale = await asyncio.to_thread(kb.qdrant.node_ids_for_note, note_id)
+        await asyncio.to_thread(kb.qdrant.delete_note_contexts, note_id)
+        wf = kb.get_ingestion_workflow()
+        for nid in stale - set(orphan_ids):
+            await wf._reindex_node(nid)  # pylint: disable=protected-access
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[delete_note] Context cleanup failed: %s", exc)
 
     logger.info(
         "[delete_note] Deleted note %s; removed %s orphaned entity nodes.",

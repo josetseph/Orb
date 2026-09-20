@@ -4,23 +4,28 @@ The load-bearing property is that key material never leaves the process: the
 API reports whether a provider is configured, never the key.
 """
 
+import sys
+
 import pytest
 
-from app.core import config
 from app.services.credentials import (
     CLOUD_PROVIDERS,
-    SOURCE_ENV,
     SOURCE_KEYCHAIN,
     CredentialStore,
     normalize_provider,
 )
 
 
+@pytest.fixture(autouse=True)
+def _no_real_keychain(monkeypatch):
+    """Never read or write the developer's real keychain from tests."""
+    from tests.unit.test_credentials_keyring import _fake_keyring
+
+    monkeypatch.setitem(sys.modules, "keyring", _fake_keyring({}))
+
+
 @pytest.fixture()
-def store(monkeypatch) -> CredentialStore:
-    """A store with no environment keys seeded."""
-    for attr in ("OPENAI_API_KEY", "GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY"):
-        monkeypatch.setattr(config.settings, attr, None, raising=False)
+def store() -> CredentialStore:
     return CredentialStore()
 
 
@@ -57,34 +62,6 @@ class TestBasicStorage:
         assert store.get("gemini") == "g-1"
 
 
-class TestEnvSeeding:
-    def test_env_keys_seed_the_store_once(self, monkeypatch):
-        monkeypatch.setattr(config.settings, "OPENAI_API_KEY", "sk-from-env", raising=False)
-        monkeypatch.setattr(config.settings, "GEMINI_API_KEY", None, raising=False)
-        monkeypatch.setattr(config.settings, "ANTHROPIC_API_KEY", None, raising=False)
-        monkeypatch.setattr(config.settings, "HUGGINGFACE_API_KEY", None, raising=False)
-        s = CredentialStore()
-        assert s.get("openai") == "sk-from-env"
-        assert s.source("openai") == SOURCE_ENV
-
-    def test_pushed_key_wins_over_env(self, monkeypatch):
-        monkeypatch.setattr(config.settings, "OPENAI_API_KEY", "sk-from-env", raising=False)
-        for attr in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY"):
-            monkeypatch.setattr(config.settings, attr, None, raising=False)
-        s = CredentialStore()
-        s.set("openai", "sk-from-keychain")
-        assert s.get("openai") == "sk-from-keychain"
-        assert s.source("openai") == SOURCE_KEYCHAIN
-
-    def test_cleared_env_key_does_not_come_back(self, monkeypatch):
-        monkeypatch.setattr(config.settings, "OPENAI_API_KEY", "sk-env", raising=False)
-        for attr in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY", "HUGGINGFACE_API_KEY"):
-            monkeypatch.setattr(config.settings, attr, None, raising=False)
-        s = CredentialStore()
-        assert s.clear("openai") is True
-        assert s.get("openai") is None
-
-
 class TestVersioning:
     def test_version_bumps_on_change_only(self, store):
         start = store.version
@@ -114,24 +91,6 @@ class TestStatus:
 
     def test_unconfigured_providers_report_false(self, store):
         assert store.status()["anthropic"]["configured"] is False
-
-
-class TestRequireApiKey:
-    def test_error_points_at_settings_not_dotenv(self, store, monkeypatch):
-        import app.services.credentials as mod
-
-        monkeypatch.setattr(mod, "credentials", store)
-        with pytest.raises(ValueError) as exc:
-            mod.require_api_key("openai")
-        assert "Settings" in str(exc.value)
-        assert ".env" not in str(exc.value)
-
-    def test_returns_key_when_present(self, store, monkeypatch):
-        import app.services.credentials as mod
-
-        monkeypatch.setattr(mod, "credentials", store)
-        store.set("openai", "sk-ok")
-        assert mod.require_api_key("openai") == "sk-ok"
 
 
 class TestEndpointIdentity:
@@ -178,11 +137,6 @@ class TestEndpointIdentity:
         store.set(endpoint_credential_id("https://openrouter.ai/api/v1"), "secret-or-key")
         assert store.endpoints() == ["https://openrouter.ai/api/v1"]
         assert "secret-or-key" not in repr(store.endpoints())
-        assert store.has_endpoint("https://openrouter.ai/api/v1/") is True
-        assert store.has_endpoint("https://other.test/v1") is False
-
-    def test_malformed_endpoint_lookup_is_false_not_an_error(self, store):
-        assert store.has_endpoint("notaurl") is False
 
     def test_endpoint_keys_do_not_collide_with_provider_names(self, store):
         from app.services.credentials import endpoint_credential_id

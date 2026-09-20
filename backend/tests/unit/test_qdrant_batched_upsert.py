@@ -28,7 +28,7 @@ class FakeClient:
 @pytest.fixture
 def svc(monkeypatch):
     s = QdrantService.__new__(QdrantService)
-    s.client = FakeClient()
+    s._client = FakeClient()
     s._col_cores = "kb_node_cores"
     s._last_upsert_error = None
     monkeypatch.setattr(qs, "_UPSERT_BATCH_SIZE", 128)
@@ -59,14 +59,14 @@ class TestBatching:
 
     def test_a_server_that_rejects_large_requests_now_succeeds(self, svc):
         """The regression: this raised 400 before chunking."""
-        svc.client = FakeClient(max_points=200)
+        svc._client = FakeClient(max_points=200)
         svc._upsert_batched("c", _points(713))
         assert sum(svc.client.calls) == 713
 
 
 class TestFailureReporting:
     def test_error_names_the_batch_and_progress(self, svc):
-        svc.client = FakeClient(fail_on_batch=3)
+        svc._client = FakeClient(fail_on_batch=3)
         with pytest.raises(RuntimeError) as exc:
             svc._upsert_batched("c", _points(713))
         msg = str(exc.value)
@@ -75,7 +75,7 @@ class TestFailureReporting:
         assert "400" in msg
 
     def test_upsert_node_cores_records_why_it_failed(self, svc, monkeypatch):
-        svc.client = FakeClient(fail_on_batch=1)
+        svc._client = FakeClient(fail_on_batch=1)
         monkeypatch.setattr(svc, "is_available", lambda: True)
         monkeypatch.setattr(svc, "_prepare_vector", lambda v: v)
         cores = [

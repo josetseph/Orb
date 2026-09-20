@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Iterator
+from urllib.parse import quote, unquote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,99 +15,112 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.log import get_logger
 from app.models.note import Note
 from app.services.kb_registry import KBContext
-from app.services.vault import title_from_filename
+from app.services.vault import mark_self_write, title_from_filename
 
 logger = get_logger("VaultSync")
 
 
-def list_vault_folders(vault: Path, *, include_attachments: bool = True) -> list[str]:
-    """Return vault-relative folder paths (excludes hidden dirs)."""
+def _iter_rel(vault: Path, keep) -> Iterator[tuple[Path, str]]:
+    """Yield ``(path, vault-relative posix path)`` for non-hidden entries ``keep`` accepts."""
     if not vault.exists():
-        return []
-    out: set[str] = set()
-    if include_attachments and (vault / "attachments").is_dir():
-        out.add("attachments")
+        return
+    root = vault.resolve()
     for path in vault.rglob("*"):
-        if not path.is_dir():
-            continue
         try:
-            rel = str(path.resolve().relative_to(vault.resolve())).replace("\\", "/")
+            rel = path.resolve().relative_to(root).as_posix()
         except ValueError:
             continue
-        parts = rel.split("/")
-        if any(p.startswith(".") for p in parts):
+        if any(p.startswith(".") for p in rel.split("/")) or not keep(path, rel):
             continue
-        out.add(rel)
-        for i in range(1, len(parts)):
-            out.add("/".join(parts[:i]))
+        yield path, rel
+
+
+def list_vault_folders(vault: Path, *, include_attachments: bool = True) -> list[str]:
+    """Return vault-relative folder paths (excludes hidden dirs)."""
+    out = {"attachments"} if include_attachments and (vault / "attachments").is_dir() else set()
+    for _, rel in _iter_rel(vault, lambda p, _r: p.is_dir()):
+        parts = rel.split("/")
+        out.update("/".join(parts[:i]) for i in range(1, len(parts) + 1))
     return sorted(out)
 
 
 def list_attachment_files(vault: Path) -> list[dict[str, str]]:
-    """List files anywhere under vault/attachments/, including subfolders.
-
-    Recursive on purpose: mkdir and move already support organising
-    attachments into folders, but a flat listing made a moved file vanish
-    from the UI even though it was still there and still linked.
-    """
-    att = vault / "attachments"
-    if not att.is_dir():
-        return []
-    files: list[dict[str, str]] = []
-    for path in sorted(att.rglob("*")):
-        if not path.is_file():
-            continue
-        try:
-            sub = str(path.relative_to(att)).replace("\\", "/")
-        except ValueError:
-            continue
-        if any(part.startswith(".") for part in sub.split("/")):
-            continue
-        files.append({"name": path.name, "rel_path": f"attachments/{sub}"})
-    return files
-
-
-def list_vault_media_files(vault: Path) -> list[dict[str, str]]:
-    """List all non-markdown files in the vault (attachments and elsewhere)."""
-    if not vault.exists():
-        return []
-    files: list[dict[str, str]] = []
-    for path in vault.rglob("*"):
-        if not path.is_file():
-            continue
-        try:
-            rel = str(path.resolve().relative_to(vault.resolve())).replace("\\", "/")
-        except ValueError:
-            continue
-        parts = rel.split("/")
-        if any(p.startswith(".") for p in parts):
-            continue
-        if rel.lower().endswith(".md"):
-            continue
-        # Skip empty keep files used for empty folders
-        if path.name == ".keep":
-            continue
-        files.append({"name": path.name, "rel_path": rel})
-    return sorted(files, key=lambda f: f["rel_path"].lower())
+    """List files anywhere under vault/attachments/, including subfolders."""
+    found = _iter_rel(vault / "attachments", lambda p, _r: p.is_file())
+    return [{"name": p.name, "rel_path": f"attachments/{rel}"} for p, rel in sorted(found, key=lambda t: t[1])]
 
 
 def iter_vault_md_files(vault: Path) -> list[str]:
-    """Return vault-relative paths for all note markdown files."""
-    if not vault.exists():
-        return []
-    out: list[str] = []
-    for path in vault.rglob("*.md"):
+    """Return vault-relative paths for all note markdown files (attachments excluded)."""
+    found = _iter_rel(vault, lambda p, r: r.lower().endswith(".md") and "/attachments/" not in f"/{r}/")
+    return sorted(rel for _, rel in found)
+
+
+# ``](target)`` and the extraction marker's ``src="…"`` — the marker must keep
+# matching its link or ingestion re-transcribes the attachment.
+_TARGET_OPEN = r'(\]\(|orb:extract src=")'
+# A target may hold balanced parens (``encodeURI`` leaves them raw).
+_VAULT_TARGET_RE = re.compile(
+    _TARGET_OPEN + r'(/vault-files/[^/)"]+/)((?:[^()"\n]|\([^()"\n]*\))+)'
+)
+_BARE_DOUBLED_RE = re.compile(_TARGET_OPEN + r"attachments/attachments/")
+
+
+def _normalize_vault_targets(text: str) -> str:
+    """Collapse ``attachments/attachments/`` and rewrite ``/vault-files/<any kb>/<rel>``
+    to the canonical vault-relative ``<rel>`` (each segment ``quote(seg, safe="")``,
+    the form ``vault_ops.rewrite_refs_in_text`` writes). The kb id is minted per
+    workspace row, so an absolute link died with every re-created workspace."""
+
+    def _fix(m: re.Match[str]) -> str:
+        segs = [unquote(s) for s in m.group(3).split("/")]
+        if segs[:2] == ["attachments", "attachments"]:
+            del segs[0]
+        return m.group(1) + "/".join(quote(s, safe="") for s in segs)
+
+    return _BARE_DOUBLED_RE.sub(r"\1attachments/", _VAULT_TARGET_RE.sub(_fix, text))
+
+
+def migrate_vault_files(vault: Path) -> int:
+    """One-time in-place sweep of legacy vault shapes; gated by ``.orb/migrated-v3``.
+
+    v2 added the relative-link rewrite, v3 moves stray non-markdown files under
+    ``attachments/``; every step is idempotent, so an older vault simply runs
+    the whole sweep once more.
+    """
+    marker = vault / ".orb" / "migrated-v3"
+    if marker.exists():
+        return 0
+    from app.services.vault_ops import rewrite_refs_in_text, unique_rel_path
+    from app.workflows.agents.ingestion_agent import wrap_legacy_enrichment_blocks
+
+    # Attachments live only under attachments/ — anything else non-markdown moves there.
+    stray = list(_iter_rel(vault, lambda p, r: p.is_file() and not r.lower().endswith(".md") and not r.startswith("attachments/")))
+    moved: list[tuple[str, str]] = []
+    for path, rel in stray:
+        new_rel = unique_rel_path(vault, f"attachments/{rel}")
+        (vault / new_rel).parent.mkdir(parents=True, exist_ok=True)
+        path.rename(vault / new_rel)
+        moved.append((rel, new_rel))
+
+    rewritten = 0
+    for rel in iter_vault_md_files(vault):
+        path = vault / rel
         try:
-            rel = str(path.resolve().relative_to(vault.resolve())).replace("\\", "/")
-        except ValueError:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
             continue
-        parts = rel.split("/")
-        if any(p.startswith(".") for p in parts):
-            continue
-        if parts[0] == "attachments" or "/attachments/" in f"/{rel}/":
-            continue
-        out.append(rel)
-    return sorted(out)
+        fixed = wrap_legacy_enrichment_blocks(_normalize_vault_targets(text))
+        for old_rel, new_rel in moved:
+            fixed = rewrite_refs_in_text(fixed, old_rel, new_rel)
+        if fixed != text:
+            mark_self_write(vault, rel)
+            path.write_text(fixed, encoding="utf-8")
+            rewritten += 1
+    marker.parent.mkdir(exist_ok=True)
+    marker.touch()
+    logger.info("Vault migration v3 (%s): %d files moved, %d files rewritten", vault, len(moved), rewritten)
+    return rewritten
 
 
 async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
@@ -112,11 +129,12 @@ async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
     if not vault or not vault.exists():
         return {"files": 0, "created": 0, "updated": 0}
 
-    rels = iter_vault_md_files(vault)
+    await asyncio.to_thread(migrate_vault_files, vault)
     existing = list(
         (await db.execute(select(Note).where(Note.kb_id == kb.kb_id))).scalars().all()
     )
-    by_rel = { (n.rel_path or "").replace("\\", "/"): n for n in existing if n.rel_path }
+    rels = iter_vault_md_files(vault)
+    by_rel = {n.rel_path: n for n in existing if n.rel_path}
     by_title = { (n.title or "").lower(): n for n in existing if n.title }
     on_disk = set(rels)
 
@@ -129,8 +147,7 @@ async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
         row = by_title.get(stem)
         if row is None or not row.rel_path:
             return None
-        current = row.rel_path.replace("\\", "/")
-        if "/" in current or current in on_disk:
+        if "/" in row.rel_path or row.rel_path in on_disk:
             return None
         return row
 
@@ -155,7 +172,6 @@ async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
                 kb_id=kb.kb_id,
                 title=title,
                 rel_path=rel,
-                content="",
                 processed=False,
                 processing_stage="Saved",
             )
