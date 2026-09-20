@@ -20,7 +20,6 @@ _lock = threading.Lock()
 _SETTING_FOR = {
     "provider": "LLM_PROVIDER",
     "model": "CHAT_MODEL",
-    "ingestion_model": "INGESTION_MODEL",
     "base_url": "LLM_BASE_URL",
 }
 # Local runtime knobs: key == lower-cased Settings attribute.

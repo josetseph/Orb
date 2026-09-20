@@ -252,7 +252,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 | Method | Call | Notes |
 |---|---|---|
 | `getLLMSettings()` | `GET /settings` | `{provider, model, ingestion_model, base_url}` |
-| `updateLLMSettings(partial)` | `PATCH /settings` | `{provider?, model?, ingestion_model?, base_url?}`; the Models page sends only what changed. |
+| `updateLLMSettings(partial)` | `PATCH /settings` | `{provider?, model?, base_url?}` (the response still carries `ingestion_model`, equal to `model`); the Models page sends only what changed. |
 
 **Models page / credentials / desktop**
 

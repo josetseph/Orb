@@ -30,7 +30,7 @@ Under the desktop app nothing injects `ORB_DATA_DIR`/`ORB_MODELS_DIR`: the runti
 ```
 DATA_DIR/                                   (e.g. ~/Library/Application Support/Orb/data)
 ├── orb.db                                  SQLite: notes, note_links, knowledge_bases, chat_conversations, chat_messages
-├── runtime_config.json                     {"provider","model","ingestion_model","base_url"} (MUTABLE_KEYS only)
+├── runtime_config.json                     {"provider","model","base_url", llama.cpp knobs} (MUTABLE_KEYS only)
 ├── meili_master_key                        random base64url key (mode 0600) or "orb-dev-key" for pre-hardening installs
 ├── .stores-migrated-v1-<kb_id>             marker per KB: main._migrate_stores ran (see §9.1)
 ├── kuzu/
@@ -282,7 +282,7 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 - Qdrant and Meilisearch are single servers for all KBs; per-KB isolation is by collection/index *name*. Deleting `qdrant/` or `meilisearch/` affects every KB.
 - `meili_master_key` and `meilisearch/` must be deleted **together**; deleting only the key on an old install falls back to `orb-dev-key`, deleting only the data keeps a random key that then opens an empty store (fine).
 - Sidecar stdio logs (`qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) roll to `.log.1` (one generation) when over 10 MB at the next spawn (`desktop_runtime._rotate_log`); `backend.log` is opened by the Tauri shell (`runtime.rs::spawn`) with the same 10 MB / `.1` rule; backend component logs are (10 MB × 5). `errors.log` aggregates ERROR+ from all components.
-- `runtime_config.json` holds only `provider`, `model`, `ingestion_model`, `base_url`; unknown keys are dropped on load and save.
+- `runtime_config.json` holds only `provider`, `model`, `base_url` and the thirteen local-runtime knobs; unknown keys are dropped on load and save.
 - `firefly/runtime.json` and `firefly/app/.env` contain secrets (API token, `APP_KEY`, password) and are written owner-only; `paths.json` and `orb.db` contain absolute paths and Firefly group ids but no secrets.
 - `MODELS_DIR` on SMB/NAS triggers staging; the staging dir is created eagerly (`mkdir`) even when unused.
 - `ensure_data_layout` is called at import of `core/database.py`, so simply importing the backend creates the `DATA_DIR` skeleton.

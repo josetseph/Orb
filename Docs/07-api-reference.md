@@ -123,7 +123,7 @@ There is **no streaming (SSE/WebSocket)** anywhere. "Streaming" chat in the UI i
 
 ### 3.10 Startup / shutdown side effects
 
-`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path` + `_sqlite_repairs`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `ingestion_model`, `base_url`), mark notes left mid-ingest by the previous run as `"Ingestion failed (interrupted)"`, then hand `_background_startup` to the default executor so `/health` answers immediately: `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing; also heals stale GGUF selection paths and starts the `orb-mmproj` projector-download thread), `start_vault_watchers()` (best-effort), and `_migrate_stores()` (one-time per-KB store scrubs gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`, see [14](14-graph-storage-kuzu.md)). `shutdown_event`: `stop_vault_watchers()`.
+`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path` + `_sqlite_repairs`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `base_url` and the local-runtime knobs), mark notes left mid-ingest by the previous run as `"Ingestion failed (interrupted)"`, then hand `_background_startup` to the default executor so `/health` answers immediately: `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing; also heals stale GGUF selection paths and starts the `orb-mmproj` projector-download thread), `start_vault_watchers()` (best-effort), and `_migrate_stores()` (one-time per-KB store scrubs gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`, see [14](14-graph-storage-kuzu.md)). `shutdown_event`: `stop_vault_watchers()`.
 
 ---
 
@@ -477,7 +477,7 @@ Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default
 {"provider": "local", "model": "gemma-…", "ingestion_model": "gemma-…", "base_url": "http://127.0.0.1:8080"}
 ```
 
-`model` = `llm_service.get_chat_model() or settings.LLM_MODEL`; `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL`.
+`model` = `llm_service.get_chat_model() or settings.LLM_MODEL`; `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL` — ingestion runs on the chat model, so globally this equals `model`; the field is response-only.
 
 #### GET / PUT /api/v1/settings/local-runtime
 
@@ -485,9 +485,9 @@ The llama.cpp knobs shown in Models → Local runtime. `GET` returns the thirtee
 
 #### PATCH /api/v1/settings
 
-Body (`LLMSettings`, all optional): `provider`, `model`, `ingestion_model`, `base_url`. API keys are **never** accepted here — they go to `PUT /api/v1/credentials`, which keeps them in memory and lets the desktop shell hold the only on-disk copy as keychain ciphertext.
+Body (`LLMSettings`, all optional): `provider`, `model`, `base_url` (there is no `ingestion_model` input; pydantic ignores it if sent). API keys are **never** accepted here — they go to `PUT /api/v1/credentials`, which keeps them in memory and lets the desktop shell hold the only on-disk copy as keychain ciphertext.
 
-Behaviour: loads `runtime_config.json`, applies each non-null field to both the overrides dict and live `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`), `runtime_config.save(overrides)` (only `MUTABLE_KEYS` are written). If `provider` or `base_url` **changed**, `llm_service.provider = …lower()` and `llm_service.init_clients()` (rebuilds provider clients). Model-only changes need no reinit. Response mirrors GET but reads `settings.CHAT_MODEL or settings.LLM_MODEL` directly.
+Behaviour: loads `runtime_config.json`, applies each non-null field to both the overrides dict and live `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`), `runtime_config.save(overrides)` (only `MUTABLE_KEYS` are written). If `provider` or `base_url` **changed**, `llm_service.provider = …lower()` and `llm_service.init_clients()` (rebuilds provider clients). Model-only changes need no reinit. Response mirrors GET but reads `settings.CHAT_MODEL or settings.LLM_MODEL` directly, for both `model` and `ingestion_model`.
 
 Gotcha: an empty string is treated as "set" (only `None` is skipped), but `provider_changed` uses truthiness so `provider: ""` is persisted without a client reinit.
 
@@ -1006,7 +1006,7 @@ Totals only consider the most recent 100 transaction groups.
 | `BatchDeleteNotesInput` | `ids: list[str] = []` |
 | `MkdirInput` | `path: str = ""` |
 | `NoteInput` (`schemas/extraction.py`) | `content: str`, `created_at: str\|None`, `title: str\|None`, `skip_ingestion: bool = False` |
-| `LLMSettings` (`api/settings.py`) | `provider`, `model`, `ingestion_model`, `base_url` (all `str\|None`) |
+| `LLMSettings` (`api/settings.py`) | `provider`, `model`, `base_url` (all `str\|None`) |
 | `TemporalDigestInput` (`api/admin.py`) | `period: str\|None` |
 | `CreateKBInput` / `RenameKBInput` (`api/kb.py`) | `name: str`, `vault_path: str\|None` / `name: str` |
 | `ScanTextInput` (`api/graph.py`) | `text: str` |
@@ -1154,7 +1154,7 @@ Each row now carries `effective_llm`:
       "effective_llm": {
         "provider": "local",
         "model": "gemma-4-e4b",
-        "ingestion_model": null,
+        "ingestion_model": "gemma-4-e4b",
         "inherited": true
       }
     }
@@ -1162,7 +1162,7 @@ Each row now carries `effective_llm`:
 }
 ```
 
-`effective_llm` is `effective_llm_config(row)`: the KB's pinned values layered over `Settings.LLM_PROVIDER` / `CHAT_MODEL` / `INGESTION_MODEL`; `inherited` is `true` when nothing is pinned.
+`effective_llm` is `effective_llm_config(row)`: the KB's pinned values layered over `Settings.LLM_PROVIDER` / `CHAT_MODEL` (`ingestion_model` = the KB's `llm_ingestion_model`, else `model`); `inherited` is `true` when nothing is pinned.
 
 ### 14.2 `GET /api/v1/kb/{kb_id}/llm`
 
@@ -1174,7 +1174,7 @@ Response:
 {
   "kb_id": "…",
   "override": { "provider": null, "model": null, "ingestion_model": null },
-  "effective": { "provider": "local", "model": "gemma-4-e4b", "ingestion_model": null, "inherited": true },
+  "effective": { "provider": "local", "model": "gemma-4-e4b", "ingestion_model": "gemma-4-e4b", "inherited": true },
   "providers": ["local", "openai_compat", "openai", "gemini", "anthropic", "huggingface"],
   "local_models": [ { "id": "gemma-4-e4b", "label": "Gemma 4 E4B", "size_gb": 3.1 } ]
 }

@@ -66,7 +66,7 @@ flowchart LR
   W[First-run setup page<br/>desktop/shell/index.html] -->|save_setup command| PJ[paths.json<br/>App Support/Orb/paths.json]
   PJ --> SUP[desktop_runtime.py / app.core.paths]
   SUP -->|env: ORB_DATA_DIR, ORB_MODELS_DIR, ORB_PATHS_FILE,<br/>QDRANT_*, MEILI_*, FIREFLY_*| API[backend Settings]
-  RC[DATA_DIR/runtime_config.json<br/>provider/model/ingestion_model/base_url] -->|startup + PATCH /settings| API
+  RC[DATA_DIR/runtime_config.json<br/>provider/model/base_url + local-runtime knobs] -->|startup + PATCH /settings| API
 ```
 
 Precedence for paths: environment variable (`ORB_DATA_DIR` / `DATA_DIR`) → `paths.json` → repo fallback (`<repo>/data`, `backend/models`). `paths.json` is deliberately tiny (`data_dir`, `models_dir`, optional `default_vault_path`) and is written atomically. `runtime_config.json` only ever holds the four mutable keys in `runtime_config.MUTABLE_KEYS`; API keys live in the OS keychain. Full tables: [21-configuration-reference.md](21-configuration-reference.md).
@@ -205,7 +205,7 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 | Video understanding | transformers (Qwen3.5 backbone) Marlin-2B | `lunahr/Marlin-2B-ungated` | `multimodal_runtime.py` |
 | Cloud alternatives | OpenAI / Gemini / Anthropic / HuggingFace / any OpenAI-compatible `LLM_BASE_URL` | – | `llm.py` |
 
-Three independent provider axes: chat (`LLM_PROVIDER` + `CHAT_MODEL`), ingestion (`INGESTION_PROVIDER` + `INGESTION_MODEL`, defaulting to chat), embeddings (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `ai_gate` derives readiness from what is actually configured (GGUFs on disk, a provider key, an endpoint URL); there is no stored "AI mode".
+Chat and ingestion share one provider and model (`LLM_PROVIDER` + `CHAT_MODEL`; only a workspace that ticked "Use a different model for note ingestion" pins its own `llm_ingestion_model`); embeddings are separate (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `ai_gate` derives readiness from what is actually configured (GGUFs on disk, a provider key, an endpoint URL); there is no stored "AI mode".
 
 Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructure` runs at startup, and a mismatch **mid-ingest raises** rather than silently recreating collections.
 
@@ -236,7 +236,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 8. **Finance requests are scoped to the KB's Firefly administration.** No list endpoint may return rows from another administration.
 9. **Trace IDs.** Every request gets `X-Request-Id` (incoming or generated) via a ContextVar; log lines from the same request can be correlated.
 10. **Community detection runs only on request.** `POST /admin/rebuild-communities` (the Setup page button) is the sole trigger; nothing schedules it after ingestion. New ingestions pre-empt a running recompute; do not call it synchronously from a request.
-11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `ingestion_model`, `base_url`.
+11. **Secrets never enter `runtime_config.json`**; only `provider`, `model`, `base_url` and the local-runtime knobs.
 12. **Legacy names are read, never emitted.** The `typesense_collection` column name exists only to read old installs; the `LIVEOS_*` env aliases and the `lifeos_current_kb`/`liveos_current_kb` browser-storage fallbacks were removed.
 
 ---

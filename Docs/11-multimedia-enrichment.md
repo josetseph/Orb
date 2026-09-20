@@ -298,7 +298,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 | `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `multimodal_models.py` | HF repo and `MODELS_DIR` folder name. |
 | env `FORCE_QWENVL_VIDEO_READER`, `VIDEO_MAX_PIXELS`, `FPS`, `FPS_MAX_FRAMES`, `FPS_MIN_FRAMES` | `pyav`, `200704`, `2.0`, `240`, `4` | `multimodal_runtime.py` import (`setdefault`) | Marlin/Qwen-VL frame sampling. Process env only. |
 | `MODELS_DIR` (paths.json) | — | `multimodal_model_path` | Where snapshots live; `is_hf_snapshot_ready` must be True or the handler raises. |
-| the KB's ingestion provider / model (`INGESTION_PROVIDER`, per-KB pin) | `local` | `LLMService.describe_image` | Which model reads images and PDF renders — the same one that extracts entities. |
+| the KB's ingestion provider / model (the chat provider and model, `LLM_PROVIDER` / `CHAT_MODEL`, or the per-KB pin) | `local` | `LLMService.describe_image` | Which model reads images and PDF renders — the same one that extracts entities. |
 | system `ffmpeg`/`ffprobe` | optional | `_resolve_ffmpeg_bins`, `api/files.py` | Preferred audio decoder (transformers engine) and upload transcoder; PyAV fallback for decoding, no transcoding fallback. |
 
 ## 8. Gotchas, extension points, history
@@ -325,7 +325,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 | New file type | `MultimediaService.extract_text_from_<type>`; a branch in `classify_attachment` and `extract_attachment`; a `_run_phase` call in `multimodal_node` (pick the phase by model needs; model-free parsers go in phase 1); the frontend needs no change — it segments on the `orb:extract` delimiters. Return the section text and let `place_extraction` wrap it. |
 | Long-audio behaviour | Already handled: the transformers engine splits at quiet points into ≤ 30 s chunks (`split_audio_into_chunks`) and the MLX library chunks the same way; change `MAX_CHUNK_SECONDS` in `asr_engine.py` if the aligner limit changes. |
 | Different image prompt (OCR-only, captions only) | `LLMService.IMAGE_DESCRIBE_PROMPT` — one string, every provider. |
-| Keep images off the network | Pin the KB's ingestion provider to `local`; `describe_image` follows the ingestion provider, so nothing else needs a switch. |
+| Keep images off the network | Pin the KB's provider to `local`; `describe_image` follows the ingestion provider, which is always the KB's chat provider, so nothing else needs a switch. |
 | Cache per-attachment results across re-ingests | Blocks for attachments still linked are already kept; for a content-hash keyed store, extend `extraction_srcs`/`attachment_key`. |
 
 ### 8.3 History / rationale

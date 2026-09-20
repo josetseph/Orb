@@ -57,10 +57,6 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = "local"
     LLM_MODEL: str = "local-chat"
     CHAT_MODEL: str | None = None
-    INGESTION_MODEL: str | None = None
-    INGESTION_PROVIDER: str | None = None
-    INGESTION_LLM_MODEL: str | None = "local-chat"
-    INGESTION_GEMINI_MODEL: str | None = None
 
     EMBEDDING_PROVIDER: str = "local"
     EMBEDDING_MODEL: str = "local-embed"

@@ -23,7 +23,7 @@ Markers: **unused** = declared but never read in `backend/app`; **overridden** =
 pydantic-settings resolves each field as: **process environment** > **field default** (`extra="ignore"`; there is no `.env` file) (some defaults are themselves computed from `paths.json`). Then, in this order, code mutates the live object:
 
 1. `config.py` bottom: `MODELS_PATH := MODELS_DIR` (always). `KUZU_DB_PATH` is a read-only property, `<DATA_DIR>/kuzu/kuzu_graph`, not a setting.
-2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` from `runtime_config.json` **win over env**.
+2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL` (and the local-runtime knobs) from `runtime_config.json` **win over env**.
 3. `main.startup_event`: `local_models.sync_embedding_infrastructure()` — `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` from the models manifest **win over env**.
 4. Later, at user action: `PATCH /api/v1/settings`, `POST /api/v1/setup/paths`, Setup model selection (`ensure_chat_and_embed_models` also sets `LLM_MODEL`).
 
@@ -102,10 +102,6 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `INGESTION_PROVIDER` | str \| None / `None` | `Settings`; `llm.init_clients` builds the ingestion client set (per-KB `ingestion_provider` ctor arg overrides it) | Blank → ingestion aliases the chat clients; set → separate clients for `local`/`gemini`/`openai`/`anthropic`/`huggingface` (keys required) | env |
-| `INGESTION_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model`, `api/settings.py`, `kb_registry._system_model_for` | Provider-agnostic ingestion model; wins over fallbacks | runtime (`ingestion_model`), env |
-| `INGESTION_LLM_MODEL` | str \| None / `"local-chat"` | `Settings`; `llm.get_ingestion_model` (local branch), `kb_registry._system_model_for` (ignored when equal to the placeholder) | Local ingestion model fallback | env |
-| `INGESTION_GEMINI_MODEL` | str \| None / `None` | `Settings`; `llm.get_ingestion_model` (gemini branch) | Gemini ingestion fallback before `GEMINI_MODEL` | env |
 | `EXTRACTION_CHUNK_TOKENS` | int \| None / `None` (learned, `4000` ceiling) | `Settings`, edited in Models → Local runtime — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
 | `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | env |
 | `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | env |
@@ -284,7 +280,6 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
 {
   "provider": "gemini",
   "model": "gemini-2.5-pro",
-  "ingestion_model": "gemini-2.0-flash",
   "base_url": "http://127.0.0.1:8080"
 }
 ```
@@ -293,10 +288,9 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
 |---|---|---|
 | `provider` | `LLM_PROVIDER` | `PATCH /api/v1/settings` |
 | `model` | `CHAT_MODEL` | `PATCH /api/v1/settings` |
-| `ingestion_model` | `INGESTION_MODEL` | `PATCH /api/v1/settings` |
 | `base_url` | `LLM_BASE_URL` | `PATCH /api/v1/settings` |
 
-Only these four keys survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
+Only these three keys and the thirteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs, written by `PUT /api/v1/settings/local-runtime`, see [12](12-local-models-and-inference.md)) survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys — including an `ingestion_model` left by an older build — are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
 
 ### 4.3 `MODELS_DIR/models_manifest.json` (pointer)
 
@@ -304,16 +298,15 @@ Not a config file you edit, but it is the third override source: `selection.{cha
 
 ### 4.4 Per-KB LLM override (working tree)
 
-Stored in `knowledge_bases.llm_provider / llm_model / llm_ingestion_model` (SQLite), edited via `PATCH /api/v1/kb/{kb_id}/llm` with body `{"provider"?, "model"?, "ingestion_model"?}` where `""`, `"inherit"`, `"system"`, `"default"` or `null` mean "inherit". Validation: provider ∈ `kb_registry.LLM_PROVIDERS = ("local","openai","gemini","anthropic","huggingface")`; cloud providers need their API key (`ai_gate.provider_is_configured`); local model ids must be known catalog chat models that are already downloaded (`model_catalog.get_option`, `chat_model_downloaded`). The service is constructed immediately to surface bad configs; on failure the override is cleared and 400 returned. Resolution (`effective_llm_config`): `provider = row.llm_provider or LLM_PROVIDER`; `model = row.llm_model or _system_model_for(provider)`; `ingestion_model = row.llm_ingestion_model or row.llm_model or _system_model_for(provider, ingestion=True) or model`.
+Stored in `knowledge_bases.llm_provider / llm_model / llm_ingestion_model` (SQLite), edited via `PATCH /api/v1/kb/{kb_id}/llm` with body `{"provider"?, "model"?, "ingestion_model"?}` where `""`, `"inherit"`, `"system"`, `"default"` or `null` mean "inherit". Validation: provider ∈ `kb_registry.LLM_PROVIDERS = ("local","openai","gemini","anthropic","huggingface")`; cloud providers need their API key (`ai_gate.provider_is_configured`); local model ids must be known catalog chat models that are already downloaded (`model_catalog.get_option`, `chat_model_downloaded`). The service is constructed immediately to surface bad configs; on failure the override is cleared and 400 returned. Resolution (`effective_llm_config`): `provider = row.llm_provider or LLM_PROVIDER`; `model = row.llm_model or _system_model_for(provider)`; `ingestion_model = row.llm_ingestion_model or model`.
 
-## 5. The three provider axes and model-key fallback chains
+## 5. The provider axes and model-key fallback chains
 
-`LLMService` defines three independent axes:
+Chat and ingestion share one provider and model; embeddings are separate:
 
 | Axis | Provider key | Model key (generic) | Provider-specific fallbacks |
 |---|---|---|---|
-| Chat / retrieval | `LLM_PROVIDER` | `CHAT_MODEL` | `LLM_MODEL` (local), `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL` |
-| Ingestion | `INGESTION_PROVIDER` (blank → same as chat) | `INGESTION_MODEL` | `INGESTION_LLM_MODEL` → `LLM_MODEL` (local), `INGESTION_GEMINI_MODEL` → `GEMINI_MODEL`, `OPENAI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL` |
+| Chat / retrieval and ingestion | `LLM_PROVIDER` | `CHAT_MODEL` | `LLM_MODEL` (local), `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL` |
 | Embeddings | `EMBEDDING_PROVIDER` (`local` only) | `EMBEDDING_MODEL` + `EMBEDDING_DIMENSIONS` | manifest selection |
 
 Reranker and multimodal models have no provider axis: always in-process GGUF / HF snapshots.
@@ -333,37 +326,30 @@ Reranker and multimodal models have no provider axis: always in-process GGUF / H
 ### 5.2 `LLMService.get_ingestion_model()`
 
 ```
-1. self._ingestion_model_override or self._chat_model_override   (per-KB; working tree)
-2. settings.INGESTION_MODEL
-3. p = self.ingestion_provider (falls back to self.provider)
-   local / ollama / lm_studio : INGESTION_LLM_MODEL or LLM_MODEL or None
-   gemini                     : INGESTION_GEMINI_MODEL or GEMINI_MODEL or None
-   openai                     : OPENAI_MODEL or None
-   anthropic                  : ANTHROPIC_MODEL or None
-   huggingface                : HUGGINGFACE_MODEL or None
-   other                      : None
+1. self._ingestion_model_override   (per-KB `llm_ingestion_model` — "Use a different model for note ingestion")
+2. self.get_chat_model()            (§5.1)
 ```
 
-Caveats visible in the call sites: the Anthropic branches of `generate`/`ingestion_generate` pass `model=settings.ANTHROPIC_MODEL` directly (ignoring `CHAT_MODEL`/`INGESTION_MODEL`); the Gemini ingestion branch uses `model or settings.GEMINI_MODEL`; `init_clients` log lines print the provider-specific key even when `CHAT_MODEL` is what will be used.
+Ingestion runs on the model selected for chat; there are no ingestion-specific settings. The removed `INGESTION_*` keys made the global service chat on `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded the manifest's download selection, so two different GGUFs were loaded.
+
+Caveats visible in the call sites: the Anthropic branches of `generate`/`ingestion_generate` pass `model=settings.ANTHROPIC_MODEL` directly (ignoring `CHAT_MODEL`); the Gemini ingestion branch uses `model or settings.GEMINI_MODEL`; `init_clients` log lines print the provider-specific key even when `CHAT_MODEL` is what will be used.
 
 ### 5.3 Provider selection
 
 ```
 chat provider      = (ctor provider | settings.LLM_PROVIDER).lower(); ollama/lm_studio → local
-ingestion provider = (ctor ingestion_provider | settings.INGESTION_PROVIDER | "").lower()
-                     ollama/lm_studio → local; "" → chat provider (clients aliased)
+ingestion provider = (ctor ingestion_provider | "").lower(); ollama/lm_studio → local
+                     "" → chat provider (clients aliased); no settings key
 embedding provider = settings.EMBEDDING_PROVIDER: local|auto|"" → local; else ValueError
 ```
 
-Per-KB services are built as `LLMService(prov, chat_model=…, ingestion_model=…, ingestion_provider=prov)` so a pinned KB never mixes providers between chat and ingestion.
+Per-KB services are built as `LLMService(prov, chat_model=…, ingestion_model=…, ingestion_provider=prov)` so a pinned KB never mixes providers between chat and ingestion; the global service passes no `ingestion_provider`, so it never does either.
 
-### 5.4 `kb_registry._system_model_for(provider, ingestion)` (what the UI shows as "inherited")
+### 5.4 `kb_registry._system_model_for(provider)` (what the UI shows as "inherited")
 
 ```
 is_global = provider == settings.LLM_PROVIDER
-if ingestion and is_global and INGESTION_MODEL → INGESTION_MODEL
-if is_global and CHAT_MODEL                    → CHAT_MODEL
-if provider == "local" and ingestion and INGESTION_LLM_MODEL not in (None, "local-chat") → INGESTION_LLM_MODEL
+if is_global and CHAT_MODEL → CHAT_MODEL
 else {"local": LLM_MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL,
       "anthropic": ANTHROPIC_MODEL, "huggingface": HUGGINGFACE_MODEL}[provider]
 ```

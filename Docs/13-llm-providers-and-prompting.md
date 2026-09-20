@@ -19,8 +19,8 @@ It does **not** own: the GGUF runtime, tokenisation or context sizing (doc 12 �
 | `backend/app/services/llm.py` | Multi-provider service, ingestion routing, structured extraction, JSON cleaning, iterative-step protocol, query analysis, lazy singleton. | `LLMService`, `_LazyLLMService`, `llm_service` |
 | `backend/app/services/ai_gate.py` | "Is AI usable right now?" for a provider / the global mode / a KB; 503 guard. | `provider_is_configured`, `ai_is_configured(kb=None)`, `require_ai(kb=None)` |
 | `backend/app/api/settings.py` | `GET/PATCH /api/v1/settings` runtime provider/model/base_url changes. | `LLMSettings`, `get_runtime_settings`, `update_runtime_settings` |
-| `backend/app/core/runtime_config.py` | Persists mutable overrides (`provider, model, ingestion_model, base_url`) to `DATA_DIR/runtime_config.json`; applied at startup. | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
-| `backend/app/core/config.py` | Settings fields (`LLM_*`, `CHAT_MODEL`, `INGESTION_*`, `*_API_KEY`, `*_MODEL`, `CHAT_HISTORY_MAX_MESSAGES`, `MAX_LOOP_ITERATIONS`). | `settings` |
+| `backend/app/core/runtime_config.py` | Persists mutable overrides (`provider, model, base_url` plus the thirteen `LOCAL_RUNTIME_KEYS`) to `DATA_DIR/runtime_config.json`; applied at startup. | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
+| `backend/app/core/config.py` | Settings fields (`LLM_*`, `CHAT_MODEL`, `*_API_KEY`, `*_MODEL`, `CHAT_HISTORY_MAX_MESSAGES`, `MAX_LOOP_ITERATIONS`). | `settings` |
 | `backend/app/services/kb_registry.py` | Per-KB LLM override storage (`knowledge_bases.llm_provider/llm_model/llm_ingestion_model`), `effective_llm_config`, `build_kb_llm_service`, `KBContext.llm`. | `LLM_PROVIDERS`, `effective_llm_config`, `build_kb_llm_service`, `KBRegistry.set_llm_config` |
 | `backend/app/api/kb.py` | `GET/PATCH /api/v1/kb/{id}/llm`, `effective_llm` in `GET /api/v1/kb`. | `KBLLMInput`, `get_kb_llm`, `update_kb_llm` |
 | `backend/app/workflows/agents/ingestion_agent.py` | Knowledge-Architect extraction prompt, chunked extraction, batched image titling, garbage-name rename prompt. | `_build_extraction_prompt`, `_extract_chunk`, `_extract_with_chunking`, `_batch_image_titles` |
@@ -83,7 +83,7 @@ For `provider=local` every one of those calls goes through `LocalOpenAICompat.ch
 
 - `provider` defaults to `settings.LLM_PROVIDER`; `ollama` / `lm_studio` are mapped to `local` with a deprecation warning (the "local alias" — commit `09e35e3` introduced `local` as the unified name for any OpenAI-compatible server; since `3f21e08` it means in-process llama-cpp only).
 - Keyword overrides are stored as `_chat_model_override`, `_ingestion_model_override`, `_ingestion_provider_override` (blank → `None`; `ollama|lm_studio` → `local`). These are what per-KB pinning uses (§5.3).
-- Then `init_clients()`, which builds the main client set and the ingestion client set (`ingestion_provider = _ingestion_provider_override or settings.INGESTION_PROVIDER or self.provider`, aliases coerced; same provider → the `i_*` attributes alias the main clients).
+- Then `init_clients()`, which builds the main client set and the ingestion client set (`ingestion_provider = _ingestion_provider_override or self.provider` — there is no settings lookup; same provider → the `i_*` attributes alias the main clients). `build_kb_llm_service` passes the KB's own provider as `ingestion_provider`, so in practice ingestion always uses the chat provider.
 
 | Provider | Required settings | Client returned by `_build_clients` | Timeouts / retries at client level |
 |---|---|---|---|
@@ -120,15 +120,11 @@ Callers that accept `model=` (`reason`, `generate_title`, `generate_text`, `gene
 ### 5.2 Ingestion model — `get_ingestion_model()`
 
 ```
-_ingestion_model_override or _chat_model_override   (per-KB) →
-settings.INGESTION_MODEL                                     →
-by ingestion_provider:
-  local:       INGESTION_LLM_MODEL (default "local-chat") or LLM_MODEL   # ollama/lm_studio were already coerced to local
-  gemini:      INGESTION_GEMINI_MODEL or GEMINI_MODEL
-  openai:      OPENAI_MODEL
-  anthropic:   ANTHROPIC_MODEL
-  huggingface: HUGGINGFACE_MODEL
+_ingestion_model_override   (per-KB "Use a different model for note ingestion") →
+get_chat_model()            (§5.1 — the model selected for chat)
 ```
+
+One selection drives both: ingestion runs on the model chosen for chat on the Models page, and there are no ingestion-specific settings. The only exception is a workspace that pinned `llm_ingestion_model`. (The removed `INGESTION_MODEL` / `INGESTION_LLM_MODEL` / `INGESTION_GEMINI_MODEL` chain made the global service chat on `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded the manifest's download selection — two different GGUFs.)
 
 May return `None` (cloud provider with no model configured) — callers pass it straight through as `model=`; the OpenAI SDK then errors. Every ingestion call goes through `_chat(..., ingestion=True)`, which uses this value for all providers (Anthropic and Gemini fall back to `settings.<PROVIDER>_MODEL` only when it is `None`).
 
@@ -140,15 +136,12 @@ Storage: four nullable TEXT columns on `knowledge_bases` (`llm_provider`, `llm_m
 
 ```
 provider        = meta.llm_provider or settings.LLM_PROVIDER or "local"            (lower-cased)
-model           = meta.llm_model or _system_model_for(provider, ingestion=False)
-ingestion_model = meta.llm_ingestion_model or meta.llm_model
-                  or _system_model_for(provider, ingestion=True) or model
+model           = meta.llm_model or _system_model_for(provider)
+ingestion_model = meta.llm_ingestion_model or model
 inherited       = no override field set
-_system_model_for(provider, ingestion):
+_system_model_for(provider):
     is_global = provider == settings.LLM_PROVIDER
-    ingestion and is_global and INGESTION_MODEL → INGESTION_MODEL
-    is_global and CHAT_MODEL                     → CHAT_MODEL
-    provider==local and ingestion and INGESTION_LLM_MODEL not in (None,"local-chat") → INGESTION_LLM_MODEL
+    is_global and CHAT_MODEL → CHAT_MODEL
     else {local: LLM_MODEL, openai: OPENAI_MODEL, gemini: GEMINI_MODEL, anthropic: ANTHROPIC_MODEL, huggingface: HUGGINGFACE_MODEL}[provider]
 ```
 
@@ -278,8 +271,8 @@ There is no stored "AI mode" anywhere: Setup only asks for folders, and choosing
 ### 8.2 `GET/PATCH /api/v1/settings` (`api/settings.py`) and `runtime_config.py`
 
 - `GET` → `{"provider": settings.LLM_PROVIDER, "model": llm_service.get_chat_model() or LLM_MODEL, "ingestion_model": llm_service.get_ingestion_model() or LLM_MODEL, "base_url": LLM_BASE_URL}` — touching `llm_service` **constructs the real service** (lazy proxy), so the first Settings page load builds provider clients.
-- `PATCH {provider?, model?, ingestion_model?, base_url?}` → merges into `runtime_config.load()`, mutates `settings.LLM_PROVIDER / CHAT_MODEL / INGESTION_MODEL / LLM_BASE_URL`, `runtime_config.save(...)`, and if provider **or** base_url changed: `llm_service.provider = LLM_PROVIDER.lower(); llm_service.init_clients()`. Model-only changes need no re-init because `get_chat_model()` reads `settings` on every call. API keys are never accepted here — they go through `PUT /api/v1/credentials/{provider}` into the OS keychain (see *Credentials* above). Provider switch to a cloud provider whose key is missing makes `init_clients()` raise `ValueError` → 500, leaving `settings.LLM_PROVIDER` already changed (and persisted) — the next startup will fail the same way until fixed (gotcha §11).
-- `runtime_config.json` (in `DATA_DIR`, fallback `<repo>/data/`): only `MUTABLE_KEYS = {provider, model, ingestion_model, base_url}` are read/written; `apply_to_settings` maps `provider→LLM_PROVIDER`, `model→CHAT_MODEL`, `ingestion_model→INGESTION_MODEL`, `base_url→LLM_BASE_URL`. `main.startup_event` applies it before `sync_embedding_infrastructure()`.
+- `PATCH {provider?, model?, base_url?}` → merges into `runtime_config.load()`, mutates `settings.LLM_PROVIDER / CHAT_MODEL / LLM_BASE_URL`, `runtime_config.save(...)`, and if provider **or** base_url changed: `llm_service.provider = LLM_PROVIDER.lower(); llm_service.init_clients()`. Model-only changes need no re-init because `get_chat_model()` reads `settings` on every call. API keys are never accepted here — they go through `PUT /api/v1/credentials/{provider}` into the OS keychain (see *Credentials* above). Provider switch to a cloud provider whose key is missing makes `init_clients()` raise `ValueError` → 500, leaving `settings.LLM_PROVIDER` already changed (and persisted) — the next startup will fail the same way until fixed (gotcha §11).
+- `runtime_config.json` (in `DATA_DIR`, fallback `<repo>/data/`): only `MUTABLE_KEYS` (`provider`, `model`, `base_url` plus the thirteen `LOCAL_RUNTIME_KEYS`) are read/written; `apply_to_settings` maps `provider→LLM_PROVIDER`, `model→CHAT_MODEL`, `base_url→LLM_BASE_URL` and each local-runtime key to its upper-cased `Settings` field. `main.startup_event` applies it before `sync_embedding_infrastructure()`.
 - Frontend `settings/page.tsx`: loads `GET /settings`, shows a provider select (`LOCAL_PROVIDERS` set hides model fields for local — "Model name fields only apply to cloud providers"), sends only changed fields via `api.updateLLMSettings(patch)`, and reports whether a restart is needed based on the response. What takes effect without restart: provider/model/base_url for the chat **and** ingestion clients (`init_clients` rebuilds both); what does not: per-KB pinned services (rebuilt lazily only if their key changes — a global provider change does change the key when the KB inherits the provider), `EmbeddingService` (unaffected — embeddings are always local).
 
 ## 9. Prompt catalogue (every LLM prompt in the backend)

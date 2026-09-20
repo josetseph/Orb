@@ -198,7 +198,7 @@ Registered with the deprecated `@app.on_event("startup")` (not a lifespan contex
 
 1. `logger.info("Application startup: Orb API online")` (logger `"API"` → `api.log`).
 2. `await init_db()` — `Base.metadata.create_all` + manual SQLite index (see §8).
-3. `runtime_config.load()`; if non-empty, `runtime_config.apply_to_settings(overrides)` and log `"Runtime config overrides applied"` with `extra={"overrides": [...keys]}`. This is what makes `DATA_DIR/runtime_config.json` win over the environment for `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`. **Important ordering consequence:** the `llm_service` singleton is a lazy proxy (`_LazyLLMService` in `services/llm.py`) that constructs `LLMService` on first attribute access. Nothing in startup touches it, so the provider read by `LLMService.__init__` is the post-override value. If any import-time code ever forces construction earlier, runtime overrides would be silently ignored for the provider — keep it lazy.
+3. `runtime_config.load()`; if non-empty, `runtime_config.apply_to_settings(overrides)` and log `"Runtime config overrides applied"` with `extra={"overrides": [...keys]}`. This is what makes `DATA_DIR/runtime_config.json` win over the environment for `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL` and the local-runtime knobs. **Important ordering consequence:** the `llm_service` singleton is a lazy proxy (`_LazyLLMService` in `services/llm.py`) that constructs `LLMService` on first attribute access. Nothing in startup touches it, so the provider read by `LLMService.__init__` is the post-override value. If any import-time code ever forces construction earlier, runtime overrides would be silently ignored for the provider — keep it lazy.
 4. `sync_embedding_infrastructure()` from `services/local_models.py`, wrapped in `try/except Exception` → `logger.warning("Embedding infrastructure sync skipped: ...")`. It reads `MODELS_DIR/models_manifest.json` selection, sets `settings.EMBEDDING_DIMENSIONS`, `settings.EMBEDDING_MODEL`, `settings.MODEL_RERANKER_LOCAL` from the manifest/catalog, and makes every KB's Qdrant collections match the embedding dimension (details in [12](12-local-models-and-inference.md) and [15](15-search-indexes-qdrant-meilisearch.md)). This is the third and last place at boot that mutates `settings` (after `config.py` bottom and `apply_to_settings`).
 5. `start_vault_watchers()` from `services/vault_watcher.py`, also `try/except` → `logger.warning("Vault watcher not started: ...")`. Starts a daemon thread with a watchdog observer per KB vault; it marks notes stale on external `.md` edits, never auto-ingests ([09](09-notes-wikilinks-and-vault-files.md)).
 
@@ -268,12 +268,7 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 
 **LLM — ingestion axis**
 
-| Field | Type | Default | Consumer |
-|---|---|---|---|
-| `INGESTION_PROVIDER` | str \| None | `None` | `llm.init_clients` (blank → alias chat clients; `ollama`/`lm_studio` → `local`) |
-| `INGESTION_MODEL` | str \| None | `None` | `llm.get_ingestion_model` (wins), `api/settings.py`, `runtime_config` |
-| `INGESTION_LLM_MODEL` | str \| None | `"local-chat"` | `llm.get_ingestion_model` local fallback |
-| `INGESTION_GEMINI_MODEL` | str \| None | `None` | `llm.get_ingestion_model` gemini fallback |
+No fields. Chat and ingestion share one provider and model: `llm.get_ingestion_model()` returns the per-KB `llm_ingestion_model` override or `get_chat_model()`, and `init_clients` uses the chat provider for ingestion. The former `INGESTION_PROVIDER`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL` and `INGESTION_GEMINI_MODEL` fields were removed.
 
 **Embeddings axis**
 
@@ -372,8 +367,8 @@ Other writers to `settings` at runtime (all in-process, none persisted except wh
 
 | Writer | Fields | Persisted? |
 |---|---|---|
-| `runtime_config.apply_to_settings` (startup, `PATCH /settings`) | `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` | yes → `runtime_config.json` |
-| `api/settings.update_runtime_settings` | same four LLM fields directly, then saves | yes |
+| `runtime_config.apply_to_settings` (startup, `PATCH /settings`) | `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL` (plus the local-runtime knobs) | yes → `runtime_config.json` |
+| `api/settings.update_runtime_settings` | same three LLM fields directly, then saves | yes |
 | `api_desktop.setup_paths` | via `sync_settings_paths`: `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` | paths → `paths.json` |
 | `paths.sync_settings_paths` | `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` | n/a (reads `paths.json`) |
 | `local_models.sync_embedding_infrastructure` | `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` | derived from `models_manifest.json` |
@@ -435,19 +430,18 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 
 Persistent, user-mutable overrides for the provider settings, so the UI can change them. API keys are deliberately never stored here.
 
-- `MUTABLE_KEYS = frozenset({"provider", "model", "ingestion_model", "base_url"})`.
+- `MUTABLE_KEYS = frozenset(_SETTING_FOR)`: `provider`, `model`, `base_url` plus the thirteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs; each key is its lower-cased `Settings` attribute).
 - `_data_path()` → `resolve_data_dir() / "runtime_config.json"`, falling back to `<repo>/data/runtime_config.json` if `paths` import fails.
 - `load() -> dict`: returns only keys in `MUTABLE_KEYS`; any `OSError`/`JSONDecodeError` logs a warning (logger `RuntimeConfig` → `api.log`) and returns `{}`.
 - `save(overrides)`: filters to `MUTABLE_KEYS`, `mkdir -p`, writes `indent=2` JSON under a `threading.Lock`. Overwrites the whole file — callers first `load()` then merge (as `PATCH /settings` does).
-- `apply_to_settings(overrides)`: maps `provider→settings.LLM_PROVIDER`, `model→settings.CHAT_MODEL`, `ingestion_model→settings.INGESTION_MODEL`, `base_url→settings.LLM_BASE_URL` (one loop over `_SETTING_FOR`); `None` values are skipped.
+- `apply_to_settings(overrides)`: maps `provider→settings.LLM_PROVIDER`, `model→settings.CHAT_MODEL`, `base_url→settings.LLM_BASE_URL` and each local-runtime key to its upper-cased field (one loop over `_SETTING_FOR`); `None` values are skipped, except for the local-runtime keys where a stored `null` means "automatic".
 
 File example:
 
 ```json
 {
   "provider": "local",
-  "model": "gemma-4-e4b",
-  "ingestion_model": "gemma-4-e4b"
+  "model": "gemma-4-e4b"
 }
 ```
 
@@ -575,7 +569,7 @@ The current working tree (uncommitted at the time of writing) adds three nullabl
 |---|---|---|
 | `llm_provider` | String | Pinned chat/ingestion provider for this KB (`local`, `openai`, `gemini`, `anthropic`, `huggingface`); `NULL` = inherit `settings.LLM_PROVIDER`. Rows holding the deprecated `ollama`/`lm_studio` are rewritten to `local` by `kb_registry._load` (`UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')`); there is no write-time coercion |
 | `llm_model` | String | Pinned chat model id; `NULL` = inherit |
-| `llm_ingestion_model` | String | Pinned ingestion model id; `NULL` = inherit `llm_model`, then system |
+| `llm_ingestion_model` | String | Pinned ingestion model id; `NULL` = follow this KB's chat model (`llm_model`, else the system chat model) |
 
 Comment in the model: "Chat + ingestion only — embed/rerank/multimodal stay system-wide (embed dims are shared)." `kb_registry._ensure_optional_columns` (renamed from `_ensure_firefly_columns`) adds them with `ALTER TABLE` on existing databases. `KBContext` gained `llm_provider`, `llm_model`, `llm_ingestion_model`, a cached `llm` property (returns the global `llm_service` when nothing is pinned, else a dedicated `LLMService(prov, chat_model=, ingestion_model=, ingestion_provider=prov)`), `has_llm_override`, and `apply_llm_override(...)` which also drops the cached retrieval/ingestion/chat workflow objects so they are rebuilt with the new service. Routes: `GET/PATCH /api/v1/kb/{kb_id}/llm` (`api/kb.py`), and `GET /api/v1/kb` rows now carry `effective_llm`. `kb_registry.effective_llm_config(meta)` computes `{provider, model, ingestion_model, inherited}` by layering the row over `settings`. See [08](08-knowledge-bases-and-vaults.md) for the full contract and [13](13-llm-providers-and-prompting.md) for the `LLMService` constructor changes.
 
@@ -668,21 +662,21 @@ Both routes are KB-agnostic (no `?kb=`) and unauthenticated like the rest of the
 
 - `provider` = `settings.LLM_PROVIDER` (raw string; may be a deprecated alias the service maps to `local`).
 - `model` = `llm_service.get_chat_model() or settings.LLM_MODEL` — **this touches the lazy `llm_service` proxy and therefore constructs `LLMService` (and, for `local`, the `local_llama_runtime` accel detection) on first call.** It does not load a GGUF.
-- `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL`.
+- `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL` — for the global service this is always the chat model (read-only; there is no separate ingestion setting).
 - `base_url` = `settings.LLM_BASE_URL`.
 
 ### `PATCH /api/v1/settings` — body `LLMSettings`
 
-`{"provider"?: str, "model"?: str, "ingestion_model"?: str, "base_url"?: str}` — all optional; only non-`None` fields are applied.
+`{"provider"?: str, "model"?: str, "base_url"?: str}` — all optional; only non-`None` fields are applied.
 
 Algorithm:
 
 1. `overrides = runtime_config.load()` (existing file contents, filtered to `MUTABLE_KEYS`).
 2. `provider_changed = bool(body.provider and body.provider != settings.LLM_PROVIDER)`; `base_url_changed` likewise.
-3. For each provided field: write into `overrides` **and** assign to `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL`).
+3. For each provided field: write into `overrides` **and** assign to `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`).
 4. `runtime_config.save(overrides)` — persists to `DATA_DIR/runtime_config.json`.
 5. If provider or base_url changed: `llm_service.provider = settings.LLM_PROVIDER.lower()` then `llm_service.init_clients()` and log `"LLM clients reinitialized"`. `init_clients()` rebuilds both the chat and the ingestion client sets.
-6. Returns `{provider, model: CHAT_MODEL or LLM_MODEL, ingestion_model: INGESTION_MODEL or LLM_MODEL, base_url}` (note: computed from `settings`, not from `get_chat_model()`, so for a cloud provider with only `GEMINI_MODEL` set this response shows `local-chat` while `GET` shows the Gemini model).
+6. Returns `{provider, model: CHAT_MODEL or LLM_MODEL, ingestion_model: CHAT_MODEL or LLM_MODEL, base_url}` (note: computed from `settings`, not from `get_chat_model()`, so for a cloud provider with only `GEMINI_MODEL` set this response shows `local-chat` while `GET` shows the Gemini model).
 
 What it never does: accept API keys (those go to `PUT /api/v1/credentials`, which stores them in the OS keychain — see [13](13-llm-providers-and-prompting.md)), validate the provider string, or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
 

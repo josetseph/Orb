@@ -64,9 +64,9 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: rerank quality drove the "Final Implementation" results; a cross-encoder can be swapped independently of the vector space.
 - Enforced: `services/reranker.py`, `LocalGgufReranker`.
 
-### B6. Three provider axes (chat / ingestion / embeddings), plus per-KB chat+ingestion override
-- Rationale: bulk extraction benefits from a cheaper or faster model than chat; embeddings must stay system-wide because Qdrant dims are shared across KBs.
-- Enforced: `Settings.LLM_PROVIDER/CHAT_MODEL`, `INGESTION_PROVIDER/INGESTION_MODEL`, `EMBEDDING_*`; per-KB columns `llm_provider/llm_model/llm_ingestion_model` (working tree) with validation in `api/kb.py::update_kb_llm` (local ids must be downloaded; cloud needs a key). Embed/rerank/multimodal are **not** per-KB by design.
+### B6. Chat and ingestion share one provider and model; embeddings are separate; plus per-KB chat+ingestion override
+- Rationale: one selection on the Models page drives both, so a single GGUF is resident (the removed global `INGESTION_*` settings let chat use `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded a second GGUF); a workspace that wants a cheaper or faster extraction model opts in per KB; embeddings must stay system-wide because Qdrant dims are shared across KBs.
+- Enforced: `Settings.LLM_PROVIDER/CHAT_MODEL`, `LLMService.get_ingestion_model()` (= per-KB override or `get_chat_model()`), `EMBEDDING_*`; per-KB columns `llm_provider/llm_model/llm_ingestion_model` (working tree) with validation in `api/kb.py::update_kb_llm` (local ids must be downloaded; cloud needs a key). Embed/rerank/multimodal are **not** per-KB by design.
 
 ### B7. Cloud providers remain available but are opt-in
 - Rationale: privacy-first default; some users want frontier quality.

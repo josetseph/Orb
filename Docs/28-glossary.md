@@ -23,7 +23,7 @@
 | **Packaged layout** | Tauri resource dir (`backend/`, `frontend/`, `firefly/`) produced by `desktop/build.py prepare`. | [05](05-packaging-build-and-release.md) |
 | **build.py** | `python3 desktop/build.py prepare` (bundle Python, Vite build, Firefly seed) and `dist` (preflight + `cargo tauri build`; on macOS the `.app` comes from Tauri and the DMG from one `hdiutil create`). | [05](05-packaging-build-and-release.md) |
 | **orbDesktop bridge** | `window.orbDesktop`, injected by `src-tauri/src/init.js`: `isDesktop`, `pickDirectory`, `pickFile`, `restartBackend`, `notify`. | [18](18-frontend-architecture.md) |
-| **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `ingestion_model`, `base_url`. | [21](21-configuration-reference.md) |
+| **runtime_config.json** | `DATA_DIR/runtime_config.json`; mutable overrides `provider`, `model`, `base_url` and the local-runtime knobs. | [21](21-configuration-reference.md) |
 
 ## Knowledge bases, vaults, notes
 
@@ -111,7 +111,7 @@
 | **Staging dir** | Local SSD cache (`~/Library/Caches/Orb/model-downloads`) used before moving downloads onto NAS/cloud-synced `MODELS_DIR`. | [12](12-local-models-and-inference.md) |
 | **SWA / swa_full** | Sliding-window attention; `LLAMA_SWA_FULL=true` avoids Gemma 4 repetition loops. | [12](12-local-models-and-inference.md) |
 | **Ordinal loop** | Failure mode where Gemma 4 repeats ordinals / "or the"; detected and retried. | [12](12-local-models-and-inference.md) |
-| **Provider axes** | Independent chat, ingestion and embedding provider/model settings. | [13](13-llm-providers-and-prompting.md) |
+| **Provider axes** | Chat and ingestion share one provider and model; embeddings are separate. | [13](13-llm-providers-and-prompting.md) |
 | **local (alias)** | `LLM_PROVIDER=local` means in-process GGUF; historical alias for the former Ollama/LM Studio paths. | [13](13-llm-providers-and-prompting.md) |
 | **Multimodal runtime** | `multimodal_runtime.py`: torch/transformers (and MLX) loader for Qwen3-ASR and Marlin. | [12](12-local-models-and-inference.md) |
 | **ensure_multimodal_services** | Verifies HF snapshots and can pip-install torch/transformers into the running interpreter. | [12](12-local-models-and-inference.md) |

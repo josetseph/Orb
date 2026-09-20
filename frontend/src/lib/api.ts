@@ -722,7 +722,6 @@ export const api = {
   async updateLLMSettings(data: {
     provider?: string;
     model?: string;
-    ingestion_model?: string;
     base_url?: string;
   }): Promise<{ provider: string; model: string; ingestion_model: string; base_url: string }> {
     return http.patch("/settings", data);

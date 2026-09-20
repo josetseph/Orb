@@ -18,7 +18,6 @@ class LLMSettings(BaseModel):
 
     provider: str | None = None
     model: str | None = None
-    ingestion_model: str | None = None
     base_url: str | None = None
 
 
@@ -105,9 +104,6 @@ async def update_runtime_settings(body: LLMSettings):
     if body.model is not None:
         overrides["model"] = body.model
         settings.CHAT_MODEL = body.model
-    if body.ingestion_model is not None:
-        overrides["ingestion_model"] = body.ingestion_model
-        settings.INGESTION_MODEL = body.ingestion_model
     if body.base_url is not None:
         overrides["base_url"] = body.base_url
         settings.LLM_BASE_URL = body.base_url
@@ -125,6 +121,6 @@ async def update_runtime_settings(body: LLMSettings):
     return {
         "provider": settings.LLM_PROVIDER,
         "model": settings.CHAT_MODEL or settings.LLM_MODEL,
-        "ingestion_model": settings.INGESTION_MODEL or settings.LLM_MODEL,
+        "ingestion_model": settings.CHAT_MODEL or settings.LLM_MODEL,
         "base_url": settings.LLM_BASE_URL,
     }

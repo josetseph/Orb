@@ -297,7 +297,7 @@ The single page for every model decision, rendered from one `GET /api/v1/models`
 
 `_components/ModelPicker.tsx` lists every installed GGUF (`InstalledModel`: label, size, architecture, warnings) plus **Browse** buttons for a file or a folder (`pickDesktopFile` with a `.gguf` filter / `pickDesktopDirectory`). A path the user picks is validated by `POST /api/v1/models/inspect` (`{ref, path, name, size_gb, warnings}`) before it is stored, so an unusable path is refused with a specific reason. GGUF is the only local format, so there is no format badge and no "cannot run here" state; the backend placeholder ref `local-chat` is shown as "nothing picked" rather than as a model.
 
-The backend persists the system choice to `DATA_DIR/runtime_config.json` (`provider`, `model`, `ingestion_model`, `base_url`) and swaps the provider live ([06](06-backend-core-and-configuration.md), [13](13-llm-providers-and-prompting.md)); per-KB pins (§6.3) layer on top.
+The backend persists the system choice to `DATA_DIR/runtime_config.json` (`provider`, `model`, `base_url`) and swaps the provider live ([06](06-backend-core-and-configuration.md), [13](13-llm-providers-and-prompting.md)); per-KB pins (§6.3) layer on top.
 
 ## 7. About — `/settings`
 
