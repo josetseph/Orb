@@ -31,7 +31,7 @@ cd Orb
 cd backend
 python3 -m venv .venv
 source .venv/bin/activate            # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt   # -dev = pytest, pytest-asyncio
 # Metal build of llama-cpp-python on Apple Silicon:
 CMAKE_ARGS="-DGGML_METAL=on" pip install llama-cpp-python --force-reinstall --no-cache-dir
 # (multimodal deps in requirements-multimodal.txt are installed on demand by Setup)
@@ -111,7 +111,7 @@ Release builds are produced by CI on `desktop-v*` tags. See [05](05-packaging-bu
 
 | Task | Command |
 |---|---|
-| Unit tests | `cd backend && .venv/bin/python -m pip install pytest pytest-asyncio && .venv/bin/python -m pytest tests/unit -q` (pytest is not in `requirements.txt`) |
+| Unit tests | `cd backend && .venv/bin/python -m pytest tests/unit -q` (pytest comes from `requirements-dev.txt`) |
 | Lint backend | `cd backend && .venv/bin/python -m pylint app` |
 | Lint frontend | `cd frontend && npm run lint` |
 | Type-check frontend | `cd frontend && npx tsc --noEmit` |
@@ -119,9 +119,9 @@ Release builds are produced by CI on `desktop-v*` tags. See [05](05-packaging-bu
 | Tail logs | `tail -f "$DATA_DIR/logs/backend.log" "$DATA_DIR/logs/ingestion.log"` |
 | Reset a dev profile | quit Orb, delete `<repo>/data` (or the chosen DATA_DIR) and `paths.json` |
 
-Unit tests need no live services: `tests/unit/conftest.py` stubs Kuzu, Qdrant, Meilisearch and the LLM, but the test modules still import the real service modules, so the venv must have `requirements.txt` installed (`qdrant_client`, `kuzu`, `openai`, …) plus `pytest` and `pytest-asyncio`. There is no CI test job; run tests locally before committing.
+Unit tests need no live services (`tests/unit/conftest.py` only pins `LLM_PROVIDER="local"`; each module stubs what it crosses), but the test modules import the real service modules, so the venv must have `requirements.txt` installed (`qdrant_client`, `kuzu`, `openai`, …) plus `requirements-dev.txt`. `.github/workflows/ci.yml` runs the suite, the frontend lint/build and `cargo check` on every push to `main` and every PR; still run tests locally before committing.
 
-State on 2026-09-20: the full suite is green (485 passed, 0 failed) when run against an interpreter that has `requirements.txt` installed — the bundled runtime under `desktop/resources/backend/python` plus `pytest`/`pytest-asyncio` works, as does a fresh `uv venv`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder first, otherwise `graph.py` opens the real Kuzu file, which the running app holds locked.
+State on 2026-09-20: the full suite is green (485 passed, 0 failed) when run against an interpreter that has `requirements.txt` installed — the bundled runtime under `desktop/resources/backend/python` plus `requirements-dev.txt` works, as does a fresh `uv venv`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder first, otherwise `graph.py` opens the real Kuzu file, which the running app holds locked.
 
 ---
 

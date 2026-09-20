@@ -109,3 +109,17 @@ def test_classify_attachment():
     assert classify_attachment(mic) == "video"  # extension wins over the mic marker
     mic["url"] = mic["lower_url"] = "/vault-files/k/rec.bin"
     assert classify_attachment(mic) == "audio"
+
+
+def test_docx_embedded_image_blocks_are_keyed_by_docx_and_index():
+    """An image inside a Word file is keyed "<docx link>#<i>": stable across runs,
+    so its block is kept while the docx is linked and not described again."""
+    docx = "attachments/report.docx"
+    note = f"Text.\n\n[📎 report.docx]({docx})\n\nEnd."
+    assert attachment_key(f"{docx}#1") == f"{docx}#1" != attachment_key(docx)
+    once = place_extraction(note, f"{docx}#0", "[Image: Diagram]\nA flow chart.")
+    kept = strip_prior(once, keep={attachment_key(docx)})
+    assert "A flow chart." in kept
+    assert attachment_key(f"{docx}#0") in extraction_srcs(kept)
+    # ...and goes when the docx itself is unlinked.
+    assert "A flow chart." not in strip_prior(once, keep=set())

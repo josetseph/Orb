@@ -186,5 +186,4 @@ def sync_settings_paths(settings_obj=None) -> None:
     settings_obj.DATA_DIR = str(data)
     settings_obj.MODELS_DIR = str(models)
     settings_obj.MODELS_PATH = str(models)
-    settings_obj.KUZU_DB_PATH = str(data / "kuzu" / "kuzu_graph")
     ensure_data_layout(data)

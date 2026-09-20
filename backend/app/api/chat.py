@@ -115,49 +115,6 @@ async def delete_chat_conversation(
     return {"status": "deleted", "conversation_id": conversation_id}
 
 
-@router.post("/api/v1/chat")
-async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
-    """Chat: retrieval → rerank → synthesis (or finance path when query matches)."""
-    require_ai(kb)
-
-    request_id = body.request_id or str(uuid.uuid4())
-    conversation = await chat_store.ensure_conversation(
-        body.conversation_id, kb.kb_id
-    )
-    conversation_id = conversation["id"]
-    history_turns = await chat_store.get_recent_history(conversation_id)
-
-    def _progress(stage: str, model: str | None = None) -> None:
-        _set_status(request_id, {"stage": stage, "model": model})
-
-    _progress("Starting chat request")
-    try:
-        await chat_store.add_message(conversation_id, "user", body.query)
-        await chat_store.maybe_set_title_from_first_message(conversation_id, body.query)
-        result = await _answer_chat_query(
-            body.query, kb, history_turns, _progress
-        )
-        assistant = await chat_store.add_message(
-            conversation_id,
-            "assistant",
-            result.get("answer", ""),
-            thinking=result.get("thinking"),
-            metadata={
-                "rewritten_query": result.get("rewritten_query"),
-                "context_count": len(result.get("context") or []),
-                "sources": result.get("sources") or [],
-            },
-        )
-        _progress("Complete")
-        result["request_id"] = request_id
-        result["conversation_id"] = conversation_id
-        result["assistant_message_id"] = assistant["id"]
-        return result
-    except Exception:
-        _progress("Failed")
-        raise
-
-
 async def _run_chat_job(
     request_id: str,
     query: str,
@@ -247,6 +204,8 @@ async def start_chat(
     conversation = await chat_store.ensure_conversation(
         body.conversation_id, kb.kb_id
     )
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
     conversation_id = conversation["id"]
     history = await chat_store.get_recent_history(conversation_id)
     history_payload = [{"role": t.role, "content": t.content} for t in history]

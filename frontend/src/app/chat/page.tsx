@@ -13,7 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { api } from "@/lib/api";
-import { cn, isAudioUrl, isImageUrl, isVideoUrl, resolveFileUrl } from "@/lib/utils";
+import { cn, errMessage, isAudioUrl, isImageUrl, isVideoUrl, resolveFileUrl } from "@/lib/utils";
 import { revealInFolder } from "@/lib/desktop";
 import { useKB } from "@/lib/kb-context";
 import { useChat } from "@/lib/chat-context";
@@ -289,8 +289,8 @@ export default function ChatPage() {
       a.download = `chat-${activeConversationId.slice(0, 8)}.md`;
       a.click();
       URL.revokeObjectURL(url);
-    } catch {
-      /* ignore */
+    } catch (error) {
+      alert(errMessage(error, "Could not export this conversation."));
     }
   };
 

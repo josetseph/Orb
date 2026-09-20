@@ -271,7 +271,7 @@ chat_is_local_only() -> bool         # LLM_PROVIDER in (local, ollama, lm_studio
 require_ai(kb=None)  → HTTPException 503 {"error": "ai_not_configured", "message": "AI is not configured. Notes, wikilinks, and finance still work. Open Setup to enable local models or a cloud provider."}
 ```
 
-Used by `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/reingest-vault`, note ingestion endpoints (`api/notes.py`), admin re-ingest (`api/admin.py`) — all pass the resolved `KBContext` so a KB pinned to a configured provider works regardless of what is set globally. `/setup/status.ai_configured` calls it with no KB.
+Used by `POST /api/v1/chat/async`, `POST /api/v1/notes/reingest-vault`, note ingestion endpoints (`api/notes.py`), admin re-ingest (`api/admin.py`) — all pass the resolved `KBContext` so a KB pinned to a configured provider works regardless of what is set globally. `/setup/status.ai_configured` calls it with no KB.
 
 There is no stored "AI mode" anywhere: Setup only asks for folders, and choosing a model on the Models page is what makes AI usable. See [12](12-local-models-and-inference.md).
 
@@ -449,7 +449,7 @@ Gotchas:
 - The extraction prompt is an f-string: every literal `{`/`}` must be doubled.
 - `generate_title` strips all `"` characters, including ones inside the title.
 - `_chat` strips the `<think>` block from every OpenAI-shaped response, but only `_reason_step` (and so `iterative_step`) returns it; `reason()`, `generate()` and the ingestion calls discard it.
-- The local runtime raises `PromptTooLongError` / `RuntimeError` for too-long prompts or missing per-KB GGUFs; `iterative_step` swallows all exceptions into an empty result (the loop then ends with "couldn't find enough information"), while `generate`/`ingestion_generate` re-raise.
+- The local runtime raises `PromptTooLongError` / `RuntimeError` for too-long prompts or missing per-KB GGUFs; `iterative_step` re-raises them (only an unparseable reply becomes an empty step, ending the loop with "couldn't find enough information"), as do `generate`/`ingestion_generate`.
 - `ai_is_configured` is true whenever `LLM_BASE_URL` is non-empty, even if nothing listens there.
 
 Failure modes:

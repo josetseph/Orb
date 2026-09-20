@@ -71,7 +71,7 @@ Wire form (`_note_response`): `{id, content, title, rel_path, created_at, update
 
 ### 3.2 Where the body lives
 
-`body = read(vault_path / rel_path)`. `notes.content` is written as `""` by every in-app save. The file is the single source of truth; the row is metadata. Corollaries:
+`body = read(vault_path / rel_path)`. There is no `notes.content` column (`_sqlite_repairs` drops it once it is empty). The file is the single source of truth; the row is metadata. Corollaries:
 
 - `GET /api/v1/notes?search=` searches `title` and `rel_path` only (bodies are not in SQLite). Full-text over bodies is Meilisearch's job after ingestion.
 - Deleting the file externally makes `content` come back empty (and the watcher flags it), but the row survives.
@@ -134,7 +134,7 @@ if note.rel_path and kb.vault_path:
 return ""
 ```
 
-- There is no fallback to `notes.content`: no `rel_path`, no vault or a missing file all read as `""`. The body the API returns is exactly the file's bytes.
+- There is no SQLite fallback: no `rel_path`, no vault or a missing file all read as `""`. The body the API returns is exactly the file's bytes.
 - `read_note_file` goes through `safe_vault_join`, so a corrupted `rel_path` containing `..` raises `ValueError` (→ 500 on the listing route; it is not caught per note).
 - Nothing rewrites link targets at read time any more; the `attachments/attachments/` collapse that used to run on every read (`normalize_vault_file_refs`, removed 2026-09-19) became part of the one-time vault sweep (§4.3).
 
@@ -159,7 +159,7 @@ Callers: `create_note`, `ingest_note` (legacy combined route), `update_note`, `I
    - `ingestion_agent.wrap_legacy_enrichment_blocks`: pre-marker enrichment output (`[PDF Extraction (…)]`, `[Image: …]`, transcripts, …) is wrapped in `<!-- orb:extract src="" -->…<!-- /orb:extract -->` so re-ingest can find and drop it (doc 10 §6.2).
    - `vault_ops.rewrite_refs_in_text(old_rel, new_rel)` for each file the v3 step moved, so `](Cloud%20Computing/diagram.png)` and the old `/vault-files/<id>/Cloud Computing/diagram.png` both become `](attachments/Cloud%20Computing/diagram.png)`.
    The marker is touched after the loop (`.orb/` is created if needed) and the counts of moved and rewritten files are logged (`Vault migration v3 (…): N files moved, M files rewritten`).
-2. **Legacy SQLite bodies**: for every `Note` of the KB whose `content` is non-empty, `persist_note_body(n, kb, n.content)` writes it to the vault file (choosing a `rel_path` if the row has none) when the file is missing, or the column is simply blanked when `read_note_file` already returns a body. After this `notes.content` is `""` everywhere and `note_body` never consults it.
+2. **Legacy SQLite bodies**: none remain — `_sqlite_repairs` (`core/database.py`) drops the `notes.content` column at boot once every row is empty, and keeps it (with a warning) if a body is still in it.
 
 Both steps are safe to re-run; only the marker makes the sweep cheap. Deleting `<vault>/.orb/migrated-v3` re-runs the sweep on the next listing.
 
@@ -451,7 +451,7 @@ Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and nev
 
 ## 14. Invariants and locked decisions
 
-1. **Body = file; `notes.content` stays empty.** `persist_note_body` enforces it; `note_body` returns `""` for a missing file and never reads the column; `sync_vault_notes` moves any pre-vault body to disk once (§4.3).
+1. **Body = file.** There is no body column; `note_body` returns `""` for a missing file (§4.3).
 2. **All disk access goes through `safe_vault_join`.** No raw `vault / rel` joins in routes; never catch its `ValueError` and retry with a raw join.
 3. **Title is user-owned; filename follows title, not the reverse** (except filling blank titles). Case-only title changes do not rename.
 4. **Moves rewrite link *targets*, never do substring replacement** (the doubled-`attachments/` bug). New rewrite code must use anchored `](…)` or `[[…]]` patterns.

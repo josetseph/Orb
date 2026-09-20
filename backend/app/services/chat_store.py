@@ -179,11 +179,11 @@ class ChatStore:
 
     async def ensure_conversation(
         self, conversation_id: str | None, kb_id: str
-    ) -> dict:
+    ) -> dict | None:
+        """The KB's live conversation for ``conversation_id`` (None if unknown,
+        deleted or another KB's); a new one when no id is given."""
         if conversation_id:
-            existing = await self.get_conversation(conversation_id, kb_id=kb_id)
-            if existing:
-                return existing
+            return await self.get_conversation(conversation_id, kb_id=kb_id)
         return await self.create_conversation(kb_id)
 
     async def maybe_set_title_from_first_message(

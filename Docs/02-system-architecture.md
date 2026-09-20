@@ -228,7 +228,7 @@ Details: [18-frontend-architecture.md](18-frontend-architecture.md), [07-api-ref
 ## 10. Cross-cutting contracts
 
 1. **`?kb=` everywhere.** Any new endpoint touching notes, graph, indexes, chat or finance must take `kb: KBContext = Depends(get_kb)` and use only that context's services.
-2. **Note body lives in the vault file.** `notes.content` is a deprecated fallback; write bodies with `persist_note_body`, read with `note_body`.
+2. **Note body lives in the vault file.** the `notes.content` column is gone (dropped by `_sqlite_repairs` once empty); write bodies with `persist_note_body`, read with `note_body`.
 3. **Title ↔ filename sync.** Renaming a note renames the `.md`; renaming the file retitles the note; wikilinks resolve by title and by path (Obsidian-compatible).
 4. **Attachments are vault files.** They live only under `attachments/` (grouped by note folder; `vault_ops.move_vault_file` refuses moves across that boundary) and notes link to them vault-root-relative. Never treat a `/vault-files/...` path as a temp file to delete after processing.
 5. **One heavy model at a time.** Any new inference code must go through the residency manager in `local_models.py` / `multimodal_runtime.py`, never spawn a model HTTP server.

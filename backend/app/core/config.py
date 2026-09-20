@@ -26,9 +26,6 @@ def _default_models_dir() -> str:
         return str(BACKEND_DIR / "models")
 
 
-DEFAULT_KUZU_DB_PATH = str(Path(_default_data_dir()) / "kuzu" / "kuzu_graph")
-
-
 class Settings(BaseSettings):
     """Pydantic settings that load all configuration from environment variables and .env files."""
 
@@ -50,8 +47,10 @@ class Settings(BaseSettings):
     DATA_DIR: str = _default_data_dir()
     MODELS_DIR: str = _default_models_dir()
 
-    # ── Kuzu (embedded graph database) ──────────────────────────────────────
-    KUZU_DB_PATH: str = DEFAULT_KUZU_DB_PATH
+    @property
+    def KUZU_DB_PATH(self) -> str:  # pylint: disable=invalid-name
+        """Default KB's Kuzu file — always under DATA_DIR, never configured."""
+        return str(Path(self.DATA_DIR) / "kuzu" / "kuzu_graph")
 
     # ── LLM Provider (local = in-process GGUF via llama-cpp-python)
     LLM_PROVIDER: str = "local"
@@ -150,7 +149,4 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
-
-_data = Path(settings.DATA_DIR)
-settings.KUZU_DB_PATH = str(_data / "kuzu" / "kuzu_graph")
 settings.MODELS_PATH = settings.MODELS_DIR

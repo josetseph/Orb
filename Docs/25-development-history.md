@@ -261,7 +261,7 @@ Do **not** resurrect any of these. They are listed so an assistant reading an al
 | Neo4j graph (+APOC/GDS) | `6fd0224` → `68494b7` | `68494b7` | Replaced by embedded Kuzu (D-10). |
 | Elasticsearch keyword index | `559e988` → `68494b7` | `68494b7` | Replaced by Typesense (D-11), then Meilisearch (D-30). |
 | Typesense keyword index | `68494b7` → `3f21e08` | service deleted `fbcafe7` | `TYPESENSE_*` settings survive as aliases (4.2). |
-| MinIO / RustFS object storage (`utils/bucket_storage.py`) | `6fd0224` → `fbcafe7` | `fbcafe7` | RustFS still in compose under `profiles: ["legacy-s3"]`; attachments now live in the vault. |
+| MinIO / RustFS object storage (`utils/bucket_storage.py`) | `6fd0224` → `fbcafe7` | `fbcafe7` | Attachments live in the vault; the compose file that still listed RustFS is gone. |
 | Postgres as the primary DB | `6fd0224` → `3f21e08` | default flipped `3f21e08` | Still selectable via `DATABASE_BACKEND=postgres` + `DATABASE_TRANSACTION_POOLER_URL` for the contributor compose only. |
 | Alembic migrations | `6fd0224` → `fbcafe7` | `fbcafe7` | Schema now created in code. |
 | Feedback feature | `559e988` → `335a253` | `335a253` | Model/schema/service/endpoint/migration. |
@@ -288,7 +288,6 @@ Do **not** resurrect any of these. They are listed so an assistant reading an al
 | `backend/app/models/note.py` | `content = Column(Text, nullable=True, default="")` | Vestigial: note bodies live in the vault `.md` (D-29). Do not start writing bodies here. |
 | `backend/app/services/llm.py` | `"ollama": _local, "lm_studio": _local  # deprecated alias` and warnings when `provider in ("ollama","lm_studio")` | Aliases map to the generic OpenAI-compatible `local` provider; no Ollama-specific code path remains. |
 | `frontend/next.config.ts` | `filesProxyTarget` defaulting to `http://rustfs:9000` and the `/files/:path*` rewrite | Docker-era file proxy; desktop serves attachments via `/vault-files/:path*` → API. |
-| `docker-compose.yml`, `backend/Dockerfile`, `frontend/Dockerfile`, `backend/.dockerignore` | Postgres, RustFS (`legacy-s3` profile), Qdrant, Meilisearch, backend, frontend services | Header states "Contributor / optional infra stack only. End users run the Orb desktop app". Not used by packaging or CI. |
 | `backend/requirements.txt` | (cleaned 2026-09-19) `langchain-openai`, `langgraph`, `instructor`, `tenacity`, `python-dateutil`, `dateparser`, `requests`, `regex`, `scikit-learn` were unimported or single-use and are gone | — |
 | `Results/…` directories, `Platform Images/` | Benchmark reports from Eras 2–3, screenshots | Historical artefacts; reports still reference "LiveOS Brain". |
 
@@ -348,7 +347,7 @@ A repo-wide audit removed about 6,500 lines and 16 dependencies without changing
 - **Structured output**: `json_mode` on `_chat`/`generate`/`ingestion_generate[_with_meta]`/`_reason_step` (OpenAI `response_format`, Gemini `response_mime_type`, llama.cpp JSON grammar; Anthropic prompt-driven); the research step and community naming are JSON parsed by pydantic (`_ResearchStep`, `_CommunityName`), deleting `_section_re`, `_clean_next_query`, the first-turn/`FULL_ANSWER` rescues and `_parse_name_summary`; `_clean_json` is fence + curly quotes + `json_repair` (hard import).
 - **Closed relationship vocabulary**: `RELATIONSHIP_TYPES` (42 predicates, catch-all `related_to`) listed in the prompts and enforced by the schema; `clean_rel_type`, the alias validators and the `_` → space rewrites are gone; default `relates_to` → `related_to`.
 - **Enrichment blocks**: `wrap_legacy_enrichment_blocks` gives pre-marker output markers; `_strip_prior_multimedia_enrichment(keep=…)` removes delimited blocks only (no truncation from the first header). Task-split prompts no longer render doubled braces; `describe_image_section` gets its `llm` on the main path. Community names must pass `_name_fits_members` instead of a generic-word blocklist. Meili `isolated_contexts` is an array; `MeilisearchService.index_name`.
-- **One-time migrations** (doc 22 §9.1): vault sweep `migrate_vault_files` (`<vault>/.orb/migrated-v1`), `rel_path` backslash repair in `init_db`, legacy `notes.content` bodies moved to disk, `normalize_kuzu_path` and `llm_provider` coercion only in `kb_registry._load`, `main._migrate_stores` (`DATA_DIR/.stores-migrated-v1-<kb_id>`: `FACTS:` scrub, note-name backfill, `relates_to` → `related_to`).
+- **One-time migrations** (doc 22 §9.1): vault sweep `migrate_vault_files` (`<vault>/.orb/migrated-v1`), `rel_path` backslash repair in `init_db`, legacy `notes.content` column dropped once empty (`_sqlite_repairs`), `normalize_kuzu_path` and `llm_provider` coercion only in `kb_registry._load`, `main._migrate_stores` (`DATA_DIR/.stores-migrated-v1-<kb_id>`: `FACTS:` scrub, note-name backfill, `relates_to` → `related_to`).
 - **Deleted read-time repairs**: `normalize_vault_file_refs`, the collapse in `rewrite_refs_in_text`, `graph._strip_facts_prefix`, `_migrate_legacy_db_path`, `retrieval._extract_predicate`, `api/graph._meili_doc_as_dict` and its per-request title resolve/Kuzu backfill, `reranker._normalize_results` (rows carry `relevance_score` only), `core/log.LOGS_DIR`, `LocalLlamaRuntime.ensure_loaded`, `.partial` sibling checks; `_heal_selection_paths` runs once at boot and the env-default GGUF guess is persisted.
 - **API / frontend**: chat responses carry `sources: [{id, title}]` instead of a `### References` block; `created_at` is a `datetime` (422 on garbage); upload response is `{url}`; frontend URL helpers stopped repairing/decoding; Tauri `trusted()` compares URL origins.
 - Tests: 473 passing, 0 failing; new `test_vault_migration.py`, `test_note_created_at.py`, `test_ingestion_community_names.py`.
@@ -367,8 +366,8 @@ A repo-wide audit removed about 6,500 lines and 16 dependencies without changing
 
 ## 7. Open questions and discrepancies
 
-- `.cursor/rules/architecture-decisions.mdc` was the only in-repo statement of the locked decisions; it is now deleted in `HEAD`, so `Docs/26-decisions-and-constraints.md` is the sole source.
+- Resolved: `.cursor/rules/architecture-decisions.mdc` was the only in-repo statement of the locked decisions; it is deleted, and `Docs/26-decisions-and-constraints.md` is the sole source.
 - No commit records *why* Kuzu was chosen over Neo4j or Meilisearch over Typesense beyond "embedded"/"replaced by"; the decision log states this explicitly rather than inferring benchmarks.
-- `docker-compose.yml`, both `Dockerfile`s and `backend/.dockerignore` survive despite `fbcafe7`'s message "remove ... Docker". They are contributor-only; nothing in CI uses them.
+- Resolved: `docker-compose.yml`, both `Dockerfile`s and `backend/.dockerignore` outlived `fbcafe7`'s "remove ... Docker" as a contributor-only stack; they are now deleted and only history mentions remain.
 - `backend/app/models/note.py` still has a `content` column although note bodies are vault files (D-29). Whether it is written anywhere is a question for [Notes and vault files](09-notes-wikilinks-and-vault-files.md).
 - The README pins the retrieval reranker as "symbolic" nowhere today, but D-04 → D-26 shows reranking flipped symbolic → neural → GGUF cross-encoder; docs on retrieval should describe only the current GGUF cross-encoder.

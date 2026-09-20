@@ -53,7 +53,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 ├── logs/
 │   ├── api.log            errors.log        ingestion.log     multimedia.log   chat.log      (backend, RotatingFileHandler 10 MB × 5)
 │   ├── database.log       graph.log         llm.log           retrieval.log    finance.log
-│   ├── backend.log        qdrant.log        meilisearch.log   firefly.log      multimodal.log (process stdio, append-only, unrotated; backend.log = runtime + API)
+│   ├── backend.log        qdrant.log        meilisearch.log   firefly.log      multimodal.log (process stdio; each rolls to `.log.1` past 10 MB at spawn; backend.log = runtime + API, written by the shell)
 │   └── *.log.1 … *.log.5                                                                  (rotated backups)
 ├── bin/
 │   ├── .tmp/                               download scratch (archives, extracted trees) — transient
@@ -94,7 +94,7 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 | `DATA_DIR/vaults/<slug>/` | `ensure_vault` via `create_kb`/legacy migration/default fallback | KB creation | **No** unless you mean to delete the notes — this *is* the user's content for that KB. Deleting the KB via the API removes it; deleting by hand leaves an orphan registry row |
 | `<vault>/attachments/` (+ `<note folder>/` subfolders) | `ensure_vault`, uploads (`store_upload`), the v3 sweep (moves stray files in) | vault creation / first upload into a folder | No (loses every attachment; markdown links dangle). Everything non-`.md` lives here — `vault_ops.move_vault_file` refuses moves across the `attachments/` boundary |
 | `<vault>/**/.keep` | `POST /api/v1/vault/mkdir` | folder creation | Yes — only keeps empty folders alive |
-| `DATA_DIR/logs/*.log` | backend `core/log.py` (rotating); shell (`backend.log`) and `desktop_runtime._spawn` (`qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) append | first start | Yes — recreated; the stdio logs grow unbounded, so periodic deletion is reasonable |
+| `DATA_DIR/logs/*.log` | backend `core/log.py` (rotating); shell (`backend.log`, `runtime.rs::spawn`) and `desktop_runtime._spawn` (`qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) append; both keep one `.1` generation past 10 MB | first start | Yes — recreated |
 | `DATA_DIR/boot-status.json` | `desktop_runtime.status()` (atomic rewrite) | every desktop launch | Yes — rewritten on next launch; `/admin/maintenance-status` surfaces it while not `Ready` |
 | `DATA_DIR/bin/<triple>/{qdrant,meilisearch}` | `desktop_runtime.ensure_binaries` | first launch (status indicator "Downloading…") | Yes — re-downloaded from GitHub releases on next launch (needs network) |
 | `DATA_DIR/bin/.tmp/` | `ensure_binaries` | during downloads | Yes — scratch |
@@ -242,7 +242,7 @@ Nothing in the app deletes `orb.db`, `meili_master_key`, `qdrant/`, `meilisearch
 | `<repo>/data/kb_registry.json` | the one-shot import into `knowledge_bases` was removed 2026-09-19; the file is ignored. |
 | `<repo>/data/kuzu_graph` (Kuzu file at data root) | no longer moved (removed 2026-09-19); copy it to `<DATA_DIR>/kuzu/kuzu_graph` by hand. |
 | `…/kuzu/<slug>` stored as a **directory** path | healed to `…/kuzu/<slug>/kuzu_graph` by `normalize_kuzu_path` at registry load only (`KBRegistry._load`), persisted to the row. |
-| `notes.content` bodies in SQLite | moved into the vault file (or blanked when the file already exists) by `vault_sync.sync_vault_notes` on the next notes listing / setup; never read by `note_body`, never written. |
+| `notes.content` column | dropped by `_sqlite_repairs` at boot once every row is empty; kept (with a warning) while any legacy body remains. |
 | `knowledge_bases.typesense_collection` | column name retained; holds the Meilisearch index name (`orb_nodes` default; raw `sqlite3` in `kb_registry`, no ORM class). The `TYPESENSE_*` env aliases are gone. |
 | Meili master key `orb-dev-key` | used automatically when `meilisearch/` already has data but no `meili_master_key` file exists. |
 | `localStorage` keys `lifeos_current_kb` / `liveos_current_kb` | migrated to `orb_current_kb` on first read. |
@@ -259,7 +259,7 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 |---|---|---|---|
 | Vault sweep (v3) | `vault_sync.migrate_vault_files(vault)` from `sync_vault_notes` (thread) — notes listing / setup | `<vault>/.orb/migrated-v3` (touched after the loop; v1/v2 vaults rerun the idempotent sweep once — every step is a no-op on a clean vault) | 1. Moves every non-hidden non-`.md` file outside `attachments/` to `attachments/<its folder>/` (`unique_rel_path` on collision; `.keep`, `.DS_Store` and dotfiles are skipped by `_iter_rel`) and rewrites links to it with `rewrite_refs_in_text`. 2. Rewrites note `.md` files in place: collapses `attachments/attachments/` in `/vault-files/<kb>/…` and bare targets, rewrites every `/vault-files/<any kb>/<rel>` in `](…)` targets and `orb:extract src="…"` to the vault-relative `<rel>` with segments re-encoded (`unquote` → `quote(seg, safe="")`), wraps pre-marker enrichment blocks in `<!-- orb:extract -->` markers. Writes go through `mark_self_write`; logs `Vault migration v3 (<vault>): N files moved, M files rewritten` to `ingestion.log`. |
 | `rel_path` backslash repair | `core/database.init_db` → `_sqlite_repairs` | none — idempotent `UPDATE notes SET rel_path = replace(rel_path,'\','/') WHERE rel_path LIKE '%\%'` on every start | Rows written as `str(Path)` on Windows; `note_files` now stores `.as_posix()`. |
-| Legacy note bodies | `vault_sync.sync_vault_notes` | none — a row qualifies while `notes.content` is non-empty | Writes the body to the vault file via `persist_note_body` (or blanks the column when the file already has a body). `note_body` never falls back to SQLite. |
+| `notes.content` column drop | `core/database._sqlite_repairs` | `PRAGMA table_info(notes)` — runs while the column exists | `ALTER TABLE notes DROP COLUMN content` once no row holds a body; otherwise logs a warning and keeps it. |
 | Kuzu path repair | `kb_registry._load` | none — idempotent; persisted with `UPDATE knowledge_bases SET kuzu_path` when `normalize_kuzu_path` changes it | Directory-shaped `kuzu_path` → `…/kuzu_graph` file path. Removed from `get_kb`/`graph`/`_build_context`/`_cleanup_stores`. |
 | `llm_provider` coercion | `kb_registry._load` | none — idempotent `UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')` | Deprecated provider names in KB rows. |
 | Attachments boundary (invariant enforced after the sweep, not a migration) | `local_storage.store_upload`, `vault_ops.move_vault_file`, the vault tree UI | none | Uploads land in `attachments/<note folder>/`; `move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment → note folder, note → `attachments/`, and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`. Note moves never move attachments, because links are vault-root-relative. |
@@ -282,7 +282,7 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 - `kuzu_graph` is a **file**; `kuzu/<slug>/` is a folder containing that file. Tools that expect a directory database (older Kuzu) will misread it.
 - Qdrant and Meilisearch are single servers for all KBs; per-KB isolation is by collection/index *name*. Deleting `qdrant/` or `meilisearch/` affects every KB.
 - `meili_master_key` and `meilisearch/` must be deleted **together**; deleting only the key on an old install falls back to `orb-dev-key`, deleting only the data keeps a random key that then opens an empty store (fine).
-- Process stdio logs (`backend.log`, `qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) are never rotated; backend component logs are (10 MB × 5). `errors.log` aggregates ERROR+ from all components.
+- Sidecar stdio logs (`qdrant.log`, `meilisearch.log`, `firefly.log`, `multimodal.log`) roll to `.log.1` (one generation) when over 10 MB at the next spawn (`desktop_runtime._rotate_log`); `backend.log` is opened by the Tauri shell (`runtime.rs::spawn`) with the same 10 MB / `.1` rule; backend component logs are (10 MB × 5). `errors.log` aggregates ERROR+ from all components.
 - `runtime_config.json` holds only `provider`, `model`, `ingestion_model`, `base_url`; unknown keys are dropped on load and save.
 - `firefly/runtime.json` and `firefly/app/.env` contain secrets (API token, `APP_KEY`, password) and are written owner-only; `paths.json` and `orb.db` contain absolute paths and Firefly group ids but no secrets.
 - `MODELS_DIR` on SMB/NAS triggers staging; the staging dir is created eagerly (`mkdir`) even when unused.

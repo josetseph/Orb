@@ -139,7 +139,7 @@
 |---|---|
 | `LIVEOS_*` env vars, `LifeOS`/`LiveOS` app-support dirs | Removed 2026-09-19; only `ORB_*` / `Orb` exist |
 | `typesense_collection` column | Column name kept for existing DBs; holds the Meilisearch index name (raw `sqlite3` in `kb_registry`, no ORM class). The `TYPESENSE_*` env aliases are gone. |
-| `notes.content` column | Deprecated fallback; body lives in vault |
+| `notes.content` column | Removed; `_sqlite_repairs` drops it once empty. Body lives in vault |
 | `/files/*` rewrite to RustFS, `STORAGE_BACKEND` | Container-era S3 storage; desktop uses vault files |
 | Electron shell (`main.js`, `preload.js`, `supervisor.js`), Next.js UI server, `prepare-dist`, `node_deps`, `credentials.enc` | Replaced by the Tauri shell + `desktop_runtime.py`, the API-served Vite build, `build.py`, and the OS keychain via `keyring` (2026-09) |
 | `LOCAL_MODELS_SERVICE_URL`, `MARLIN_SERVICE_URL`, `ollama`, `lm_studio` | Removed sidecar/provider paths; code warns and maps to `local` |

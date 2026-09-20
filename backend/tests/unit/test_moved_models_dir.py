@@ -134,3 +134,27 @@ class TestSelectionWrites:
         got = local_models.gguf_paths_if_present()
         assert got == {"chat": models_dir / "gguf" / "chat.gguf", "embed": models_dir / "gguf" / "embed.gguf"}
         assert writes == [{"selection": {"chat_path": "gguf/chat.gguf", "embed_path": "gguf/embed.gguf"}}]
+
+
+class TestPruneMissingGgufs:
+    """Deleting a GGUF from disk must not leave its manifest record behind."""
+
+    def test_deleted_entries_are_dropped_and_present_ones_kept(self, models_dir, monkeypatch):
+        man = {
+            "gguf": {
+                "chat.gguf": {"path": str(models_dir / "gguf" / "chat.gguf")},
+                "gone.gguf": {"path": str(models_dir / "gguf" / "gone.gguf")},
+                "embed.gguf": {},  # no recorded path: falls back to gguf/<name>
+            }
+        }
+        monkeypatch.setattr(local_models, "load_manifest", lambda: man)
+        writes = []
+        monkeypatch.setattr(local_models, "save_manifest", writes.append)
+        local_models._prune_missing_ggufs()
+        assert writes == [{"gguf": {"chat.gguf": man["gguf"]["chat.gguf"], "embed.gguf": {}}}]
+
+    def test_nothing_missing_writes_nothing(self, models_dir, monkeypatch):
+        man = {"gguf": {"chat.gguf": {"path": "gguf/chat.gguf"}}}
+        monkeypatch.setattr(local_models, "load_manifest", lambda: man)
+        monkeypatch.setattr(local_models, "save_manifest", lambda m: pytest.fail("wrote with nothing to prune"))
+        local_models._prune_missing_ggufs()

@@ -603,6 +603,7 @@ def sync_embedding_infrastructure(
         sel = load_manifest().get("selection") or {}
         # Once per boot (main.py calls this at startup), not on every read.
         _heal_selection_paths(sel)
+        _prune_missing_ggufs()
         _ensure_mmproj_in_background(sel)
         reranker_id = (sel.get("reranker_id") or "").strip()
         if reranker_id:
@@ -670,6 +671,15 @@ def sync_embedding_infrastructure(
     except Exception as exc:  # pylint: disable=broad-exception-caught
         errors.append(f"registry: {exc}")
         logger.warning("[Models] KB registry sync failed: %s", exc)
+
+    # is_qwen3 (query-instruction prefix) is derived from EMBEDDING_MODEL at
+    # construction; re-derive it now that the model id is final.
+    try:
+        from app.services.embedding import embedding_service
+
+        embedding_service.reconfigure()
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[Models] Could not reconfigure embedding service: %s", exc)
 
     logger.info(
         "[Models] Embedding infrastructure synced — dims=%s embed_id=%s kbs=%s",
@@ -850,6 +860,26 @@ def _heal_selection_paths(sel: dict) -> None:
         logger.info("[LocalModels] Manifest paths repaired: %s", ", ".join(fixed))
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning("[LocalModels] Could not repair manifest paths: %s", exc)
+
+
+def _prune_missing_ggufs() -> None:
+    """Drop ``manifest["gguf"]`` records whose file was deleted from disk."""
+    man = load_manifest()
+    entries = man.get("gguf") or {}
+    gone = [
+        name
+        for name, entry in entries.items()
+        if not selected_gguf((entry or {}).get("path") or f"gguf/{name}")
+    ]
+    if not gone:
+        return
+    for name in gone:
+        entries.pop(name)
+    try:
+        save_manifest(man)
+        logger.info("[LocalModels] Manifest dropped deleted GGUFs: %s", ", ".join(gone))
+    except OSError as exc:
+        logger.warning("[LocalModels] Could not prune manifest: %s", exc)
 
 
 def _ensure_mmproj_in_background(sel: dict) -> None:

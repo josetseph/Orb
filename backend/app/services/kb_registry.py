@@ -588,14 +588,12 @@ class KBRegistry:
             ctx = self._cache.pop(kb_id, None)
             if meta is None:
                 return False
-            # Close Kuzu before deleting files on disk.
-            if ctx is not None:
+            # Close Kuzu before deleting files on disk — only if it was ever
+            # opened (``ctx.graph`` would open it just to close it).
+            graph = getattr(ctx, "_graph", None)
+            if graph is not None:
                 try:
-                    closer = getattr(ctx, "close", None) or getattr(
-                        getattr(ctx, "graph", None), "close", None
-                    )
-                    if callable(closer):
-                        closer()
+                    graph.close()
                 except Exception:  # pylint: disable=broad-exception-caught
                     pass
             meta.pop("firefly_group_id", None)
@@ -784,19 +782,16 @@ class KBRegistry:
 
     def _cleanup_stores(self, meta: dict) -> None:
         try:
-            qs = QdrantService(
-                col_cores=meta["qdrant_col_cores"],
-                col_relationships=meta["qdrant_col_rels"],
-                col_contexts=meta["qdrant_col_contexts"],
-            )
-            if qs.is_available() and qs.client:
+            # Any client reaches the same server; a per-KB QdrantService would
+            # recreate the collections in its constructor right before this.
+            if qdrant_service.is_available():
                 for col in [
                     meta["qdrant_col_cores"],
                     meta["qdrant_col_rels"],
                     meta["qdrant_col_contexts"],
                 ]:
                     try:
-                        qs.client.delete_collection(col)
+                        qdrant_service.client.delete_collection(col)
                     except Exception:  # pylint: disable=broad-exception-caught
                         pass
         except Exception as exc:  # pylint: disable=broad-exception-caught

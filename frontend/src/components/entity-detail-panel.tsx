@@ -27,9 +27,6 @@ interface EntityDetail {
   node_type: string;
   description: string;
   isolated_contexts: string[];
-  facts: string[];
-  domain?: string;
-  status?: string;
   community_id?: string;
   community_name?: string;
   connections?: EntityConnection[];
@@ -99,7 +96,6 @@ export function EntityDetailPanel({
   const hasBody =
     Boolean(detail?.description) ||
     Boolean(detail?.isolated_contexts?.length) ||
-    Boolean(detail?.facts?.length) ||
     Boolean(detail?.connections?.length) ||
     Boolean(detail?.related_notes?.length);
 
@@ -152,25 +148,6 @@ export function EntityDetailPanel({
                     {ctx}
                   </p>
                 ))}
-              </>
-            )}
-
-            {detail.facts?.length > 0 && (
-              <>
-                <div className="kicker mb-1.5 mt-3.5">Facts</div>
-                {detail.facts.map((fact, i) => (
-                  <div key={i} className="flex gap-2 py-1 text-[12.5px] text-n-200">
-                    <span className="text-accent-700">•</span>
-                    <span>{fact}</span>
-                  </div>
-                ))}
-              </>
-            )}
-
-            {detail.domain && (
-              <>
-                <div className="kicker mb-1.5 mt-3.5">Domain</div>
-                <p className="text-[12.5px] text-n-300">{detail.domain}</p>
               </>
             )}
 

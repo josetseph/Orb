@@ -72,6 +72,8 @@ A second job, `release`, runs after the matrix on tag pushes only
 `merge-multiple`, then `gh release create "$TAG" --draft --generate-notes --title "Orb <version>" bundles/*`.
 The release stays a draft until someone has smoke-tested each installer and publishes it by hand.
 
+The release workflow builds only. Tests, lint and `cargo check` run in `.github/workflows/ci.yml` on every push to `main` and every pull request (three jobs: `backend`, `frontend`, `desktop`; details in [Testing](24-testing.md) §7).
+
 Version locations to bump together (all `1.0.0` today): `desktop/src-tauri/tauri.conf.json` and
 `desktop/src-tauri/Cargo.toml` (`version`), `frontend/package.json`,
 `backend/app/main.py` (`FastAPI(version=…)`). The tag is `desktop-v<version>`.

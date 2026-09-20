@@ -1368,8 +1368,10 @@ class RetrievalService:
         """Rank candidates and return the top_n highest-scoring ones.
 
         When RERANKER_ENABLED is True, scores using the local model
-        (``settings.MODEL_RERANKER_LOCAL``).  Falls back to a keyword-overlap
-        heuristic when the model is disabled or unavailable.
+        (``settings.MODEL_RERANKER_LOCAL``).  When the reranker is disabled or
+        returns nothing, candidates keep the order hybrid_search produced
+        (entity → BM25 → vector, each channel in its own score order) with
+        ``rerank_score`` 0.0, and ``score_threshold`` is not applied.
 
         Args:
             top_n: After ranking, slice to this many results.  None = no cutoff.
@@ -1453,7 +1455,7 @@ class RetrievalService:
         else:
             logger.info(f"  [Reranker] Ranked {len(candidates)} candidates (no cutoff)")
 
-        if score_threshold is not None:
+        if score_threshold is not None and model_scores:
             before = len(candidates)
             candidates = [
                 c for c in candidates if c.get("rerank_score", 0.0) >= score_threshold
@@ -1589,18 +1591,27 @@ class RetrievalService:
 
                 docs = selected_docs + expanded
 
-                # Accumulate unique docs into all_docs
-                seen_all_names = {
-                    (d.get("original_obj") or {}).get("name") or d.get("name", "")
+                # Accumulate unique docs into all_docs. A graph_expansion doc
+                # carries its origin node's name, which selected_docs already
+                # put here — fold its neighbour notes into that doc so they
+                # stay citable in ``sources``.
+                by_name = {
+                    (d.get("original_obj") or {}).get("name") or d.get("name", ""): d
                     for d in all_docs
                 }
                 for d in docs:
                     name = (d.get("original_obj") or {}).get("name") or d.get(
                         "name", ""
                     )
-                    if name not in seen_all_names:
+                    kept = by_name.get(name)
+                    if kept is None:
                         all_docs.append(d)
-                        seen_all_names.add(name)
+                        by_name[name] = d
+                        continue
+                    known = {n.get("id") for n in kept.get("linked_notes", [])}
+                    kept["linked_notes"] = kept.get("linked_notes", []) + [
+                        n for n in d.get("linked_notes", []) if n.get("id") not in known
+                    ]
             else:
                 docs = []
 

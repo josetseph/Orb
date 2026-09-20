@@ -26,7 +26,7 @@ class CreateConversationInput(BaseModel):
 
 
 class ChatInput(BaseModel):
-    """Request body for sync and async chat endpoints."""
+    """Request body for ``POST /api/v1/chat/async``."""
 
     query: str = Field(min_length=1)
     request_id: str | None = None

@@ -142,6 +142,7 @@ def _local_state() -> dict:
     """Installed models, what can be downloaded, and the fixed support models."""
     from app.core.paths import resolve_models_dir
     from app.services.model_catalog import recommend_stack
+    from app.services.local_models import local_llama_runtime
     from app.services.model_discovery import discover_chat_models
 
     stack = recommend_stack()
@@ -175,6 +176,7 @@ def _local_state() -> dict:
         "embed": stack.get("embed"),
         "reranker": stack.get("reranker"),
         "media": _media_rows(),
+        "runtime": local_llama_runtime.status(),
     }
 
 

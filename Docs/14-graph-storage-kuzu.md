@@ -12,13 +12,13 @@
 
 - The per-KB Kuzu database file (`DATA_DIR/kuzu/<slug>/kuzu_graph`, default KB: `DATA_DIR/kuzu/kuzu_graph`) and its `.wal`.
 - Schema bootstrap (idempotent DDL in `_SCHEMA_STMTS`) and a process-wide `threading.RLock` per `GraphService` instance that serialises every Cypher statement.
-- Structural facts only: which node IDs exist, their `kind`/`name`/`type`, which note REFERENCES which entity, SEMANTIC_REL edges with their provenance (`note_id`, timestamps, `mention_count` — the score columns are schema-only), community membership (MEMBER_OF / CONTAINS), and persisted 3D coordinates (`pos_x/pos_y/pos_z`).
+- Structural facts only: which node IDs exist, their `kind`/`name`/`type`, which note REFERENCES which entity, SEMANTIC_REL edges with their provenance (`note_id`, timestamps, `mention_count` — the score columns are schema-only), community membership (MEMBER_OF / CONTAINS). No layout is persisted; `get_full_3d_graph` computes one per request.
 - The 3D layout algorithms (`backend/app/utils/graph_layout.py`) whose outputs are persisted to Kuzu.
 - The `GET /api/v1/graph/*` visualisation/autocomplete endpoints and the `/api/v1/admin/*` maintenance endpoints that drive rebuilds.
 
 **Does NOT own**
 
-- Node *content*: `description`, `facts`, `isolated_contexts`, `potential_questions`, `themes`, `member_count`, `community_level`, relationship `natural_language`. All of that is Qdrant payload (`*_node_cores`, `*_node_relationships`, `*_node_isolated_contexts`) and Meilisearch documents — see [15](15-search-indexes-qdrant-meilisearch.md). `GraphService` reads them through its injected `QdrantService` to assemble detail payloads, but never writes them except through `upsert_node_core` for community/digest nodes.
+- Node *content*: `description`, `isolated_contexts`, `community_level`, relationship `natural_language`. All of that is Qdrant payload (`*_node_cores`, `*_node_relationships`, `*_node_isolated_contexts`) and Meilisearch documents — see [15](15-search-indexes-qdrant-meilisearch.md). `GraphService` reads them through its injected `QdrantService` to assemble detail payloads, but never writes them except through `upsert_node_core` for community/digest nodes.
 - Name → ID resolution for entities. `GraphService.resolve_node_id` delegates to `QdrantService.find_node_id_by_name`; Kuzu's own name index is only a fallback (`find_nodes_by_exact_names`).
 - Entity/relationship extraction (LLM) and the decision of *what* to write — that is `backend/app/workflows/ingestion.py` ([10](10-ingestion-pipeline.md)). This doc documents the write contracts those call sites rely on.
 - Leiden/community *summaries* (LLM prompts) — generated in `IngestionWorkflow`; only the resulting node/edges are stored here.
@@ -29,7 +29,7 @@
 | Path | Purpose | Key exports |
 |---|---|---|
 | `backend/app/services/graph.py` | Kuzu-backed `GraphService`; schema DDL; all Cypher | `GraphService`, `graph_service` (default-KB singleton), `_SCHEMA_STMTS` |
-| `backend/app/utils/graph_layout.py` | Pure-Python deterministic 3D layouts | `compute_solar_positions`, `compute_spring_layout_3d`, `SOLAR_*` constants, `_fibonacci_sphere`, `_deterministic_jitter`, `_majority_key` |
+| `backend/app/utils/graph_layout.py` | Pure-Python deterministic 3D layout | `compute_solar_positions`, `SOLAR_*` constants, `_fibonacci_sphere`, `_deterministic_jitter`, `_majority_key` |
 | `backend/app/api/graph.py` | FastAPI router: 3D full graph, node detail, entity autocomplete, text scan, note subgraph | `router`, `ScanTextInput`, `_apply_meili_content`, `_needs_title` |
 | `backend/app/api/admin.py` | FastAPI router: maintenance status, rebuild communities, temporal digests, reset, reingest | `router`, `TemporalDigestInput` |
 | `backend/app/services/kb_registry.py` | Per-KB Kuzu path derivation/repair and lazy `GraphService` construction | `_kuzu_db_file`, `normalize_kuzu_path`, `KBContext.graph`, `KBRegistry._cleanup_stores` |
@@ -48,7 +48,7 @@ flowchart LR
     subgraph Writers
         ING["IngestionWorkflow._write_ontology<br/>(note node, entity nodes, REFERENCES, SEMANTIC_REL)"]
         SUM["IngestionWorkflow._update_node_summary<br/>(MERGE indexable stub)"]
-        LEI["IngestionWorkflow.rebuild_leiden_communities<br/>(community nodes, MEMBER_OF, CONTAINS, pos_x/y/z)"]
+        LEI["IngestionWorkflow.rebuild_leiden_communities<br/>(community nodes, MEMBER_OF, CONTAINS)"]
         DIG["IngestionWorkflow.build_temporal_digests<br/>(temporal_digest nodes)"]
         DEL["api/notes.py delete_note<br/>(DETACH DELETE note + orphans)"]
         ADM["api/admin.py reset-ingestion-data<br/>(wipe_all_nodes)"]
@@ -77,9 +77,6 @@ erDiagram
         STRING kind "note | indexable | community | temporal_digest"
         STRING name "lowercase for indexable; title-cased for note/community/digest"
         STRING type "entity type (lowercase, default 'thing'/'unknown') | 'community' | 'temporal_digest' | NULL for notes"
-        DOUBLE pos_x "spring-layout x (nullable)"
-        DOUBLE pos_y
-        DOUBLE pos_z
     }
     Node ||--o{ REFERENCES : "note -> indexable"
     REFERENCES {
@@ -105,8 +102,6 @@ erDiagram
         STRING last_updated "ISO-8601 naive UTC"
         INT64 mention_count
         STRING note_id "first note that asserted the edge"
-        BOOLEAN is_similarity "legacy; never written"
-        STRING created_at "legacy; never written"
     }
 ```
 
@@ -197,7 +192,6 @@ All Kuzu work is synchronous. Every API call site wraps it in `asyncio.to_thread
 ```cypher
 CREATE NODE TABLE IF NOT EXISTS Node(
     id STRING, kind STRING, name STRING, type STRING,
-    pos_x DOUBLE, pos_y DOUBLE, pos_z DOUBLE,
     PRIMARY KEY(id))
 CREATE REL TABLE IF NOT EXISTS REFERENCES(FROM Node TO Node, note_id STRING)
 CREATE REL TABLE IF NOT EXISTS MEMBER_OF(FROM Node TO Node, level INT64)
@@ -205,9 +199,10 @@ CREATE REL TABLE IF NOT EXISTS CONTAINS(FROM Node TO Node)
 CREATE REL TABLE IF NOT EXISTS SEMANTIC_REL(FROM Node TO Node,
     rel_type STRING, confidence DOUBLE, strength DOUBLE, relevance DOUBLE,
     edge_weight DOUBLE, relationship_id STRING, ingested_at STRING,
-    last_updated STRING, mention_count INT64, note_id STRING,
-    is_similarity BOOLEAN, created_at STRING)
+    last_updated STRING, mention_count INT64, note_id STRING)
 ```
+
+`pos_x/pos_y/pos_z`, `is_similarity` and `created_at` were dropped from the DDL; a database created earlier keeps them as empty columns (`IF NOT EXISTS` never alters), and nothing reads or writes them.
 
 ### 5.2 `Node` properties
 
@@ -217,16 +212,15 @@ CREATE REL TABLE IF NOT EXISTS SEMANTIC_REL(FROM Node TO Node,
 | `kind` | STRING | `ON CREATE SET` in every MERGE | `note`, `indexable`, `community`, `temporal_digest`. Replaces Neo4j labels (`:Note`, `:Indexable`, `:Community`). Never NULL for rows written by current code, but rows created by `create_or_update_relationship`'s endpoint MERGE get `kind='indexable'` **and nothing else** (no name/type). |
 | `name` | STRING | `_write_ontology` (entities: normalised lowercase; note: title as-is, `"Untitled"` fallback), `create_leiden_community`, `create_temporal_digest_node`, `main._migrate_stores` one-time note-name backfill | Entity names are lowercase; all lookups use `toLower(n.name)` anyway. |
 | `type` | STRING | `_write_ontology` (`node.type.strip().lower()` → `"thing"` if empty → `"unknown"` at the UNWIND site if still falsy), communities (`'community'`), digests (`'temporal_digest'`) | Notes have `type` NULL. `get_full_3d_graph` maps NULL → `"unknown"`. |
-| `pos_x`,`pos_y`,`pos_z` | DOUBLE | `store_node_positions` (after each community rebuild) | NULL until the first successful rebuild. **Not read by any current endpoint** — `get_full_3d_graph` recomputes positions on the fly with `compute_solar_positions` (see §11.4). |
 
 ### 5.3 Relationship tables
 
 | Table | From → To (by convention) | Properties | Writer | Readers |
 |---|---|---|---|---|
 | `REFERENCES` | note → indexable | `note_id STRING` (= from-node id; redundant but used via `coalesce(r.note_id, note.id)`) | `_write_ontology` `query_nodes` | `_hop_query`, `get_related_nodes`, `get_linked_evidence_by_node_ids`, `get_notes_referencing_node`, `delete_note` orphan query |
-| `MEMBER_OF` | indexable → community | `level INT64` | `set_node_community_membership` | `get_full_3d_graph`, `get_all_node_ids_and_edges`, `get_node_detail`, `clear_all_communities` |
+| `MEMBER_OF` | indexable → community | `level INT64` | `set_node_community_membership` | `get_full_3d_graph`, `get_node_detail`, `clear_all_communities` |
 | `CONTAINS` | community → indexable | none | `create_leiden_community` (best-effort, errors logged at DEBUG) | nothing reads it; it is the inverse of MEMBER_OF kept for future traversals |
-| `SEMANTIC_REL` | indexable → indexable | see §7 | `create_or_update_relationship` | `_hop_query`, `get_related_nodes`, `get_all_node_ids_and_edges`, `get_full_3d_graph` |
+| `SEMANTIC_REL` | indexable → indexable | see §7 | `create_or_update_relationship`, `clear_note_contribution` | `_hop_query`, `get_related_nodes`, `get_full_3d_graph`, `delete_orphan_entities` |
 
 Kuzu rel tables permit multiple edges between the same pair; the code relies on this for distinct `rel_type`s between two nodes, and de-duplicates by `rel_type` itself (§7.3).
 
@@ -251,7 +245,7 @@ From the module docstring plus what the code actually uses:
 | parameters | `$name`; lists and lists-of-maps (`UNWIND $rows AS row … row.node_id`) work as parameters |
 | `MERGE … ON CREATE SET … ON MATCH SET …` | supported |
 | `DETACH DELETE` | supported |
-| `UNION` | supported (`get_all_node_ids_and_edges` unions two RETURNs; the trailing `LIMIT 5000` applies to the union) |
+| `UNION` | supported; a trailing `LIMIT` applies to the whole union, so cap each branch or fetch them separately (no current query uses it) |
 | `CASE WHEN … THEN … ELSE … END`, `coalesce`, `toLower`, `size`, `STARTS WITH`, `CONTAINS`, `collect(DISTINCT {…})` | all used and working |
 
 ## 6. Node identity & naming
@@ -312,7 +306,7 @@ Steps:
 
 ### 7.2 Columns never written by current code
 
-`is_similarity` and `created_at` are declared but never set (always NULL). They are leftovers of the bi-temporal design (033589d added `valid_from/valid_to/ingested_at/is_active`, and similarity edges); da75dfc "removed substantial bi-temporal / relationship evolution logic". The ingestion caller still checks `result["action"] in ("created", "evolved")` — `"evolved"` can no longer occur.
+`is_similarity` and `created_at` are no longer declared (old DBs keep them, always NULL). They were leftovers of the bi-temporal design (033589d added `valid_from/valid_to/ingested_at/is_active`, and similarity edges); da75dfc "removed substantial bi-temporal / relationship evolution logic". The ingestion caller still checks `result["action"] in ("created", "evolved")` — `"evolved"` can no longer occur.
 
 ### 7.3 Identity of an edge
 
@@ -324,7 +318,7 @@ An edge is identified by the triple `(source.id, target.id, rel_type)` and is **
 |---|---|---|
 | `confidence` | schema-only (never written since 2026-09-19; NULL on every edge) | `_hop_query` still returns `coalesce(r.confidence, 1.0)` as `confidence_path` and the var-length query `coalesce(r.confidence, 0.0)` — so retrieval always sees the fallback constants and does nothing with them (the in-code comment "Confidence filtering is done in Python below" is stale; see §18). |
 | `strength`, `relevance`, `edge_weight` | schema-only (never written since 2026-09-19) | not read by any query today |
-| `mention_count` | reinforcement counter | not read by any query today |
+| `mention_count` | reinforcement counter | `clear_note_contribution` decrements it for the note's own edges and deletes at 0 |
 | `note_id` | first asserting note | not read by any query today (REFERENCES.note_id is what evidence lookups use) |
 
 ## 8. Note ↔ entity linkage (`REFERENCES`)
@@ -379,7 +373,7 @@ After the vault file and SQLite rows are gone (so a graph failure cannot strand 
 3. `kb.qdrant.delete_node(note_id)`, `kb.meili.delete_node(note_id)`.
 4. For each orphan: `MATCH (n:Node {id:$id}) DETACH DELETE n` (this also removes its `SEMANTIC_REL`, `MEMBER_OF`, `CONTAINS` edges), then Qdrant/Meili delete.
 
-Response includes `orphans_removed`. Community nodes are not recounted; a community may keep dangling `member_count`-style content in Qdrant until the next rebuild. Relationship points in Qdrant `*_node_relationships` that referenced the orphan are **not** deleted (`delete_node` only clears cores + contexts) — they become dangling until a community rebuild does not touch them either; see [15](15-search-indexes-qdrant-meilisearch.md).
+Response includes `orphans_removed`. Community nodes are not recounted; a community may keep dangling `member_count`-style content in Qdrant until the next rebuild. `qdrant.delete_node` also removes every `*_node_relationships` point whose `source_node_id`/`target_node_id` is the orphan. Re-ingest uses the same rule through `GraphService.clear_note_contribution` + `delete_orphan_entities` (§7.4); the route still runs its own inline orphan query and could call those instead.
 
 ## 9. Communities ("Leiden")
 
@@ -410,7 +404,7 @@ Member sets are transitive: an L1 community's `member_entity_ids` is the union o
 5. Qdrant `upsert_node_relationships` of one membership sentence per member: `"{member name} is a member of the '{name}' community."`, `relationship_id=f"community_rel_{community_id}_{nid}"`, `source_node_id=nid`, `target_node_id=community_id`, `is_community_rel=True`. This sentence is the **only** retrieval-visible signal of membership.
 6. `GraphService.set_node_community_membership(member_ids, community_id, level)`: `MATCH (c {id}) UNWIND $node_ids AS id MATCH (n {id}) MERGE (n)-[r:MEMBER_OF]->(c) SET r.level=$level`. Unknown ids silently produce no rows.
 
-After all levels: one batched `MeilisearchService.update_nodes_community(rows)` refreshes `relationship_natural_language` and `name` on every assigned entity document (NL fetched from Qdrant `get_relationships_for_node_ids`), then the spring layout is recomputed and persisted (§11.2).
+After all levels: one batched `MeilisearchService.update_nodes_community(rows)` refreshes `relationship_natural_language` and `name` on every assigned entity document (NL fetched from Qdrant `get_relationships_for_node_ids`). Nothing is laid out or persisted here — positions are computed per request (§11).
 
 ### 9.4 Where community data lives
 
@@ -420,7 +414,6 @@ After all levels: one batched `MeilisearchService.update_nodes_community(rows)` 
 | level | **only as `MEMBER_OF.level` on member edges** (`get_full_3d_graph` derives it; "community_level is not stored on the community node itself") | payload `community_level` | doc `community_level` (filterable) |
 | summary / description | — | payload `description` | — |
 | membership | `MEMBER_OF` (entity→community), `CONTAINS` (community→entity) | `*_node_relationships` points with `is_community_rel=True` | entity doc `relationship_natural_language` contains the membership sentence |
-| `themes`, `member_count`, `domain`, `status` | — | read by `get_node_detail` from payload but **never written** by current code → always empty/0 | — |
 
 ### 9.5 Clearing (`clear_all_communities() -> list[str]`)
 
@@ -468,7 +461,7 @@ The pending count comes from `_queue_leiden_recompute_if_due(note_id)`: the numb
 | Gates | The method itself returns 0 when `settings.TEMPORAL_DIGESTS_ENABLED` is False (default False) — so, contrary to the admin endpoint's docstring ("this manual endpoint is always available"), the endpoint returns `started` but the job no-ops when the flag is off. Also returns 0 (and relies on the timer restarting later) if `_tracker.has_active_ingestions()`. |
 | Cancellation | `_tracker.cancel_temporal` checked between buckets; on cancel, reschedules itself via a fresh timer if no ingestion is active. |
 | Status | `get_maintenance_status()["temporal_digests"]["running"]` (`_temporal_digest_running` flag; not reset on unexpected exceptions — a crash mid-run leaves it `True` until the next successful run). |
-| Visibility | Not part of `get_full_3d_graph` (filters `kind IN ['indexable','note','community']`), not returned by `get_node_detail`, not counted by `get_all_node_ids_and_edges`. Only retrieval sees them (via Qdrant cores / Meili). |
+| Visibility | Not part of `get_full_3d_graph` (filters `kind IN ['indexable','note','community']`), not returned by `get_node_detail`. Only retrieval sees them (via Qdrant cores / Meili). |
 
 ## 11. 3D positions & layout algorithms
 
@@ -480,22 +473,9 @@ Both algorithms are in `backend/app/utils/graph_layout.py`, pure Python, no RNG 
 - `_deterministic_jitter(seed, max_offset) -> (jx,jy,jz)`: three bytes of `md5(seed)` mapped to `[-max_offset, +max_offset]`. Same seed → same offset; used to avoid z-fighting.
 - `_majority_key(votes)`: `max(votes, key=votes.__getitem__)` — ties resolve to the first-inserted max key (dict order), which is deterministic given deterministic input order.
 
-### 11.2 `compute_spring_layout_3d(node_ids, edges, k=220.0, iterations=80, gravity=0.02)` — Fruchterman–Reingold
+### 11.2 Spring layout — removed
 
-Called from `rebuild_leiden_communities` after communities are written, on `get_all_node_ids_and_edges()`:
-- nodes: `kind IN ['indexable','note','community']`
-- edges: `DISTINCT` `SEMANTIC_REL` pairs `UNION` `MEMBER_OF` pairs, **`LIMIT 5000` on the union**.
-
-Algorithm:
-1. `n==0 → {}`, `n==1 → {id: (0,0,0)}`.
-2. Initial positions on a Fibonacci sphere of radius `k·max(n^(1/3), 1.5)` in `node_ids` order.
-3. Edges normalised to undirected unique pairs, self-loops and unknown endpoints dropped.
-4. For `step` in `range(iterations)`: temperature `t = 2.5k · (0.5 + 0.5·cos(π·step/iterations))` (cosine anneal); repulsion for all pairs `f = k²/d` (O(n²)); attraction along edges `f = d²/k`; gravity `−pos·gravity`; each node moves `min(|disp|, t)` along `disp`.
-5. Result `{id: (float,float,float)}` persisted by `store_node_positions` in UNWIND batches of 500 (`MATCH (n {id: row.node_id}) SET n.pos_x=row.x, …`), with per-row fallback if a batch fails.
-
-Determinism: no RNG, but the initial placement depends on the **order** of `node_ids` as returned by Kuzu, which is scan order, not guaranteed stable across rebuilds. Cost: `n=500` → 80 × 125 k pair evaluations in pure Python (a few seconds); the code comment sets the expected ceiling at "n ≤ ~500".
-
-**Important:** these persisted `pos_*` values are currently **not read by any endpoint**. `get_full_3d_graph` recomputes a solar layout per request (§11.3). The spring layout is effectively a write-only cache retained from commit b84ca73/8de5cda's "batch … Kuzu position writes" work.
+The Fruchterman–Reingold spring layout that `rebuild_leiden_communities` used to compute and persist as `pos_x/pos_y/pos_z` (`compute_spring_layout_3d`, `get_all_node_ids_and_edges`, `store_node_positions`) was write-only — no endpoint read it — and was deleted. Community rebuilds no longer run an O(n²) layout pass.
 
 ### 11.3 `compute_solar_positions(communities, node_level_map, all_node_ids=None)` — hierarchical "solar system"
 
@@ -518,7 +498,7 @@ Output: `{id: (x,y,z)}` for every community id and every id in `all_node_ids` (t
 
 ### 11.4 Which layout does the UI see?
 
-`GET /api/v1/graph/3d/full` → `GraphService.get_full_3d_graph()` → `compute_solar_positions`. The docstring of the endpoint ("flat spring-layout 3D graph … with pre-computed positions") and of `graph_layout.py` ("stored on community recompute for the nested 3D graph") describe the *previous* split; today the endpoint is solar-on-the-fly and the stored spring positions are unused. If communities do not exist, every node is a "truly orphan" node scattered in the 80–2520 shell.
+`GET /api/v1/graph/3d/full` → `GraphService.get_full_3d_graph()` → `compute_solar_positions`, computed per request; nothing is persisted (the endpoint and `graph_layout.py` docstrings say so). If communities do not exist, every node is a "truly orphan" node scattered in the 80–2520 shell.
 
 ## 12. `GraphService` public API (method by method)
 
@@ -540,15 +520,13 @@ Conventions: every method returns plain Python (`list[dict]` rows keyed by Cyphe
 | `create_temporal_digest_node` | `(node_id, name, summary, period_key) -> None` | §10; Qdrant failure logged, not raised | — | `build_temporal_digests` |
 | `set_node_community_membership` | `(node_ids, community_id, community_level) -> None` | one UNWIND MERGE of `MEMBER_OF` with `SET r.level` | — | `_commit_community` |
 | `create_leiden_community` | `(community_id, community_level, name, summary, member_node_ids) -> dict` | §9.3 step 3 | `{"community_id"}` | `_commit_community` |
-| `get_node_storage_payload` | `(node_id) -> dict|None` | Kuzu existence check (`RETURN n.id, [n.kind] AS labels`) then Qdrant `get_node_content_by_id` + `get_relationships_for_node_ids` | `{node_id, labels, name, description, facts, potential_questions, isolated_contexts, community_level, relationship_natural_language}` (`facts`/`potential_questions` are always `[]` — Qdrant no longer returns them) | none currently (kept for API compatibility) |
+| `get_node_storage_payload` | `(node_id) -> dict|None` | Kuzu existence check (`RETURN n.id, [n.kind] AS labels`) then Qdrant `get_node_content_by_id` + `get_relationships_for_node_ids` | `{node_id, labels, name, description, isolated_contexts, community_level, relationship_natural_language}` | none currently (kept for API compatibility) |
 | `get_linked_evidence` | `(node_names, limit_per_node=3) -> list[dict]` | §8.2 | `[{node_id, evidence:[{id,title}], node_name}]` | `RetrievalService` |
 | `get_linked_evidence_by_node_ids` | `(node_ids, limit_per_node=3, node_id_to_name=None) -> list[dict]` | §8.2 | same | `RetrievalService`, `get_linked_evidence` |
 | `create_or_update_relationship` | §7.1 | §7.1 | `{action, …}` | `_write_ontology` |
 | `_hop_query` (private but load-bearing) | `(direction: "->"|"<-") -> str` | template: `MATCH (start:Node {id:$node_id})-[r:SEMANTIC_REL|REFERENCES]->(related:Node) RETURN DISTINCT related.id AS node_id, related.name AS name, related.kind AS label, 1 AS depth, [CASE WHEN label(r)='SEMANTIC_REL' THEN r.rel_type ELSE label(r) END] AS relationship_path, [coalesce(r.confidence,1.0)] AS confidence_path, [NULL] AS context_path, [NULL] AS natural_language_path ORDER BY name` | Cypher string | `get_related_nodes`, `get_node_connections` |
 | `get_related_nodes` | `(node_name, max_depth=2, node_id=None) -> list[dict]` | `node_id or resolve_node_id(name)`; none → `[]`. **depth 1:** runs outgoing then incoming `_hop_query`, tags `edge_direction`, dedups by `node_id` keeping outgoing, sorts by name. **depth>1:** `MATCH path=(start {id})-[:SEMANTIC_REL|REFERENCES*1..N]-(related) WITH related, relationships(path) AS rels, length(path) AS depth RETURN DISTINCT … [rel IN rels | CASE WHEN label(rel)='SEMANTIC_REL' THEN rel.rel_type ELSE label(rel) END] AS relationship_path, [rel IN rels | coalesce(rel.confidence,0.0)] AS confidence_path, … ORDER BY depth LIMIT 200` (undirected, no `edge_direction`, no confidence filtering despite the comment) | rows `{node_id,name,label,depth,relationship_path,confidence_path,context_path,natural_language_path[,edge_direction]}` | `RetrievalService` (depth 1 with known id), `api/graph.py note-subgraph` (depth 1 by name) |
-| `get_all_node_ids_and_edges` | `() -> (list[str], list[(str,str)])` | §11.2 | ids, edges | `rebuild_leiden_communities` |
 | `get_full_3d_graph` | `() -> dict` | §13.1 | `{nodes, edges}` | `GET /graph/3d/full` |
-| `store_node_positions` | `(positions: dict[str,(x,y,z)]) -> None` | §11.2 | — | `rebuild_leiden_communities` |
 | `get_node_connections` | `(node_id, *, limit=16) -> list[dict]` | both `_hop_query` directions by **id** (no Qdrant), dedup, sort by lowercase name, slice `[:max(1,limit)]` | hop rows + `edge_direction` | `get_node_detail` |
 | `get_notes_referencing_node` | `(node_id, *, limit=8) -> list[dict]` | §8.2 | `[{note_id, name}]` (`"Untitled note"` fallback) | `get_node_detail` |
 | `get_node_detail` | `(node_id) -> dict|None` | §13.2 | detail dict | `GET /graph/3d/node/{id}` |
@@ -590,9 +568,9 @@ Service payload:
 {
   "node_id": "…", "name": "…", "node_type": "person|…|community",
   "description": "<Qdrant description>",
-  "isolated_contexts": ["…"], "facts": [], "domain": null, "status": null,
+  "isolated_contexts": ["…"],
   "community_id": "community_l2_…", "community_name": "…",
-  "summary": "<same as description>", "themes": [], "member_count": 0,
+  "summary": "<same as description>",
   "connections": [{"node_id": "…", "name": "…", "kind": "indexable|note|community",
                    "relationship": "plays|REFERENCES|…", "direction": "outgoing|incoming"}],
   "related_notes": [{"note_id": "…", "name": "<note title>"}]
@@ -649,7 +627,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 | Direction | Contract |
 |---|---|
 | `KBRegistry` → `GraphService` | Constructs one instance per KB with `GraphService(db_path=<normalised kuzu_path>, qdrant=<that KB's QdrantService>)`, lazily on `KBContext.graph`. Default KB reuses the module singleton `graph_service`. `delete_kb` closes and deletes the file. |
-| `IngestionWorkflow` → `GraphService` | `execute_query` (note MERGE, entity+REFERENCES UNWIND, indexable MERGE in `_update_node_summary`, 1-hop neighbour query), `find_nodes_by_exact_names`, `find_nodes_by_name(fuzzy=False)`, `create_or_update_relationship`, `get_indexable_nodes_for_communities`, `clear_all_communities`, `create_leiden_community`, `set_node_community_membership`, `get_all_node_ids_and_edges`, `store_node_positions`, `clear_all_temporal_digests`, `create_temporal_digest_node`. Contract: entity ids supplied by ingestion are canonical; the graph never mints entity ids. |
+| `IngestionWorkflow` → `GraphService` | `execute_query` (note MERGE, entity+REFERENCES UNWIND, indexable MERGE in `_update_node_summary`, 1-hop neighbour query), `find_nodes_by_exact_names`, `find_nodes_by_name(fuzzy=False)`, `create_or_update_relationship`, `get_indexable_nodes_for_communities`, `clear_all_communities`, `create_leiden_community`, `set_node_community_membership`, `clear_all_temporal_digests`, `create_temporal_digest_node`, `clear_note_contribution`, `delete_orphan_entities`. Contract: entity ids supplied by ingestion are canonical; the graph never mints entity ids. |
 | `RetrievalService` → `GraphService` | Reads only: `find_nodes_by_name`, `find_name_variants_batch`, `get_related_nodes(name, max_depth=1, node_id=…)`, `get_linked_evidence`, `get_linked_evidence_by_node_ids`. Row shapes in §12 are the contract retrieval parses (`node_id`, `name`, `labels`/`label`, `entity_type`, `relationship_path`, `confidence_path`, `edge_direction`, `evidence`). |
 | `GraphService` → `QdrantService` | `find_node_id_by_name`, `find_node_ids_by_names`, `get_node_content_by_id`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `upsert_node_core` (community/digest), `delete_community_relationships`. The Qdrant instance must be the same KB's. |
 | `GraphService` → `EmbeddingService` | `embed_documents([summary])` for community and digest vectors; imported lazily inside the methods to avoid the `graph ↔ embedding ↔ local_models` import cycle. |
@@ -667,7 +645,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 6. **Entity ids are minted only by ingestion, only after both stores miss, and the Qdrant stub write must succeed** (otherwise the ingest raises). Never create an entity node in Kuzu from another path without also writing its `node_cores` point.
 7. **Entity names are stored lowercase** and all matching lowercases both sides.
 8. **`kind` is the label.** New code must filter on `n.kind`; there are no Kuzu labels beyond `Node`.
-9. **Batch/limit constants** (change deliberately, they bound response sizes): `store_node_positions` chunk 500; `get_all_node_ids_and_edges` union `LIMIT 5000`; `get_full_3d_graph` semantic edges `LIMIT 4000`; `get_related_nodes` depth>1 `LIMIT 200`; `find_nodes_by_name` `LIMIT 50`; `get_node_connections` 16; `get_notes_referencing_node` 8; `scan-text` 40 candidates.
+9. **Batch/limit constants** (change deliberately, they bound response sizes): `get_full_3d_graph` semantic edges `LIMIT 4000`; `get_related_nodes` depth>1 `LIMIT 200`; `find_nodes_by_name` `LIMIT 50`; `get_node_connections` 16; `get_notes_referencing_node` 8; `scan-text` 40 candidates.
 10. **Never call Kuzu on the event loop** — wrap in `asyncio.to_thread` or run in `BackgroundTasks`.
 11. **Schema is bootstrap-only.** Adding/removing properties requires a manual `ALTER` or a DB reset; `reset-ingestion-data` does not drop tables.
 12. **Deletion is contained** to `DATA_DIR/kuzu` (`_cleanup_stores`) and to app-provisioned vaults.
@@ -687,9 +665,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 | Qdrant unavailable during community/digest build | Kuzu nodes/edges are written; `upsert_node_core` failure is logged; Meili is still indexed; detail endpoint falls back to Meili content. |
 | Embedding dims mismatch | `QdrantService._prepare_vector` raises `ValueError` inside `upsert_node_core`; caught in `GraphService` (warn) — community/digest node lacks a vector; in `_write_ontology` stub upserts return False → abort. |
 | Rebuild cancelled mid-way | Returns partial count; KB has a partial hierarchy until reschedule (communities were cleared first). Status shows `needed=true`. |
-| Layout computation error | Caught, WARNING, communities remain valid; positions stale/NULL. |
-| `store_node_positions` batch error | Falls back to per-row writes; per-row errors DEBUG-logged and skipped. |
-| >4000 semantic edges / >5000 union edges | Silently truncated in the 3D payload / spring input. |
+| >4000 semantic edges | Silently truncated in the 3D payload. |
 | `normalize_kuzu_path` persistence errors in `_load` | WARNING, continue with whatever path resolves. |
 | `temporal_digest` run raises unexpectedly | `_temporal_digest_running` is left `True` (only reset on normal/handled exits) → status shows running until the next successful run or restart. |
 | Kuzu parser assertion (`KU_UNREACHABLE`) | Native assertion in the Kuzu binary; may abort the process rather than raise. Avoid the forbidden constructs (§16.1). |
@@ -698,14 +674,14 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 
 1. **"Leiden" is not Leiden.** It is a greedy cosine-threshold merge over embeddings (plain numpy); SEMANTIC_REL topology is ignored by community detection.
 2. **`KUZU_DB_PATH` from env is ignored**; only `DATA_DIR` matters.
-3. **`pos_x/pos_y/pos_z` are written but never read.** `/graph/3d/full` computes a solar layout per request. Both module docstrings describing "stored spring positions for the flat graph" are stale.
+3. **No layout is persisted.** `/graph/3d/full` computes a solar layout per request; the write-only spring layout (`pos_x/pos_y/pos_z`, `compute_spring_layout_3d`, `store_node_positions`) was removed.
 4. **Feature flags default to `False` in code but `true` in `.env.example`.** Desktop builds without a `.env` get no automatic community detection or digests unless `runtime_config.json` sets them.
 5. **`POST /admin/build-temporal-digests` returns `started` but does nothing when `TEMPORAL_DIGESTS_ENABLED` is False**, contradicting its docstring. `rebuild-communities` really does ignore its flag.
 6. **`COMMUNITY_IDLE_SECONDS=120` is a constant.**
 7. **Unit tests.** `backend/tests/unit/test_graph_queries.py` covers `get_related_nodes` (depth 1 and the depth>1 Cypher shape); the tests for `find_paths_between_nodes` / `min_confidence` (removed in da75dfc) were deleted on 2026-09-19. `test_graph_layout.py` is current.
 8. **`get_related_nodes` depth>1 is undirected, unfiltered and has no `edge_direction`**; the "Confidence filtering is done in Python below" comment describes removed code. Depth 1 returns `coalesce(confidence,1.0)`, depth>1 `coalesce(confidence,0.0)`.
 9. **Reinforcement is first-write-wins** for `relationship_id`, `note_id`, `ingested_at`; only `mention_count` and `last_updated` evolve.
-10. **REFERENCES edges are never removed on re-ingest**, only on note delete.
+10. **Re-ingest removes the note's own REFERENCES first** (`clear_note_contribution`) and sweeps the entities it alone kept alive (`delete_orphan_entities`).
 11. **Notes are "indexable" for name lookup** (`kind IN ['indexable','note']`), so `find_nodes_by_name("meeting")` can return note titles.
 12. **`get_node_detail.community_id` is an arbitrary one** of the node's up-to-three communities (`OPTIONAL MATCH … LIMIT 1`), while `get_full_3d_graph.community_id` is the finest level.
 13. **Community level lives on `MEMBER_OF.level`, not on the community node**; Qdrant payload also has it.
@@ -713,21 +689,21 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 15. **The ingestion tracker's cancel events are process-global** (its counters, timers and callbacks are per KB), so an ingest in one KB still cancels another KB's running rebuild.
 16. **Importing `app.services.graph` opens the default Kuzu DB** — tests must patch `kuzu.Database`/`kuzu.Connection` first (`_get_graph_service_class` pattern); any script importing `app.services.*` while the backend runs will contend for the file.
 17. **`KBRegistry.delete_kb` evaluates `ctx.graph` to close it**, opening a never-opened DB just to close it.
-18. **`is_similarity`, `created_at` are never written; `"evolved"` is never returned**; `get_node_storage_payload.facts/potential_questions` are always empty; `get_node_detail.themes/member_count/domain/status` are always empty.
+18. **`"evolved"` is never returned** by `create_or_update_relationship` (the caller still accepts it).
 19. **Default `type` differs by path**: `_write_ontology` → `"thing"` then `"unknown"` at the UNWIND site if falsy; `_update_node_summary` → `"unknown"` in Kuzu but `"thing"` in Qdrant; notes → NULL → `"unknown"` in the 3D payload.
 20. **`ingested_at`/`last_updated` are naive `utcnow().isoformat()` strings** — compare lexicographically, do not parse as tz-aware.
-21. **`delete_note` leaves Qdrant `*_node_relationships` points for deleted orphans** (`delete_node` clears cores+contexts only).
-22. **`get_all_node_ids_and_edges`' `LIMIT 5000` applies to the whole `UNION`**, so MEMBER_OF edges can be starved by many SEMANTIC_REL edges; `get_full_3d_graph` avoids this by building MEMBER_OF edges from the unlimited membership query.
+21. **`delete_node` clears cores, contexts and relationship points** for the node; edges deleted by `clear_note_contribution` are dropped by id with `delete_relationships`.
+22. **`get_full_3d_graph` builds MEMBER_OF edges from the unlimited membership query**, so they are never starved by the semantic-edge `LIMIT 4000`.
 23. **Kuzu accepts `MERGE … ON CREATE SET … SET …`** (unconditional SET after ON CREATE) — the ingestion MERGEs rely on it.
 24. **`FACTS:` prefixes are scrubbed once, not at read time** (`strip_facts_prefixes` from `_migrate_stores`); a legacy description with no `". "` terminator became empty in that scrub.
 
 ## 19. Extension points / how to modify safely
 
 - **Add a `Node` property:** append it to the `CREATE NODE TABLE` in `_SCHEMA_STMTS` (fresh DBs) **and** add a guarded `ALTER TABLE Node ADD <col> <TYPE>` statement to `_init_schema` (existing DBs; ignore "already exist"). Update every `RETURN` that should expose it and the 3D/detail payload builders. Update §5 here and [22](22-data-directory-layout.md) if the on-disk layout changes.
-- **Add a relationship table:** new `CREATE REL TABLE IF NOT EXISTS X(FROM Node TO Node, …)`; decide whether `_hop_query`, `get_related_nodes`, `get_all_node_ids_and_edges`, `get_full_3d_graph`, and the `delete_note` orphan query should traverse it; add a `clear_*` if it is rebuilt wholesale.
-- **Add a node `kind`:** writer MERGE sets `kind`/`type`; add the kind to the `kind IN […]` filters where it should appear (`get_full_3d_graph`, `get_all_node_ids_and_edges`, `get_node_detail`, `find_nodes_by_name`), give it a `clear_all_<kind>` method, mirror it to Qdrant `node_cores` with `type=<kind>` and to Meili, and make sure retrieval filters (`type` conditions) treat it correctly ([16](16-retrieval-and-chat.md)).
+- **Add a relationship table:** new `CREATE REL TABLE IF NOT EXISTS X(FROM Node TO Node, …)`; decide whether `_hop_query`, `get_related_nodes`, `get_full_3d_graph`, `delete_orphan_entities` and the `delete_note` orphan query should traverse it; add a `clear_*` if it is rebuilt wholesale.
+- **Add a node `kind`:** writer MERGE sets `kind`/`type`; add the kind to the `kind IN […]` filters where it should appear (`get_full_3d_graph`, `get_node_detail`, `find_nodes_by_name`), give it a `clear_all_<kind>` method, mirror it to Qdrant `node_cores` with `type=<kind>` and to Meili, and make sure retrieval filters (`type` conditions) treat it correctly ([16](16-retrieval-and-chat.md)).
 - **Change community detection:** edit `_embedding_cluster` / thresholds / level loop in `IngestionWorkflow.rebuild_leiden_communities`; keep `_commit_community`'s write sequence (Kuzu node + CONTAINS + Qdrant core + Meili doc + NL membership points + MEMBER_OF) intact so layout, detail and retrieval keep working. Preserve the cancellation checkpoints.
-- **Change layout:** `backend/app/utils/graph_layout.py`; consumers are `get_full_3d_graph` (solar) and `rebuild_leiden_communities` (spring). Keep functions pure/deterministic; extend `backend/tests/unit/test_graph_layout.py`. If you make the frontend use stored `pos_*`, read them in `get_full_3d_graph` and drop the per-request solar computation.
+- **Change layout:** `backend/app/utils/graph_layout.py`; the only consumer is `get_full_3d_graph` (solar, per request). Keep functions pure/deterministic; extend `backend/tests/unit/test_graph_layout.py`. To persist positions instead, add the columns back and read them in `get_full_3d_graph`.
 - **Add a graph endpoint:** `backend/app/api/graph.py`, `Depends(get_kb)`, `asyncio.to_thread(kb.graph.<method>)`, add a wrapper to `frontend/src/lib/api.ts`, document in [07](07-api-reference.md).
 - **Add a `GraphService` method:** use `execute_query` with `$params`; prefer `UNWIND` batches over per-row loops (8de5cda/b84ca73 rationale); avoid var-length + predicate functions; add a unit test using the stubbed-Kuzu import pattern.
 - **Add config:** add to `Settings` in `config.py`, read it via `settings.<KEY>` at call time (not import time) so `runtime_config` overrides apply; document in [21](21-configuration-reference.md).

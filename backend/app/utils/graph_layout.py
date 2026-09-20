@@ -1,14 +1,9 @@
 """
 Deterministic 3D layout for the knowledge graph.
 
-Public algorithms:
-  - ``compute_solar_positions`` — hierarchical L0/L1/L2 solar-system layout
-    (stored on community recompute for the nested 3D graph).
-  - ``compute_spring_layout_3d`` — Fruchterman–Reingold spring layout
-    (flat “show everything” 3D graph after Leiden).
-
-Results are static ``{id: (x, y, z)}`` dicts persisted in Kuzu so the
-frontend does not run a physics simulation.
+``compute_solar_positions`` — hierarchical L0/L1/L2 solar-system layout,
+computed per request by ``GraphService.get_full_3d_graph`` (nothing is
+persisted) so the frontend does not run a physics simulation.
 """
 
 from __future__ import annotations
@@ -288,106 +283,3 @@ def compute_solar_positions(  # pylint: disable=too-many-locals,too-many-branche
                     positions[node_id] = (nx * r, ny * r, nz * r)
 
     return positions
-
-
-def compute_spring_layout_3d(  # pylint: disable=too-many-locals,too-many-statements
-    node_ids: list[str],
-    edges: list[tuple[str, str]],
-    k: float = 220.0,
-    iterations: int = 80,
-    gravity: float = 0.02,
-) -> dict[str, tuple[float, float, float]]:
-    """3D Fruchterman-Reingold spring layout.
-
-    Connected nodes are pulled together (attraction ∝ d²/k).
-    All node pairs are pushed apart (repulsion ∝ k²/d).
-    A gentle gravity toward origin prevents runaway nodes.
-
-    Args:
-        node_ids:   All nodes to lay out (Indexable + Community).
-        edges:      List of (source_id, target_id) pairs.
-        k:          Ideal edge length in world units (~distance between
-                    connected neighbours at equilibrium).
-        iterations: Number of simulation steps.
-        gravity:    Pull toward origin per unit distance (0 = no gravity).
-
-    Returns:
-        {node_id: (x, y, z)}
-    """
-    n = len(node_ids)
-    if n == 0:
-        return {}
-    if n == 1:
-        return {node_ids[0]: (0.0, 0.0, 0.0)}
-
-    init_radius = k * max(n ** (1 / 3), 1.5)
-    sphere = _fibonacci_sphere(n, init_radius)
-    pos: dict[str, list[float]] = {
-        nid: [sphere[i][0], sphere[i][1], sphere[i][2]]
-        for i, nid in enumerate(node_ids)
-    }
-
-    node_set = set(node_ids)
-    adj: set[tuple[str, str]] = set()
-    for src, tgt in edges:
-        if src in node_set and tgt in node_set and src != tgt:
-            a, b = (src, tgt) if src < tgt else (tgt, src)
-            adj.add((a, b))
-    adj_list = list(adj)
-
-    t_start = k * 2.5
-    for step in range(iterations):
-        progress = step / iterations
-        t = t_start * (0.5 + 0.5 * math.cos(math.pi * progress))
-
-        disp: dict[str, list[float]] = {nid: [0.0, 0.0, 0.0] for nid in node_ids}
-
-        # Repulsion: O(n²) — acceptable for personal-KB sizes (n ≤ ~500)
-        for i in range(n):
-            for j in range(i + 1, n):
-                u, v = node_ids[i], node_ids[j]
-                dx = pos[u][0] - pos[v][0]
-                dy = pos[u][1] - pos[v][1]
-                dz = pos[u][2] - pos[v][2]
-                d = math.sqrt(dx * dx + dy * dy + dz * dz) or 0.01
-                f = (k * k) / d
-                nx_, ny_, nz_ = dx / d, dy / d, dz / d
-                disp[u][0] += nx_ * f
-                disp[u][1] += ny_ * f
-                disp[u][2] += nz_ * f
-                disp[v][0] -= nx_ * f
-                disp[v][1] -= ny_ * f
-                disp[v][2] -= nz_ * f
-
-        for src, tgt in adj_list:
-            dx = pos[src][0] - pos[tgt][0]
-            dy = pos[src][1] - pos[tgt][1]
-            dz = pos[src][2] - pos[tgt][2]
-            d = math.sqrt(dx * dx + dy * dy + dz * dz) or 0.01
-            f = (d * d) / k
-            nx_, ny_, nz_ = dx / d, dy / d, dz / d
-            disp[src][0] -= nx_ * f
-            disp[src][1] -= ny_ * f
-            disp[src][2] -= nz_ * f
-            disp[tgt][0] += nx_ * f
-            disp[tgt][1] += ny_ * f
-            disp[tgt][2] += nz_ * f
-
-        if gravity > 0:
-            for nid in node_ids:
-                disp[nid][0] -= pos[nid][0] * gravity
-                disp[nid][1] -= pos[nid][1] * gravity
-                disp[nid][2] -= pos[nid][2] * gravity
-
-        for nid in node_ids:
-            dx, dy, dz = disp[nid]
-            d = math.sqrt(dx * dx + dy * dy + dz * dz) or 0.01
-            move = min(d, t)
-            pos[nid][0] += (dx / d) * move
-            pos[nid][1] += (dy / d) * move
-            pos[nid][2] += (dz / d) * move
-
-    return {
-        nid: (float(pos[nid][0]), float(pos[nid][1]), float(pos[nid][2]))
-        for nid in node_ids
-    }

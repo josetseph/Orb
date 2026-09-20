@@ -146,8 +146,11 @@ def _strip_prior_multimedia_enrichment(
     """
     if not content:
         return ""
+    # "<key>#<n>" is an image embedded in attachment <key>: kept with it.
     return EXTRACT_BLOCK_RE.sub(
-        lambda m: m.group(0) if keep is not None and _block_key(m.group(0)) in keep else "",
+        lambda m: m.group(0)
+        if keep is not None and _block_key(m.group(0)).split("#", 1)[0] in keep
+        else "",
         content,
     ).rstrip()
 
@@ -1019,24 +1022,28 @@ async def multimodal_node(
         # Images embedded in a .docx used to be invisible: the same picture
         # attached directly got described, but inside a Word file it was lost.
         # Expand them here, before the phases run, so they ride the existing
-        # image pass rather than forcing the model to reload later.
-        # ponytail: their blocks carry a temp-file src that never matches on
-        # the next run, so they are always orphaned and re-described; key them
-        # by docx url + index if that cost ever matters.
+        # image pass rather than forcing the model to reload later. Their
+        # blocks are keyed "<docx link>#<index>", so a re-ingest keeps them
+        # like any other attachment's instead of describing them again.
         docx_temp_images: list[str] = []
         for item in list(docx_files):
             try:
-                for path in await asyncio.to_thread(
-                    multimedia_service.extract_docx_images, item["url"]
+                for i, path in enumerate(
+                    await asyncio.to_thread(
+                        multimedia_service.extract_docx_images, item["url"]
+                    )
                 ):
                     docx_temp_images.append(path)
+                    link = f"{item['link']}#{i}"
+                    if attachment_key(link) in done:
+                        continue
                     images.append(
                         {
                             "emoji": "📎",
                             "filename": f"{item['filename']} — embedded image",
-                            "link": path,
+                            "link": link,
                             "url": path,
-                            "lower_url": path.lower(),
+                            "lower_url": attachment_key(link),
                         }
                     )
             except Exception as exc:  # pylint: disable=broad-exception-caught

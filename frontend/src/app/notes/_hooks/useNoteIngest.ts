@@ -108,6 +108,8 @@ export function useNoteIngest({
         id: string;
         processed: boolean;
         failed: boolean;
+        /** Cancelled or reset server-side: nothing is running any more. */
+        idle: boolean;
         processing_stage?: string | null;
         processing_model?: string | null;
       }> = [];
@@ -120,6 +122,7 @@ export function useNoteIngest({
               id: noteId,
               processed: status.processed,
               failed: status.failed,
+              idle: status.status === "not_ingested",
               processing_stage: status.processing_stage,
               processing_model: status.processing_model,
             });
@@ -138,7 +141,7 @@ export function useNoteIngest({
       setIngestingNoteIds((prev) => {
         const next = new Set(prev);
         updates
-          .filter((c) => c.processed || c.failed)
+          .filter((c) => c.processed || c.failed || c.idle)
           .forEach((c) => next.delete(c.id));
         return next;
       });

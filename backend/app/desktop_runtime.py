@@ -278,7 +278,7 @@ def _spawn(label: str, cmd: list[str], *, cwd: Path | None = None, env: dict | N
     status(f"Starting {label}…")
     out = subprocess.DEVNULL
     if log is not None:
-        log.parent.mkdir(parents=True, exist_ok=True)
+        _rotate_log(log)
         out = open(log, "ab")  # noqa: SIM115 — the child owns this handle
     proc = subprocess.Popen(  # noqa: S603
         cmd,
@@ -326,6 +326,16 @@ def stop_sidecars(grace: float = 1.5) -> None:
 
 def _log_path(data_dir: Path, label: str) -> Path:
     return data_dir / "logs" / f"{label}.log"
+
+
+def _rotate_log(log: Path, limit: int = 10 * 1024 * 1024) -> None:
+    """Sidecar stdio is append-only; keep one `.1` generation past `limit`."""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        if log.stat().st_size > limit:
+            os.replace(log, log.with_name(log.name + ".1"))
+    except OSError:
+        pass
 
 
 # ── Qdrant + Meilisearch ─────────────────────────────────────────────────────

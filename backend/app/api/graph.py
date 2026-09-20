@@ -47,9 +47,9 @@ def _apply_meili_content(detail: dict, doc: dict) -> None:
 @router.get("/api/v1/graph/3d/full")
 async def graph_3d_full(kb: KBContext = Depends(get_kb)):
     """
-    Return ALL nodes and ALL edges for the flat spring-layout 3D graph.
-    Every Indexable + Community node with pre-computed positions is included.
-    Used by the 3D graph renderer that shows everything at once.
+    Return ALL nodes and ALL edges for the 3D graph, with solar-system
+    positions computed per request. Used by the renderer that shows
+    everything at once.
     """
     return await asyncio.to_thread(kb.graph.get_full_3d_graph)
 
@@ -57,7 +57,7 @@ async def graph_3d_full(kb: KBContext = Depends(get_kb)):
 @router.get("/api/v1/graph/3d/node/{node_id}")
 async def graph_3d_node_detail(node_id: str, kb: KBContext = Depends(get_kb)):
     """
-    Return full detail for a single Indexable node (description, facts, status).
+    Return full detail for a single Indexable node (description, contexts, connections).
     Called on-demand when the user clicks a card in the 3D graph.
     """
     detail = await asyncio.to_thread(kb.graph.get_node_detail, node_id)

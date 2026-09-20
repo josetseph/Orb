@@ -676,12 +676,15 @@ class LLMService:
             f"{task_instructions}"
         )
 
+        # Runtime/provider errors (PromptTooLongError, a missing GGUF, an
+        # outage) propagate so the chat job reports the real cause; only an
+        # unparseable reply is a no-op step.
+        raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt, json_mode=True)
+        logger.info(f"[LLM] iterative_step raw response:\n{raw}")
         try:
-            raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt, json_mode=True)
-            logger.info(f"[LLM] iterative_step raw response:\n{raw}")
             step = _ResearchStep.model_validate_json(self._clean_json(raw or ""))
-        except Exception as e:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[LLM] iterative_step failed: {e}")
+        except ValueError as e:  # pydantic ValidationError is a ValueError
+            logger.warning(f"[LLM] iterative_step: unparseable reply: {e}")
             return {
                 "reasoning": "",
                 "full_answer": "",

@@ -316,7 +316,6 @@ export const api = {
       name: string;
       node_type: string;
       description: string;
-      facts: string[];
       community_id?: string;
       x: number;
       y: number;
@@ -337,9 +336,6 @@ export const api = {
     node_type: string;
     description: string;
     isolated_contexts: string[];
-    facts: string[];
-    domain?: string;
-    status?: string;
     community_id?: string;
     community_name?: string;
     connections?: {

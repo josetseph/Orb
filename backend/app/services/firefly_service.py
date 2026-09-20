@@ -1299,12 +1299,34 @@ class FireflyService:
                 group_id = int(created["group_id"])
                 kb_registry.set_firefly_group(kb.kb_id, group_id, title)
 
+        if self._switched_group_id == group_id:
+            # The user can change the active administration in Firefly's own
+            # UI; trust the cache only while Firefly agrees (one GET, not the
+            # ~1 s PHP bootstrap the cache exists to avoid).
+            live = await self._firefly_active_group()
+            if live is not None and live != group_id:
+                self._switched_group_id = None
         if self._switched_group_id != group_id:
             await asyncio.to_thread(
                 self._run_php, self._php_switch_group_script(group_id)
             )
             self._switched_group_id = group_id
         return group_id
+
+    async def _firefly_active_group(self) -> int | None:
+        """The administration Firefly reports as ``in_use``; None if unknown."""
+        try:
+            payload = await self._request("GET", "/api/v1/user-groups")
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Could not read the active Firefly administration: %s", exc)
+            return None
+        for group in self._as_list(self._as_dict(payload).get("data")):
+            if not isinstance(group, dict):
+                continue
+            if self._as_dict(group.get("attributes")).get("in_use") is True:
+                gid = str(group.get("id") or "")
+                return int(gid) if gid.isdigit() else None
+        return None
 
     async def _run_scoped(self, kb: KBContext, callback):
         async with self._scope_lock:
@@ -1471,7 +1493,8 @@ class FireflyService:
 
         all_accounts: list[dict[str, Any]] = []
         today = _iso_today().isoformat()
-        for account_type in ("asset", "expense", "revenue", "liability"):
+        # Firefly files cash under its own type; it is an asset-like account.
+        for account_type in ("asset", "cash", "expense", "revenue", "liability"):
             params: dict[str, Any] = {"type": account_type, "limit": 100, "date": today}
             if isinstance(group_id, int) and group_id > 0:
                 params["user_group_id"] = group_id
@@ -1641,7 +1664,7 @@ class FireflyService:
             asset_balance = sum(
                 _as_float(a.get("balance"))
                 for a in accounts
-                if a.get("account_type") in ("asset", "liability", "liabilities")
+                if a.get("account_type") in ("asset", "cash", "liability", "liabilities")
             )
             chart = await self._request(
                 "GET",

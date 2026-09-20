@@ -108,18 +108,6 @@ export function NodeDetailModal({
         )}
         {d.description && <p className="my-2.5 text-[13px] text-n-300">{d.description}</p>}
 
-        {d.facts && d.facts.length > 0 && (
-          <>
-            <div className="kicker mb-1.5 mt-3.5">Facts</div>
-            {d.facts.map((f, i) => (
-              <div key={i} className="flex gap-2 py-1 text-[12.5px] text-n-200">
-                <span className="text-accent-700">•</span>
-                <span>{f}</span>
-              </div>
-            ))}
-          </>
-        )}
-
         {d.isolated_contexts && d.isolated_contexts.length > 0 && (
           <>
             <div className="kicker mb-1.5 mt-3.5">Contexts</div>

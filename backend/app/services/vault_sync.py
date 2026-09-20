@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.log import get_logger
 from app.models.note import Note
 from app.services.kb_registry import KBContext
-from app.services.note_files import persist_note_body
-from app.services.vault import mark_self_write, read_note_file, title_from_filename
+from app.services.vault import mark_self_write, title_from_filename
 
 logger = get_logger("VaultSync")
 
@@ -134,13 +133,6 @@ async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
     existing = list(
         (await db.execute(select(Note).where(Note.kb_id == kb.kb_id))).scalars().all()
     )
-    # Bodies lived in SQLite before notes were vault-backed — move them to disk.
-    for n in existing:
-        if n.content:
-            if n.rel_path and read_note_file(vault, n.rel_path):
-                n.content = ""
-            else:
-                persist_note_body(n, kb, n.content)
     rels = iter_vault_md_files(vault)
     by_rel = {n.rel_path: n for n in existing if n.rel_path}
     by_title = { (n.title or "").lower(): n for n in existing if n.title }
@@ -180,7 +172,6 @@ async def sync_vault_notes(db: AsyncSession, kb: KBContext) -> dict[str, int]:
                 kb_id=kb.kb_id,
                 title=title,
                 rel_path=rel,
-                content="",
                 processed=False,
                 processing_stage="Saved",
             )

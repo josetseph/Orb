@@ -55,3 +55,15 @@ class TestFireflyEnvQuoting:
 
         assert _env_quote("plain") == "'plain'"
         assert _env_quote("Joe's $HOME \"x\"") == '"Joe\'s \\$HOME \\"x\\""'
+
+
+def test_sidecar_log_rotates_past_limit_and_keeps_one_generation(tmp_path):
+    log = tmp_path / "logs" / "qdrant.log"
+    d._rotate_log(log)  # missing file: creates the dir, no error
+    log.write_bytes(b"x")
+    d._rotate_log(log)
+    assert log.exists() and not (tmp_path / "logs" / "qdrant.log.1").exists()
+    with open(log, "wb") as fh:
+        fh.truncate(11 * 1024 * 1024)
+    d._rotate_log(log)
+    assert not log.exists() and (tmp_path / "logs" / "qdrant.log.1").stat().st_size == 11 * 1024 * 1024

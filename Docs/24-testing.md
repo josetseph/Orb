@@ -1,6 +1,6 @@
 # Testing
 
-**What this covers.** Everything that verifies Orb's behaviour: the pytest unit suite under `backend/tests/unit/` (what each module pins, what `conftest.py` stubs and why), the lint/type tooling (`backend/.pylintrc`, `frontend/eslint.config.mjs`, `frontend/tsconfig.json`), the current testing gaps (no CI test job, no frontend tests, stale unit tests), and how to add tests for new services following the existing patterns.
+**What this covers.** Everything that verifies Orb's behaviour: the pytest unit suite under `backend/tests/unit/` (what each module pins, what `conftest.py` stubs and why), the lint/type tooling (`backend/.pylintrc`, `frontend/eslint.config.mjs`, `frontend/tsconfig.json`), the CI job (`.github/workflows/ci.yml`), the current testing gaps (no frontend tests, no integration tests), and how to add tests for new services following the existing patterns.
 
 **Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Packaging, build and release](05-packaging-build-and-release.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Notes, wikilinks and vault files](09-notes-wikilinks-and-vault-files.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Local models and inference](12-local-models-and-inference.md) · [LLM providers and prompting](13-llm-providers-and-prompting.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant / Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Configuration reference](21-configuration-reference.md) · [Logging and observability](23-logging-and-observability.md) · [Development history](25-development-history.md) · [Decisions and constraints](26-decisions-and-constraints.md) · [Development guide](27-development-guide.md) · [Glossary](28-glossary.md)
 
@@ -24,7 +24,7 @@ Boundary facts that matter when modifying code:
 | Path | Purpose | Key exports / contents |
 |---|---|---|
 | `backend/tests/__init__.py`, `backend/tests/unit/__init__.py` | Make `tests` a package so pytest's default (`prepend`) import mode inserts `backend/` on `sys.path`; `app.*` imports then work from any cwd. | — |
-| `backend/tests/unit/conftest.py` | Shared fixtures: autouse settings patch, `MagicMock`/`AsyncMock` service stubs, sample-data helpers. | `event_loop_policy`, `patch_settings` (autouse), `mock_llm_service`, `mock_graph_service`, `mock_meili_service`, `mock_typesense_service` (alias), `mock_qdrant_service`, `make_node()`, `make_relationship()` |
+| `backend/tests/unit/conftest.py` | The one shared fixture: the autouse settings patch. | `patch_settings` (autouse, pins `LLM_PROVIDER="local"`) |
 | `backend/tests/unit/test_chat_context.py` | Follow-up query rewrite (`LLMService.rewrite_follow_up_query`). | 6 tests in `TestRewriteFollowUpQuery` |
 | `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (`None` handling, wrapper unwrapping, the closed `RELATIONSHIP_TYPES` vocabulary — off-list predicates become `related_to`). | 16 tests |
 | `backend/tests/unit/test_graph_layout.py` | Pure geometry in `app/utils/graph_layout.py`. | `TestFibonacciSphere`, `TestDeterministicJitter`, `TestComputeSolarPositions`, `TestComputeSpringLayout3d` |
@@ -63,22 +63,22 @@ Boundary facts that matter when modifying code:
 ```bash
 cd backend
 source .venv/bin/activate            # or use .venv/bin/python -m pytest
-pip install pytest pytest-asyncio    # NOT in requirements.txt — see below
+pip install -r requirements.txt -r requirements-dev.txt   # pytest + pytest-asyncio are in requirements-dev.txt
 python -m pytest tests/unit -q
 python -m pytest tests/unit/test_extraction_schemas.py -q      # one module
 python -m pytest tests/unit -q -k "chunk"                       # by keyword
 ```
 
 - Run from `backend/` (or pass `backend/tests/unit` as the path). `backend/tests/__init__.py` and `backend/tests/unit/__init__.py` make `tests` a package, so pytest's default `prepend` import mode inserts `backend/` (the first ancestor without an `__init__.py`) on `sys.path`; `import app...` then resolves without `PYTHONPATH`.
-- There is **no** `pytest.ini`, `pyproject.toml`, `setup.cfg` or `tox.ini` in `backend/`, so every pytest option is at its default. In particular `asyncio_mode` is `strict`, which means `async def` tests must carry `@pytest.mark.asyncio` — the four async tests in `test_ingestion_chunked_extraction.py` do.
+- `backend/pytest.ini` sets `testpaths = tests/unit` (so a bare `pytest` never picks up `tests/integration/`), `asyncio_mode = strict` (`async def` tests must carry `@pytest.mark.asyncio` — the four async tests in `test_ingestion_chunked_extraction.py` do) and registers the `integration` marker. There is no `pyproject.toml`, `setup.cfg` or `tox.ini`.
 - No markers, no `-p` plugins, no coverage configuration. `.gitignore` ignores `.pytest_cache/`.
 
 ### 3.2 Dependencies the suite needs
 
 | Package | Why | In `requirements.txt`? |
 |---|---|---|
-| `pytest` | runner | **No** |
-| `pytest-asyncio` | `@pytest.mark.asyncio` tests + the `event_loop_policy` fixture in `conftest.py` | **No** |
+| `pytest` | runner | `requirements-dev.txt` |
+| `pytest-asyncio` | `@pytest.mark.asyncio` tests | `requirements-dev.txt` |
 | `json-repair`, `openai`, `google-genai`, `anthropic` | imported by `app/services/llm.py` (several test modules import `LLMService`) | yes |
 | `qdrant-client` | `app/services/qdrant_service.py` (`test_qdrant_contract.py` also imports `qdrant_client.models` directly) | yes |
 | `kuzu` | `test_graph_queries.py` does `patch("kuzu.Database")`, which imports the real `kuzu` module before patching | yes |
@@ -86,11 +86,11 @@ python -m pytest tests/unit -q -k "chunk"                       # by keyword
 | the ingestion stack (`numpy`, `kuzu`, …) | `app/workflows/agents/ingestion_agent.py` (`test_ingestion_chunked_extraction.py`) | yes |
 | `llama-cpp-python` | `app/services/local_models.py` (`test_local_runtime_budget.py`, `test_model_load_clock.py`) — only if imported at module top; the tests never load a GGUF | yes (multimodal extras separate) |
 
-In short: the unit tests need the **full** backend environment installed, even though they never open a connection. A venv built from `requirements.txt` plus `pytest pytest-asyncio` is the minimum.
+In short: the unit tests need the **full** backend environment installed, even though they never open a connection. A venv built from `requirements.txt` + `requirements-dev.txt` is the minimum.
 
 ### 3.3 Environment and settings
 
-- `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "lm_studio"` for every test, so no `.env` is required. Importing `app.core.config` still evaluates `Settings()` once: it reads `backend/.env` **if present** (`env_file` in `model_config`, `extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). If you have a real `.env` in `backend/`, its values leak into the tests except for the keys individual tests monkeypatch.
+- `conftest.py`'s autouse `patch_settings` fixture sets `settings.LLM_PROVIDER = "local"` for every test, so no `.env` is required. Importing `app.core.config` still evaluates `Settings()` once: it reads `backend/.env` **if present** (`env_file` in `model_config`, `extra="ignore"`) and resolves `DATA_DIR`/`KUZU_DB_PATH` defaults — see [Backend core and configuration](06-backend-core-and-configuration.md). If you have a real `.env` in `backend/`, its values leak into the tests except for the keys individual tests monkeypatch.
 - `test_kb_llm_config.py` has its own autouse fixture that overrides `LLM_PROVIDER` to `"local"` and pins `LLM_MODEL`, `CHAT_MODEL`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL`, `GEMINI_MODEL`, `OPENAI_MODEL` — it runs after `patch_settings` and wins.
 - `normalize_base_url` lives only in `backend/app/services/credentials.py` (the UI sends the raw URL); `test_credentials.py` covers the URL corpus and `test_credentials_keyring.py` the keychain persistence with `keyring` mocked.
 - Env vars read by code under test and controlled via `monkeypatch.setenv/delenv`: `ORB_EXTRACTION_CHUNK_TOKENS`, `ORB_LLAMA_MAX_TOKENS`. Set `DATA_DIR`/`ORB_DATA_DIR` to a scratch folder before running the suite: `app/services/graph.py` opens the configured Kuzu file at import and the running desktop app holds a lock on the real one.
@@ -104,21 +104,15 @@ Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing
 
 ## 4. `conftest.py` — fixtures and what they stub
 
-`backend/tests/unit/conftest.py` is the only conftest (the `tests/integration/` package and its conftest were deleted in `335a253`). Its module docstring still says services are "Kuzu, Qdrant, Typesense, Postgres" — Typesense became Meilisearch and Postgres became SQLite; the fixtures predate both changes.
+`backend/tests/unit/conftest.py` is the only conftest (the `tests/integration/` package and its conftest were deleted in `335a253`). It holds a single fixture:
 
-| Fixture / helper | Scope | What it provides | What it stubs and why | Used by current tests? |
-|---|---|---|---|---|
-| `event_loop_policy` | session | `asyncio.DefaultEventLoopPolicy()` | The pytest-asyncio hook that decides which loop policy async tests run under. Harmless without the plugin (it is just an unused fixture). | Implicitly by the 4 `@pytest.mark.asyncio` tests in `test_ingestion_chunked_extraction.py` |
-| `patch_settings` | function, **autouse** | — | `monkeypatch.setattr(config.settings, "LLM_PROVIDER", "lm_studio", raising=False)`. Prevents any provider branch in `LLMService` from selecting a cloud client and removes the need for a `.env`. `"lm_studio"` is a legacy provider name from the Feb–Mar 2026 LM Studio era; the current default in `config.py` is `"local"`. | Every test (autouse); overridden by `test_kb_llm_config.py` |
-| `mock_llm_service` | function | `MagicMock` with `AsyncMock` methods `select_relevant_relationships → []`, `select_relevant_docs_with_reasoning → {"selected": [], "reasoning": ""}`, `generate_node_enrichment_async → {description,title,facts,questions}` | Stands in for `LLMService` in Joint-Approach-era retrieval tests. **None of these three methods exist on `LLMService` today** (removed with the Final Implementation refactor `68494b7` and the desktop cleanup `fbcafe7`). | No |
-| `mock_graph_service` | function | `MagicMock` with `get_related_nodes → []`, `find_paths_between_nodes → []`, `resolve_node_id → None`, `execute_query → []` | Stands in for `GraphService`. `find_paths_between_nodes` no longer exists. | No |
-| `mock_meili_service` | function | `MagicMock` with `is_available → True`, `index_node`, `delete_node` | Stands in for `MeilisearchService`; method names are still accurate. | No |
-| `mock_typesense_service` | function | alias returning `mock_meili_service` | Backward-compat alias from the Typesense era ("Kuzu/Typesense migration", `68494b7`, 2026-05-07). | No |
-| `mock_qdrant_service` | function | `MagicMock` with `find_node_id_by_name → None`, `upsert_node` (`AsyncMock → True`), `search_node_cores → []` | Stands in for `QdrantService`. The real write method is the **sync** `upsert_node_core`; `upsert_node` does not exist. | No |
-| `make_node(name, kind="indexable", node_id=None)` | helper | `{"id", "name", "kind", "description"}` dict | Sample node row shaped like a Kuzu `Node` (`kind` ∈ indexable/note/community). | No |
-| `make_relationship(source, target, rel_type="RELATED_TO", confidence=0.9)` | helper | `{"source_name", "target_name", "rel_type", "confidence"}` dict | Sample edge. Note the key is `rel_type` (Kuzu edge property) not `relationship_type` (Pydantic `ExtractedRelationship`). | No |
+| Fixture | Scope | What it does |
+|---|---|---|
+| `patch_settings` | function, **autouse** | `monkeypatch.setattr(config.settings, "LLM_PROVIDER", "local", raising=False)` — removes the need for a `.env`; `test_kb_llm_config.py` overrides it with its own autouse fixture. |
 
-The pattern the live tests actually rely on is **not** these fixtures but three idioms, documented in §13:
+The Joint-Approach-era `mock_llm_service` / `mock_graph_service` / `mock_meili_service` / `mock_typesense_service` / `mock_qdrant_service` fixtures and the `make_node` / `make_relationship` helpers stubbed methods that no longer existed and were used by no test; they and the redundant `event_loop_policy` override were deleted on 2026-09-20.
+
+The pattern the live tests rely on is three idioms, documented in §13:
 
 1. `Service.__new__(Service)` to bypass `__init__` (which opens clients), then assign the exact attributes the method under test reads (`client`, `_enabled`, `collection`, `_index`, `_db`, `_conn`, `provider`, `_chat_model_override`, `_chat`).
 2. `unittest.mock.patch.object(svc, "method", return_value=…)` to cut off the next layer down (`_reason_step_sync`, `execute_query`, `resolve_node_id`).
@@ -348,17 +342,17 @@ There is no separate `typecheck` script, but `npm run build` is `tsc --noEmit &&
 
 | Gap | Detail | Risk |
 |---|---|---|
-| No CI test job | `.github/workflows/desktop-release.yml` is the only workflow and runs only on `desktop-v*` tags / manual dispatch; it builds installers and drafts the release but never invokes pytest, pylint, eslint or `tsc` directly. | Regressions accumulate silently between manual runs. |
-| Unit suite needs a full environment | `pytest`/`pytest-asyncio` are absent from `requirements.txt` and `backend/.venv` is partial; the suite itself is green (§3.4). | New contributors must build a venv first. |
-| No frontend tests | No jest/vitest/RTL/playwright in `frontend/package.json`; only `eslint` and the `tsc --noEmit` in `npm run build`. | Editor (CodeMirror wikilink autocomplete), chat polling and graph canvas logic are unverified. |
-| No desktop-shell / runtime tests | `desktop/src-tauri` has no tests and `backend/app/desktop_runtime.py` (ports, sidecar boot, Firefly bootstrap) is exercised only by hand. | |
-| No integration tests | `tests/integration/` was deleted in `335a253`; nothing starts Qdrant/Meili/Kuzu/SQLite against a temp `DATA_DIR`. The API contract (`?kb=`, vault sync, ingestion status transitions) is covered only by the benchmark scripts, which need a full running app and an LLM. | Cross-service invariants (vault file ↔ SQLite row ↔ Kuzu ↔ Qdrant ↔ Meili) are untested. |
-| conftest fixtures are dead | Six fixtures/helpers stub methods that no longer exist and are used by no test. | Misleading for anyone writing new tests. |
+| Unit suite needs a full environment | The suite imports every service module, so `requirements.txt` (including `llama-cpp-python`) must be installed alongside `requirements-dev.txt`; `backend/.venv` is partial. | New contributors must build a venv first. |
+| Frontend tests cover pure logic only | `frontend/src/**/*.test.ts` (vitest 5, `environment: "node"`, `@` alias from `vitest.config.ts`) pin `lib/utils.ts` (file URLs, media sniffing incl. the deliberate mkv/avi exclusion, YouTube embeds, `errMessage`), `parse-note-attachments`, `wikilinks` (normalise/resolve/create-target), `folder-tree` and `rewrite-vault-urls`. No component, hook or DOM tests. | Editor (CodeMirror wikilink autocomplete), chat polling and graph canvas logic are still unverified; `parseSegments` in `components/segmented-note-content.tsx` is not exported, so it stays untested. |
+| Desktop runtime partly covered, shell not at all | `tests/unit/test_desktop_runtime.py` (Meili key, status file, Firefly `.env` quoting) and `tests/integration/test_desktop_runtime_ports.py` (`_port` env override, `free_ports` never kills its own pid and counts strangers, Firefly `.env` under a temp data dir, sticky `APP_KEY`, mode 0600) import `app.desktop_runtime` without running `main()`. `desktop/src-tauri` has no tests; sidecar boot and downloads are exercised only by hand. | |
+| Integration smoke only, stores offline | `tests/integration/test_api_smoke.py` boots the real app with `TestClient` against a temp `DATA_DIR` with `QDRANT_PORT`/`MEILI_PORT` pointed at a dead port: `/health`, KB list/create, note create → vault file → GET round-trip → PUT → DELETE, `/vault/folders`, upload into `attachments/<folder>/`, and the 400 on moving across the `attachments/` boundary. Marked `integration`; `pytest.ini` sets `testpaths = tests/unit` so it only runs when asked. | Kuzu/Qdrant/Meili write paths, vault sync and ingestion status transitions are still covered only by the benchmark scripts, which need a full running app and an LLM. |
 | No coverage, no type checking, no formatter | See §6.4. | |
+
+CI: `.github/workflows/ci.yml` (added 2026-09-20) runs on every push to `main` and every pull request — `backend` (Python 3.12, `pip install --prefer-binary` of both requirements files with `CMAKE_ARGS=-DGGML_NATIVE=OFF` so `llama-cpp-python` builds a portable CPU wheel, `pytest tests/unit -q` then `pytest tests/integration -q` as a separate process, each with its own `DATA_DIR` under `runner.temp`), `frontend` (Node 24, `npm ci`, `npm run lint`, `npm run build` — which includes `tsc --noEmit` — and `npm test`, vitest) and `desktop` (`cargo check --locked` in `desktop/src-tauri` on ubuntu-22.04 with the release job's webkit packages). The backend job's first run compiles llama.cpp (~8–10 min); later runs hit the pip cache and take ~2 min. `pylint` is still not run in CI.
 
 ## 8. How to add tests for a new service
 
-Follow the idioms the passing modules use; do not reach for the dead `mock_*` fixtures.
+Follow the idioms the passing modules use.
 
 1. **File placement and naming**: `backend/tests/unit/test_<area>.py`, test classes `Test<Behaviour>`, functions `test_<expectation>`. Keep one module per production module. Module docstring: what is under test and why no I/O is needed.
 2. **Instantiate without `__init__`**:
@@ -376,17 +370,32 @@ Follow the idioms the passing modules use; do not reach for the dead `mock_*` fi
    If the module builds a singleton at import time (like `app.services.graph`), import it under `patch(...)` and pop it from `sys.modules` first (see `_get_graph_service_class`).
 3. **Cut the next layer with `patch.object`** (`_reason_step_sync`, `execute_query`, `resolve_node_id`) rather than mocking HTTP libraries; assert on the *arguments* passed downward (query text, payload dict, filter object) — that is the contract worth pinning.
 4. **Async code**: use `@pytest.mark.asyncio` on `async def` tests (strict mode; no ini file sets `asyncio_mode=auto`). For LLM-driven code, write a small duck-typed stub class (see `_StubLLM`) implementing only the methods the code calls — and update it when the `LLMService` protocol changes.
-5. **Settings and env**: use `monkeypatch.setattr(config.settings, "KEY", value, raising=False)` and `monkeypatch.setenv/delenv`; never write `.env`. Remember `patch_settings` already pins `LLM_PROVIDER="lm_studio"`; override it in a module-level autouse fixture if your code branches on `"local"`.
+5. **Settings and env**: use `monkeypatch.setattr(config.settings, "KEY", value, raising=False)` and `monkeypatch.setenv/delenv`; never write `.env`. `patch_settings` already pins `LLM_PROVIDER="local"`.
 6. **Filesystem**: `tmp_path`, and patch resolver functions (`resolve_models_dir`, `_gguf_looks_complete`) instead of touching `DATA_DIR`.
 7. **Determinism**: no wall-clock, no randomness (see `graph_layout` tests), no sleeps (patch `asyncio.sleep` and assert it was not called, as the chunking test does).
-8. **Run it**: `cd backend && python -m pytest tests/unit/test_<area>.py -q`. Add `pytest` and `pytest-asyncio` to a dev requirements file when you get the chance — they are missing today.
+8. **Run it**: `cd backend && python -m pytest tests/unit/test_<area>.py -q`.
 9. **When you remove or rename a production function**, grep `backend/tests/unit` for it in the same commit (the three stale modules exist because this step was skipped in `da75dfc` and `fbcafe7`).
 10. **Response-shape changes**: if you change the chat response shape (`answer`, `context[].text/linked_notes/note_id/title`) or the notes status fields (`processed`, `failed`), update the harness on the `orb-testing` branch to match.
+
+### 8.1 Running each suite
+
+```bash
+# Backend unit (default: pytest.ini has testpaths = tests/unit, asyncio_mode = strict)
+cd backend && DATA_DIR=/tmp/orb-test ORB_DATA_DIR=/tmp/orb-test python -m pytest -q
+
+# Backend integration (opt-in; run in its own process — the app binds DATA_DIR at import)
+cd backend && python -m pytest tests/integration -q          # ~2 s, no Qdrant/Meili/models needed
+
+# Frontend (vitest, node environment, pure modules only)
+cd frontend && npm test                                       # = vitest run
+cd frontend && npx vitest src/lib                             # watch one folder
+```
+
+`test_api_smoke.py` skips itself if `app.core.config` was already imported in the same process (e.g. `pytest tests`), because `DATA_DIR`, the SQLite engine and the Kuzu file are bound at import time.
 
 ## 9. Invariants, gotchas and non-obvious behaviours
 
 - **`Service.__new__` is the test contract.** Any attribute a method reads that is normally assigned in `__init__` (`client`, `_enabled`, `_col_cores`, `collection`, `_conn`, `_chat`, `_chat_model_override`) is part of the implicit interface the tests set up by hand; renaming one breaks tests without touching behaviour.
-- **`patch_settings` sets a provider that no longer exists** (`lm_studio`). Code that validates `LLM_PROVIDER` against the current enum would make every test fail; keep the fixture in mind when adding validation.
 - **`patch("kuzu.Database")` imports kuzu.** The graph tests are not free of the native dependency, only of a database file.
 - **Kuzu query text is pinned**: never reintroduce `WHERE all(...)` over `relationships(path)` or `*1..N` in the depth-1 path — `KU_UNREACHABLE` is a hard crash, not an exception.
 - **Extraction validators are order-sensitive**: `Extraction.normalize_keys` (before) → `ensure_list` (before, per field) → `Node`/`ExtractedRelationship` validators. Wrapper unwrapping only happens when the inner dict has `nodes` or `relationships`.

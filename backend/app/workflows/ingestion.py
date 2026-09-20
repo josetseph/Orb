@@ -35,6 +35,15 @@ class _CommunityName(BaseModel):
     summary: str = ""
 
 
+#: Contexts read back from Qdrant as "{content} - {note_created_at}"; dedup
+#: compares the content alone.
+_CTX_DATE_SUFFIX = re.compile(r" - \d{4}-\d{2}-\d{2}\S*$")
+
+
+def _context_key(text: str) -> str:
+    return _CTX_DATE_SUFFIX.sub("", (text or "").strip())
+
+
 #: Pipelines in flight, by (kb_id, note_id) — what the Cancel button stops.
 _running_ingestions: dict[tuple[str, str], asyncio.Task] = {}
 
@@ -350,6 +359,11 @@ class IngestionWorkflow:
         custom_title: str = None,
     ):
         logger.info(f"[Ontology] Writing ontology for note {note_id}")
+        # Re-ingest: take back what this note asserted last time. The entities
+        # it alone kept alive are swept at the end, after the new extraction is
+        # written, so ones still mentioned keep their ids.
+        prior = self._graph.clear_note_contribution(note_id)
+        self._qdrant.delete_relationships(prior["relationship_ids"])
         # 0. Resolve title: user-provided > extracted by LLM during extraction > separate LLM call
         if custom_title:
             title = custom_title
@@ -701,7 +715,7 @@ class IngestionWorkflow:
             if _qdrant_rel_pending:
                 _nl_batch = [item[1] for item in _qdrant_rel_pending]
                 _nl_vectors = embedding_service.embed_documents(_nl_batch)
-                self._qdrant.upsert_node_relationships(
+                rels_ok = self._qdrant.upsert_node_relationships(
                     [
                         {
                             "relationship_id": result["relationship_id"],
@@ -715,6 +729,13 @@ class IngestionWorkflow:
                         )
                     ]
                 )
+                if not rels_ok:
+                    raise RuntimeError(
+                        f"Failed to write {len(_qdrant_rel_pending)} Qdrant "
+                        "node_relationships point(s) — aborting ingest so the "
+                        "edges are not invisible to search. Qdrant said: "
+                        f"{getattr(self._qdrant, '_last_upsert_error', None) or 'no further detail'}"
+                    )
                 logger.debug(
                     f"  [Ontology] Qdrant rels written: {len(_qdrant_rel_pending)}"
                 )
@@ -723,6 +744,11 @@ class IngestionWorkflow:
                 f"[Relationship] note_id={note_id} total={_rel_total} "
                 f"written={_rel_written} skipped={_rel_skipped}"
             )
+
+        for nid in self._graph.delete_orphan_entities(prior["entity_ids"]):
+            self._qdrant.delete_node(nid)
+            self._meili.delete_node(nid)
+            logger.info(f"[Ontology] Removed entity {nid} no longer mentioned by any note")
 
         return title
 
@@ -997,10 +1023,10 @@ class IngestionWorkflow:
             # 2. Append all new contexts that aren't already stored (dedup against existing).
             # Collecting all of them before the LLM call means one summary generation
             # per ingestion run regardless of how many contexts this node received.
-            _existing_stripped = {c.strip() for c in existing_contexts if c}
+            _existing_stripped = {_context_key(c) for c in existing_contexts if c}
             _contexts_to_add: list[str] = []
             for _nc in new_contexts or []:
-                _nc_stripped = _nc.strip() if _nc else ""
+                _nc_stripped = _context_key(_nc)
                 if _nc_stripped and _nc_stripped not in _existing_stripped:
                     existing_contexts.append(_nc)
                     _existing_stripped.add(_nc_stripped)
@@ -1842,23 +1868,6 @@ class IngestionWorkflow:
                 )
             self._meili.update_nodes_community(community_rows)
 
-            # ── Compute & store 3D positions for the new layout ──────────────────
-            try:
-                from app.utils.graph_layout import compute_spring_layout_3d
-
-                # After Leiden has created communities, rerun spring layout so
-                # community nodes are pulled into the correct positions by their members.
-                spring_node_ids, spring_edges = self._graph.get_all_node_ids_and_edges()
-                positions = compute_spring_layout_3d(spring_node_ids, spring_edges)
-                self._graph.store_node_positions(positions)
-                logger.info(
-                    f"[Community] Spring layout recomputed after Leiden: "
-                    f"{len(positions)} nodes, {len(spring_edges)} edges"
-                )
-            except Exception as _layout_err:  # pylint: disable=broad-exception-caught
-                logger.warning(
-                    f"[Community] 3D layout computation failed (non-fatal): {_layout_err}"
-                )
 
             logger.info(
                 f"\n{'='*70}\n"

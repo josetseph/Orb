@@ -38,5 +38,3 @@ def persist_note_body(
     elif display_title and display_title != note.title:
         note.title = display_title
     write_note_file(vault, note.rel_path, content)
-    # Keep nullable content empty — body is file-backed
-    note.content = ""

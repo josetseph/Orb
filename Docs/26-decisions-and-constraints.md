@@ -82,9 +82,9 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ## C. Storage
 
 ### C1. Note bodies are real `.md` files in a per-KB vault; SQLite is metadata only
-- Rejected: bodies in Postgres/SQLite (the original design; `notes.content` remains as a deprecated fallback), S3/RustFS object storage for attachments.
+- Rejected: bodies in Postgres/SQLite (the original design; the `notes.content` column has since been dropped), S3/RustFS object storage for attachments.
 - Rationale: Obsidian compatibility, user ownership, cloud-sync friendliness, "your knowledge on your machine".
-- Enforced: `note_files.persist_note_body/note_body`, `vault.py`, `vault_sync.py`; `notes.content` kept empty by `persist_note_body`.
+- Enforced: `note_files.persist_note_body/note_body`, `vault.py`, `vault_sync.py`; no body column in SQLite.
 
 ### C2. SQLite (`DATA_DIR/orb.db`) is the only metadata store
 - Rejected: Postgres (was contributor-only; removed with the Tauri migration along with `asyncpg`).

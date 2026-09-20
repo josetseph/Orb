@@ -78,10 +78,10 @@ Write ordering contract inside a note ingest: **Kuzu structural node → Qdrant 
 
 ### 4.1 Client setup
 
-`QdrantService.__init__(col_cores=None, col_relationships=None, col_contexts=None)`:
+`QdrantService.__init__(col_cores=None, col_relationships=None, col_contexts=None, create_collections=True)`:
 
 1. Collection names default to `settings.QDRANT_COLLECTION_NODE_CORES` (`"node_cores"`), `QDRANT_COLLECTION_NODE_RELATIONSHIPS` (`"node_relationships"`), `QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS` (`"node_isolated_contexts"`) — these un-prefixed names are the **default KB's** collections.
-2. `self.client = QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT, api_key=settings.QDRANT_API_KEY)`. No explicit timeout, `prefer_grpc`, or `https` is passed — the qdrant-client defaults apply (REST on `http://host:port`, default timeout). If construction raises, `_enabled=False`, `client=None`, a WARNING is logged and every method becomes a no-op returning `[]`/`{}`/`None`/`False`.
+2. `self.client = QdrantClient(host=settings.QDRANT_HOST, port=settings.QDRANT_PORT, api_key=settings.QDRANT_API_KEY)`. No explicit timeout, `prefer_grpc`, or `https` is passed — the qdrant-client defaults apply (REST on `http://host:port`, default timeout). If construction raises, `_enabled=False`, `client=None`, a WARNING is logged and every method becomes a no-op returning `[]`/`{}`/`None`/`False`. `create_collections=False` connects without `_ensure_collections` — for a caller about to delete the KB's collections.
 3. Dims pre-check: reads `load_manifest()["selection"]["embedding_dims"]` from `local_models` and, if present, overwrites `settings.EMBEDDING_DIMENSIONS` **before** creating collections (so a freshly started process with a 768-dim model does not create 1024-dim collections). Errors ignored.
 4. `_ensure_collections()` (idempotent; see §7 for the mismatch rules).
 
@@ -139,7 +139,7 @@ The `node_id` itself (`node_<uuid4>`, note id, `community_l…`, `digest_…`) i
 | `period_key` | str | `create_temporal_digest_node` via `extra_payload` | e.g. `"2024-05"`, `"2024-W21"`, `"2024"`; filtered by retrieval month queries |
 | *(vector)* | float[dims] | | stub: embed(`"{name} ({type}): {isolated_context}"`); entity core: embed(all contexts joined by `" "`); community/digest: embed(summary) |
 
-Legacy fields the read paths still tolerate but nothing writes any more: `facts`, `potential_questions`, `community_id`, `themes`, `member_count`, `domain`, `status` (they surface as empty in `GraphService` payloads).
+Legacy payload fields nothing writes or reads any more: `facts`, `potential_questions`, `community_id`, `themes`, `member_count`, `domain`, `status` (`GraphService` payloads no longer carry them).
 
 **`<slug>_node_relationships`** — one point per semantic edge or community membership.
 
@@ -151,7 +151,7 @@ Legacy fields the read paths still tolerate but nothing writes any more: `facts`
 | `is_community_rel` | bool | `_commit_community` only (`True`) | key for bulk delete on rebuild; absent (not `False`) on ordinary edges |
 | *(vector)* | | | embed(natural_language) |
 
-Note: `relationship_id` is **not** stored in the payload — only encoded in the point id.
+`relationship_id` is stored in the payload (and encoded in the point id); points written before it was added lack it.
 
 **`<slug>_node_isolated_contexts`** — N points per entity.
 
@@ -171,10 +171,11 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 | `upsert_node_core` | `(node_id, name, node_type, description_vector, description="", community_level=None, extra_payload=None) -> bool` | builds payload (`description`/`community_level` only when truthy/not-None; `extra_payload` merged last, can override), upserts one `PointStruct(id=uuid5(node_id))`; returns `False` on client error (warn) or when unavailable. **`_prepare_vector` `ValueError` propagates** (it is called before the try). | `_update_node_summary` (merged vector), `GraphService.create_leiden_community`, `GraphService.create_temporal_digest_node` |
 | `upsert_node_cores` | `(cores: list[dict]) -> bool` | batch variant, one `client.upsert`; same field names per dict; empty list → `True`; unavailable → `False` | `_write_ontology` stub seeding (fail → ingest aborted) |
 | `upsert_node_relationship` | `(relationship_id, natural_language, nl_vector, source_node_id, target_node_id, is_community_rel=False) -> None` | single point; errors warn-only | none currently (batch used) |
-| `upsert_node_relationships` | `(rels: list[dict]) -> None` | batch; errors warn-only (**no return value → callers cannot detect failure**) | `_write_ontology`, `_commit_community` |
+| `upsert_node_relationships` | `(rels: list[dict]) -> bool` | batch; `True` when all points stored (empty list → `True`), `False` on rejection with `_last_upsert_error` set | `_write_ontology` (`False` ⇒ abort), `_commit_community` |
 | `append_node_item` | `(collection_name, node_id, content, vector, note_created_at=None) -> bool` | one uuid4 point `{parent_node_id, content[, note_created_at]}`; never touches existing points | `_update_node_summary` per new context; `False` count → `RuntimeError` in caller |
 | `upsert_node_items` | `(collection_name, node_id, items) -> None` | delete-by-filter `parent_node_id==node_id` then insert all items (`content`, `vector`, extra keys) — full replace | none currently |
-| `delete_node` | `(node_id) -> None` | deletes core point `uuid5(node_id)` and all `*_node_isolated_contexts` with `parent_node_id==node_id`. **Does not touch `*_node_relationships`.** | `api/notes.py` (note + orphans), `rebuild_leiden_communities` (old communities), `build_temporal_digests` (old digests) |
+| `delete_node` | `(node_id) -> None` | deletes core point `uuid5(node_id)`, all `*_node_isolated_contexts` with `parent_node_id==node_id`, and every `*_node_relationships` point whose `source_node_id` or `target_node_id` is the node | `api/notes.py` (note + orphans), `_write_ontology` (re-ingest orphans), `rebuild_leiden_communities` (old communities), `build_temporal_digests` (old digests) |
+| `delete_relationships` | `(relationship_ids) -> None` | deletes the `uuid5(relationship_id)` points | `_write_ontology` (edges dropped by `clear_note_contribution`) |
 | `delete_community_relationships` | `() -> None` | delete-by-filter `is_community_rel == True` in rels | `GraphService.clear_all_communities` |
 | `reset_all` | `() -> None` | `delete_collection` ×3 (warn on failure) then `_ensure_collections()` | admin reset-ingestion-data, KB empty |
 | `ensure_vector_size` | `(vector_len) -> None` | adopts `vector_len` into `settings.EMBEDDING_DIMENSIONS` (warn if changed) and re-runs `_ensure_collections()` — always, even if settings already matched | `sync_embedding_infrastructure` only |
@@ -184,14 +185,14 @@ Note: `relationship_id` is **not** stored in the payload — only encoded in the
 
 | Function | Signature | Behaviour | Callers |
 |---|---|---|---|
-| `search_all_collections` | `(query_vector, limit, min_score, contexts_filter: Filter|None=None, period_key_filter: str|None=None, day_only=False) -> list[{collection, score, payload}]` | `query_points(collection, query=vector, limit, score_threshold=min_score, query_filter, with_payload=True)` per collection, run sequentially (a `ponytail:` comment marks the thread-pool upgrade path), results flattened in `collections` order. Filters: `contexts_filter` applies to the contexts collection only; `period_key_filter` becomes `Filter(must=[period_key == value])` on **cores** only; `day_only=True` restricts targets to the contexts collection. Per-collection errors → DEBUG + `[]`. | `RetrievalService` vector phase |
+| `search_all_collections` | `(query_vector, limit, min_score, contexts_filter: Filter|None=None, period_key_filter: str|None=None, day_only=False) -> list[{collection, score, payload}]` | `query_points(collection, query=vector, limit, score_threshold=min_score, query_filter, with_payload=True)` per collection, run sequentially (a `ponytail:` comment marks the thread-pool upgrade path), results flattened in `collections` order. Filters: `contexts_filter` applies to the contexts collection only; `period_key_filter` becomes `Filter(must=[period_key == value])` on **cores** only; `day_only=True` keeps all three collections and adds `must_not type IN [community, temporal_digest]` on cores (entity descriptions still match; month-level summaries do not), rels unfiltered. Per-collection errors → DEBUG + `[]`. | `RetrievalService` vector phase |
 | `search_node_cores` | `(query_vector, limit, min_score, node_type=None, community_level=None) -> list[{score, payload}]` | cores only; optional `must` filters on `type` and `community_level` (both → two conditions) | none in current retrieval (kept; pinned by contract tests) |
 | `find_node_id_by_name` | `(name) -> str|None` | `scroll(cores, filter name == name.lower().strip(), limit=1, with_vectors=False)` → payload `node_id` | `GraphService.resolve_node_id`, `_update_node_summary` |
 | `find_node_ids_by_names` | `(names) -> dict[str, str|None]` | one `MatchAny(any=normalized)` scroll paged by 500; first hit per name wins; stops early when all resolved | `_write_ontology` (nodes and relationship endpoints), `GraphService.get_linked_evidence` |
 | `get_node_content_by_id` | `(node_id) -> dict|None` | `retrieve(cores, [uuid5])` + paged scroll of contexts (`limit=100`) → `{node_id, name, type, description, community_level, isolated_contexts: [ "content - date" or "content" ]}`. If no core but contexts exist → returns a dict with empty name/type/description. Neither → `None`. | `_update_node_summary`, `GraphService.get_node_storage_payload`, `get_node_detail` fallback |
 | `get_nodes_content_by_ids` | `(node_ids) -> dict[str, dict]` | one `retrieve` for all cores + one `MatchAny` scroll of contexts paged by 500; omits ids with neither core nor contexts | retrieval (many places), `GraphService.get_node_detail`, `rebuild_leiden_communities` |
 | `list_all_community_payloads` | `() -> list[{community_id, community_level, name, description}]` | scroll cores with `type == "community"` | none currently |
-| `get_relationships_for_node_ids` | `(node_ids) -> list[{natural_language, source_node_id, target_node_id}]` | two scrolls (`source_node_id` in ids, `target_node_id` in ids), paged 500, **deduplicated by `natural_language` text** (two different edges with identical sentences collapse) | retrieval, `_update_node_summary` (Meili NL), `rebuild_leiden_communities` (Meili refresh), `GraphService.get_node_storage_payload` |
+| `get_relationships_for_node_ids` | `(node_ids) -> list[{relationship_id, natural_language, source_node_id, target_node_id}]` | two scrolls (`source_node_id` in ids, `target_node_id` in ids), paged 500, deduplicated by `relationship_id` (falling back to the sentence for points written before the id was stored) | retrieval, `_update_node_summary` (Meili NL), `rebuild_leiden_communities` (Meili refresh), `GraphService.get_node_storage_payload` |
 | `scroll_all_isolated_contexts_with_dates` | `() -> list[payload]` | full unfiltered scroll of contexts (500/page) keeping payloads with `note_created_at` | `build_temporal_digests` |
 
 **Score semantics and thresholds.** Scores are raw cosine similarities from Qdrant. Retrieval passes `limit=500` per collection ("a large ceiling … the score_threshold is the only real filter") and `min_score` = `settings.VECTOR_PRE_RERANK_THRESHOLD` (**0.45**) when `RERANKER_ENABLED`, else `settings.VECTOR_SIMILARITY_THRESHOLD` (**0.50**). Every collection is queried with the same vector and threshold, so a context sentence, a relationship sentence and a merged-core passage compete on equal footing; retrieval then maps each hit to a node via `node_id` / `parent_node_id` / `source_node_id` / `target_node_id` and de-duplicates. `isolated_contexts` strings returned by the content getters have the note date appended as `" - <date>"` when present — consumers that display or re-embed them see that suffix.
@@ -341,10 +342,11 @@ Rationale in code: avoid "split-brain cores@1024 + contexts@768". Recreation is 
 | **Startup** | `sync_embedding_infrastructure()` → `ensure_vector_size` on default + every registered KB (constructs a temporary `QdrantService` per KB, which itself runs `_ensure_collections`) | untouched | `main.startup_event` |
 | **KB create** | `KBRegistry.create_kb` → `_build_context` → `QdrantService(col_cores=…, col_relationships=…, col_contexts=…)` → collections created immediately | `MeilisearchService(index_name=f"{slug}_nodes")` → index + settings created immediately | `kb_registry.py` |
 | **KB load at startup** | `_load` → `_build_context` per row (collections re-ensured) | same | `kb_registry.py` |
-| **KB delete** | `_cleanup_stores`: temporary `QdrantService` (which first *re-creates* any missing collection via `_ensure_collections`, then) `client.delete_collection` ×3, errors ignored | `client.delete_index(uid)` + `wait_for_task(…, 10000)` | `KBRegistry.delete_kb(wipe_indexes=True)` |
+| **KB delete** | `_cleanup_stores`: temporary `QdrantService` then `client.delete_collection` ×3, errors ignored (pass `create_collections=False` so the constructor does not first re-create the collections it is about to delete; `kb_registry.py` does not yet) | `client.delete_index(uid)` + `wait_for_task(…, 10000)` | `KBRegistry.delete_kb(wipe_indexes=True)` |
 | **KB empty** (`api/kb.py`) | `kb.qdrant.reset_all()` in `asyncio.to_thread` (delete ×3 + recreate) | `kb.meili.reset_all()` | after Firefly destroy, SQL note purge, `graph.wipe_all_nodes`; before vault clear |
 | **Admin reset-ingestion-data** | `kb.qdrant.reset_all()` (background) | `kb.meili.reset_all()` (background) | `api/admin.py` |
-| **Note delete** | `delete_node(note_id)` and `delete_node(orphan_id)` (cores + contexts; relationship points left behind) | `delete_node` per id | `api/notes.py` |
+| **Note delete** | `delete_node(note_id)` and `delete_node(orphan_id)` (cores + contexts + relationship points) | `delete_node` per id | `api/notes.py` |
+| **Note re-ingest** | `delete_relationships(ids of edges no other note restated)`; `delete_node(orphan_id)` for entities only this note kept alive; `delete_note_contexts(note_id)` | `delete_node` per orphan; re-indexed nodes rewritten | `_write_ontology`, `_update_neighborhoods` |
 | **Community rebuild** | `delete_community_relationships()`; `delete_node(old_cid)`; new cores + rels | `delete_node(old_cid)`; `index_node` per community; `update_nodes_community` batch | `rebuild_leiden_communities` |
 | **Digest rebuild** | `delete_node(old_did)`; `upsert_node_core` | `delete_node`; `index_node` | `build_temporal_digests` |
 | **Model change** | §7 | untouched | `save_selection` |
@@ -377,7 +379,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 | Direction | Contract |
 |---|---|
 | `KBRegistry` → both services | constructs per-KB instances with names from SQLite; `delete_kb` → `_cleanup_stores` |
-| `IngestionWorkflow` → Qdrant | `find_node_ids_by_names` (id resolution), `upsert_node_cores` (stubs; `False` ⇒ abort), `upsert_node_relationships`, `find_node_id_by_name`, `get_node_content_by_id`, `append_node_item` (`False` ⇒ abort), `upsert_node_core` (merged; `False` ⇒ abort), `get_relationships_for_node_ids`, `get_nodes_content_by_ids`, `delete_node`, `scroll_all_isolated_contexts_with_dates` |
+| `IngestionWorkflow` → Qdrant | `find_node_ids_by_names` (id resolution), `upsert_node_cores` (stubs; `False` ⇒ abort), `upsert_node_relationships` (`False` ⇒ abort), `delete_relationships`, `find_node_id_by_name`, `get_node_content_by_id`, `append_node_item` (`False` ⇒ abort), `upsert_node_core` (merged; `False` ⇒ abort), `get_relationships_for_node_ids`, `get_nodes_content_by_ids`, `delete_node`, `scroll_all_isolated_contexts_with_dates` |
 | `IngestionWorkflow` → Meili | `index_node`, `get_node`, `update_nodes_community`, `delete_node` — always after the Qdrant step succeeded |
 | `GraphService` → Qdrant | `find_node_id_by_name`, `find_node_ids_by_names`, `get_node_content_by_id`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `upsert_node_core`, `delete_community_relationships` ([14 §15](14-graph-storage-kuzu.md)) |
 | `RetrievalService` → Qdrant | `search_all_collections(query_vector, limit=500, min_score, contexts_filter, period_key_filter, day_only)`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`; builds `Filter(note_created_at == "YYYY-MM-DD")` for day queries and `MatchAny(all days of month)` + `period_key_filter="YYYY-MM"` for month queries |
@@ -423,7 +425,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 | Qdrant/Meili unreachable at import | client construction usually succeeds (lazy connection); `_ensure_collections`/`_ensure_collection` log a WARNING; `is_available()` returns `False` per call → all reads return empty, all writes return `False`/`None`. Ingestion then aborts notes (`upsert_node_cores` False → `RuntimeError`); retrieval degrades to entity/graph-only. |
 | Qdrant client constructor raises | `_enabled=False`, service permanently disabled for the process. |
 | Dims mismatch (non-empty collections) | ERROR at every service construction; every ingest raises `ValueError` from `_prepare_vector`; retrieval still works with old vectors of the old model (the query vector from the new model has the wrong length → `query_points` fails per collection → DEBUG log → `[]`). |
-| `upsert_node_relationships` failure | WARNING only; Kuzu edge exists without NL point → relationship invisible to vector search and to Meili `relationship_natural_language`. |
+| `upsert_node_relationships` failure | Returns `False`; `_write_ontology` raises `RuntimeError` and the note is marked failed (Kuzu edges already written remain; the retry re-asserts them). |
 | `append_node_item` partial failure | `_update_node_summary` raises `RuntimeError` (`ctx_appended(x/y)`); contexts already appended remain (no rollback) → duplicates are avoided on retry by the `existing_contexts` dedup. |
 | Meili task timeout | caught; WARNING/DEBUG; task usually completes later; readers may briefly see stale docs. |
 | Meili `add_documents` without contexts | replaces document → contexts lost; mitigated by read-before-write in the two writers. |
@@ -439,19 +441,19 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, ingestion_
 1. **`is_available()` is a network call on every method** (`get_collections()` / `health()`); a loop calling `get_node` per row doubles HTTP traffic. Batch APIs exist for this reason.
 2. **No payload indexes** — all filters are full scans; `find_node_ids_by_names` pages the whole cores collection in the worst case.
 3. **`search_nodes` scores are synthetic ranks** (`N..1`), not BM25 or `_rankingScore`; comparing them with Qdrant cosine scores is meaningless — retrieval treats them as separate candidate sources.
-4. **`get_relationships_for_node_ids` dedups by sentence text**, so two distinct edges with the same NL collapse; `relationship_id` is not in the payload so they cannot be told apart.
+4. **`get_relationships_for_node_ids` dedups by `relationship_id`**; only legacy points without one fall back to their sentence.
 5. **`isolated_contexts` returned from Qdrant carry `" - <note_created_at>"` appended**; the same field in Meili is the array of context strings, which is what `api/graph.py` reads back.
 6. **`note_created_at` is stored as whatever ISO string ingestion passed** (`NoteInput.created_at`, typically full `datetime.isoformat()`), while retrieval filters with `MatchValue("YYYY-MM-DD")` / `MatchAny([...days])` — exact string equality. Date filters only hit when the stored value is a bare date; check what `_update_node_summary` receives before relying on temporal filtering ([10](10-ingestion-pipeline.md)).
-7. **`delete_node` never deletes relationship points**; deleted entities leave dangling `source_node_id`/`target_node_id` in `*_node_relationships` that still match vector searches.
-8. **`_cleanup_stores` constructs a `QdrantService` (recreating missing collections) right before deleting them** — harmless but confusing in logs ("Created collection … / Deleted collection …").
+7. **`delete_node` deletes relationship points too** (by `source_node_id`/`target_node_id`), so a removed entity leaves nothing that still matches vector search.
+8. **`_cleanup_stores` constructs a `QdrantService` without `create_collections=False`**, so it still recreates missing collections right before deleting them — harmless but confusing in logs until `kb_registry.py` passes the flag.
 9. **Default-KB names are un-prefixed** (`node_cores`, `orb_nodes`), other KBs are `<slug>_…`; a KB literally named `node` would produce `node_node_cores`, fine, but a Qdrant instance shared with another app could collide on the default names.
 10. **`EMBEDDING_DIMENSIONS` in `.env` is advisory** — overwritten by the manifest at `QdrantService` construction and by `sync_embedding_infrastructure`.
 11. **`save_selection`'s "collections were resized" log is optimistic** — with data present nothing is resized (§7.4).
-12. **`upsert_node_relationships` returns `None`** so `_write_ontology` cannot tell that NL points were not written; only Qdrant *core* and *context* writes are fail-closed.
+12. **`upsert_node_relationships` returns `bool`** and `_write_ontology` fails closed on `False`, like core and context writes.
 13. **`extra_payload` is merged last** and can overwrite `node_id`/`name`/`type` in a core payload.
 14. **Meili `type` filterability is configured but unused**; `community_level` is filterable and unused; there are no sortable attributes.
 15. **Community docs in Meili have no `isolated_contexts`/`relationship_natural_language`** — only `name`, `type`, `community_level` — so BM25 can only match communities by name.
-16. **`search_all_collections` with `day_only=True` skips cores and rels entirely**, so entity descriptions never match day-scoped queries.
+16. **`search_all_collections` with `day_only=True` still searches cores and rels**; the day filter narrows contexts, and cores only exclude community/digest summaries.
 17. **The Typesense era is still visible:** SQLite column `typesense_collection`, the `_ensure_collection` method name, `mock_typesense_service`, conftest docstring — all now mean Meilisearch. The `TYPESENSE_*` settings aliases are gone.
 18. **`QdrantService.__init__` mutates global `settings.EMBEDDING_DIMENSIONS`** as a side effect of constructing any KB's service.
 19. **Meili master key differs between fresh desktop installs (random, in `DATA_DIR/meili_master_key`) and upgraded/dev installs (`orb-dev-key`)** — `curl` debugging must use the file's value.

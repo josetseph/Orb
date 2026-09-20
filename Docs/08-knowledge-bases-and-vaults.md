@@ -97,7 +97,7 @@ Key consequences:
 
 **`_ensure_lazy()`** builds, in order and only once: `RetrievalService(graph, qdrant, meili)`, `IngestionWorkflow(graph, qdrant, meili)`, `ChatWorkflow(retrieval=retrieval_service)`. All three are built together on the first call of `get_ingestion_workflow()` or `get_chat_workflow()`. Accessing `graph` inside this opens Kuzu, so the first ingest or chat request on a KB pays the Kuzu open + schema init cost.
 
-There is **no `close()` on `KBContext`**; `delete_kb` looks for `ctx.close` or `ctx.graph.close` via `getattr` (see §7.3) — note that `getattr(ctx, "graph")` *opens* Kuzu if it was never opened, only to close it again.
+There is **no `close()` on `KBContext`**; `delete_kb` closes `ctx._graph` only when it is already open (see §7.3) — it never touches the `graph` property, which would open Kuzu just to close it.
 
 ## 5. `KBRegistry`
 
@@ -247,9 +247,9 @@ Route order: `firefly_service.destroy_kb_administration(ctx)` (best-effort) → 
 `delete_kb`:
 
 1. `default` → `ValueError`.
-2. Under the lock: pop metadata and context; if a context exists, try `ctx.close` then `ctx.graph.close` (`GraphService.close()` closes the Kuzu connection — needed before deleting the file on disk). Delete the row.
+2. Under the lock: pop metadata and context; if the context has an open graph (`ctx._graph is not None`), `GraphService.close()` closes the Kuzu connection — needed before deleting the file on disk; a never-opened graph is left alone. Delete the row.
 3. `wipe_indexes` → `_cleanup_stores(meta)`:
-   - Qdrant: new `QdrantService(...)` with the KB's names (this *re-creates* the collections in its constructor if they were missing, then) `delete_collection` each of the three. Errors swallowed.
+   - Qdrant: `delete_collection` each of the three names through the module singleton `qdrant_service.client` (any client reaches the same server; constructing a per-KB `QdrantService` here would recreate the collections right before deleting them). Skipped when `qdrant_service.is_available()` is false. Errors swallowed.
    - Meili: `MeilisearchService(index_name=index)` (again ensures the index exists) then `delete_index` + `wait_for_task(10 s)`.
    - Kuzu: `Path(kuzu_path).resolve()` as stored (normalised at `_load`); refuse unless under `DATA_DIR/kuzu` (comment: *"A crafted KB name used to be able to point this at arbitrary paths — never delete outside DATA_DIR/kuzu"*). Unlink file + `.wal`; remove the now-empty `<slug>` folder (never the `kuzu` root); if it is a directory, `rmtree`.
 4. `delete_vault_files` → `rmtree` **only** if under `DATA_DIR/vaults` (§6.4).
@@ -310,7 +310,7 @@ All helpers compute `rel = path.resolve().relative_to(vault.resolve())`, skip an
 
 Called from `GET /api/v1/notes` (default `sync_vault=true`, wrapped in try/except so a scan failure never breaks listing) and from the setup flow. Algorithm:
 
-0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v3`, doc 09 §4.3), then every row of this KB with a non-empty legacy `notes.content` is moved to disk — `persist_note_body(n, kb, n.content)` when its file is missing, or just `content = ""` when `read_note_file` already returns a body.
+0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v3`, doc 09 §4.3), then the vault is walked.
 1. `rels = iter_vault_md_files(vault)`; load all `Note` rows for `kb.kb_id`; build `by_rel` (normalised `rel_path` → row) and `by_title` (`title.lower()` → row).
 2. For each `rel` on disk with no row:
    - **Adoption**: `adoptable(stem)` returns a row whose `title.lower() == stem`, whose current `rel_path` is **root-level** (no `/`), and whose current file is **not on disk** — i.e. "a root note was moved into a folder outside Orb". The row's `rel_path` is repointed, `updated_at` bumped, `updated += 1`. The on-disk check exists because *"a second note of the same name in another folder would steal the root note's row and orphan the root file"* (added in `f8f527f`).
@@ -419,7 +419,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` for the ORM tables; `kno
 2. **`slug` is immutable and filesystem-safe.** Everything derived from it (vault dir under `DATA_DIR/vaults`, `DATA_DIR/kuzu/<slug>/`, `<slug>_node_*`, `<slug>_nodes`) is fixed at creation. Do not add code that derives paths from `name`.
 3. **Kuzu path is a file, never a directory.** `_kuzu_db_file` / `normalize_kuzu_path` exist because the opposite once shipped; keep all Kuzu path handling going through them.
 4. **Deletion never leaves `DATA_DIR`.** Vault `rmtree` only under `DATA_DIR/vaults`; Kuzu unlink only under `DATA_DIR/kuzu`. External vault folders (OneDrive, NAS, Obsidian vaults) are user data and must survive KB deletion. (`kb/empty` is the deliberate exception and wipes whatever folder the KB points at.)
-5. **Note bodies live in the vault, not SQLite.** `notes.content` is kept empty by `persist_note_body`; the registry/vault layer is what makes a KB's `vault_path` authoritative. Never "fix" an empty body by writing into `notes.content`.
+5. **Note bodies live in the vault, not SQLite.** there is no `notes.content` column any more (`_sqlite_repairs` drops it once empty); the registry/vault layer is what makes a KB's `vault_path` authoritative.
 6. **External changes never trigger ingestion.** Watcher and scan only create/mark rows. Any future auto-ingest must be an explicit opt-in.
 7. **Filename is a fallback for title, never an overwrite.** Scan and watcher fill blank titles only. (Title→filename sync is the reverse direction and is handled in `vault_ops.rename_note_file_for_title`, see [09](09-notes-wikilinks-and-vault-files.md).)
 8. **Opening Kuzu must not be required to serve notes or finance.** Keep `_graph` lazy; do not touch `kb.graph` in notes/vault/files/finance handlers.
@@ -438,7 +438,7 @@ Startup wiring: `main.py` → `init_db()` (`create_all` for the ORM tables; `kno
 | `orb.db` unreadable | `_load` logs and falls back to an in-memory default KB; `list_kbs` returns the synthetic entry; registry writes will fail loudly later. |
 | KB row references a deleted vault folder | `GET /notes` returns rows with empty bodies; `sync_vault_notes` returns zeros (vault missing). Re-creating the folder revives it. |
 | Kuzu file locked by another process (second Orb instance) | `KBContext.graph` raises on first access → graph/ingest/chat routes 500; notes still work. |
-| `delete_kb` on a KB whose context was never opened | `getattr(ctx, "graph")` opens Kuzu just to close it; if opening fails the exception is swallowed and the file is deleted anyway. |
+| `delete_kb` on a KB whose context was never opened | Nothing to close (`_graph` is `None`); the file is deleted without ever opening Kuzu. |
 | Watcher sees Orb's own delete before the row is gone | The route unlinks the file (thread) *before* deleting the row; a fast watcher may set `processing_stage = "External delete detected…"` on a row that is deleted a few ms later. Harmless. |
 
 ## 16. Gotchas

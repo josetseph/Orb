@@ -150,6 +150,11 @@ class TestIterativeStep:
         got = _step(svc, "not json at all")
         assert got["can_answer"] is False and got["next_query"] is None and got["thinking"] is None
 
+    def test_runtime_errors_propagate(self, svc):
+        with patch.object(svc, "_reason_step", side_effect=RuntimeError("no GGUF")):
+            with pytest.raises(RuntimeError, match="no GGUF"):
+                asyncio.run(svc.iterative_step("q?", [], "s", [{"text": "d"}]))
+
     def test_prompt_asks_for_json(self, svc):
         with patch.object(svc, "_reason_step", return_value=("{}", None)) as reason:
             asyncio.run(svc.iterative_step("q?", [], "s", [{"text": "d"}]))

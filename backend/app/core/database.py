@@ -47,6 +47,30 @@ async def get_db():
         yield session
 
 
+# create_all skips new indexes on existing SQLite tables — ensure key ones.
+def _sqlite_repairs(sync_conn) -> None:
+    if sync_conn.dialect.name != "sqlite":
+        return
+    sync_conn.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)"
+    )
+    # rel_path was once str(Path) — backslashes on Windows.
+    sync_conn.exec_driver_sql(
+        "UPDATE notes SET rel_path = replace(rel_path, '\\', '/') "
+        "WHERE rel_path LIKE '%\\%'"
+    )
+    # Bodies moved to vault files; drop the column once nothing is left in it.
+    cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(notes)")}
+    if "content" in cols:
+        left = sync_conn.exec_driver_sql(
+            "SELECT count(*) FROM notes WHERE content IS NOT NULL AND content != ''"
+        ).scalar()
+        if left:
+            logger.warning("notes.content still holds %d bodies; column kept", left)
+        else:
+            sync_conn.exec_driver_sql("ALTER TABLE notes DROP COLUMN content")
+
+
 async def init_db() -> None:
     """Create tables if they do not exist (SQLite-friendly bootstrap)."""
     # Import models so metadata is populated (finance = Firefly, not local tables)
@@ -56,19 +80,6 @@ async def init_db() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-
-        # create_all skips new indexes on existing SQLite tables — ensure key ones.
-        def _sqlite_repairs(sync_conn) -> None:
-            if sync_conn.dialect.name != "sqlite":
-                return
-            sync_conn.exec_driver_sql(
-                "CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)"
-            )
-            # rel_path was once str(Path) — backslashes on Windows.
-            sync_conn.exec_driver_sql(
-                "UPDATE notes SET rel_path = replace(rel_path, '\\', '/') "
-                "WHERE rel_path LIKE '%\\%'"
-            )
 
         await conn.run_sync(_sqlite_repairs)
     logger.info("Database schema ensured (create_all)")

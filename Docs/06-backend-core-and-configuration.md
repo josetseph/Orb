@@ -28,7 +28,7 @@
 | Path | Purpose | Key exports |
 |---|---|---|
 | `backend/app/main.py` | FastAPI app construction, CORS, trace-id middleware, startup/shutdown | `app`, `request_trace_id` (ContextVar), `trace_id_middleware`, `startup_event`, `shutdown_event` |
-| `backend/app/core/config.py` | pydantic-settings `Settings` class; global `settings` singleton; post-construction path mutation | `Settings`, `settings`, `BACKEND_DIR`, `REPO_ROOT`, `DEFAULT_KUZU_DB_PATH` |
+| `backend/app/core/config.py` | pydantic-settings `Settings` class; global `settings` singleton; post-construction path mutation | `Settings`, `settings`, `BACKEND_DIR`, `REPO_ROOT` |
 | `backend/app/core/paths.py` | `paths.json` bootstrap; env > file > repo fallback resolution of data/models/vault dirs; download staging dir; data layout creation | `paths_json_location`, `load_paths_file`, `save_paths_file`, `resolve_data_dir`, `resolve_models_dir`, `resolve_default_vault_path`, `looks_like_network_volume`, `local_download_staging_dir`, `ensure_data_layout`, `sqlite_url`, `sync_settings_paths` |
 | `backend/app/core/runtime_config.py` | `DATA_DIR/runtime_config.json` load/save/apply of the four mutable provider keys | `MUTABLE_KEYS`, `load`, `save`, `apply_to_settings` |
 | `backend/app/core/database.py` | Async engine (SQLite/aiosqlite, NullPool), session factory, declarative `Base`, `init_db` | `engine`, `DATABASE_URL`, `AsyncSessionLocal`, `Base`, `get_db`, `init_db` |
@@ -108,7 +108,7 @@ Import-time ordering inside `core/` matters and is enforced by which module impo
 | Module | Imports from `core` | Reads at import time | Side effects at import time |
 |---|---|---|---|
 | `paths.py` | nothing (comment: "Avoid importing settings here (circular with config.py)") | `os.environ`, `paths.json` (lazily, cached) | none |
-| `config.py` | `paths` (function-local, inside `_default_data_dir` / `_default_models_dir`) | env, `backend/.env`, `paths.json` via `paths` | constructs `settings`; mutates `settings.KUZU_DB_PATH` and `settings.MODELS_PATH` |
+| `config.py` | `paths` (function-local, inside `_default_data_dir` / `_default_models_dir`) | env, `backend/.env`, `paths.json` via `paths` | constructs `settings`; mutates `settings.MODELS_PATH` |
 | `log.py` | `config.settings` | `settings.DATA_DIR`, `settings.LOG_LEVEL` | `resolve_logs_dir()` creates `DATA_DIR/logs` (called where needed; there is no module-level `LOGS_DIR` snapshot) |
 | `runtime_config.py` | `config`, `log` | — | none (file read only in `load()`) |
 | `database.py` | `config`, `log`, `paths` | `paths.sqlite_url()` | `ensure_data_layout()` creates the `DATA_DIR` subdirs; **creates the SQLAlchemy engine** (so `DATA_DIR` is frozen for the engine from this moment) |
@@ -236,7 +236,7 @@ class Settings(BaseSettings):
 
 ### 5.2 Defaults that are computed before the class body runs
 
-`_default_data_dir()` and `_default_models_dir()` call `paths.resolve_data_dir()` / `resolve_models_dir()` (env `ORB_DATA_DIR`/`DATA_DIR` > `paths.json` > `<repo>/data`; env `ORB_MODELS_DIR`/`MODELS_DIR` > `paths.json` > `backend/models`). Any exception falls back to `<repo>/data` / `backend/models`. `DEFAULT_KUZU_DB_PATH = <data_dir>/kuzu/kuzu_graph` is derived from that. Because these are evaluated as class-attribute defaults, the *field default* for `DATA_DIR` already includes `paths.json`; then pydantic still lets a plain `DATA_DIR` env var or `.env` entry override it (which is consistent, since `resolve_data_dir` also honours `DATA_DIR`).
+`_default_data_dir()` and `_default_models_dir()` call `paths.resolve_data_dir()` / `resolve_models_dir()` (env `ORB_DATA_DIR`/`DATA_DIR` > `paths.json` > `<repo>/data`; env `ORB_MODELS_DIR`/`MODELS_DIR` > `paths.json` > `backend/models`). Any exception falls back to `<repo>/data` / `backend/models`. Because these are evaluated as class-attribute defaults, the *field default* for `DATA_DIR` already includes `paths.json`; then pydantic still lets a plain `DATA_DIR` env var or `.env` entry override it (which is consistent, since `resolve_data_dir` also honours `DATA_DIR`).
 
 ### 5.3 Fields, grouped (type / default / consumer)
 
@@ -253,10 +253,10 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 
 | Field | Type | Default | Consumer |
 |---|---|---|---|
-| `DATA_DIR` | str | `_default_data_dir()` | `log.resolve_logs_dir`, `config.py` bottom (derives `KUZU_DB_PATH`); everything else goes through `paths.resolve_data_dir()` |
+| `DATA_DIR` | str | `_default_data_dir()` | `log.resolve_logs_dir`, the `KUZU_DB_PATH` property; everything else goes through `paths.resolve_data_dir()` |
 | `MODELS_DIR` | str | `_default_models_dir()` | `config.py` bottom (copied to `MODELS_PATH`), `paths.sync_settings_paths` |
 | `MODELS_PATH` | str | `"models"` then **overwritten** with `MODELS_DIR` | not read by name anywhere else (legacy; kept in sync) |
-| `KUZU_DB_PATH` | str | `DEFAULT_KUZU_DB_PATH` then **overwritten** with `<DATA_DIR>/kuzu/kuzu_graph` | `kb_registry` (default KB), `graph.GraphService` default |
+| `KUZU_DB_PATH` | read-only `@property` | `<DATA_DIR>/kuzu/kuzu_graph` — not a field, so env/`.env` cannot set it | `kb_registry` (default KB), `graph.GraphService` default |
 
 **LLM — chat axis**
 
@@ -369,15 +369,13 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 
 ```python
 settings = Settings()
-_data = Path(settings.DATA_DIR)
-settings.KUZU_DB_PATH = str(_data / "kuzu" / "kuzu_graph")
 settings.MODELS_PATH = settings.MODELS_DIR
 ```
 
 Consequences:
 
-- **`KUZU_DB_PATH` from env/`.env` is always discarded.** `.env.example` documents `KUZU_DB_PATH=data/kuzu/kuzu_graph`, but whatever you set, the effective value is `<DATA_DIR>/kuzu/kuzu_graph`. (Per-KB Kuzu paths for non-default KBs are `<DATA_DIR>/kuzu/<slug>/kuzu_graph`, computed by `kb_registry`, not by settings.)
 - `MODELS_PATH` is a pure alias of `MODELS_DIR`.
+- `KUZU_DB_PATH` is not mutated here (or anywhere): it is a read-only `@property` on `Settings` returning `<DATA_DIR>/kuzu/kuzu_graph`, so it follows `DATA_DIR` automatically. (Per-KB Kuzu paths for non-default KBs are `<DATA_DIR>/kuzu/<slug>/kuzu_graph`, computed by `kb_registry`, not by settings.)
 
 Other writers to `settings` at runtime (all in-process, none persisted except where noted):
 
@@ -385,8 +383,8 @@ Other writers to `settings` at runtime (all in-process, none persisted except wh
 |---|---|---|
 | `runtime_config.apply_to_settings` (startup, `PATCH /settings`) | `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` | yes → `runtime_config.json` |
 | `api/settings.update_runtime_settings` | same four LLM fields directly, then saves | yes |
-| `api_desktop.setup_paths` | via `sync_settings_paths`: `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH`, `KUZU_DB_PATH` | paths → `paths.json` |
-| `paths.sync_settings_paths` | `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH`, `KUZU_DB_PATH` | n/a (reads `paths.json`) |
+| `api_desktop.setup_paths` | via `sync_settings_paths`: `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` | paths → `paths.json` |
+| `paths.sync_settings_paths` | `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` | n/a (reads `paths.json`) |
 | `local_models.sync_embedding_infrastructure` | `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` | derived from `models_manifest.json` |
 | `local_models.ensure_chat_and_embed_models` | `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL`, `LLM_MODEL` | manifest |
 
@@ -428,7 +426,7 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 | `local_download_staging_dir()` | `-> Path` | `ORB_HF_STAGING` / `ORB_DOWNLOAD_STAGING` override; else macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%/Orb/model-downloads`, Linux `~/.cache/orb/model-downloads`. Always `mkdir -p`. |
 | `ensure_data_layout(data_dir=None)` | `-> Path` | creates `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/` under the data dir. Called at import of `database.py`, in `kb_registry._connect`, and by `sync_settings_paths`. |
 | `sqlite_url(data_dir=None, driver="aiosqlite")` | `-> str` | `sqlite+<driver>:///<DATA_DIR>/orb.db` (absolute). |
-| `sync_settings_paths(settings_obj=None)` | `-> None` | re-resolves data/models and writes `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH`, `KUZU_DB_PATH` onto `settings`; calls `ensure_data_layout`. Docstring is explicit: "SQLite/Qdrant engines created at import still need a restart to retarget storage roots." |
+| `sync_settings_paths(settings_obj=None)` | `-> None` | re-resolves data/models and writes `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` onto `settings` (`KUZU_DB_PATH` follows as a property); calls `ensure_data_layout`. Docstring is explicit: "SQLite/Qdrant engines created at import still need a restart to retarget storage roots." |
 
 ### 6.3 `paths.json` schema
 
@@ -809,8 +807,8 @@ Replaces the former RustFS/S3 object store. Attachments live only under `<vault_
 
 ## 20. Gotchas (things an assistant would get wrong)
 
-- `settings.MODELS_PATH` and `settings.KUZU_DB_PATH` from the environment are **overwritten** at the bottom of `config.py`; setting them in `.env` does nothing.
-- `.env.example` documents `EMBEDDING_PROVIDER=openai`, `COMMUNITY_DETECTION_ENABLED=true` "defaults", `KUZU_DB_PATH`, `VIDEO_MAX_PIXELS`/`FPS*`, `MODELS_PATH=models` — several of these are unused or overridden by code (see §5.3 "unused" markers and [21](21-configuration-reference.md)).
+- `settings.MODELS_PATH` from the environment is **overwritten** at the bottom of `config.py`; setting it in `.env` does nothing. `KUZU_DB_PATH` is a property and not a setting at all.
+- `.env.example` documents `EMBEDDING_PROVIDER=openai`, `COMMUNITY_DETECTION_ENABLED=true` "defaults", `VIDEO_MAX_PIXELS`/`FPS*`, `MODELS_PATH=models` — several of these are unused or overridden by code (see §5.3 "unused" markers and [21](21-configuration-reference.md)).
 - `IMAGE_DESCRIBE_MAX_PIXELS=0` does **not** disable the cap (`or 1_500_000`).
 - `ai_is_configured()` returns `True` for `cloud`/`hybrid` even with no key because `LLM_BASE_URL` has a non-empty default.
 - `GET /api/v1/settings` forces construction of `LLMService` (and accel detection); calling it in a tight loop is cheap after the first call but the first call can take a moment and logs "Primary LLM Provider: …".

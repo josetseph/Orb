@@ -162,10 +162,14 @@ fn spawn(app: &AppHandle) -> std::io::Result<()> {
     let lay = layout(app);
     let logs = data_dir(app).join("logs");
     fs::create_dir_all(&logs)?;
+    let log_path = logs.join("backend.log");
+    if fs::metadata(&log_path).map(|m| m.len() > 10 * 1024 * 1024).unwrap_or(false) {
+        let _ = fs::rename(&log_path, logs.join("backend.log.1"));
+    }
     let log = fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(logs.join("backend.log"))?;
+        .open(&log_path)?;
     let mut cmd = Command::new(&lay.python);
     cmd.args(["-m", "app.desktop_runtime"])
         .current_dir(&lay.backend)

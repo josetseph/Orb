@@ -1,6 +1,6 @@
 # Retrieval and Chat
 
-**What this covers.** The question-answering half of Orb: how a chat request enters the FastAPI backend (`POST /api/v1/chat` synchronously, or `POST /api/v1/chat/async` + `GET /api/v1/chat/status/{request_id}` polling), how conversations and messages are persisted in SQLite (`chat_conversations`, `chat_messages`), how follow-up questions are rewritten against history, and — in most depth — the multi-hop **iterative research loop** in `backend/app/services/retrieval.py` that combines LLM query analysis, Kuzu entity lookup, Meilisearch BM25, Qdrant vector search across three collections, 1-hop graph expansion, in-process GGUF cross-encoder reranking and a per-iteration LLM reasoning step to produce a final answer with note citations. It also documents the wire shapes the React chat page consumes, every configuration key that influences retrieval, the log files to read when debugging, failure modes, and how to tune retrieval safely.
+**What this covers.** The question-answering half of Orb: how a chat request enters the FastAPI backend (`POST /api/v1/chat/async` + `GET /api/v1/chat/status/{request_id}` polling), how conversations and messages are persisted in SQLite (`chat_conversations`, `chat_messages`), how follow-up questions are rewritten against history, and — in most depth — the multi-hop **iterative research loop** in `backend/app/services/retrieval.py` that combines LLM query analysis, Kuzu entity lookup, Meilisearch BM25, Qdrant vector search across three collections, 1-hop graph expansion, in-process GGUF cross-encoder reranking and a per-iteration LLM reasoning step to produce a final answer with note citations. It also documents the wire shapes the React chat page consumes, every configuration key that influences retrieval, the log files to read when debugging, failure modes, and how to tune retrieval safely.
 
 **Related docs:** [System architecture](02-system-architecture.md) · [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Local models & inference](12-local-models-and-inference.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Frontend chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Logging & observability](23-logging-and-observability.md) · [Testing](24-testing.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -10,7 +10,7 @@
 
 This slice **owns**:
 
-- The HTTP surface for chat: `backend/app/api/chat.py` (conversation CRUD, sync chat, async chat job + status polling) and the chat export route that lives in `backend/app/api_desktop.py`.
+- The HTTP surface for chat: `backend/app/api/chat.py` (conversation CRUD, async chat job + status polling) and the chat export route that lives in `backend/app/api_desktop.py`.
 - Conversation/message persistence: `backend/app/services/chat_store.py` over the SQLAlchemy models in `backend/app/models/chat.py` (tables `chat_conversations`, `chat_messages` in `DATA_DIR/orb.db`).
 - The chat orchestration layer: `backend/app/workflows/chat.py` (`ChatWorkflow`) — follow-up rewrite, invoking the research loop, dedupe/truncate of evidence, reference extraction, final answer assembly.
 - The retrieval engine: `backend/app/services/retrieval.py` (`RetrievalService`) — the iterative loop, per-iteration hybrid search (entity + BM25 + vector), graph expansion, candidate text formatting, reranker invocation.
@@ -30,7 +30,7 @@ This slice does **not** own (only consumes):
 
 | Path | Purpose | Key exports |
 |---|---|---|
-| `backend/app/api/chat.py` | FastAPI router: conversations CRUD, `POST /api/v1/chat`, `POST /api/v1/chat/async`, `GET /api/v1/chat/status/{request_id}`; in-memory job registry (bounded) and global job lock | `router`, `_chat_status: OrderedDict[str, (written_at, dict)]`, `_set_status`, `_get_status`, `_prune`, `_chat_job_lock: asyncio.Lock`, `_chat_tasks: set[asyncio.Task]`, `_answer_chat_query`, `_run_chat_job`, `_run_chat_job_serialized` |
+| `backend/app/api/chat.py` | FastAPI router: conversations CRUD, `POST /api/v1/chat/async`, `GET /api/v1/chat/status/{request_id}`; in-memory job registry (bounded) and global job lock | `router`, `_chat_status: OrderedDict[str, (written_at, dict)]`, `_set_status`, `_get_status`, `_prune`, `_chat_job_lock: asyncio.Lock`, `_chat_tasks: set[asyncio.Task]`, `_answer_chat_query`, `_run_chat_job`, `_run_chat_job_serialized` |
 | `backend/app/api_desktop.py` (chat export section) | `GET /api/v1/chat/conversations/{conversation_id}/export` (markdown/json) — **currently broken**, see §4.6 | `export_chat` |
 | `backend/app/schemas/chat.py` | Pydantic wire schemas | `ChatTurn{role,content}`, `CreateConversationInput{title?}`, `ChatInput{query(min 1), request_id?, conversation_id?}` |
 | `backend/app/models/chat.py` | SQLAlchemy ORM models | `ChatConversation`, `ChatMessage` |
@@ -64,7 +64,7 @@ sequenceDiagram
     participant LLM as llm_service
     UI->>API: POST /api/v1/chat/async?kb=slug {query, request_id, conversation_id?}
     API->>API: require_ai() (503 if not configured)
-    API->>CS: ensure_conversation(conversation_id, kb_id) → create if missing
+    API->>CS: ensure_conversation(conversation_id, kb_id) → 404 if unknown, create if no id
     API->>CS: get_recent_history(conversation_id) (≤ CHAT_HISTORY_MAX_MESSAGES, excludes the new turn)
     API->>CS: add_message(user, query); maybe_set_title_from_first_message
     API->>API: _chat_status[request_id] = {stage:"Queued", done:false, conversation_id}
@@ -137,7 +137,6 @@ All chat routes except `status` and `export` take the `kb` query parameter via `
 | POST | `/api/v1/chat/conversations` | kb | `chat_store.create_conversation(kb_id, title)`; body `{title?}` optional |
 | GET | `/api/v1/chat/conversations/{id}/messages` | kb | 404 if conversation missing/deleted/other KB; else all messages ascending by `created_at` |
 | DELETE | `/api/v1/chat/conversations/{id}` | kb | Soft delete (`deleted_at = now`); 404 if no row matched; returns `{"status":"deleted","conversation_id"}` |
-| POST | `/api/v1/chat` | kb + `require_ai()` | **Synchronous** full pipeline; returns the result dict when done |
 | POST | `/api/v1/chat/async` | kb + `require_ai()` | Persists the user turn, registers a job, returns immediately |
 | GET | `/api/v1/chat/status/{request_id}` | none | Reads `_chat_status[request_id]`; unknown id → `{"stage":"Waiting","model":null,"done":false}` |
 | GET | `/api/v1/chat/conversations/{id}/export?format=markdown\|json` | none (desktop router) | Broken (500) — see §4.6 |
@@ -146,19 +145,16 @@ All chat routes except `status` and `export` take the `kb` query parameter via `
 
 ### 4.2 Request id and conversation resolution
 
-Both `/chat` and `/chat/async` do the same preamble:
+`/chat/async` preamble:
 
 1. `request_id = body.request_id or str(uuid.uuid4())`. The frontend always supplies one (`crypto.randomUUID()` or a `Date.now()-random` fallback) so it can start polling before the POST returns. **Nothing validates uniqueness**; a reused id overwrites the previous status entry.
-2. `conversation = await chat_store.ensure_conversation(body.conversation_id, kb.kb_id)` — if `conversation_id` is given and exists **in this KB and is not soft-deleted**, it is reused; otherwise a **new** conversation is silently created (no 404). A stale/foreign conversation id therefore forks a new thread rather than erroring.
+2. `conversation = await chat_store.ensure_conversation(body.conversation_id, kb.kb_id)` — if `conversation_id` is given it must exist **in this KB and not be soft-deleted**, else **404** `"Conversation not found"` (nothing is persisted); a new conversation is created only when no id is given.
 3. `history = await chat_store.get_recent_history(conversation_id)` — fetched **before** the new user message is inserted, so history never contains the current question.
 4. `await chat_store.add_message(conversation_id, "user", body.query)` then `maybe_set_title_from_first_message(conversation_id, body.query)`.
 
 ### 4.3 Synchronous `POST /api/v1/chat`
 
-- Progress callback `_progress(stage, model)` writes `_chat_status[request_id] = {"stage": stage, "model": model}` — note: **no `done`, no `conversation_id`** keys on this path, so a client polling the sync request's id would see `done` falsy forever.
-- Runs `_answer_chat_query(...)` inline on the event loop, **without** taking `_chat_job_lock`. A sync chat can therefore run concurrently with an async job and both will contend for the single in-process llama runtime (model swap thrash, see §12).
-- On success: persists the assistant message (with `thinking` and `metadata={"rewritten_query","context_count"}`), sets stage `"Complete"`, and returns the workflow result dict augmented with `request_id`, `conversation_id`, `assistant_message_id`.
-- On any exception: sets stage `"Failed"` and re-raises → FastAPI **500**. The user message already persisted remains in the conversation (dangling turn).
+Removed (2026-09-20): it bypassed `_chat_job_lock` and never set `done`, and the frontend never called it. `/chat/async` is the only chat entry point.
 
 ### 4.4 Asynchronous `POST /api/v1/chat/async` + polling
 
@@ -226,7 +222,7 @@ The `"Gemma4"` model label is a **hard-coded string** in `chat.py`/`retrieval.py
 
 The API layer adds `request_id`, `conversation_id`, `assistant_message_id`. The finance path (`firefly_service.answer_finance_question`) returns the same keys plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source":"finance","summary":...,"kb_id":...}` to `context`; `thinking` is copied from the note-retrieval pass if present.
 
-**Export.** `GET /api/v1/chat/conversations/{conversation_id}/export?format=markdown|json` in `backend/app/api_desktop.py` reads the rows through `chat_store.list_messages(conversation_id)` and returns JSON `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>` blocks. It ignores `kb` and does no ownership check. The chat page's "Export" button calls `api.exportChat(activeConversationId, "markdown")`, builds a Blob download named `chat-<first 8 chars>.md`, and swallows errors silently.
+**Export.** `GET /api/v1/chat/conversations/{conversation_id}/export?format=markdown|json` in `backend/app/api_desktop.py` reads the rows through `chat_store.list_messages(conversation_id)` and returns JSON `[{"role","content","created_at"}]` or a `text/markdown` body of `## <role>` blocks. It ignores `kb` and does no ownership check. The chat page's "Export" button calls `api.exportChat(activeConversationId, "markdown")`, builds a Blob download named `chat-<first 8 chars>.md`, and reports a failed request with `alert(errMessage(...))`.
 
 ## 5. Conversation persistence (`chat_store.py`, `models/chat.py`)
 
@@ -272,10 +268,10 @@ All methods are `async`, open their own `AsyncSessionLocal()` session, and retur
 | `list_messages(id, kb_id=None)` | If `kb_id` given, first checks ownership + not deleted (returns `[]` otherwise); then all messages ascending |
 | `add_message(conversation_id, role, content, thinking=None, metadata=None)` | Inserts and bumps the conversation's `updated_at` in the same transaction; returns the message dict |
 | `get_recent_history(conversation_id, limit=None)` | Last `limit or settings.CHAT_HISTORY_MAX_MESSAGES` (24) messages by `created_at DESC`, reversed to chronological, filtered to `role in {user, assistant}` with non-empty content, returned as `ChatTurn` objects |
-| `ensure_conversation(conversation_id, kb_id)` | Reuse if found in this KB and not deleted, else create |
+| `ensure_conversation(conversation_id, kb_id)` | Reuse if found in this KB and not deleted; `None` for an unknown/deleted/foreign id (the API answers 404); create only when no id is given |
 | `maybe_set_title_from_first_message(conversation_id, user_text)` | See §5.3 |
 
-Soft-deleted conversations keep their messages; they are invisible to list/get/messages but their `id` can still be passed to `/chat` — `ensure_conversation` then silently creates a **new** conversation (it does not resurrect the deleted one).
+Soft-deleted conversations keep their messages; they are invisible to list/get/messages passing their `id` to `/chat/async` is a **404** (`ensure_conversation` returns `None`; it does not resurrect the deleted one).
 
 ### 5.3 Title generation
 
@@ -324,7 +320,7 @@ The working tree adds a per-KB chat/ingestion model override that changes how ch
 2. **Retrieval, skipped on iteration 1** because `current_query is None` — the first LLM call only *plans* the first query. Consequently with `MAX_LOOP_ITERATIONS = 3` there are at most **two** retrievals per chat turn (iterations 2 and 3), and the third iteration's LLM step is the last chance to say `ANSWER`.
    - `selected_docs = await self.hybrid_search(current_query)` (§7–§8); add each doc's `original_obj.name` to `surfaced_names`.
    - `expanded = await self._expand_relevant_neighbors(selected_docs, current_query, surfaced_names)` (§8.4) inside a try/except (failure → warning, `expanded = []`). If non-empty: `_progress("Reranking graph neighbors", MODEL_RERANKER_LOCAL)` and `expanded = _apply_reranker_logging(current_query, expanded, top_n=RERANKER_TOP_K, question_attribute=_loop_question_attr)` (no score threshold on this pass). Names of expansion docs' `original_obj` (the *origin* node, not the neighbours) are added to `surfaced_names`.
-   - `docs = selected_docs + expanded`; docs are merged into `all_docs` **deduplicated by `original_obj.name`** (fallback `d["name"]`). Because a `graph_expansion` doc's `original_obj` is the origin node that was just added from `selected_docs`, **expansion docs are effectively never added to `all_docs`** — they are visible to the LLM for this iteration only and never reach the final `context`/`sources` (see Gotchas §16).
+   - `docs = selected_docs + expanded`; docs are merged into `all_docs` **deduplicated by `original_obj.name`** (fallback `d["name"]`). Because a `graph_expansion` doc's `original_obj` is the origin node that was just added from `selected_docs`, the expansion doc itself is not appended; its `linked_notes` (neighbour note provenance) are folded into the origin doc, so expansion notes reach `sources` while the expansion text is visible to the LLM for this iteration only (see Gotchas §16).
 3. `_progress(f"Reasoning over retrieved context ({i}/{N})", "Gemma4")`; `result = await llm.iterative_step(original_question=query, accumulated_steps, search_query=current_query, docs, tried_queries or None, conversation_context or None)` (§9.2).
 4. If `docs` is non-empty and the step produced `full_answer` or `reasoning`, append `{query: current_query, full_answer, reasoning}` to `accumulated_steps` (iteration 1 never records a step).
 5. **Termination A — answer:** if `result["can_answer"]`, return `(result["final_answer"], all_docs, result.get("thinking"))`. Only the *terminating* step's thinking is returned.
@@ -486,7 +482,7 @@ Three layers:
 
 - **Query hints:** `rerank_query = f"{query} [{question_attribute}; type: t1, t2]"` (each part only when present). In `hybrid_search` both hints come from that sub-query's analysis; in the loop's expansion pass only `question_attribute` (from the original question) is passed.
 - **Texts:** `candidate["_rerank_text"]` → fallback `_build_node_text(original_obj, [])` → fallback `candidate["text"]`.
-- **Scores:** if `RERANKER_ENABLED`, call `reranker_service.rerank(rerank_query, texts)`; map `index → float(r.get("relevance_score") or 0.0)`. If the reranker returns nothing, log `Model returned no scores, skipping candidate scoring`. Every candidate gets `rerank_score = model_scores.get(idx, 0.0)` and `reranker_rank = idx + 1`. **There is no keyword-overlap fallback** despite the docstring claiming one — disabled or failed reranking yields all-zero scores.
+- **Scores:** if `RERANKER_ENABLED`, call `reranker_service.rerank(rerank_query, texts)`; map `index → float(r.get("relevance_score") or 0.0)`. If the reranker returns nothing, log `Model returned no scores, skipping candidate scoring`. Every candidate gets `rerank_score = model_scores.get(idx, 0.0)` and `reranker_rank = idx + 1`. There is no keyword-overlap fallback: disabled or failed reranking yields all-zero scores, keeps the hybrid order, and skips `score_threshold`.
 - **Order:** stable sort by `rerank_score` desc (ties keep channel order entity → BM25 → vector).
 - **Cut:** `candidates[:top_n]` when `top_n` is not `None`; then drop `rerank_score < score_threshold` when `score_threshold` is not `None`.
 - **Call sites:**
@@ -497,7 +493,7 @@ Three layers:
 | loop, expansion docs | `RERANKER_TOP_K` (10) | none | original-question attribute |
 | `_expand_relevant_neighbors` per-pair (§8.4) | manual: `GRAPH_EXPAND_TOP_NEIGHBORS` (10) | `GRAPH_EXPAND_SCORE_THRESHOLD` (0, i.e. off) if > 0 | none (raw sub-query) |
 
-**Critical consequence:** with `RERANKER_ENABLED=false`, or when the reranker GGUF is missing/fails, every candidate scores `0.0 < RERANKER_SCORE_THRESHOLD (0.05)` and `hybrid_search` returns **an empty list every iteration**. The loop then feeds `docs=[]` to `iterative_step`, which (because `search_query and docs` is false) re-issues the "output the first search query" instruction, and the turn ends in exhaustion with "I couldn't find any relevant information…". Set `RERANKER_SCORE_THRESHOLD=0` if you must run without a reranker (§14).
+With `RERANKER_ENABLED=false`, or when the reranker GGUF is missing/fails, `score_threshold` is skipped (it only applies to model scores) and `hybrid_search` returns the top `RERANKER_TOP_K` candidates in channel order (entity → BM25 → vector).
 
 Per-candidate DEBUG lines: `[Reranker] [i] name rerank=0.1234 | text: '...'`; INFO summary: `[Reranker] qwen3-reranker-0.6b scored N candidates (top score: …)`, `Ranked N candidates → keeping top K`, `Score threshold T dropped D candidate(s) → R remaining`. Note `settings.MODEL_RERANKER_LOCAL` is only a **label** in these logs and progress stages; the actual GGUF is `reranker_gguf_path()` (manifest selection / `ORB_RERANK_GGUF`).
 
@@ -532,7 +528,7 @@ Back in the loop, the expansion docs are reranked a second time as whole documen
 
 ### 9.1 What the LLM sees per iteration (no token budgeting)
 
-`iterative_step` concatenates `doc["text"]` of **every** doc passed for that iteration (≤ 10 reranked candidates + ≤ 10 reranked expansion docs), separated by `\n\n---\n\n`. There is **no token budget, no per-doc truncation and no character cap** anywhere in retrieval or the workflow: the only limiters are `RERANKER_TOP_K` (docs per pass) and the natural length of node summaries/isolated contexts. On the local runtime the safety net is `LocalLlamaRuntime._remaining_output_budget` (working tree): the prompt is token-estimated against `n_ctx` (`ORB_LLAMA_N_CTX`, default 16384) and if fewer than 256 tokens would remain it raises `PromptTooLongError` — which `iterative_step` catches as a generic exception and turns into the empty result (`can_answer=False, next_query=None`) → loop `break` → exhaustion. So an oversize context manifests as "I couldn't find enough information", with the real cause only in `llm.log` (`iterative_step failed: Prompt is ~N tokens; context window is …`).
+`iterative_step` concatenates `doc["text"]` of **every** doc passed for that iteration (≤ 10 reranked candidates + ≤ 10 reranked expansion docs), separated by `\n\n---\n\n`. There is **no token budget, no per-doc truncation and no character cap** anywhere in retrieval or the workflow: the only limiters are `RERANKER_TOP_K` (docs per pass) and the natural length of node summaries/isolated contexts. On the local runtime the safety net is `LocalLlamaRuntime._remaining_output_budget` (working tree): the prompt is token-estimated against `n_ctx` (`ORB_LLAMA_N_CTX`, default 16384) and if fewer than 256 tokens would remain it raises `PromptTooLongError` — which propagates out of `iterative_step` and the loop to the chat job, so the turn fails with that message in the status `error` field (`Prompt is ~N tokens; context window is …`) and in `api.log`.
 
 Doc text ordering inside the prompt = reranked order (candidates first, then expansion docs). Each candidate's text is the `_build_node_text` block; there is no per-source header, no score, no citation marker — the LLM never sees note ids, and **citations are not produced by the LLM** (see §9.4).
 
@@ -640,7 +636,7 @@ So one retrieval iteration in local mode is at minimum **chat → embed → rera
 
 `model_load` is the summed load time in the window, `inference` is `total − model_load` (everything else, including Kuzu/Qdrant/Meili I/O), `loads` is `ModelLoadClock.describe(delta)` (`none` when nothing loaded). This is the number to look at when deciding whether a slow turn is disk-bound or compute-bound.
 
-**Cross-KB and cross-request contention.** The runtime locks are process-wide; the async job lock serialises async chats but the sync `/chat` endpoint and ingestion do not take it. A chat running while ingestion embeds documents will thrash chat ↔ embed loads. Per-KB pinned local chat models (§5.5) add another swap axis: switching KBs with different pinned GGUFs reloads the chat model even when "chat" is already resident.
+**Cross-KB and cross-request contention.** The runtime locks are process-wide; the async job lock serialises chats but ingestion does not take it. A chat running while ingestion embeds documents will thrash chat ↔ embed loads. Per-KB pinned local chat models (§5.5) add another swap axis: switching KBs with different pinned GGUFs reloads the chat model even when "chat" is already resident.
 
 **Cloud providers** (`LLM_PROVIDER=openai|gemini|anthropic|huggingface`, or a KB override) remove the chat-model swaps but **embedding and reranking stay local** — the embed ↔ rerank swap per iteration remains, and the reranker's sequential per-document scoring is unchanged.
 
@@ -652,7 +648,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 
 | Key | Default | Where read | Effect |
 |---|---|---|---|
-| `RERANKER_ENABLED` | `True` | `_apply_reranker_logging`, `_expand_relevant_neighbors`, `_search_qdrant_multi_collection` | Off ⇒ all `rerank_score = 0.0`, vector threshold switches to `VECTOR_SIMILARITY_THRESHOLD`, per-pair expansion rerank skipped. **Off with default `RERANKER_SCORE_THRESHOLD` ⇒ empty retrieval** (§8.3) |
+| `RERANKER_ENABLED` | `True` | `_apply_reranker_logging`, `_expand_relevant_neighbors`, `_search_qdrant_multi_collection` | Off ⇒ all `rerank_score = 0.0` (hybrid order kept), `RERANKER_SCORE_THRESHOLD` not applied, vector threshold switches to `VECTOR_SIMILARITY_THRESHOLD`, per-pair expansion rerank skipped (§8.3) |
 | `RERANKER_TOP_K` | `10` | `hybrid_search`, loop expansion rerank | Docs kept per rerank pass (both passes) |
 | `RERANKER_SCORE_THRESHOLD` | `0.05` | `hybrid_search` only | Drop candidates below this yes-probability after the top-K cut |
 | `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `_search_qdrant_multi_collection` | Qdrant `score_threshold` when the reranker is on |
@@ -722,7 +718,6 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 |---|---|
 | `_answer_chat_query(query, kb, history_turns, progress_callback)` | Route: `firefly_service.looks_like_finance_query(query)` (keyword list: balance(s), transaction(s), spending, spent, income, expense(s), budget, cash, account(s), finance, financial, report, net worth, savings) → `retrieve_for_query` + `answer_finance_question`; else `ChatWorkflow.chat` |
 | `list_chat_conversations` / `create_chat_conversation` / `get_chat_messages` / `delete_chat_conversation` | Thin wrappers over `chat_store` with 404s |
-| `chat(body, kb)` | Sync endpoint (§4.3) |
 | `_run_chat_job(request_id, query, kb, conversation_id, history)` | Async job body: progress → answer → persist assistant → terminal status |
 | `_run_chat_job_serialized(...)` | Wraps `_run_chat_job` in `_chat_job_lock`, publishing the waiting stage |
 | `start_chat(body, kb)` | Async endpoint (§4.4) |
@@ -825,18 +820,17 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | Chat GGUF not downloaded (local) | `ensure_chat_loaded` raises `RuntimeError("Local GGUF models are not downloaded…")` in the rewrite call → job `Failed` | Error bubble |
 | Per-KB pinned local model not downloaded | `resolve_chat_gguf` raises → `Failed` (PATCH normally prevents this) | Error bubble |
 | `analyze_query` JSON/provider failure | Safe defaults: no entities, keywords = whitespace tokens; entity channel skipped | Weaker recall; `Query analysis failed` in `llm.log` |
-| `iterative_step` LLM failure, JSON parse failure or `PromptTooLongError` | Empty result → no next query → exhaustion | "couldn't find enough information"; cause only in `llm.log` |
+| `iterative_step` runtime/provider failure (`PromptTooLongError`, missing GGUF, outage) | Propagates → job `Failed`, real message in status `error` | Error bubble; traceback in `api.log` |
 | LLM ignores the protocol (not a JSON object with the four keys) | `_ResearchStep.model_validate_json` raises → empty result → no next query → exhaustion | "couldn't find enough information" |
 | LLM repeats a query | Not detected; the loop searches again (cache makes analysis cheap, but embed/rerank/reason repeat) | Wasted iteration |
 | Local repetition loop (Gemma ordinal cascade) | `create_chat_completion` retries up to 3 fresh samples, then `RuntimeError` → exhaustion or `Failed` | `llm.log` `Chat repetition loop on attempt n/3` |
 | Empty graph / fresh KB | All channels empty → exhaustion | "I couldn't find any relevant information in the knowledge base to answer that." |
 | Note deleted after ingestion but `REFERENCES` edge remains | Reference rendered with the graph title (`Untitled Note` if none); clicking it 404s in `getNote` (logged to console) | Dead reference pill |
 | Exception anywhere in an async job | `_chat_status[...] = {stage: "Failed", done: true, error}`; user message already persisted; no assistant row | Error bubble; dangling user turn in history |
-| Exception in sync `/chat` | 500, stage `"Failed"` (no `done` key) | Caller sees HTTP error |
 | Browser closed mid-job | Job continues under the lock and persists the answer | Appears on next load |
 | Frontend polls > 10 min | `fail()` client-side; backend unaffected | Error bubble, later the real answer appears after reload |
 | Two async chats at once (same or different KB) | Second waits on `_chat_job_lock` showing "Waiting for current chat to finish" | Stage text |
-| Sync `/chat` concurrent with an async job or ingestion | No lock — model swap thrash, longer wall time; `LocalLlamaRuntime._lock` prevents corruption | Slow turns |
+| Chat concurrent with ingestion | No shared lock — model swap thrash, longer wall time; `LocalLlamaRuntime._lock` prevents corruption | Slow turns |
 | Finance query (`looks_like_finance_query`) but Firefly not ready | `answer_finance_question` returns "I can't answer finance questions yet because …" with the note context attached | Answer text (no `sources` on this path) |
 
 ## 16. Invariants, locked decisions, and gotchas
@@ -856,7 +850,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 **Gotchas an assistant would get wrong**
 
 - `MAX_LOOP_ITERATIONS = 3` means **two** searches, not three; iteration 1 only plans.
-- `graph_expansion` docs are shown to the LLM but never enter `all_docs`/`context`/`sources` (name-dedup against their origin). If you want expansion provenance in citations, key expansion docs by a synthetic name (e.g. `f"{origin}→neighbours"`) or merge their `linked_notes` into the origin doc.
+- `graph_expansion` docs are shown to the LLM but never enter `all_docs`/`context` themselves (name-dedup against their origin); their `linked_notes` are merged into the origin doc, which is how neighbour notes reach `sources`.
 - Meili results are typed `entity_match`, not a keyword type; the source can be told apart via `original_obj._source == "meili"`.
 - Vector name variants come from Kuzu without Qdrant enrichment and are usually dropped for lack of text.
 - `RERANKER_ENABLED=false` (or a missing reranker) empties retrieval because of `RERANKER_SCORE_THRESHOLD`; the "keyword-overlap heuristic" in the docstring does not exist.
@@ -871,7 +865,6 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - Stored `natural_language` is used verbatim in `_build_node_text` (`{origin} {nl} {neighbour}.`); a sentence that already contains both entity names doubles them.
 - `find_nodes_by_name` fuzzy `CONTAINS` also matches note nodes (`kind='note'`), so note titles compete as entities.
 - The title auto-set is keyed on the *title* being "New Chat", not on message count.
-- The chat page's Export button swallows request errors silently (`catch { /* ignore */ }`).
 - There is no streaming — "progress" is polling of a dict.
 
 ## 17. Extension points / how to modify safely

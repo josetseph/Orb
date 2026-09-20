@@ -40,6 +40,7 @@ export interface ModelsPageState {
   kb: (Pick<KBLLMConfig, "override" | "effective"> & { id: string; name: string }) | null;
   local: {
     models_dir: string;
+    runtime: Record<string, unknown>;
     installed: InstalledModel[];
     installed_refs: string[];
     downloadable: DownloadableModel[];

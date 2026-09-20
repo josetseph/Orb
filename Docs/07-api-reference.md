@@ -32,7 +32,7 @@ There is **no authentication or authorization** on any route. The API binds to l
 | `backend/app/api/health.py` | Liveness routes | `router` (`GET /`, `GET /health`) |
 | `backend/app/api/settings.py` | Runtime LLM provider/model settings | `router`, `LLMSettings` |
 | `backend/app/api/files.py` | Attachment upload (with ffmpeg audio transcode) and delete | `router`, `_transcode_to_m4a` |
-| `backend/app/api/chat.py` | Conversations, sync chat, async chat job + status polling | `router`, `_chat_status`, `_chat_job_lock` |
+| `backend/app/api/chat.py` | Conversations, async chat job + status polling | `router`, `_chat_status`, `_chat_job_lock` |
 | `backend/app/api/graph.py` | 3D graph export, node detail, entity autocomplete/scan, note entity subgraph | `router`, `ScanTextInput` |
 | `backend/app/api/notes.py` | Notes CRUD, ingest, move, batch delete, legacy `/ingest` | `router`, `_note_response`, `_delete_note_impl` |
 | `backend/app/api/vault.py` | Vault file move/delete/mkdir/list/local-path | `router` |
@@ -100,7 +100,7 @@ Notes:
 
 ### 3.7 AI gate
 
-`services/ai_gate.ai_is_configured()` returns `True` when anything is actually reachable — chat+embed GGUFs on disk (`gguf_paths_if_present()`), any cloud provider key in the credential store, or a non-empty `LLM_BASE_URL`. `require_ai()` raises the 503 above. Routes gated: `POST /api/v1/chat`, `POST /api/v1/chat/async`, `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest` (unless `skip_ingestion`), `POST /api/v1/admin/reingest-all`, `POST /api/v1/notes/reingest-vault`. Routes that silently degrade instead of erroring: `GET /api/v1/graph/entities/search` (returns `[]`), `POST /api/v1/graph/entities/note-subgraph` (returns nodes but no edges).
+`services/ai_gate.ai_is_configured()` returns `True` when anything is actually reachable — chat+embed GGUFs on disk (`gguf_paths_if_present()`), any cloud provider key in the credential store, or a non-empty `LLM_BASE_URL`. `require_ai()` raises the 503 above. Routes gated: `POST /api/v1/chat/async`, `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest` (unless `skip_ingestion`), `POST /api/v1/admin/reingest-all`, `POST /api/v1/notes/reingest-vault`. Routes that silently degrade instead of erroring: `GET /api/v1/graph/entities/search` (returns `[]`), `POST /api/v1/graph/entities/note-subgraph` (returns nodes but no edges).
 
 ### 3.8 Background work and polling patterns
 
@@ -213,7 +213,6 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | GET | `/api/v1/chat/conversations/{conversation_id}/messages` | kb | List messages | [#](#get-apiv1chatconversationsconversation_idmessages) |
 | DELETE | `/api/v1/chat/conversations/{conversation_id}` | kb | Soft-delete conversation | [#](#delete-apiv1chatconversationsconversation_id) |
 | GET | `/api/v1/chat/conversations/{conversation_id}/export` | – | Export markdown/json (**currently broken**, see section) | [#](#get-apiv1chatconversationsconversation_idexport) |
-| POST | `/api/v1/chat` | kb | Synchronous chat | [#](#post-apiv1chat) |
 | POST | `/api/v1/chat/async` | kb | Start chat job, returns immediately | [#](#post-apiv1chatasync) |
 | GET | `/api/v1/chat/status/{request_id}` | – | Poll job progress / result | [#](#get-apiv1chatstatusrequest_id) |
 
@@ -564,7 +563,7 @@ Path `kb_id` = UUID. Body (`RenameKBInput`): `name: str`. **400** if blank or if
  "processing_stage": "Saved" | "Queued for ingestion" | "…" | null, "processing_model": null | "…", "kb_id": "default"}
 ```
 
-`content` is read from `<vault_path>/<rel_path>` via `note_files.note_body` — `""` when the file is missing; there is no SQLite fallback (a non-empty legacy `notes.content` is written to the vault file and blanked by `sync_vault_notes`). The SQLite `content` column is always kept empty by `persist_note_body`.
+`content` is read from `<vault_path>/<rel_path>` via `note_files.note_body` — `""` when the file is missing; there is no SQLite fallback (the `notes.content` column was dropped by `_sqlite_repairs`).
 
 `created_at` is a Pydantic `datetime | None` (ISO 8601, `Z` and offsets accepted; anything else → **422**); a naive datetime is taken as UTC (`_aware`).
 
@@ -592,7 +591,7 @@ Lightweight poll (no body read). **404** unknown; **503** `"Database temporarily
 {"id": "…", "processed": false, "failed": false, "status": "processing", "processing_stage": "Extracting entities", "processing_model": "gemma-…"}
 ```
 
-`status` = `completed` if `processed`, else `failed` if `failed`, else `processing` — so a never-ingested note (`stage="Saved"`) also reports `processing`. Clients must look at `processing_stage` to distinguish.
+`status` is derived from the row by `notes.note_status`: `completed` if `processed`, else `failed` if `failed`, else by `processing_stage` — `not_ingested` for an idle stage (`Saved`, empty, `Ingestion complete/failed` with flags reset, `Changed on disk…`, `External…`, anything containing `pending`), `queued` for `Queued…`, otherwise `processing`. A note that was only saved is therefore `not_ingested`, never `processing`; the notes UI stops polling on `not_ingested` (cancelled / reset ingest) as well as on `completed`/`failed`.
 
 #### PUT /api/v1/notes/{note_id}
 
@@ -758,15 +757,15 @@ Query: `format: str = "markdown"` (`"json"` for JSON). Reads the rows through `c
 
 <content>` blocks. It ignores `?kb=` and does no KB ownership check (conversation ids are UUIDs). Pinned by `test_chat_export.py`.
 
-#### POST /api/v1/chat
+#### POST /api/v1/chat/async
 
-Synchronous. Body (`ChatInput`): `query: str` (min length 1), `request_id: str | null` (client-chosen job id; UUID4 generated if absent), `conversation_id: str | null`.
+Body (`ChatInput`): `query: str` (min length 1), `request_id: str | null` (client-chosen job id; UUID4 generated if absent), `conversation_id: str | null` (`null` → a new conversation; an unknown, deleted or other-KB id → **404** `Conversation not found`). There is no synchronous chat route any more.
 
-Flow: `require_ai()` → `chat_store.ensure_conversation(conversation_id, kb_id)` (reuses if it exists in this KB, else **creates a new one** — an id from another KB silently starts a fresh conversation) → `get_recent_history` (last `CHAT_HISTORY_MAX_MESSAGES`=24 messages, user/assistant only, **before** the new message) → `add_message(user)` → `maybe_set_title_from_first_message` (if title is still `"New Chat"`, use the first 72 chars, ellipsised at 69) → `_answer_chat_query` → `add_message(assistant, thinking, metadata)` → return.
+Flow: `require_ai()` → `chat_store.ensure_conversation(conversation_id, kb_id)` → `get_recent_history` (last `CHAT_HISTORY_MAX_MESSAGES`=24 messages, user/assistant only, **before** the new message) → `add_message(user)` → `maybe_set_title_from_first_message` (if title is still `"New Chat"`, use the first 72 chars, ellipsised at 69) → seeds `_chat_status[request_id] = {"stage": "Queued", "model": None, "done": False, "conversation_id"}` → `asyncio.create_task(_run_chat_job_serialized(...))` (task kept in `_chat_tasks` to avoid GC) → returns. **The user message and title are written before the response.** The job runs `_answer_chat_query` and then `add_message(assistant, thinking, metadata)`.
 
 `_answer_chat_query`: if `firefly_service.looks_like_finance_query(query)` (keyword match on `balance`, `transaction(s)`, `spending`, `spent`, `income`, `expense(s)`, `budget`, `cash`, `account(s)`, `finance`, `financial`, `report`, `net worth`, `savings`) it runs `ChatWorkflow.retrieve_for_query` (retrieval only, up to 12 docs) then `firefly_service.answer_finance_question(query, kb, note_docs, rewritten_query)`; otherwise `ChatWorkflow.chat(query, history, progress_callback)`.
 
-Response (workflow result + ids):
+Chat result (delivered through `chat/status` as `result`, workflow output + ids):
 
 ```json
 {"query": "…", "rewritten_query": "…", "answer": "…", "sources": [{"id": "…", "title": "…"}], "thinking": "…" | null,
@@ -774,11 +773,9 @@ Response (workflow result + ids):
  "request_id": "…", "conversation_id": "…", "assistant_message_id": "…"}
 ```
 
-`sources` (`schemas.chat.ChatSource`) lists the unique notes linked from the retrieved context, SQLite title preferred (else `"Untitled Note"`); the answer text carries no citation block. The finance path returns the same keys (without `sources`) plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source": "finance", "summary": {…}, "kb_id": "…"}` to `context`. Progress for sync chat is also written into `_chat_status[request_id]` (`{"stage", "model"}`) so a client could poll while waiting. Errors: 503 (AI), 422, or 500 (stage recorded as `"Failed"`). Not used by the frontend.
+`sources` (`schemas.chat.ChatSource`) lists the unique notes linked from the retrieved context, SQLite title preferred (else `"Untitled Note"`); the answer text carries no citation block. The finance path returns the same keys (without `sources`) plus `information_needs: [query]`, `discovered_entities: {}`, and appends `{"source": "finance", "summary": {…}, "kb_id": "…"}` to `context`.
 
-#### POST /api/v1/chat/async
-
-Same body as `POST /api/v1/chat`. `require_ai()`; ensures conversation, snapshots history, **adds the user message and sets the title before returning**, seeds `_chat_status[request_id] = {"stage": "Queued", "model": None, "done": False, "conversation_id"}`, then `asyncio.create_task(_run_chat_job_serialized(...))` (task kept in `_chat_tasks` to avoid GC). Response:
+Route errors: 503 (AI), 404 (conversation), 422. Immediate response:
 
 ```json
 {"request_id": "…", "conversation_id": "…", "stage": "Queued", "model": null, "done": false}
@@ -792,7 +789,7 @@ No `kb`. Returns `{"request_id": …, **_chat_status.get(request_id, {"stage": "
 
 ```json
 {"request_id": "…", "stage": "Complete", "model": null, "done": true, "conversation_id": "…",
- "result": {…full chat result as in POST /api/v1/chat…}}
+ "result": {…the chat result shape shown under POST /api/v1/chat/async…}}
 ```
 
 or `{"…", "stage": "Failed", "done": true, "error": "…"}`. Unknown ids look like a pending job (`"Waiting"`), never 404. Intermediate `stage`/`model` values come from the workflow's `progress_callback` (e.g. `"Planning retrieval"` with model `"Gemma4"`, `"Selecting best evidence"`, `"Formatting answer"`, `"Checking finance data and notes"`). The frontend (`chat-context.tsx`) polls this until `done`.
@@ -863,7 +860,7 @@ Query: `rebuild: bool = true`. When true, first `rebuild_kb_note_links(db, kb)`:
 
 #### GET /api/v1/graph/notes/{note_id}/neighbors
 
-Query: `rebuild: bool = false`. Returns the full payload filtered to the note plus direct neighbours (either direction) and edges among them, with `"center_id": note_id`. Unknown `note_id` yields `{"nodes": [], "edges": [], "center_id": "…"}` (no 404). Used by the notes editor's Connected panel; the vault watcher keeps `note_links` current so rebuild defaults off.
+Query: `rebuild: bool = false`. Returns the full payload filtered to the note plus direct neighbours (either direction) and edges among them, with `"center_id": note_id`. **404** for an unknown `note_id` (checked against this KB before building the payload). Used by the notes editor's Connected panel; the vault watcher keeps `note_links` current so rebuild defaults off.
 
 #### POST /api/v1/graph/notes/rebuild
 
@@ -894,7 +891,7 @@ No body. `BackgroundTasks.add_task(wf.rebuild_leiden_communities)` (sync functio
 
 Body optional (`TemporalDigestInput`): `period: "month" | "week" | "year" | null` (default `settings.TEMPORAL_DIGEST_PERIOD`, `"month"`). Queues `wf.build_temporal_digests(period)`. Response `{"status": "started", "message": "Temporal digest build triggered (period=month). …"}`.
 
-**Discrepancy:** the route docstring says the manual endpoint is always available, but `IngestionWorkflow.build_temporal_digests` returns `0` immediately when `settings.TEMPORAL_DIGESTS_ENABLED` is `False` (the default), and also refuses to start while any ingestion is active. The route still answers `"started"`.
+**409** with a clear `detail` when the job would be a no-op: `settings.TEMPORAL_DIGESTS_ENABLED` is `False` (the default — `IngestionWorkflow.build_temporal_digests` returns `0` immediately; the flag gates the manual run too, unlike `rebuild-communities`) or an ingestion is active for this KB (`ingestion_tracker.has_active_ingestions`). The route never answers `"started"` for a run that will do nothing.
 
 #### POST /api/v1/admin/reset-ingestion-data
 
@@ -911,7 +908,7 @@ No body. Immediately `UPDATE notes SET processed=0, failed=0 WHERE kb_id=…` an
 All Finance routes proxy to the embedded Firefly III instance through `services/firefly_service.firefly_service`. Shared behaviour:
 
 - **Scoping:** every call goes through `FireflyService._run_scoped(kb, cb)`: acquires the **global** `_scope_lock` (all finance requests across all KBs are serialised), resolves or creates the KB's Firefly *administration* (user group titled `Orb: <kb name>`; group id cached in `knowledge_bases.firefly_group_id`; creation and switching run PHP scripts via `_run_php`, ~1 s Laravel bootstrap, skipped when the group is unchanged), sets `_active_group_id`, and stamps `user_group_id=<group>` on every Firefly REST request. List routes additionally filter rows by ids that a PHP helper reports for that group (`_ids_for_group`), because several Firefly endpoints are still user-wide.
-- **Errors:** mutating routes wrap the service call in `try/except` and map through `_finance_error`: `ValueError` → **400** (validation), `RuntimeError` (including `FireflyHTTPError`, which carries Firefly's status and message) → **502**, anything else → **500**. **`GET` list routes and `summary`/`workspace GET` have no wrapper**: a Firefly failure there is an unhandled exception → plain 500. `get_workspace` and `status` catch internally and return `ready: false`.
+- **Errors:** every `/api/v1/finance/**` route is decorated with `_finance_errors`, which maps through `_finance_error`: `ValueError` → **400** (validation), `RuntimeError` (including `FireflyHTTPError`, which carries Firefly's status and message) → **502**, anything else → **500** — always as the `{"detail": …}` JSON envelope (`HTTPException`s pass through untouched). `get_workspace` and `status` additionally catch internally and return `ready: false`. `test_finance_route_errors.py` fails if a finance route is added without the decorator.
 - **Bodies:** typed Pydantic models for workspace/accounts/transactions/budgets/categories/recurrences (422 on shape errors); **plain `dict`** for rule-groups and rules (missing keys become defaults and fail with 400 from the service, or pass silently).
 - Dates: `YYYY-MM-DD` strings are accepted; when a datetime is required the service appends `T12:00:00+00:00`.
 
@@ -1050,7 +1047,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 | `getMaintenanceStatus` / `rebuildCommunities` / `buildTemporalDigests` / `resetIngestionData` / `reingestAll` | admin | `buildTemporalDigests` sends `{period: null}` when unset |
 | Finance: workspace (get/create/reset), accounts (list/create), transactions (list/create/delete), summary, report, budgets (list/create), categories (list/create/delete), recurrences (list/create/delete), rule-groups (list/create/delete), rules (list/create/delete), search | finance routes | |
 
-**Backend routes with no frontend caller:** `GET /`, `GET /health` (infrastructure), `POST /api/v1/chat` (sync), `POST /api/v1/chat/conversations`, `POST /api/v1/ingest`, `DELETE /api/v1/files/{key}`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services`. The frontend also loads `/vault-files/…` URLs directly (media tags and `fetchMediaObjectUrl` in `frontend/src/lib/utils.ts`).
+**Backend routes with no frontend caller:** `GET /`, `GET /health` (infrastructure), `POST /api/v1/chat/conversations`, `POST /api/v1/ingest`, `DELETE /api/v1/files/{key}`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services`. The frontend also loads `/vault-files/…` URLs directly (media tags and `fetchMediaObjectUrl` in `frontend/src/lib/utils.ts`).
 
 **Frontend calls with no backend route:** none.
 
@@ -1063,7 +1060,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 - **Paths are literal.** No `APIRouter(prefix=…)`; Add new routes with the full `/api/v1/...` string.
 - **Desktop router registers first.** Literal desktop paths win over parameterised domain routes.
 - **`?kb=` is name-or-slug; `/kb/{kb_id}` is UUID.** Never pass a UUID as `?kb=`.
-- **Notes bodies live on disk.** Every note-returning route reads the vault file; `notes.content` stays empty. Do not write bodies to SQLite.
+- **Notes bodies live on disk.** Every note-returning route reads the vault file; there is no body column in SQLite.
 - **Autosave (`PUT /notes/{id}`) must never start ingestion.** Ingestion is only triggered by `/notes/{id}/ingest`, `/ingest`, `reingest-all`, `reingest-vault`.
 - **Vault deletes must go through `safe_vault_join`.** `_delete_note_impl` deliberately does not fall back to raw path joins when the safe delete fails.
 - **One chat job at a time.** `_chat_job_lock` serialises `chat/async` jobs process-wide; `AsyncSessionLocal` must be used from the app event loop, hence `asyncio.create_task` rather than a thread.
@@ -1098,11 +1095,11 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 2. `POST /api/v1/kb/empty` `rmtree`s **everything** in the vault folder, including files Orb did not create, even for external (OneDrive/NAS) vaults. `DELETE /api/v1/kb/{id}` is the one with the external-vault guard.
 3. `GET /api/v1/vault/folders` **creates** `attachments/`. `GET /api/v1/notes` **inserts** note rows for unseen `.md` files. `GET /api/v1/graph/notes` **rewrites** `note_links` for the whole KB. `GET /api/v1/finance/workspace` **creates** a Firefly administration.
 4. Any chat query containing `account`, `report`, `cash`, `balance`, etc. (e.g. "notes about my Google account") is routed to the finance answerer, which calls Firefly and formats a ledger-centric prompt.
-5. `GET /notes/{id}/status` returns `status: "processing"` for notes that were merely saved and never queued.
+5. `GET /notes/{id}/status` `status` vocabulary is `completed | failed | not_ingested | queued | processing` (derived from the row); `POST /notes/{id}/ingest` still answers the unrelated `"processing_started"`.
 6. `POST /api/v1/ingest` ignores `title` for the row/filename; the note is created as `Untitled.md`.
 7. `_chat_status` keeps full results in memory until `_prune()` evicts them (more than 200 entries, or older than 1800 s) — a finished job's result can disappear from `chat/status` after 30 minutes.
 8. `maintenance-status.ingestion` and community timer fields are process-wide, not per KB.
-9. `build-temporal-digests` reports `"started"` even when `TEMPORAL_DIGESTS_ENABLED=false` makes the job a no-op.
+9. `build-temporal-digests` answers **409** (not `"started"`) when `TEMPORAL_DIGESTS_ENABLED=false` or an ingestion is running; `rebuild-communities` runs regardless of `COMMUNITY_DETECTION_ENABLED`.
 10. Every frontend method that addresses a KB-scoped resource sends `kb`; omission means the default KB on purpose.
 11. `PUT /notes/{id}` with a new title rewrites **every** note body in the KB (reads + conditional writes) — O(vault) per rename.
 12. `POST /vault/move` may return a different `to` than requested (uniquified); clients must use the returned value.
@@ -1110,9 +1107,9 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 14. `DELETE /api/v1/files/{key}` always returns 200 even when nothing was deleted.
 15. `POST /api/v1/kb` returns **201**; `DELETE /api/v1/kb/{id}` returns **204** with no body — callers must not expect JSON.
 16. `download-models`, `start-local-llm`, `start-multimodal-services` are long blocking requests; `start-multimodal-services` can `pip install` into the running interpreter.
-17. Finance list routes are unwrapped: Firefly errors there produce plain-text 500s, not the `{"detail": …}` envelope.
+17. Every finance route (GET lists included) maps Firefly errors through `_finance_errors` → `{"detail": …}` JSON (400/502/500).
 19. `list_transactions`' limit (40) and `summary`'s 100-group window are hard-coded; totals are approximate for busy ledgers.
-20. Unknown `note_id` on `/graph/notes/{id}/neighbors` returns an empty graph, not 404.
+20. Unknown `note_id` is a **404** everywhere in `api/notes.py` (`_get_note_or_404`, incl. `ingest/cancel`, `attachments/cancel`, `attachments/jobs`) and on `/graph/notes/{id}/neighbors`; the one deliberate exception is `DELETE /notes/{id}` / `batch-delete`, which stay idempotent (`already_gone: true`).
 
 ---
 

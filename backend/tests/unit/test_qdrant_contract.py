@@ -207,3 +207,84 @@ class TestSearchNodeCoresFilter:
             min_score=0.5,
         )
         assert result == []
+
+
+# ── relationship points: written with their id, deleted with their nodes ─────
+
+
+def _svc_all():
+    svc = _make_service()
+    svc._col_rels = "kb_node_relationships"
+    svc._col_contexts = "kb_node_isolated_contexts"
+    svc._last_upsert_error = None
+    return svc
+
+
+class TestRelationshipPoints:
+    def test_upsert_returns_true_and_carries_relationship_id(self):
+        svc = _svc_all()
+        ok = svc.upsert_node_relationships([{
+            "relationship_id": "r1", "natural_language": "a knows b",
+            "nl_vector": [0.1] * 768, "source_node_id": "a", "target_node_id": "b",
+        }])
+        assert ok is True
+        payload = svc.client.upsert.call_args.kwargs["points"][0].payload
+        assert payload["relationship_id"] == "r1"
+
+    def test_upsert_returns_false_on_rejection(self):
+        svc = _svc_all()
+        svc.client.upsert.side_effect = RuntimeError("400")
+        ok = svc.upsert_node_relationships([{
+            "relationship_id": "r1", "natural_language": "x",
+            "nl_vector": [0.1] * 768, "source_node_id": "a", "target_node_id": "b",
+        }])
+        assert ok is False and "400" in svc._last_upsert_error
+        assert svc.upsert_node_relationships([]) is True
+
+    def test_two_edges_with_the_same_sentence_both_come_back(self):
+        svc = _svc_all()
+        pts = [
+            MagicMock(payload={"relationship_id": rid, "natural_language": "knows",
+                               "source_node_id": "a", "target_node_id": "b"})
+            for rid in ("r1", "r2")
+        ]
+        svc.client.scroll.side_effect = [(pts, None), ([], None)]
+        rows = svc.get_relationships_for_node_ids(["a"])
+        assert [r["relationship_id"] for r in rows] == ["r1", "r2"]
+
+    def test_delete_node_clears_its_relationship_points(self):
+        svc = _svc_all()
+        svc.delete_node("n1")
+        by_col = {c.kwargs["collection_name"]: c.kwargs["points_selector"]
+                  for c in svc.client.delete.call_args_list}
+        assert set(by_col) == {svc._col_cores, svc._col_contexts, svc._col_rels}
+        conds = by_col[svc._col_rels].filter.should
+        assert {(c.key, c.match.value) for c in conds} == {
+            ("source_node_id", "n1"), ("target_node_id", "n1")}
+
+    def test_delete_relationships_by_id(self):
+        import uuid
+
+        svc = _svc_all()
+        svc.delete_relationships(["r1"])
+        call = svc.client.delete.call_args.kwargs
+        assert call["collection_name"] == svc._col_rels
+        assert call["points_selector"] == [str(uuid.uuid5(uuid.NAMESPACE_OID, "r1"))]
+
+
+# ── search_all_collections: a day filter narrows, it does not skip ───────────
+
+
+class TestDayScopedSearch:
+    def test_day_only_still_searches_cores_and_rels(self):
+        svc = _svc_all()
+        svc.client.query_points.return_value = MagicMock(points=[])
+        svc.search_all_collections([0.1] * 768, 5, 0.5, contexts_filter=Filter(must=[]), day_only=True)
+        calls = {c.kwargs["collection_name"]: c.kwargs["query_filter"]
+                 for c in svc.client.query_points.call_args_list}
+        assert set(calls) == {svc._col_cores, svc._col_rels, svc._col_contexts}
+        assert calls[svc._col_rels] is None
+        excluded = calls[svc._col_cores].must_not[0]
+        assert excluded.key == "type" and set(excluded.match.any) == {"community", "temporal_digest"}
+        assert calls[svc._col_contexts].must == []
+

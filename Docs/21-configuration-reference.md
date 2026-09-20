@@ -22,7 +22,7 @@ Markers: **unused** = declared but never read in `backend/app`; **overridden** =
 
 pydantic-settings resolves each field as: **process environment** > `backend/.env` (absolute path `BACKEND_DIR / ".env"`, `extra="ignore"`) > **field default** (some defaults are themselves computed from `paths.json`). Then, in this order, code mutates the live object:
 
-1. `config.py` bottom: `KUZU_DB_PATH := <DATA_DIR>/kuzu/kuzu_graph`, `MODELS_PATH := MODELS_DIR` (always).
+1. `config.py` bottom: `MODELS_PATH := MODELS_DIR` (always). `KUZU_DB_PATH` is a read-only property, `<DATA_DIR>/kuzu/kuzu_graph`, not a setting.
 2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `INGESTION_MODEL`, `LLM_BASE_URL` from `runtime_config.json` **win over env/.env**.
 3. `main.startup_event`: `local_models.sync_embedding_infrastructure()` — `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` from the models manifest **win over env/.env**.
 4. Later, at user action: `PATCH /api/v1/settings`, `POST /api/v1/setup/paths`, Setup model selection (`ensure_chat_and_embed_models` also sets `LLM_MODEL`).
@@ -74,7 +74,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `ORB_DATA_DIR` (`DATA_DIR`) | path / `paths.json.data_dir` → `<repo>/data` | env — `paths.resolve_data_dir()`; `Settings.DATA_DIR` default is that result | Root for `orb.db`, `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`, `firefly/`, `runtime_config.json`, `meili_master_key`, `boot-status.json`. Keep it on local disk: the runtime prints `[desktop] WARNING: data dir … cloud-synced` for iCloud/OneDrive/Dropbox/Google Drive paths | setup (`paths.json`); env only in dev |
 | `ORB_MODELS_DIR` (`MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/` (incl. `mmproj-*` vision projectors), HF snapshots (`qwen3-asr-1.7b[-hf]`, `marlin-2b`), `manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
 | `MODELS_PATH` | str / `"models"` → **overridden** to `MODELS_DIR` | `Settings` (config.py bottom, `paths.sync_settings_paths`) | Alias only | code |
-| `KUZU_DB_PATH` | str / **overridden** to `<DATA_DIR>/kuzu/kuzu_graph` | `Settings`; `kb_registry` default KB, `graph.GraphService` default | Default KB's Kuzu file; per-KB files are `<DATA_DIR>/kuzu/<slug>/kuzu_graph` | code |
+| `KUZU_DB_PATH` | read-only property, `<DATA_DIR>/kuzu/kuzu_graph` (not settable) | `Settings`; `kb_registry` default KB, `graph.GraphService` default | Default KB's Kuzu file; per-KB files are `<DATA_DIR>/kuzu/<slug>/kuzu_graph` | code |
 | `ORB_DEFAULT_VAULT` | path / none | env — `paths.resolve_default_vault_path()` **after** `paths.json.default_vault_path` | Default KB vault folder when the file has none; else `<DATA_DIR>/vaults/default` | rarely (dev) |
 | `ORB_HF_STAGING`, `ORB_DOWNLOAD_STAGING` | path / macOS `~/Library/Caches/Orb/model-downloads`, Windows `%LOCALAPPDATA%/Orb/model-downloads`, Linux `~/.cache/orb/model-downloads` | env — `paths.local_download_staging_dir()` | Local SSD staging dir for GGUF/HF downloads destined for a network `MODELS_DIR` | rarely |
 | `ORB_FORCE_DOWNLOAD_STAGING` | any non-empty | env — `local_models.download_file` | Always stage downloads locally even when `MODELS_DIR` is not a network volume | rarely |
@@ -147,7 +147,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `KUZU_DB_PATH` | see §3.1 — **overridden** | — | — | code |
+| `KUZU_DB_PATH` | see §3.1 — property, not a setting | — | — | code |
 
 Kuzu has no other knobs; per-KB paths, healing of legacy directory paths (`normalize_kuzu_path`) and the schema are in [14](14-graph-storage-kuzu.md).
 
@@ -382,7 +382,7 @@ else {"local": LLM_MODEL, "openai": OPENAI_MODEL, "gemini": GEMINI_MODEL,
 | Key | Status |
 |---|---|
 | `DATABASE_*` (commented out in `.env.example`) | no longer `Settings` fields; SQLite only |
-| `KUZU_DB_PATH`, `MODELS_PATH` | read but overwritten by code |
+| `MODELS_PATH` | read but overwritten by code |
 | `LLM_BASE_URL`, `LLM_API_KEY` | only affect `ai_is_configured()`; no HTTP client uses them |
 | `STORAGE_BACKEND`, `FILES_URL` | not `Settings` fields; ignored by the backend |
 | `EMBEDDING_PROVIDER=openai` (from `.env.example` Option C) | raises `ValueError` |

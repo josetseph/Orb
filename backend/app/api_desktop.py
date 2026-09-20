@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
@@ -317,6 +318,11 @@ async def notes_graph_neighbors(
     # panel) — a full vault re-parse per call is wasteful. The vault watcher
     # keeps note_links current; pass rebuild=true or POST /graph/notes/rebuild
     # to force a full re-resolve.
+    exists = await db.execute(
+        select(Note.id).where(Note.id == note_id, Note.kb_id == kb.kb_id)
+    )
+    if exists.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Note not found")
     if rebuild:
         await rebuild_kb_note_links(db, kb)
     return await note_neighborhood_payload(db, kb.kb_id, note_id)
@@ -437,7 +443,23 @@ def _finance_error(exc: Exception) -> HTTPException:
     return HTTPException(status_code=500, detail=str(exc))
 
 
+def _finance_errors(fn):
+    """Map Firefly/service failures to JSON errors on every finance route."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            raise _finance_error(exc) from exc
+
+    return wrapper
+
+
 @router.get("/api/v1/finance/workspace")
+@_finance_errors
 async def get_finance_workspace(kb: KBContext = Depends(get_kb)):
     if not kb.finance_enabled:
         return {
@@ -455,54 +477,50 @@ async def get_finance_workspace(kb: KBContext = Depends(get_kb)):
 
 
 @router.post("/api/v1/finance/workspace")
+@_finance_errors
 async def create_finance_workspace(
     body: CreateWorkspaceInput,
     kb: KBContext = Depends(get_finance_kb),
 ):
-    try:
-        return await firefly_service.set_primary_currency(kb, body.currency)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.set_primary_currency(kb, body.currency)
 
 
 @router.post("/api/v1/finance/reset-administration")
+@_finance_errors
 async def reset_finance_administration(kb: KBContext = Depends(get_finance_kb)):
     """Destroy this KB's Firefly administration (ledger + UserGroup)."""
-    try:
-        result = await firefly_service.destroy_kb_administration(kb)
-        return {
-            "status": "reset",
-            "kb_id": kb.kb_id,
-            "result": result,
-            "message": (
-                "Finance data for this knowledge base was cleared. "
-                "Opening Finance again will create a fresh administration."
-            ),
-        }
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    result = await firefly_service.destroy_kb_administration(kb)
+    return {
+        "status": "reset",
+        "kb_id": kb.kb_id,
+        "result": result,
+        "message": (
+            "Finance data for this knowledge base was cleared. "
+            "Opening Finance again will create a fresh administration."
+        ),
+    }
 
 
 @router.get("/api/v1/finance/accounts")
+@_finance_errors
 async def list_accounts(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_accounts(kb)
 
 
 @router.post("/api/v1/finance/accounts")
+@_finance_errors
 async def create_account(body: CreateAccountInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_account(
-            kb,
-            name=body.name,
-            account_type=body.account_type,
-            opening_balance=body.opening_balance,
-            currency_code=body.currency,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_account(
+        kb,
+        name=body.name,
+        account_type=body.account_type,
+        opening_balance=body.opening_balance,
+        currency_code=body.currency,
+    )
 
 
 @router.get("/api/v1/finance/transactions")
+@_finance_errors
 async def list_transactions(
     kb: KBContext = Depends(get_finance_kb),
     account_id: str | None = None,
@@ -511,38 +529,35 @@ async def list_transactions(
 
 
 @router.post("/api/v1/finance/transactions")
+@_finance_errors
 async def create_transaction(
     body: CreateTransactionInput,
     kb: KBContext = Depends(get_finance_kb),
 ):
-    try:
-        return await firefly_service.create_transaction(
-            kb,
-            description=body.description,
-            amount=body.amount,
-            tx_type=body.type,
-            account_id=body.account_id,
-            date_value=body.date,
-            counterparty_name=body.counterparty_name,
-            transfer_account_id=body.transfer_account_id,
-            category=body.category,
-            budget_id=body.budget_id,
-            currency_code=body.currency,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_transaction(
+        kb,
+        description=body.description,
+        amount=body.amount,
+        tx_type=body.type,
+        account_id=body.account_id,
+        date_value=body.date,
+        counterparty_name=body.counterparty_name,
+        transfer_account_id=body.transfer_account_id,
+        category=body.category,
+        budget_id=body.budget_id,
+        currency_code=body.currency,
+    )
 
 
 @router.delete("/api/v1/finance/transactions/{transaction_id}")
+@_finance_errors
 async def delete_transaction(transaction_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_transaction(kb, transaction_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    await firefly_service.delete_transaction(kb, transaction_id)
+    return {"ok": True}
 
 
 @router.get("/api/v1/finance/budgets")
+@_finance_errors
 async def list_budgets(
     kb: KBContext = Depends(get_finance_kb),
     days: int = Query(default=30, ge=1, le=365),
@@ -551,144 +566,129 @@ async def list_budgets(
 
 
 @router.post("/api/v1/finance/budgets")
+@_finance_errors
 async def create_budget(body: CreateBudgetInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_budget(
-            kb,
-            name=body.name,
-            amount=body.amount,
-            currency_code=body.currency,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_budget(
+        kb,
+        name=body.name,
+        amount=body.amount,
+        currency_code=body.currency,
+    )
 
 
 @router.get("/api/v1/finance/categories")
+@_finance_errors
 async def list_categories(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_categories(kb)
 
 
 @router.post("/api/v1/finance/categories")
+@_finance_errors
 async def create_category(body: CreateCategoryInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_category(kb, name=body.name, notes=body.notes)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_category(kb, name=body.name, notes=body.notes)
 
 
 @router.delete("/api/v1/finance/categories/{category_id}")
+@_finance_errors
 async def delete_category(category_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_category(kb, category_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    await firefly_service.delete_category(kb, category_id)
+    return {"ok": True}
 
 
 @router.get("/api/v1/finance/recurrences")
+@_finance_errors
 async def list_recurrences(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_recurrences(kb)
 
 
 @router.post("/api/v1/finance/recurrences")
+@_finance_errors
 async def create_recurrence(body: CreateRecurrenceInput, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_recurrence(
-            kb,
-            title=body.title,
-            amount=body.amount,
-            tx_type=body.type,
-            source_id=body.source_id,
-            destination_id=body.destination_id,
-            description=body.description,
-            first_date=body.first_date,
-            repeat_freq=body.repeat_freq,
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_recurrence(
+        kb,
+        title=body.title,
+        amount=body.amount,
+        tx_type=body.type,
+        source_id=body.source_id,
+        destination_id=body.destination_id,
+        description=body.description,
+        first_date=body.first_date,
+        repeat_freq=body.repeat_freq,
+    )
 
 
 @router.delete("/api/v1/finance/recurrences/{recurrence_id}")
+@_finance_errors
 async def delete_recurrence(recurrence_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_recurrence(kb, recurrence_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    await firefly_service.delete_recurrence(kb, recurrence_id)
+    return {"ok": True}
 
 
 @router.get("/api/v1/finance/rule-groups")
+@_finance_errors
 async def list_rule_groups(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_rule_groups(kb)
 
 
 @router.post("/api/v1/finance/rule-groups")
+@_finance_errors
 async def create_rule_group(body: dict, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_rule_group(
-            kb,
-            title=str(body.get("title") or ""),
-            description=body.get("description"),
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_rule_group(
+        kb,
+        title=str(body.get("title") or ""),
+        description=body.get("description"),
+    )
 
 
 @router.delete("/api/v1/finance/rule-groups/{rule_group_id}")
+@_finance_errors
 async def delete_rule_group(rule_group_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_rule_group(kb, rule_group_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    await firefly_service.delete_rule_group(kb, rule_group_id)
+    return {"ok": True}
 
 
 @router.get("/api/v1/finance/rules")
+@_finance_errors
 async def list_rules(kb: KBContext = Depends(get_finance_kb)):
     return await firefly_service.list_rules(kb)
 
 
 @router.post("/api/v1/finance/rules")
+@_finance_errors
 async def create_rule(body: dict, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        return await firefly_service.create_rule(
-            kb,
-            title=str(body.get("title") or ""),
-            rule_group_id=str(body.get("rule_group_id") or ""),
-            trigger_type=str(body.get("trigger_type") or "description_contains"),
-            trigger_value=str(body.get("trigger_value") or ""),
-            action_type=str(body.get("action_type") or "add_tag"),
-            action_value=str(body.get("action_value") or ""),
-            trigger=str(body.get("trigger") or "store-journal"),
-            description=body.get("description"),
-        )
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.create_rule(
+        kb,
+        title=str(body.get("title") or ""),
+        rule_group_id=str(body.get("rule_group_id") or ""),
+        trigger_type=str(body.get("trigger_type") or "description_contains"),
+        trigger_value=str(body.get("trigger_value") or ""),
+        action_type=str(body.get("action_type") or "add_tag"),
+        action_value=str(body.get("action_value") or ""),
+        trigger=str(body.get("trigger") or "store-journal"),
+        description=body.get("description"),
+    )
 
 
 @router.delete("/api/v1/finance/rules/{rule_id}")
+@_finance_errors
 async def delete_rule(rule_id: str, kb: KBContext = Depends(get_finance_kb)):
-    try:
-        await firefly_service.delete_rule(kb, rule_id)
-        return {"ok": True}
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    await firefly_service.delete_rule(kb, rule_id)
+    return {"ok": True}
 
 
 
 @router.get("/api/v1/finance/search")
+@_finance_errors
 async def finance_search(
     kb: KBContext = Depends(get_finance_kb),
     query: str = Query(...),
     kind: str = Query(default="transactions"),
 ):
-    try:
-        return await firefly_service.search(kb, query=query, kind=kind)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.search(kb, query=query, kind=kind)
 
 
 @router.get("/api/v1/finance/summary")
+@_finance_errors
 async def get_finance_summary(
     kb: KBContext = Depends(get_finance_kb),
     days: int = Query(default=30, ge=1, le=365),
@@ -697,15 +697,13 @@ async def get_finance_summary(
 
 
 @router.get("/api/v1/finance/report")
+@_finance_errors
 async def get_finance_report(
     kb: KBContext = Depends(get_finance_kb),
     start: str | None = None,
     end: str | None = None,
 ):
-    try:
-        return await firefly_service.report(kb, start=start, end=end)
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        raise _finance_error(exc) from exc
+    return await firefly_service.report(kb, start=start, end=end)
 
 
 # Python's mimetypes guesses types no browser will decode: .m4a becomes
