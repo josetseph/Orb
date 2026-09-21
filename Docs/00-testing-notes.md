@@ -5,6 +5,32 @@ that an experiment depends on, how to measure honestly, and what has been learne
 Update it in the same commit as the change or finding it describes. Newest log entry first.
 If something here stops being true, fix or delete it; do not leave it to rot.
 
+## 0. The rule
+
+Set by the owner on 2026-09-21. It governs every pipeline change made on this branch.
+
+**No regex or patchwork implementations. No normalisation. Output from the model is not "fixed".
+Everything must work with minimal effort to correct it.**
+
+What that means in practice: a variant is judged on what the model actually produced. If a reply does not parse,
+names an entity that was not listed, or uses a predicate outside the vocabulary, that is a failure of the
+model-and-prompt pair and is counted as one. It is not repaired, coerced, fuzzy-matched or silently dropped.
+The way to get valid output is to ask for it better (prompt, schema, output format, model), not to clean it up after.
+
+Where the inherited pipeline breaks the rule today (each is a candidate lever: with it, without it, and what replaces it):
+
+| Site | What it does |
+|---|---|
+| `LLMService._clean_json` + the `json_repair` dependency | Every structured reply is unwrapped from code fences and passed through a JSON repairer before parsing. |
+| `schemas/extraction.py`: about ten `mode="before"` validators | Absorb the malformed shapes local models emit (wrong container types, missing keys, stray values) instead of rejecting them. |
+| `relationship_type` validator | Any predicate outside the closed vocabulary is rewritten to `related_to`. This is why nearly every edge in the first extraction was `related_to`. |
+| `match_entity_name` / `_norm_name` in the ingestion agent | Relationship and context rows that name an entity slightly differently are matched back by normalised name; unmatched ones are dropped quietly. |
+| Regex in `ingestion_agent.py`, `extraction_chunking.py`, `llm.py`, `ingestion.py` | Parsing and splitting of model output and note text by pattern. Each needs classifying: input handling (allowed) or output fixing (not). |
+
+Nothing records how often these fire, so nobody knows how much of the current scores depend on them.
+The harness scorer also normalises (`normalize_answer`, first-line extraction, fuzzy match). That is the published
+HotpotQA metric, kept so numbers stay comparable; a strict raw exact match is to be reported beside it.
+
 ## 1. Hazards
 
 | Hazard | What happens | Guard |
