@@ -245,6 +245,13 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, baseline `base-e4b` (pipeline as it was, repairs included).** Gemma 4 E4B ingest and chat, 20 HotpotQA questions,
+  199 notes, default knobs, no community summaries. Ingest 7.7 h (137 s a note, no failures). Exact match 45 %, F1 0.704,
+  contains 60 %, retrieval recall 0.825, 227 s a question. Where the 8 misses went (`replay.py`): 6 retrieved but answered
+  wrong, 2 gold note never surfaced, none cut by the filters. No filter setting beats the recall ceiling of 0.825, so the
+  rerank filters are not the problem; tightening the evidence cap only raises precision. Three questions ran out of loop
+  iterations and returned their last finding, a full sentence, as the answer, which cannot match. The other wrong answers are
+  yes/no and answer-form errors ("between 1986 and 2013" for "from 1986 to 2013"). Aim next at the answering step and the loop limit, not retrieval filters.
 - **2026-09-21, strict pipeline, cache and sweeps (branch `orb-testing-strict`).** Built in a second worktree so the baseline plan
   running from `orb-testing` keeps the code it started with. The rule is enforced (section 0), the model-call cache and the
   retrieval-only evaluator are in, and `sweep.py` with the lever registry replaces hand-written plans (section 4b).
