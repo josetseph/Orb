@@ -233,7 +233,10 @@ def main() -> int:
         import uvicorn
 
         log(f"Starting API on http://127.0.0.1:{API_PORT}")
-        uvicorn.run("app.main:app", host="127.0.0.1", port=API_PORT)
+        # uvicorn owns the signals while it serves and waits for in-flight requests before returning. A model
+        # generation can run for minutes; without a bound the caller gives up, kills this process, and the
+        # sidecars below are never stopped.
+        uvicorn.run("app.main:app", host="127.0.0.1", port=API_PORT, timeout_graceful_shutdown=10)
         return 0
     finally:
         stop_sidecars()

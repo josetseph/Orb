@@ -235,9 +235,11 @@ def main() -> None:
     finally:
         server.send_signal(signal.SIGINT)
         try:
-            server.wait(timeout=60)
+            server.wait(timeout=90)
         except subprocess.TimeoutExpired:
             server.kill()
+            # a killed server cannot stop its sidecars; they run from this data dir's bin folder
+            subprocess.run(["pkill", "-TERM", "-f", str(DATA / "bin")], check=False)
         record["finished"] = datetime.now().isoformat(timespec="seconds")
         tally: dict[str, int] = {}
         if failures.is_file():
