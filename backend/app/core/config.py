@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     MAX_LOOP_ITERATIONS: int = 3
     # Benchmark runs: short extracted answers + the HotPotQA/MuSiQue reasoning rules.
     BENCHMARK_MODE: bool = False
+    # Evidence returned with an answer: the N best docs by rerank score.
+    CHAT_MAX_CONTEXT_DOCS: int = 6
+    # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the
+    # embed model changes vector dimensions: an existing index is no longer valid.
+    EMBED_MODEL_ID: str | None = None
+    RERANK_MODEL_ID: str | None = None
     CHAT_HISTORY_MAX_MESSAGES: int = 24
 
     # Local runtime (llama.cpp). Edited in Settings → Local runtime and saved to

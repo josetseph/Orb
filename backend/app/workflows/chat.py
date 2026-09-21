@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 
 from app.core.database import AsyncSessionLocal
+from app.core.config import settings
 from app.core.log import get_logger
 from app.models.note import Note
 from app.schemas.chat import ChatSource, ChatTurn
@@ -123,7 +124,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         logger.info(f"\n[Chat] Started processing query: '{user_query}'")
         rewritten_query, final_answer, unique_docs, thinking = (
             await self._retrieve_context(
-                user_query, history, progress_callback, max_context_docs=6
+                user_query, history, progress_callback, max_context_docs=settings.CHAT_MAX_CONTEXT_DOCS
             )
         )
         if rewritten_query != user_query:

@@ -358,7 +358,11 @@ def _fits(opt: ModelOption, budget: float) -> bool:
 
 
 def pick_embed_for_budget(total_ram: float) -> ModelOption:
-    """Qwen3 embed tier from total system RAM (original design, sized up)."""
+    """Qwen3 embed tier from total system RAM, unless ``EMBED_MODEL_ID`` names one."""
+    from app.core.config import settings
+
+    if settings.EMBED_MODEL_ID:
+        return next(m for m in EMBED_MODELS if m.id == settings.EMBED_MODEL_ID)
     if total_ram >= 48:
         return next(m for m in EMBED_MODELS if m.id == "qwen3-embed-8b-q4")
     if total_ram >= 24:
@@ -367,7 +371,11 @@ def pick_embed_for_budget(total_ram: float) -> ModelOption:
 
 
 def pick_rerank_for_budget(total_ram: float) -> ModelOption:
-    """Qwen3 reranker tier from total system RAM (original design, sized up)."""
+    """Qwen3 reranker tier from total system RAM, unless ``RERANK_MODEL_ID`` names one."""
+    from app.core.config import settings
+
+    if settings.RERANK_MODEL_ID:
+        return next(m for m in RERANK_MODELS if m.id == settings.RERANK_MODEL_ID)
     if total_ram >= 48:
         return next(m for m in RERANK_MODELS if m.id == "qwen3-rerank-8b-q4")
     if total_ram >= 24:

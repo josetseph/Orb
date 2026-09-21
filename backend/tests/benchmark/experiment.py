@@ -44,11 +44,13 @@ KEEP = {"bin"}  # sidecar binaries: large, identical across runs
 BASE_URL = "http://127.0.0.1:8000"
 
 
-def save_snapshot(name: str) -> None:
+def save_snapshot(name: str, selection: dict) -> None:
     dest = SNAPSHOTS / name
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(DATA, dest, ignore=shutil.ignore_patterns(*KEEP, "logs"))
+    # The vectors inside are only valid for this embed model.
+    (dest / "snapshot.json").write_text(json.dumps({"selection": selection}, indent=2))
     print(f"[experiment] snapshot saved: {dest}")
 
 
@@ -97,6 +99,8 @@ def main() -> None:
     ap.add_argument("--fresh", action="store_true", help="start from an empty data dir")
     ap.add_argument("--ingest", action="store_true", help="ingest the dataset's notes before evaluating")
     ap.add_argument("--no-eval", action="store_true", help="ingest/snapshot only")
+    ap.add_argument("--download", action="store_true",
+                    help="fetch any missing GGUFs for this run's chat / embed / reranker selection first")
     ap.add_argument("--communities", action="store_true",
                     help="after ingesting, rebuild community summaries (on-demand in the app; one model call per cluster)")
     ap.add_argument("--snapshot", metavar="NAME", help="save the data dir under this name when done")
@@ -114,11 +118,23 @@ def main() -> None:
     out = RESULTS / args.name
     out.mkdir(parents=True, exist_ok=True)
     if args.restore:
+        meta = SNAPSHOTS / args.restore / "snapshot.json"
+        built_with = json.loads(meta.read_text())["selection"].get("embed_id") if meta.is_file() else None
+        wanted = overrides.get("EMBED_MODEL_ID")
+        if wanted and built_with and wanted != built_with:
+            sys.exit(f"[experiment] snapshot {args.restore} was embedded with {built_with}; {wanted} needs its own --fresh --ingest run")
         restore_snapshot(args.restore)
     elif args.fresh and DATA.exists():
-        for child in DATA.iterdir():
-            if child.name not in KEEP:
-                shutil.rmtree(child) if child.is_dir() else child.unlink()
+        marker = DATA / ".experiment"
+        if marker.is_file() and marker.read_text().strip() == args.name:
+            # Same run, started before and interrupted: keep the hours already ingested (--resume skips them).
+            print(f"[experiment] resuming {args.name}: data dir kept")
+        else:
+            for child in DATA.iterdir():
+                if child.name not in KEEP:
+                    shutil.rmtree(child) if child.is_dir() else child.unlink()
+    DATA.mkdir(exist_ok=True)
+    (DATA / ".experiment").write_text(args.name)
 
     env = {**os.environ, "BENCHMARK_MODE": "true", **overrides,
            "ORB_DATA_DIR": str(DATA), "ORB_BENCH_PROGRESS": str(DATA / "prepare_progress.json")}
@@ -131,6 +147,18 @@ def main() -> None:
         server = subprocess.Popen([sys.executable, "run.py"], cwd=BACKEND, env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
         wait_until("the API", lambda: get_json("/health")["status"] == "healthy", 1800, server)
+        # The manifest is branch-local state that outlives a run: re-assert the selection so
+        # EMBED_MODEL_ID / RERANK_MODEL_ID (or their absence) decide it, not the previous experiment.
+        selection = get_json("/api/v1/benchmark/config")["selection"]
+        catalogue = {m["id"] for m in get_json("/api/v1/models", 60)["local"]["downloadable"]}
+        chat_id = args.chat_model if args.chat_model in catalogue else selection.get("chat_id")
+        route = "/api/v1/setup/download-models" if args.download else "/api/v1/setup/select-chat-model"
+        req = Request(BASE_URL + route, method="POST", data=json.dumps({"chat_id": chat_id}).encode(),
+                      headers={"content-type": "application/json"})
+        try:
+            urlopen(req, timeout=14400).read()  # noqa: S310 — loopback; a download can take a while
+        except HTTPError as exc:
+            sys.exit(f"[experiment] {route} failed: {exc.read().decode()}")
         if args.provider or args.chat_model or args.ingestion_model:
             # Pinned on the KB, which lives in the data dir: no shared manifest is touched.
             pin = {"provider": args.provider, "model": args.chat_model,
@@ -152,12 +180,12 @@ def main() -> None:
             run(cmd, env)
             wait_until("ingestion to drain", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
             record["ingest_seconds"] = round(time.monotonic() - t0)
-            if args.communities:
-                t0 = time.monotonic()
-                urlopen(Request(BASE_URL + "/api/v1/admin/rebuild-communities", method="POST"), timeout=60).read()  # noqa: S310
-                time.sleep(10)  # the rebuild is a background task; give its running flag time to rise
-                wait_until("the community rebuild", lambda: get_json("/api/v1/benchmark/idle")["idle"], 14400, server)
-                record["communities_seconds"] = round(time.monotonic() - t0)
+        if args.communities:  # works on a restored snapshot too: same index, with and without summaries
+            t0 = time.monotonic()
+            urlopen(Request(BASE_URL + "/api/v1/admin/rebuild-communities", method="POST"), timeout=60).read()  # noqa: S310
+            time.sleep(10)  # the rebuild is a background task; give its running flag time to rise
+            wait_until("the community rebuild", lambda: get_json("/api/v1/benchmark/idle")["idle"], 14400, server)
+            record["communities_seconds"] = round(time.monotonic() - t0)
 
         if args.synthesis_from:
             run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from,
@@ -177,7 +205,7 @@ def main() -> None:
         record["finished"] = datetime.now().isoformat(timespec="seconds")
         (out / "config.json").write_text(json.dumps(record, indent=2))
     if args.snapshot:
-        save_snapshot(args.snapshot)
+        save_snapshot(args.snapshot, record.get("server", {}).get("selection") or {})
     print(f"[experiment] done -> {out}")
 
 

@@ -86,7 +86,19 @@ Ingestion (`workflows/ingestion.py`, `workflows/agents/ingestion_agent.py`):
 | `tests/benchmark/compare.py` | Pair runs per question. First file is the baseline. |
 | `tests/benchmark/replay.py` | Offline: where questions are lost, and a sweep of top-k, threshold, context cap. |
 | `tests/benchmark/synthesis.py` | Re-answer from a run's frozen evidence with another model. |
+| `tests/benchmark/plan.sh` | The ordered list of experiments. Skips finished runs, so it is safe to restart. `QUESTIONS`, `DATASET`, `PYTHON` env vars. |
 | `evaluate.py`, `prepare_dataset.py`, `fetch_notes.py` | The manual loop; `--questions N` ingests only the notes the first N questions use. |
+
+Switches, all defaulting to the app's behaviour. Flags of `experiment.py`: `--provider`, `--chat-model`,
+`--ingestion-model` (KB pins), `--communities` (rebuild summaries; works on a restored snapshot), `--download`
+(fetch missing GGUFs). Settings via `--set`: `MAX_LOOP_ITERATIONS`, `RERANKER_TOP_K`, `RERANKER_SCORE_THRESHOLD`,
+`CHAT_MAX_CONTEXT_DOCS` (branch-only, was a literal 6), `EMBED_MODEL_ID` and `RERANK_MODEL_ID` (branch-only;
+catalogue ids overriding the RAM-tier pick), `VECTOR_PRE_RERANK_THRESHOLD`, `GRAPH_EXPAND_*`, the `LLAMA_*` runtime knobs.
+A reranker swap works on any snapshot. An embed swap changes vector dimensions and needs its own `--fresh --ingest`;
+`experiment.py` refuses to restore a snapshot built with a different embed model (`snapshot.json`).
+`experiment.py` re-asserts the model selection at the start of every run, because the branch manifest outlives a run.
+An interrupted `--fresh --ingest` resumes instead of wiping (`data/.experiment` marker) when re-run under the same name.
+Use `backend/.venv` (Python 3.13, gitignored); the desktop repo's venv cannot install these requirements.
 
 Result file (`Results/<run>/<dataset>.json`): `config` (chat and ingestion model, `selection`, knobs),
 `note_titles` (id to title), and per question the scores, `context` (cited evidence text) and `trace`.
@@ -149,17 +161,24 @@ ingestion model or a much smaller local one is the way to make them affordable.
    on the baseline decides whether to work on ingestion, retrieval filters, or the answering prompt.
 6. The one validation question needed all three loop iterations and answered on the last allowed step.
    With `MAX_LOOP_ITERATIONS=3` a 2-hop question has no slack; 3 and 4-hop MuSiQue questions cannot finish.
-7. Is per-note extraction (mean 171 s for a paragraph) dominated by the number of passes? It runs entity,
-   relationship and context passes separately. Fewer or merged passes is the obvious ingestion speed lever.
+7. Per-note extraction (mean 171 s for a paragraph) is one model call, not several: a note that fits the
+   context budget is extracted in a single pass, and only longer notes are split by task. The time is one long
+   generation (a context sentence per entity plus every relationship), so the levers are model size and how
+   much each extraction is asked to write. Ingestion-model runs in `plan.sh` measure the first.
 8. Are community summaries worth their cost at all for these question sets, and at this granularity? Run one
    snapshot with `--communities` and one without. 70 clusters from 10 notes, mean size 1.5.
    A minimum cluster size would cut most of those model calls. Does retrieval quality move if it does?
-9. In the first extraction nearly every relationship was typed `related_to` even where the text gave a
-   specific predicate ("is the director of"). Check across notes; typed edges are what graph expansion can use.
+9. Settled, low value: in the first extraction nearly every relationship was typed `related_to` although the
+   closed vocabulary has `created`, `authored`, `produces`. It costs retrieval little, because graph expansion
+   words an edge with its stored natural-language sentence and falls back to the type label only when that is missing.
 5. Would smaller embedding and reranker models (0.6B) cost accuracy? They are loaded on every search.
 
 ## 8. Log
 
+- **2026-09-21, variations and plan.** Added `CHAT_MAX_CONTEXT_DOCS`, `EMBED_MODEL_ID`, `RERANK_MODEL_ID`, `--download`,
+  standalone `--communities`, snapshot embed guard, ingest resume marker, and `plan.sh`: one E4B index on 20 HotpotQA
+  questions, then baseline, loop limits, small reranker, five answering models (synthesis replay then full loop),
+  community summaries, three ingestion models, small embed. Two hypotheses dropped after reading the code (open questions 7 and 9).
 - **2026-09-21, sync to `main` `3bd480f`.** Fifteen commits since `63c602e`, applied as a three-way patch; two
   conflicts, both in attachment code, kept the branch side. Taken: the keyword-plus-vector candidate fix,
   on-demand communities and digests, ingestion on the selected model, llama.cpp knobs as Settings, the learned
