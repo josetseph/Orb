@@ -1,154 +1,91 @@
-"""Unit tests for app/schemas/extraction.py — Pydantic model validators.
+"""The extraction schema accepts one shape: the one the prompt asks for.
 
-Tests cover handle_none, the closed relationship vocabulary, and the
-Extraction outer-wrapper normalizer. All tests are synchronous with no I/O.
+It used to absorb whatever local models produced (bare lists, wrapper keys, nulls,
+off-list predicates). A reply is now used as written or rejected and counted, so
+every shape below that is not the specified one must fail validation.
 """
 
+import json
+
+import pytest
+from pydantic import ValidationError
 
 from app.schemas.extraction import RELATIONSHIP_TYPES, ExtractedRelationship, Extraction, Node
 
-# ── Node.normalize_keys ───────────────────────────────────────────────────────
+NODES = [
+    {"name": "Alice", "type": "Person", "isolated_context": "Alice is an engineer."},
+    {"name": "Bob", "type": "Person", "isolated_context": "Bob manages Alice."},
+]
+REL = {"source_name": "Bob", "target_name": "Alice", "relationship_type": "manages", "natural_language": "Bob manages Alice"}
 
 
-# ── Node.handle_none ──────────────────────────────────────────────────────────
+def _parse(payload) -> Extraction:
+    return Extraction.model_validate_json(json.dumps(payload))
 
 
-class TestNodeHandleNone:
-    def test_none_name_becomes_empty_string(self):
-        node = Node.model_validate({"name": None, "type": "person"})
-        assert node.name == ""
-
-    def test_none_type_becomes_thing(self):
-        node = Node.model_validate({"name": "X", "type": None})
-        assert node.type == "thing"
-
-    def test_none_isolated_context_becomes_empty_string(self):
-        node = Node.model_validate({"name": "X", "isolated_context": None})
-        assert node.isolated_context == ""
-
-    def test_valid_type_preserved(self):
-        node = Node.model_validate({"name": "Paris", "type": "city"})
-        assert node.type == "city"
+def test_the_specified_shape_is_accepted_unchanged():
+    got = _parse({"title": "Team", "nodes": NODES, "relationships": [REL]})
+    assert [n.name for n in got.nodes] == ["Alice", "Bob"]
+    assert got.relationships[0].relationship_type == "manages"
+    assert got.title == "Team"
 
 
-# ── ExtractedRelationship.relationship_type ──────────────────────────────────
+def test_title_is_the_only_optional_key():
+    assert _parse({"nodes": NODES, "relationships": []}).title is None
 
 
-class TestRelationshipTypeVocabulary:
-    def _rel(self, rel_type):
-        return ExtractedRelationship.model_validate(
-            {"source_name": "A", "target_name": "B", "relationship_type": rel_type}
-        ).relationship_type
-
-    def test_none_and_empty_become_related_to(self):
-        assert self._rel(None) == "related_to"
-        assert self._rel("") == "related_to"
-
-    def test_unknown_predicate_becomes_related_to(self):
-        assert self._rel("plays_corliss_archer") == "related_to"
-        assert self._rel("is_friends_with") == "related_to"  # no fuzzy matching
-
-    def test_known_predicate_is_normalised_not_rejected(self):
-        assert self._rel(" Lives In ") == "lives_in"
-        assert self._rel("WORKS_AT") == "works_at"
-
-    def test_every_listed_predicate_round_trips(self):
-        for t in RELATIONSHIP_TYPES:
-            assert self._rel(t) == t
+@pytest.mark.parametrize("predicate", RELATIONSHIP_TYPES)
+def test_every_listed_predicate_is_accepted(predicate):
+    assert ExtractedRelationship(**{**REL, "relationship_type": predicate}).relationship_type == predicate
 
 
-# ── Extraction.normalize_keys ─────────────────────────────────────────────────
+@pytest.mark.parametrize(
+    "predicate",
+    ["supervises", "Manages", "manages ", "works at", "", None],
+    ids=["off-list", "wrong-case", "trailing-space", "spaced", "empty", "null"],
+)
+def test_a_predicate_is_never_rewritten(predicate):
+    with pytest.raises(ValidationError):
+        ExtractedRelationship(**{**REL, "relationship_type": predicate})
 
 
-class TestExtractionNormalizeKeys:
-    def test_bare_node_list_wraps_into_extraction(self):
-        raw = [{"name": "Alice", "type": "person"}, {"name": "Paris", "type": "city"}]
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 2
-        assert ext.relationships == []
+@pytest.mark.parametrize(
+    "payload",
+    [
+        NODES,
+        [NODES, [REL]],
+        {"extraction": {"nodes": NODES, "relationships": []}},
+        {"data": {"nodes": NODES, "relationships": []}},
+        {"result": {"nodes": NODES, "relationships": []}},
+        {"nodes": ["Alice", "Bob"], "relationships": []},
+        {"nodes": NODES},
+        {"relationships": []},
+        {"nodes": None, "relationships": None},
+        None,
+    ],
+    ids=["bare-list", "two-lists", "extraction-wrapper", "data-wrapper", "result-wrapper",
+         "string-nodes", "no-relationships-key", "no-nodes-key", "null-lists", "null"],
+)
+def test_no_other_shape_is_absorbed(payload):
+    with pytest.raises(ValidationError):
+        _parse(payload)
 
-    def test_gemma3_two_list_format(self):
-        raw = [
-            [{"name": "Alice", "type": "person"}],
-            [
-                {
-                    "source_name": "Alice",
-                    "target_name": "Bob",
-                    "relationship_type": "knows",
-                }
-            ],
-        ]
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 1
-        assert len(ext.relationships) == 1
 
-    def test_extraction_wrapper_unwrapped(self):
-        raw = {
-            "extraction": {
-                "nodes": [{"name": "Alice", "type": "person"}],
-                "relationships": [],
-            }
-        }
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 1
+@pytest.mark.parametrize("field", ["name", "type", "isolated_context"])
+@pytest.mark.parametrize("value", [None, ""], ids=["null", "empty"])
+def test_a_node_field_is_never_defaulted(field, value):
+    with pytest.raises(ValidationError):
+        Node(**{**NODES[0], field: value})
 
-    def test_data_wrapper_unwrapped(self):
-        raw = {
-            "data": {
-                "nodes": [{"name": "Bob"}],
-                "relationships": [],
-            }
-        }
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 1
 
-    def test_result_wrapper_unwrapped(self):
-        raw = {
-            "result": {
-                "nodes": [{"name": "Charlie"}],
-                "relationships": [],
-            }
-        }
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 1
+@pytest.mark.parametrize("end", ["source_name", "target_name"])
+@pytest.mark.parametrize("name", ["Carol", "alice", "Alice ", "Alice (Person)"], ids=["unlisted", "case", "space", "type-echo"])
+def test_a_relationship_must_name_its_entities_exactly(end, name):
+    with pytest.raises(ValidationError, match="not one of the entities"):
+        _parse({"nodes": NODES, "relationships": [{**REL, end: name}]})
 
-    def test_string_items_in_bare_list_become_nodes(self):
-        raw = ["Alice", "Bob", "Paris"]
-        ext = Extraction.model_validate(raw)
-        names = {n.name for n in ext.nodes}
-        assert "Alice" in names
-        assert "Bob" in names
-        assert "Paris" in names
 
-    def test_embedded_relationships_hoisted(self):
-        raw = [
-            {
-                "name": "Alice",
-                "type": "person",
-                "relationships": [
-                    {
-                        "source_name": "Alice",
-                        "target_name": "Bob",
-                        "relationship_type": "knows",
-                    }
-                ],
-            }
-        ]
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 1
-        assert len(ext.relationships) == 1
-
-    def test_normal_dict_with_nodes_and_relationships(self):
-        raw = {
-            "nodes": [{"name": "Alice"}, {"name": "Bob"}],
-            "relationships": [
-                {
-                    "source_name": "Alice",
-                    "target_name": "Bob",
-                    "relationship_type": "knows",
-                }
-            ],
-        }
-        ext = Extraction.model_validate(raw)
-        assert len(ext.nodes) == 2
-        assert len(ext.relationships) == 1
+def test_malformed_json_is_not_repaired():
+    for raw in ('```json\n{"nodes": [], "relationships": []}\n```', '{"nodes": [], "relationships": [],}', "{'nodes': [], 'relationships': []}", ""):
+        with pytest.raises(ValidationError):
+            Extraction.model_validate_json(raw)

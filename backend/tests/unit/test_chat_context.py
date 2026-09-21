@@ -10,7 +10,9 @@ from app.services.llm import LLMService
 
 @pytest.fixture(scope="module")
 def svc() -> LLMService:
-    return LLMService.__new__(LLMService)
+    service = LLMService.__new__(LLMService)
+    service.get_chat_model = lambda: "test-model"
+    return service
 
 
 class TestRewriteFollowUpQuery:
@@ -129,26 +131,47 @@ def _step(svc, raw: str, docs=None):
         )
 
 
+NO_OP = {"reasoning": "", "full_answer": "", "can_answer": False, "final_answer": None, "next_query": None, "thinking": None}
+
+
 class TestIterativeStep:
-    def test_answer_wins(self, svc):
-        got = _step(svc, '{"reasoning": "r", "finding": "f", "answer": "42", "next_query": "ignored"}', [{"text": "d"}])
+    """The step reply is used exactly as written, or the step produces nothing."""
+
+    def test_an_answer_ends_the_loop(self, svc):
+        got = _step(svc, '{"reasoning": "r", "finding": "f", "answer": "42", "next_query": null}', [{"text": "d"}])
         assert got == {
             "reasoning": "r", "full_answer": "f", "can_answer": True,
             "final_answer": "42", "next_query": None, "thinking": "thought",
         }
 
-    def test_next_query_when_no_answer(self, svc):
-        got = _step(svc, '```json\n{"reasoning": "", "finding": null, "answer": null, "next_query": "who?"}\n```')
+    def test_a_next_query_continues_it(self, svc):
+        got = _step(svc, '{"reasoning": "", "finding": "", "answer": null, "next_query": "who?"}')
         assert not got["can_answer"] and got["next_query"] == "who?"
-        assert got["full_answer"] == ""
 
-    def test_non_answer_strings_do_not_count(self, svc):
-        got = _step(svc, '{"answer": "INSUFFICIENT", "next_query": "null"}', [{"text": "d"}])
-        assert not got["can_answer"] and got["next_query"] is None
+    def test_an_answer_is_never_reinterpreted(self, svc):
+        """"INSUFFICIENT" used to be read as "no answer". It is what the model answered."""
+        got = _step(svc, '{"reasoning": "r", "finding": "f", "answer": "INSUFFICIENT", "next_query": null}', [{"text": "d"}])
+        assert got["final_answer"] == "INSUFFICIENT"
 
-    def test_garbage_is_a_no_op_step(self, svc):
-        got = _step(svc, "not json at all")
-        assert got["can_answer"] is False and got["next_query"] is None and got["thinking"] is None
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "not json at all",
+            '```json\n{"reasoning": "", "finding": "", "answer": null, "next_query": "who?"}\n```',
+            '{"reasoning": "r", "finding": "f", "answer": "42", "next_query": "also this"}',
+            '{"reasoning": "r", "finding": "f", "answer": null, "next_query": null}',
+            '{"reasoning": "", "finding": null, "answer": null, "next_query": "who?"}',
+            '{"answer": "42", "next_query": null}',
+        ],
+        ids=["garbage", "code-fence", "both-outcomes", "no-outcome", "null-finding", "missing-keys"],
+    )
+    def test_an_unusable_reply_is_a_counted_no_op(self, svc, raw, tmp_path, monkeypatch):
+        from app.core.config import settings
+        from app.services import model_output
+
+        monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+        assert _step(svc, raw, [{"text": "d"}]) == NO_OP
+        assert model_output.failure_log().read_text().count('"stage": "research step"') == 1
 
     def test_runtime_errors_propagate(self, svc):
         with patch.object(svc, "_reason_step", side_effect=RuntimeError("no GGUF")):

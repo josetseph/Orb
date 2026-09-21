@@ -17,19 +17,31 @@ names an entity that was not listed, or uses a predicate outside the vocabulary,
 model-and-prompt pair and is counted as one. It is not repaired, coerced, fuzzy-matched or silently dropped.
 The way to get valid output is to ask for it better (prompt, schema, output format, model), not to clean it up after.
 
-Where the inherited pipeline breaks the rule today (each is a candidate lever: with it, without it, and what replaces it):
+How the rule is enforced (branch `orb-testing-strict`, 2026-09-21):
 
-| Site | What it does |
-|---|---|
-| `LLMService._clean_json` + the `json_repair` dependency | Every structured reply is unwrapped from code fences and passed through a JSON repairer before parsing. |
-| `schemas/extraction.py`: about ten `mode="before"` validators | Absorb the malformed shapes local models emit (wrong container types, missing keys, stray values) instead of rejecting them. |
-| `relationship_type` validator | Any predicate outside the closed vocabulary is rewritten to `related_to`. This is why nearly every edge in the first extraction was `related_to`. |
-| `match_entity_name` / `_norm_name` in the ingestion agent | Relationship and context rows that name an entity slightly differently are matched back by normalised name; unmatched ones are dropped quietly. |
-| Regex in `ingestion_agent.py`, `extraction_chunking.py`, `llm.py`, `ingestion.py` | Parsing and splitting of model output and note text by pattern. Each needs classifying: input handling (allowed) or output fixing (not). |
+- Every structured reply goes through `services/model_output.parse`: `json` + the schema, as written. A reply that
+  does not parse or fit raises `ModelOutputError`, is recorded in the request trace (`invalid_output`) and appended to
+  `DATA_DIR/logs/invalid_model_output.jsonl` with stage, model, reason and the raw text. The count is a result.
+- Replies are constrained to valid JSON while they are generated (`json_mode`: llama.cpp JSON grammar, OpenAI
+  `response_format`, Gemini `response_mime_type`). Constraining to a full schema is not used: a code comment in
+  `local_models.py` records that it emptied nested arrays on small models. Untested since; a candidate lever.
+- Schemas have required fields and no `before` validators. Predicates are a `Literal` of the closed vocabulary.
+  A relationship or description must name an entity exactly as listed. Chunk extractions merge on the exact name.
+- `EXTRACTION_ATTEMPTS` (default 1) may ask again; it never repairs. A truncated reply on an unsplittable chunk fails.
+- A research step must set exactly one of `answer` / `next_query`; an answer such as "INSUFFICIENT" is returned as the
+  answer, not reinterpreted. An unusable step reply is a counted step that produced nothing.
 
-Nothing records how often these fire, so nobody knows how much of the current scores depend on them.
-The harness scorer also normalises (`normalize_answer`, first-line extraction, fuzzy match). That is the published
-HotpotQA metric, kept so numbers stay comparable; a strict raw exact match is to be reported beside it.
+Removed: `_clean_json` and the `json-repair` dependency, all tolerant validators and shape unwrapping, predicate rewriting
+to `related_to`, `match_entity_name`, the regex sentence fallback that invented an entity description when the model gave
+none (`sentences_about`), the fall-back from task-split to chunking when the entity pass returned nothing, the swallowed
+task-split passes, community-name fit check with its two retries and invented fallback name, the graph layer's predicate
+sanitiser, every regex in the pipeline packages, and (as attachment code) the extraction-block markup and vault migration sweep.
+
+Still to decide, not LLM output but in the same spirit: the graph stores and looks up entities by lower-cased name, so
+"Ama" and "ama" from two notes become one node. That is entity resolution across notes and is a lever to test, not a repair.
+
+The harness scorer normalises answers (`normalize_answer`, first-line extraction, fuzzy match). That is the published
+HotpotQA metric and the owner chose to keep it.
 
 ## 1. Hazards
 

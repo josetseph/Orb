@@ -56,7 +56,7 @@ def _ext(names, rels=()):
         title="T",
         nodes=[Node(name=n, type="person", isolated_context=f"{n} ctx") for n in names],
         relationships=[
-            ExtractedRelationship(source_name=a, target_name=b, natural_language=f"{a} knows {b}")
+            ExtractedRelationship(source_name=a, target_name=b, relationship_type="knows", natural_language=f"{a} knows {b}")
             for a, b in rels
         ],
     )

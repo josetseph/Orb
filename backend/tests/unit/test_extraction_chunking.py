@@ -72,46 +72,46 @@ class TestChunkTokenBudget:
         assert chunk_token_budget(1000, 2000) == MIN_SPLIT_TOKENS
 
 
+def _node(name, context, type_="Person"):
+    return Node(name=name, type=type_, isolated_context=context)
+
+
+def _ext(nodes, relationships=(), title=None):
+    return Extraction(nodes=list(nodes), relationships=list(relationships), title=title)
+
+
 class TestMergeExtractions:
-    def test_nodes_dedupe_by_name_and_contexts_concatenate(self):
-        a = Extraction(
-            title="First",
-            nodes=[Node(name="Ama", type="Person", isolated_context="Ama is a girl.")],
-        )
-        b = Extraction(
-            nodes=[
-                Node(name="ama", type="Person", isolated_context="Ama plays on weekends."),
-                Node(name="Kofi", type="Person", isolated_context="Kofi is a boy."),
-            ]
-        )
+    """Chunks merge on the name exactly as written. Nothing is lower-cased or trimmed to make two names meet."""
+
+    def test_the_same_name_merges_and_contexts_join_in_order(self):
+        a = _ext([_node("Ama", "Ama is a girl.")], title="First")
+        b = _ext([_node("Ama", "Ama plays on weekends."), _node("Kofi", "Kofi is a boy.")])
         merged = merge_extractions([a, b])
-        names = {n.name.lower() for n in merged.nodes}
-        assert names == {"ama", "kofi"}
-        ama = next(n for n in merged.nodes if n.name.lower() == "ama")
-        assert ama.isolated_context == "Ama is a girl. Ama plays on weekends."
+        assert [n.name for n in merged.nodes] == ["Ama", "Kofi"]
+        assert merged.nodes[0].isolated_context == "Ama is a girl. Ama plays on weekends."
         assert merged.title == "First"
 
+    def test_a_different_spelling_is_a_different_entity(self):
+        merged = merge_extractions([_ext([_node("Ama", "x")]), _ext([_node("ama", "y")])])
+        assert [n.name for n in merged.nodes] == ["Ama", "ama"]
+
     def test_duplicate_context_not_repeated(self):
-        node = Node(name="X", isolated_context="same")
-        merged = merge_extractions([Extraction(nodes=[node]), Extraction(nodes=[node])])
+        merged = merge_extractions([_ext([_node("X", "same")]), _ext([_node("X", "same")])])
         assert merged.nodes[0].isolated_context == "same"
 
-    def test_generic_type_upgraded_by_later_chunk(self):
-        a = Extraction(nodes=[Node(name="Paris", type="thing")])
-        b = Extraction(nodes=[Node(name="Paris", type="Place")])
-        assert merge_extractions([a, b]).nodes[0].type == "Place"
+    def test_the_first_type_stands(self):
+        merged = merge_extractions([_ext([_node("Paris", "x", "City")]), _ext([_node("Paris", "y", "Place")])])
+        assert merged.nodes[0].type == "City"
 
-    def test_relationships_dedupe_keeping_first(self):
-        first = ExtractedRelationship(
-            source_name="Ama", target_name="Kofi", relationship_type="friend_of", natural_language="a"
-        )
-        later = ExtractedRelationship(
-            source_name="ama", target_name="kofi", relationship_type="FRIEND_OF", natural_language="b"
-        )
-        merged = merge_extractions([Extraction(relationships=[first]), Extraction(relationships=[later])])
-        assert len(merged.relationships) == 1
-        assert merged.relationships[0].natural_language == "a"
+    def test_identical_relationships_dedupe_keeping_first(self):
+        people = [_node("Ama", "x"), _node("Kofi", "y")]
+        rel = dict(source_name="Ama", target_name="Kofi", relationship_type="friend_of")
+        first = ExtractedRelationship(**rel, natural_language="a")
+        later = ExtractedRelationship(**rel, natural_language="b")
+        merged = merge_extractions([_ext(people, [first]), _ext(people, [later])])
+        assert [r.natural_language for r in merged.relationships] == ["a"]
 
-    def test_none_parts_are_skipped(self):
-        merged = merge_extractions([None, Extraction(nodes=[Node(name="A")])])
-        assert [n.name for n in merged.nodes] == ["A"]
+    def test_a_relationship_may_span_chunks(self):
+        rel = ExtractedRelationship(source_name="Ama", target_name="Ama", relationship_type="related_to", natural_language="z")
+        merged = merge_extractions([_ext([_node("Ama", "x")], [rel]), _ext([_node("Kofi", "y")])])
+        assert len(merged.relationships) == 1 and len(merged.nodes) == 2

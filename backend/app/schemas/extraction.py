@@ -2,31 +2,23 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, StringConstraints, model_validator
+
+Name = Annotated[str, StringConstraints(min_length=1)]
+
 
 class Node(BaseModel):
-    """Single uniform node — LLM sets ``type`` freely (e.g. person, song, event)."""
+    """One entity. ``type`` is free text (person, song, event); every field is required."""
 
-    name: str = ""
-    type: str = "thing"
-    isolated_context: str = ""
-
-    @field_validator("*", mode="before")
-    @classmethod
-    def handle_none(cls, v: Any, info) -> Any:
-        """Coerce None to safe defaults for each field."""
-        if v is None:
-            if info.field_name == "type":
-                return "thing"
-            return ""
-        return v
+    name: Name
+    type: Name
+    isolated_context: Name
 
 
-#: The only predicates the graph stores. The model is shown this list; anything
-#: else it returns collapses to ``related_to`` rather than minting a new edge
-#: label per note.
+#: The only predicates the graph stores. The model is shown this list; a reply
+#: that uses anything else is invalid.
 RELATIONSHIP_TYPES: tuple[str, ...] = (
     "related_to",
     "works_at",
@@ -73,97 +65,36 @@ RELATIONSHIP_TYPES: tuple[str, ...] = (
 )
 
 
+Predicate = Literal[RELATIONSHIP_TYPES]  # type: ignore[valid-type]
+
+
 class ExtractedRelationship(BaseModel):
-    """Relationship between two nodes extracted from content."""
+    """Relationship between two entities, named exactly as the entities are."""
 
-    source_name: str = ""
-    target_name: str = ""
-    relationship_type: str = "related_to"
-    natural_language: str = ""
+    source_name: Name
+    target_name: Name
+    relationship_type: Predicate
+    natural_language: Name
 
-    @field_validator("source_name", "target_name", "natural_language", mode="before")
-    @classmethod
-    def handle_none_strings(cls, v: Any) -> Any:
-        return "" if v is None else v
 
-    @field_validator("relationship_type", mode="before")
-    @classmethod
-    def closed_vocabulary(cls, v: Any) -> str:
-        """Normalise spelling, then reject anything off the list — no fuzzy matching."""
-        key = "_".join(str(v or "").strip().lower().split())
-        return key if key in RELATIONSHIP_TYPES else "related_to"
+def _require_known_endpoints(relationships: list[ExtractedRelationship], names: set[str]) -> None:
+    for rel in relationships:
+        for end in (rel.source_name, rel.target_name):
+            if end not in names:
+                raise ValueError(f"relationship names {end!r}, which is not one of the entities")
 
 
 class Extraction(BaseModel):
     """Root extraction result — nodes and relationships found in a note."""
 
-    nodes: list[Node] = Field(default_factory=list)
-    relationships: list[ExtractedRelationship] = Field(default_factory=list)
+    nodes: list[Node]
+    relationships: list[ExtractedRelationship]
     title: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        """Accept messy LLM shapes (bare lists, wrappers, embedded rels)."""
-        if data is None:
-            return {"nodes": [], "relationships": []}
-
-        # Unwrap common outer wrappers
-        if isinstance(data, dict):
-            for key in ("extraction", "data", "result"):
-                inner = data.get(key)
-                if isinstance(inner, dict) and (
-                    "nodes" in inner or "relationships" in inner
-                ):
-                    data = inner
-                    break
-
-        # Gemma-style: [nodes_list, relationships_list]
-        if (
-            isinstance(data, list)
-            and len(data) == 2
-            and isinstance(data[0], list)
-            and isinstance(data[1], list)
-        ):
-            data = {"nodes": data[0], "relationships": data[1]}
-
-        # Bare list of nodes (dicts or strings), optionally with embedded rels
-        if isinstance(data, list):
-            nodes: list[Any] = []
-            relationships: list[Any] = []
-            for item in data:
-                if isinstance(item, str) and item.strip():
-                    nodes.append({"name": item.strip()})
-                    continue
-                if not isinstance(item, dict):
-                    continue
-                node = dict(item)
-                embedded = node.pop("relationships", None)
-                if isinstance(embedded, list):
-                    relationships.extend(embedded)
-                nodes.append(node)
-            data = {"nodes": nodes, "relationships": relationships}
-
-        if not isinstance(data, dict):
-            return {"nodes": [], "relationships": []}
-        return data
-
-    @field_validator("nodes", "relationships", mode="before")
-    @classmethod
-    def ensure_list(cls, v: Any, info) -> list:
-        """Coerce None or scalars to a list; string items → minimal nodes."""
-        if v is None or not isinstance(v, list):
-            return []
-        if info.field_name == "nodes":
-            return [
-                (
-                    {"name": item.strip()}
-                    if isinstance(item, str) and item.strip()
-                    else item
-                )
-                for item in v
-            ]
-        return v
+    @model_validator(mode="after")
+    def endpoints_are_entities(self) -> "Extraction":
+        _require_known_endpoints(self.relationships, {n.name for n in self.nodes})
+        return self
 
 
 class NoteInput(BaseModel):
@@ -173,6 +104,13 @@ class NoteInput(BaseModel):
     created_at: str | None = None
     title: str | None = None  # If provided, use instead of auto-generating
     skip_ingestion: bool = False  # Save metadata/vault only; skip graph ingest
+
+
+class EntityName(BaseModel):
+    """An entity as pass 1 lists it: what exists, not yet described."""
+
+    name: Name
+    type: Name
 
 
 class EntityPass(BaseModel):
@@ -185,20 +123,7 @@ class EntityPass(BaseModel):
     """
 
     title: str | None = None
-    nodes: list[Node] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        if data is None:
-            return {"nodes": []}
-        if isinstance(data, list):
-            return {"nodes": data}
-        if isinstance(data, dict):
-            for key in ("entities", "nodes", "result", "data"):
-                if key in data and isinstance(data[key], list):
-                    return {"title": data.get("title"), "nodes": data[key]}
-        return data
+    nodes: list[EntityName]
 
 
 class RelationshipPass(BaseModel):
@@ -209,32 +134,14 @@ class RelationshipPass(BaseModel):
     side could state it.
     """
 
-    relationships: list[ExtractedRelationship] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        if data is None:
-            return {"relationships": []}
-        if isinstance(data, list):
-            return {"relationships": data}
-        if isinstance(data, dict):
-            for key in ("relationships", "edges", "result", "data"):
-                if key in data and isinstance(data[key], list):
-                    return {"relationships": data[key]}
-        return data
+    relationships: list[ExtractedRelationship]
 
 
 class NodeContext(BaseModel):
     """One entity's description, from pass 3."""
 
-    name: str = ""
-    isolated_context: str = ""
-
-    @field_validator("name", "isolated_context", mode="before")
-    @classmethod
-    def handle_none_strings(cls, v: Any) -> Any:
-        return "" if v is None else v
+    name: Name
+    isolated_context: Name
 
 
 class ContextPass(BaseModel):
@@ -245,17 +152,4 @@ class ContextPass(BaseModel):
     fixed, so chunking here cannot invent or split an entity.
     """
 
-    contexts: list[NodeContext] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_keys(cls, data: Any) -> Any:
-        if data is None:
-            return {"contexts": []}
-        if isinstance(data, list):
-            return {"contexts": data}
-        if isinstance(data, dict):
-            for key in ("contexts", "nodes", "entities", "result", "data"):
-                if key in data and isinstance(data[key], list):
-                    return {"contexts": data[key]}
-        return data
+    contexts: list[NodeContext]

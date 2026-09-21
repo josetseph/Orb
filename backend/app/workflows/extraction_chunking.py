@@ -8,7 +8,6 @@ helpers are pure (no LLM, no I/O) so the policy is unit-testable.
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Callable
 
 from app.schemas.extraction import ExtractedRelationship, Extraction, Node
@@ -20,55 +19,8 @@ _OUTPUT_TO_INPUT_RATIO = 2.5
 # to retry. This is only the seed: ``extraction_budget`` learns the real
 # ceiling per model from truncation, since nothing reports it.
 _DEFAULT_CHUNK_TOKENS = 4000
-# Below this, a truncated chunk is accepted (repaired) rather than split again.
+# Below this, a truncated chunk is not split again: its extraction fails.
 MIN_SPLIT_TOKENS = 400
-
-_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
-_STOPWORDS = {"the", "and", "with", "from", "for", "that", "this", "model", "method", "system", "systems"}
-
-
-def sentences_about(name: str, text: str, *, max_sentences: int = 4, max_chars: int = 600) -> str:
-    """The sentences of ``text`` that mention ``name``, in document order.
-
-    The fallback when the model returned no context for an entity: a few
-    sentences about it, never the whole note — a 100k-character note stored as
-    one entity's context swamps its embedding and its detail panel alike.
-    Empty when the name never appears.
-    """
-    needle = (name or "").strip().lower()
-    if not needle or not text:
-        return ""
-    sentences = [x.strip() for x in _SENTENCE_RE.split(re.sub(r"\s+", " ", text))]
-    # Exact name first; the model often canonicalises ("Waterfall Model" for a
-    # note that says "the waterfall approach"), so fall back to every word of
-    # the name, then to its one distinctive word.
-    words = [w for w in re.findall(r"[a-z0-9]+", needle) if len(w) > 3 and w not in _STOPWORDS]
-    tests = [lambda t: needle in t]
-    if words:
-        tests.append(lambda t: all(w in t for w in words))
-        if len(words) > 1:
-            longest = max(words, key=len)
-            tests.append(lambda t: longest in t)
-    matches = next((m for m in ([x for x in sentences if t(x.lower())] for t in tests) if m), [])
-    picked: list[str] = []
-    used = 0
-    for sentence in matches:
-        if needle not in sentence.lower():
-            needle = next((w for w in words if w in sentence.lower()), needle)
-        if len(sentence) > max_chars:
-            # A single monster "sentence" (a table row, a transcript run): keep
-            # the window around the first mention.
-            at = sentence.lower().index(needle)
-            lo = max(0, at - max_chars // 2)
-            sentence = ("…" if lo else "") + sentence[lo : lo + max_chars].strip() + "…"
-        if used + len(sentence) > max_chars * max_sentences:
-            break
-        picked.append(sentence)
-        used += len(sentence)
-        if len(picked) >= max_sentences:
-            break
-    return " ".join(picked)
-
 
 def chunk_token_budget(
     context_tokens: int,
@@ -107,6 +59,29 @@ def _pack(units: list[str], max_tokens: int, count: Callable[[str], int], sep: s
     return chunks
 
 
+def _paragraphs(text: str) -> list[str]:
+    """Blocks of lines separated by one or more blank lines."""
+    blocks: list[list[str]] = [[]]
+    for line in text.split("\n"):
+        if line.strip():
+            blocks[-1].append(line)
+        elif blocks[-1]:
+            blocks.append([])
+    return ["\n".join(b).strip() for b in blocks if b]
+
+
+def _sentences(text: str) -> list[str]:
+    """Split after ``.``, ``!`` or ``?`` when whitespace follows."""
+    out: list[str] = []
+    start = 0
+    for i, ch in enumerate(text):
+        if ch in ".!?" and i + 1 < len(text) and text[i + 1].isspace():
+            out.append(text[start : i + 1].strip())
+            start = i + 1
+    out.append(text[start:].strip())
+    return [s for s in out if s]
+
+
 def _split_oversized(unit: str, max_tokens: int, count: Callable[[str], int]) -> list[str]:
     """Break one paragraph that alone exceeds the budget: lines → sentences → characters."""
     if count(unit) <= max_tokens:
@@ -117,7 +92,7 @@ def _split_oversized(unit: str, max_tokens: int, count: Callable[[str], int]) ->
         for piece in _pack(lines, max_tokens, count, "\n"):
             out.extend(_split_oversized(piece, max_tokens, count))
         return out
-    sentences = [s for s in _SENTENCE_RE.split(unit) if s.strip()]
+    sentences = _sentences(unit)
     if len(sentences) > 1:
         out = []
         for piece in _pack(sentences, max_tokens, count, " "):
@@ -149,64 +124,33 @@ def split_for_extraction(
     max_tokens = max(1, int(max_tokens))
     if count(text) <= max_tokens:
         return [text]
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    paragraphs = _paragraphs(text)
     units: list[str] = []
     for para in paragraphs:
         units.extend(_split_oversized(para, max_tokens, count))
     return [c.strip() for c in _pack(units, max_tokens, count, "\n\n") if c.strip()]
 
 
-def normalize_entity_name(name: str) -> str:
-    """Canonical key for matching an entity across passes and chunks.
-
-    Shared with the task-split extractor on purpose: if the two disagreed, a
-    relationship or context would be dropped for referencing an entity that
-    merging considers the same one.
-    """
-    return (name or "").lstrip("#").strip().lower()
 
 
 def merge_extractions(parts: list[Extraction]) -> Extraction:
-    """Combine chunk extractions: dedupe nodes by name, concatenate their contexts."""
+    """Combine chunk extractions. An entity is the same entity only when its name is
+    written identically; its descriptions from each chunk are joined in order."""
     nodes: dict[str, Node] = {}
     contexts: dict[str, list[str]] = {}
     rels: dict[tuple[str, str, str], ExtractedRelationship] = {}
     title: str | None = None
-
     for part in parts:
-        if part is None:
-            continue
-        if not title and (part.title or "").strip():
-            title = part.title.strip()
+        title = title or part.title
         for node in part.nodes:
-            key = normalize_entity_name(node.name)
-            if not key:
-                continue
-            ctx = (node.isolated_context or "").strip()
-            if key not in nodes:
-                nodes[key] = node.model_copy()
-                contexts[key] = [ctx] if ctx else []
-            else:
-                existing = nodes[key]
-                if (existing.type or "thing").lower() == "thing" and node.type:
-                    existing.type = node.type
-                if ctx and ctx not in contexts[key]:
-                    contexts[key].append(ctx)
+            nodes.setdefault(node.name, node)
+            seen = contexts.setdefault(node.name, [])
+            if node.isolated_context not in seen:
+                seen.append(node.isolated_context)
         for rel in part.relationships:
-            key = (
-                normalize_entity_name(rel.source_name),
-                normalize_entity_name(rel.target_name),
-                (rel.relationship_type or "").strip().lower(),
-            )
-            if not key[0] or not key[1]:
-                continue
-            rels.setdefault(key, rel)
-
-    for key, node in nodes.items():
-        node.isolated_context = " ".join(contexts[key])
-
+            rels.setdefault((rel.source_name, rel.target_name, rel.relationship_type), rel)
     return Extraction(
-        nodes=list(nodes.values()),
+        nodes=[Node(name=n.name, type=n.type, isolated_context=" ".join(contexts[n.name])) for n in nodes.values()],
         relationships=list(rels.values()),
         title=title,
     )
