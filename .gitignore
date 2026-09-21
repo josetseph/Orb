@@ -54,3 +54,4 @@ backend/tests/benchmark/musique_notes/
 # Benchmark branch: local model manifest + gguf symlink, and data-dir snapshots
 /models
 /snapshots
+/llm-cache

@@ -43,4 +43,3 @@ huggingface_hub>=0.34.0
 
 # Data Processing
 numpy==2.2.6
-json-repair==0.55.0

@@ -3,11 +3,15 @@
 # pylint: disable=wrong-import-order,import-outside-toplevel
 import asyncio
 import functools
-import re
+import hashlib
+import json
+import time
+from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
 from app.core.log import get_logger
+from app.services import model_output, trace
 from app.services.credentials import (
     InvalidEndpointError,
     credentials,
@@ -18,9 +22,8 @@ from app.services.credentials import (
 )
 from google import genai
 from google.genai import types
-from json_repair import repair_json
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 logger = get_logger("LLMService")
 
@@ -52,13 +55,18 @@ ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
 
 
 class _ResearchStep(BaseModel):
-    """One turn of the iterative research loop, as the model returns it."""
+    """One turn of the iterative research loop, exactly as the prompt specifies it."""
 
-    # Small models write null for an empty string field.
-    reasoning: str | None = ""
-    finding: str | None = ""
-    answer: str | None = None
-    next_query: str | None = None
+    reasoning: str
+    finding: str
+    answer: str | None
+    next_query: str | None
+
+    @model_validator(mode="after")
+    def exactly_one_outcome(self) -> "_ResearchStep":
+        if bool(self.answer) == bool(self.next_query):
+            raise ValueError("set exactly one of answer / next_query")
+        return self
 
 
 class LLMService:
@@ -189,18 +197,40 @@ class LLMService:
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
-    def _clean_json(self, json_str: str) -> str:
-        """Model output → parseable JSON text: unwrap a code fence, then json_repair."""
-        match = re.search(r"```(?:json)?(.*?)```", json_str, re.DOTALL)
-        if match:
-            json_str = match.group(1)
-        # json_repair escapes stray control characters itself, but it does not
-        # read curly quotes as string delimiters.
-        json_str = re.sub(r"[\u2018\u2019\u201B]", "'", json_str)
-        json_str = re.sub(r"[\u201C\u201D\u201E]", '"', json_str)
-        return repair_json(json_str)
+    def _chat(self, messages: list[dict], **kwargs) -> tuple[str, dict]:
+        """``_chat_provider`` behind the experiment cache (``LLM_CALL_CACHE_DIR``; off when unset).
 
-    def _chat(  # pylint: disable=too-many-locals,too-many-branches
+        The key is everything that decides the reply: provider, endpoint, model, the exact
+        messages and the generation parameters. Change a prompt, a model or a note and the key
+        changes with it, so there are no versions to maintain, and a stage whose inputs did not
+        change costs nothing to run again. The reply is stored as the model wrote it.
+        """
+        started = time.perf_counter()
+        ingestion = kwargs.get("ingestion", False)
+        model = kwargs.get("model") or (self.get_ingestion_model() if ingestion else self.get_chat_model())
+        path = None
+        if settings.LLM_CALL_CACHE_DIR:
+            key = hashlib.sha256(json.dumps([
+                self.ingestion_provider if ingestion else self.provider, self.get_base_url(), model, messages,
+                kwargs.get("temperature"), kwargs.get("max_tokens"), kwargs.get("json_mode", False),
+                settings.LLAMA_REPEAT_PENALTY, settings.LLAMA_MAX_TOKENS,
+            ], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            path = Path(settings.LLM_CALL_CACHE_DIR) / key[:2] / f"{key}.json"
+            if path.is_file():
+                hit = json.loads(path.read_text(encoding="utf-8"))
+                trace.record("llm_call", model=model, ingestion=ingestion, cached=True, seconds=0.0)
+                return hit["text"], hit["meta"]
+        text, meta = self._chat_provider(messages, **kwargs)
+        trace.record("llm_call", model=model, ingestion=ingestion, cached=False,
+                     seconds=round(time.perf_counter() - started, 2))
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"model": model, "text": text, "meta": meta}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        return text, meta
+
+    def _chat_provider(  # pylint: disable=too-many-locals,too-many-branches
         self,
         messages: list[dict],
         *,
@@ -220,7 +250,7 @@ class LLMService:
 
         ``json_mode`` asks the provider for a JSON object structurally where it
         can (OpenAI-style ``response_format``, Gemini ``response_mime_type``,
-        llama.cpp's JSON grammar); callers still parse through ``_clean_json``.
+        llama.cpp's JSON grammar). The reply is parsed as written (``model_output.parse``).
         """
         provider = self.ingestion_provider if ingestion else self.provider
         model = model or (self.get_ingestion_model() if ingestion else self.get_chat_model())
@@ -291,9 +321,11 @@ class LLMService:
             # An unclosed <think> is reasoning the output limit cut off.
             thinking = getattr(choice.message, "reasoning_content", None) or None
             if not thinking and "<think>" in text:
-                match = re.search(r"<think>(.*?)(?:</think>|\Z)", text, re.DOTALL)
-                thinking = match.group(1).strip() or None
-                text = text[: match.start()] + text[match.end() :]
+                # The thinking channel, not the answer: split it off, change nothing in either.
+                before, _, rest = text.partition("<think>")
+                thought, _, after = rest.partition("</think>")
+                thinking = thought.strip() or None
+                text = before + after
             reason = getattr(choice, "finish_reason", None)
             return text.strip(), {
                 "finish_reason": reason,
@@ -475,33 +507,27 @@ class LLMService:
         from pydantic import Field
 
         class QueryAnalysis(BaseModel):
-            """Structured output schema for query-analysis: sub-questions and search hints."""
+            """Query analysis exactly as the prompt specifies it: every key present, nulls where it says null."""
 
             intent: Literal[
                 "search", "summarize", "compare", "explain", "list", "recent", "verify"
             ] = Field(description="Primary intent of the query")
             entities: list[str] = Field(
-                default_factory=list,
                 description="Named entities mentioned in the query",
             )
             keywords: list[str] = Field(
-                default_factory=list,
                 description="Important keywords for semantic search",
             )
             expected_entity_types: list[str] = Field(
-                default_factory=list,
                 description="Types of entities the answer should be about: Person, Film, Place, Organization, etc.",
             )
             question_attribute: Optional[str] = Field(
-                default=None,
                 description="What attribute is being asked about: nationality, occupation, birth_date, location, director, capacity, etc.",  # pylint: disable=line-too-long
             )
             date_filter: Optional[str] = Field(
-                default=None,
                 description="ISO date (YYYY-MM-DD) if the query asks about a specific calendar day, e.g. '2024-05-24'. Null if the query spans a whole month or is not temporal.",  # pylint: disable=line-too-long
             )
             period_filter: Optional[str] = Field(
-                default=None,
                 description="ISO year-month (YYYY-MM) if the query asks about a whole month or multi-day period, e.g. 'last month', 'in April'. Mutually exclusive with date_filter. Null if date_filter is set or query is not temporal.",  # pylint: disable=line-too-long
             )
 
@@ -563,7 +589,7 @@ class LLMService:
         raw, _ = self._chat([{"role": "user", "content": prompt}], temperature=0, json_mode=True)
         if not raw:
             raise ValueError("Empty extraction result")
-        return QueryAnalysis.model_validate_json(self._clean_json(raw)).model_dump()
+        return model_output.parse(raw, QueryAnalysis, stage="query analysis", model=self.get_chat_model()).model_dump()
 
     async def generate(
         self,
@@ -616,7 +642,6 @@ class LLMService:
                 "next_query":   str | None,    # next search query (if not can_answer)
             }
         """
-        _non_answers = {"INSUFFICIENT", "NONE", "NULL", "N/A", "UNKNOWN", "NOT FOUND"}
 
         # ── Build prior findings block ────────────────────────────────────────
         prior_block = ""
@@ -702,9 +727,9 @@ class LLMService:
         raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt, json_mode=True)
         logger.info(f"[LLM] iterative_step raw response:\n{raw}")
         try:
-            step = _ResearchStep.model_validate_json(self._clean_json(raw or ""))
-        except ValueError as e:  # pydantic ValidationError is a ValueError
-            logger.warning(f"[LLM] iterative_step: unparseable reply: {e}")
+            step = model_output.parse(raw, _ResearchStep, stage="research step", model=self.get_chat_model())
+        except model_output.ModelOutputError as e:  # counted; the step produced nothing
+            logger.warning(f"[LLM] iterative_step: unusable reply: {e}")
             return {
                 "reasoning": "",
                 "full_answer": "",
@@ -714,17 +739,12 @@ class LLMService:
                 "thinking": None,
             }
 
-        def _real(value: str | None) -> str | None:
-            value = (value or "").strip()
-            return value if value and value.upper() not in _non_answers else None
-
-        final_answer = _real(step.answer)
         return {
-            "reasoning": step.reasoning or "",
-            "full_answer": step.finding or "",
-            "can_answer": final_answer is not None,
-            "final_answer": final_answer,
-            "next_query": None if final_answer else _real(step.next_query),
+            "reasoning": step.reasoning,
+            "full_answer": step.finding,
+            "can_answer": step.answer is not None,
+            "final_answer": step.answer,
+            "next_query": step.next_query,
             "thinking": step_thinking,
         }
 

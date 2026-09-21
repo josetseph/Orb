@@ -28,9 +28,6 @@ class FakeLLM:
         self.context_tokens = context_tokens
         self.prompts = []
 
-    def _clean_json(self, raw):
-        return raw
-
     def get_ingestion_model(self):
         return "fake-model"
 
@@ -66,12 +63,13 @@ class FakeLLM:
         )
 
 
+BOTH = {"Ama": "a girl", "Kofi": "a boy"}
 ENTITIES = [{"name": "Ama", "type": "Person"}, {"name": "Kofi", "type": "Person"}]
 RELS = [
     {
         "source_name": "Ama",
         "target_name": "Kofi",
-        "relationship_type": "is_friends_with",
+        "relationship_type": "friend_of",
         "natural_language": "friends",
     }
 ]
@@ -93,62 +91,34 @@ class TestPassStructure:
     def test_every_pass_receives_the_whole_note(self):
         """The point of task-splitting: no pass sees a fragment."""
         note = "Ama is here. " * 200
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "x", "Kofi": "y"})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         _run(llm, note, budget=10_000)
         assert note in llm.prompts[0], "entity pass must see the whole note"
         assert note in llm.prompts[1], "relationship pass must see the whole note"
 
     def test_relationship_pass_is_given_the_entity_list(self):
-        llm = FakeLLM(ENTITIES, RELS, {})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         _run(llm, "note", budget=10_000)
         assert "- Ama (Person)" in llm.prompts[1]
         assert "- Kofi (Person)" in llm.prompts[1]
 
     def test_json_templates_render_single_braces(self):
         """The f-string templates once doubled ``{{`` — the model was shown ``{{``."""
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "x"})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         _run(llm, "note", budget=10_000)
         for prompt in llm.prompts:
             assert "{{" not in prompt and "}}" not in prompt
             assert '"name"' in prompt or '"source_name"' in prompt
 
     def test_relationship_pass_lists_the_closed_vocabulary(self):
-        llm = FakeLLM(ENTITIES, RELS, {})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         _run(llm, "note", budget=10_000)
         assert "lives_in" in llm.prompts[1] and "related_to" in llm.prompts[1]
 
     def test_title_comes_from_the_entity_pass(self):
-        llm = FakeLLM(ENTITIES, RELS, {})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         result, _ = _run(llm, "note", budget=10_000)
         assert result.title == "T"
-
-
-class TestRelationshipsAreGrounded:
-    def test_relationships_to_unknown_entities_are_dropped(self):
-        rels = RELS + [
-            {
-                "source_name": "Ama",
-                "target_name": "Someone Invented",
-                "relationship_type": "knows",
-                "natural_language": "?",
-            }
-        ]
-        llm = FakeLLM(ENTITIES, rels, {})
-        result, _ = _run(llm, "note", budget=10_000)
-        assert len(result.relationships) == 1
-
-    def test_matching_ignores_case_and_spacing(self):
-        rels = [
-            {
-                "source_name": "  AMA ",
-                "target_name": "kofi",
-                "relationship_type": "knows",
-                "natural_language": "x",
-            }
-        ]
-        llm = FakeLLM(ENTITIES, rels, {})
-        result, _ = _run(llm, "note", budget=10_000)
-        assert len(result.relationships) == 1, "same normaliser as merge_extractions"
 
 
 class TestContexts:
@@ -167,40 +137,9 @@ class TestContexts:
         note = "\n\n".join(
             f"Paragraph {i} discusses Ama at some length here." for i in range(200)
         )
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"}, context_tokens=1_500)
+        llm = FakeLLM(ENTITIES, RELS, BOTH, context_tokens=1_500)
         _, calls = _run(llm, note, budget=20)
         assert calls > 3, "a document past the window must be split"
-
-    def test_an_entity_with_nothing_said_about_it_keeps_empty_context(self):
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
-        result, _ = _run(llm, "note", budget=10_000)
-        assert {n.name: n.isolated_context for n in result.nodes}["Kofi"] == ""
-
-
-class TestResilience:
-    def test_no_entities_falls_back_to_chunking(self, monkeypatch):
-        async def fake_chunks(llm, content, count, budget, logs):
-            from app.schemas.extraction import Extraction, Node
-
-            return Extraction(nodes=[Node(name="fallback", type="Thing")]), 2
-
-        monkeypatch.setattr(ia, "_extract_by_chunks", fake_chunks)
-        llm = FakeLLM([], [], {})
-        result, _ = _run(llm, "note", budget=10_000)
-        assert [n.name for n in result.nodes] == ["fallback"]
-
-    def test_a_failing_pass_does_not_abort_the_note(self):
-        class Broken(FakeLLM):
-            async def ingestion_generate_with_meta(self, prompt, temperature=0.1, **kw):
-                if "relationship extraction engine" in prompt:
-                    raise RuntimeError("endpoint fell over")
-                return await super().ingestion_generate_with_meta(prompt, temperature, **kw)
-
-        llm = Broken(ENTITIES, RELS, {"Ama": "a girl"})
-        result, _ = _run(llm, "note", budget=10_000)
-        assert len(result.nodes) == 2, "entities survive a failed relationship pass"
-        assert result.relationships == []
-
 
 class TestRouting:
     def test_a_note_that_fits_stays_a_single_call(self, monkeypatch):
@@ -210,17 +149,17 @@ class TestRouting:
             from app.schemas.extraction import Extraction
 
             seen["chunked"] = True
-            return Extraction(), 1
+            return Extraction(nodes=[], relationships=[]), 1
 
         async def fake_split(*a, **k):
             from app.schemas.extraction import Extraction
 
             seen["split"] = True
-            return Extraction(), 3
+            return Extraction(nodes=[], relationships=[]), 3
 
         monkeypatch.setattr(ia, "_extract_by_chunks", fake_chunks)
         monkeypatch.setattr(ia, "_extract_task_split", fake_split)
-        llm = FakeLLM(ENTITIES, RELS, {})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         asyncio.run(ia._extract_with_chunking(llm, "short note", []))
         assert seen == {"chunked": True}, "small notes must not pay for 3 passes"
 
@@ -231,11 +170,11 @@ class TestRouting:
             from app.schemas.extraction import Extraction
 
             seen["split"] = True
-            return Extraction(), 3
+            return Extraction(nodes=[], relationships=[]), 3
 
         monkeypatch.setattr(ia, "_extract_task_split", fake_split)
         monkeypatch.setattr(ia, "chunk_token_budget", lambda *a, **k: 5)
-        llm = FakeLLM(ENTITIES, RELS, {})
+        llm = FakeLLM(ENTITIES, RELS, BOTH)
         asyncio.run(ia._extract_with_chunking(llm, "a much longer note " * 50, []))
         assert seen.get("split") is True
 
@@ -275,7 +214,7 @@ class TestContextPassCost:
             else f"Paragraph {i} says something unrelated at length."
             for i in range(200)
         )
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"}, context_tokens=1_200)
+        llm = FakeLLM(ENTITIES, RELS, BOTH, context_tokens=1_200)
         _, calls = _run(llm, note, budget=30)
         pieces = len(note) // (30 * 4) + 1
         assert calls < 2 + pieces * 2, f"{calls} calls is too many for {pieces} pieces"
@@ -314,80 +253,72 @@ class TestContextPassSeesTheWholeDocument:
         assert ia.context_pass_budget(4_000, 400, 100) >= 400
 
 
-class TestEntityNameMatching:
-    """A pass echoing the list back must still resolve to the right entity.
+class TestRepliesAreUsedAsWrittenOrNotAtAll:
+    """Nothing is matched loosely, dropped quietly or filled in. Each of these shapes
+    used to be absorbed; each is now a counted failure of the model and prompt."""
 
-    The real failure: the context prompt listed "Name (Type)" and asked for the
-    name "exactly as listed", so the model returned the parenthetical too. Every
-    description then matched nothing and was discarded — 135 entities described,
-    0 attached, with no error anywhere.
-    """
+    @staticmethod
+    def _rejected(llm, stage):
+        import pytest
+        from app.services.model_output import ModelOutputError
 
-    KNOWN = {"masters in intelligent computing systems", "ghana"}
+        with pytest.raises(ModelOutputError) as err:
+            _run(llm, "note", budget=10_000)
+        assert err.value.stage == stage
+        return err.value
 
-    def test_exact_name_matches(self):
-        assert ia.match_entity_name("Ghana", self.KNOWN) == "ghana"
+    def test_a_relationship_to_an_unlisted_entity(self):
+        rels = RELS + [{"source_name": "Ama", "target_name": "Someone Invented", "relationship_type": "knows", "natural_language": "?"}]
+        assert "Someone Invented" in self._rejected(FakeLLM(ENTITIES, rels, BOTH), "relationship pass").reason
 
-    def test_echoed_type_suffix_matches(self):
-        got = ia.match_entity_name(
-            "Masters in Intelligent Computing Systems (Program)", self.KNOWN
-        )
-        assert got == "masters in intelligent computing systems"
+    def test_a_name_in_different_case_or_spacing(self):
+        rels = [{"source_name": "  AMA ", "target_name": "kofi", "relationship_type": "knows", "natural_language": "x"}]
+        self._rejected(FakeLLM(ENTITIES, rels, BOTH), "relationship pass")
 
-    def test_bullet_and_quotes_are_tolerated(self):
-        assert ia.match_entity_name('- "Ghana"', self.KNOWN) == "ghana"
+    def test_a_name_echoed_with_its_type(self):
+        rels = [{"source_name": "Ama (Person)", "target_name": "Kofi (Person)", "relationship_type": "knows", "natural_language": "x"}]
+        self._rejected(FakeLLM(ENTITIES, rels, BOTH), "relationship pass")
 
-    def test_a_genuinely_unknown_entity_is_rejected(self):
-        assert ia.match_entity_name("Atlantis (Place)", self.KNOWN) is None
+    def test_a_predicate_outside_the_vocabulary(self):
+        rels = [{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "is_friends_with", "natural_language": "x"}]
+        assert "relationship_type" in self._rejected(FakeLLM(ENTITIES, rels, BOTH), "relationship pass").reason
 
-    def test_empty_is_rejected(self):
-        assert ia.match_entity_name("", self.KNOWN) is None
-        assert ia.match_entity_name(None, self.KNOWN) is None
+    def test_an_entity_left_undescribed(self):
+        assert "Kofi" in self._rejected(FakeLLM(ENTITIES, RELS, {"Ama": "a girl"}), "context pass").reason
 
-    def test_context_prompt_lists_bare_names(self):
-        """Not 'Name (Type)' — that is what invited the echo."""
-        llm = FakeLLM(ENTITIES, RELS, {"Ama": "a girl"})
-        _run(llm, "note", budget=10_000)
-        ctx = [p for p in llm.prompts if "context extraction engine" in p][0]
-        assert "- Ama\n" in ctx or ctx.rstrip().endswith("- Ama")
-        assert "- Ama (Person)" not in ctx
+    def test_an_empty_entity_list(self):
+        self._rejected(FakeLLM([], [], {}), "entity pass")
 
-    def test_descriptions_attach_when_the_model_echoes_the_type(self):
-        """End to end: the exact shape that produced 0/135."""
+    def test_truncated_output(self):
+        assert "truncated" in self._rejected(FakeLLM(ENTITIES, RELS, BOTH, truncated=True), "entity pass").reason
 
-        class EchoingLLM(FakeLLM):
+    def test_every_rejection_is_counted(self, tmp_path, monkeypatch):
+        import json as _json
+        from app.core.config import settings
+        from app.services import model_output
+
+        monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
+        self._rejected(FakeLLM([], [], {}), "entity pass")
+        rows = [_json.loads(line) for line in model_output.failure_log().read_text().splitlines()]
+        assert [(r["stage"], r["model"]) for r in rows] == [("entity pass", "fake-model")]
+
+    def test_a_failed_call_is_not_swallowed(self):
+        import pytest
+
+        class Broken(FakeLLM):
             async def ingestion_generate_with_meta(self, prompt, temperature=0.1, **kw):
-                if "context extraction engine" in prompt:
-                    self.prompts.append(prompt)
-                    return (
-                        json.dumps(
-                            {
-                                "contexts": [
-                                    {
-                                        "name": "Ama (Person)",
-                                        "isolated_context": "a girl",
-                                    }
-                                ]
-                            }
-                        ),
-                        {},
-                    )
+                if "relationship extraction engine" in prompt:
+                    raise RuntimeError("endpoint fell over")
                 return await super().ingestion_generate_with_meta(prompt, temperature, **kw)
 
-        llm = EchoingLLM(ENTITIES, RELS, {})
-        result, _ = _run(llm, "note", budget=10_000)
-        described = {n.name: n.isolated_context for n in result.nodes}
-        assert described["Ama"] == "a girl", "echoed type must still attach"
+        with pytest.raises(RuntimeError, match="endpoint fell over"):
+            _run(Broken(ENTITIES, RELS, BOTH), "note", budget=10_000)
 
-    def test_relationships_tolerate_the_same_echo(self):
-        rels = [
-            {
-                "source_name": "Ama (Person)",
-                "target_name": "Kofi (Person)",
-                "relationship_type": "knows",
-                "natural_language": "x",
-            }
-        ]
-        llm = FakeLLM(ENTITIES, rels, {})
-        result, _ = _run(llm, "note", budget=10_000)
-        assert len(result.relationships) == 1
+
+def test_context_prompt_lists_bare_names():
+    """Not 'Name (Type)' — that invited the model to echo the type back."""
+    llm = FakeLLM(ENTITIES, RELS, BOTH)
+    _run(llm, "note", budget=10_000)
+    ctx = [p for p in llm.prompts if "context extraction engine" in p][0]
+    assert "- Ama\n" in ctx or ctx.rstrip().endswith("- Ama")
+    assert "- Ama (Person)" not in ctx

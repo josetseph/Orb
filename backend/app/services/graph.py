@@ -36,7 +36,6 @@ Cypher translation notes
 
 # pylint: disable=too-many-lines,import-outside-toplevel
 
-import re
 import threading
 from pathlib import Path
 
@@ -44,6 +43,7 @@ import kuzu
 from app.core.config import REPO_ROOT, settings
 from app.core.log import get_logger
 from app.services.qdrant_service import QdrantService, qdrant_service
+from app.schemas.extraction import RELATIONSHIP_TYPES
 logger = get_logger("GraphService")
 
 
@@ -556,12 +556,10 @@ class GraphService:
         import uuid as _uuid
         from datetime import datetime
 
-        if not relationship_type or not relationship_type.strip():
+        if relationship_type not in RELATIONSHIP_TYPES:
             raise ValueError(
-                f"relationship_type cannot be empty for {source_name} -> {target_name}"
+                f"{relationship_type!r} is not a stored predicate ({source_name} -> {target_name})"
             )
-
-        relationship_type = re.sub(r"[^A-Za-z0-9_]", "_", relationship_type.strip())
 
         if not relationship_id:
             relationship_id = str(_uuid.uuid4())

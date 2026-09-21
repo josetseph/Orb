@@ -2,46 +2,47 @@
 
 # pylint: disable=too-many-lines,import-outside-toplevel
 import asyncio
-import re
+from datetime import date
 import threading
 import time
 import uuid
-from urllib.parse import unquote
 from collections import defaultdict
 
 from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.log import get_logger
-from app.schemas.extraction import Extraction, NoteInput
+from app.schemas.extraction import Extraction, Name, NoteInput
 from app.services.graph import GraphService, graph_service
 from app.services.embedding import embedding_service
 from app.services.ingestion_tracker import (
     ingestion_tracker as _tracker,
 )
+from app.services import model_output
 from app.services import ingestion_checkpoint as checkpoint
 from app.services.llm import llm_service
 from app.services.local_models import ModelLoadClock, model_load_clock
 from app.services.qdrant_service import QdrantService, qdrant_service
 from app.services.meilisearch_service import MeilisearchService, meilisearch_service
 from app.workflows.agents.ingestion_agent import run_ingestion_agent
-from app.workflows.extraction_chunking import sentences_about
 
 logger = get_logger("IngestionPipeline")
 
 
 class _CommunityName(BaseModel):
-    name: str = ""
-    summary: str = ""
-
-
-#: Contexts read back from Qdrant as "{content} - {note_created_at}"; dedup
-#: compares the content alone.
-_CTX_DATE_SUFFIX = re.compile(r" - \d{4}-\d{2}-\d{2}\S*$")
+    name: Name
+    summary: Name
 
 
 def _context_key(text: str) -> str:
-    return _CTX_DATE_SUFFIX.sub("", (text or "").strip())
+    """The content part of a context this pipeline stored as "{content} - {note_created_at}"."""
+    text = (text or "").strip()
+    head, sep, tail = text.rpartition(" - ")
+    try:
+        date.fromisoformat(tail[:10])
+    except ValueError:
+        return text
+    return head if sep else text
 
 
 #: Pipelines in flight, by (kb_id, note_id) — what the Cancel button stops.
@@ -66,25 +67,6 @@ def cancel_ingestion(kb_id: str, note_id: str) -> bool:
         return False
     task.cancel()
     return True
-
-
-def _passages(text: str, target_chars: int = 1200) -> list[str]:
-    """Split a document into passages of about 300 tokens on paragraph breaks."""
-    out: list[str] = []
-    current = ""
-    for para in (p.strip() for p in text.split("\n")):
-        if not para:
-            continue
-        if current and len(current) + len(para) > target_chars:
-            out.append(current)
-            current = ""
-        current = f"{current}\n{para}".strip()
-        while len(current) > target_chars * 2:  # one giant paragraph
-            out.append(current[:target_chars])
-            current = current[target_chars:]
-    if current:
-        out.append(current)
-    return out
 
 
 class IngestionWorkflow:
@@ -764,63 +746,6 @@ class IngestionWorkflow:
 
         return title
 
-    async def _index_documents(
-        self, note_id: str, documents: list[dict], note_created_at: str | None
-    ) -> None:
-        """Make index-only attachments searchable without graphing them.
-
-        Each becomes ONE node (type ``document``) referenced by the note, with
-        its text stored as passages in the contexts collection — the same
-        place entity sentences live, so vector search, the reranker and chat
-        pick up the matching passages with no retrieval changes. The node's
-        description stays a fixed one-liner: retrieval falls back to it when
-        the document is matched by name, and must not pull in every passage.
-        Runs after the context refresh, which clears what this note indexed.
-        """
-        for doc in documents:
-            name = unquote(doc["src"].rsplit("/", 1)[-1]).lower()
-            node_id = f"node_{uuid.uuid5(uuid.NAMESPACE_URL, f'{self.kb_id}/{doc['key']}')}"
-            passages = _passages(doc["body"])
-            if not passages:
-                continue
-
-            def _write(node_id=node_id, name=name, passages=passages):
-                vectors = embedding_service.embed_documents(passages)
-                description = f"Indexed document ({len(passages)} passages, searchable, not graphed)."
-                self._graph.execute_query(
-                    """
-                    MERGE (note:Node {id: $note_id}) ON CREATE SET note.kind = 'note'
-                    MERGE (n:Node {id: $id}) ON CREATE SET n.kind = 'indexable'
-                    SET n.name = $name, n.type = 'document'
-                    MERGE (note)-[r:REFERENCES]->(n) SET r.note_id = $note_id
-                    """,
-                    {"note_id": note_id, "id": node_id, "name": name},
-                )
-                self._qdrant.upsert_node_core(
-                    node_id=node_id, name=name, node_type="document",
-                    description_vector=embedding_service.embed_documents([name])[0],
-                    description=description,
-                )
-                self._qdrant.upsert_node_items(
-                    self._qdrant._col_contexts,  # pylint: disable=protected-access
-                    node_id,
-                    [
-                        {
-                            "content": text, "vector": vector, "name": name,
-                            "type": "document", "note_id": note_id,
-                            "note_created_at": note_created_at or "",
-                        }
-                        for text, vector in zip(passages, vectors)
-                    ],
-                )
-                self._meili.index_node(
-                    node_id=node_id, name=name, node_type="document",
-                    isolated_contexts=passages, relationship_natural_language="",
-                )
-
-            await asyncio.to_thread(_write)
-            logger.info(f"[Documents] '{name}' indexed as {len(passages)} passage(s), not graphed")
-
     async def _update_neighborhoods(
         self,
         nodes,
@@ -851,11 +776,7 @@ class IngestionWorkflow:
             name = (node.name or "").lstrip("#").strip().lower()
             if not name:
                 continue
-            # No context from the model: the sentences that mention the entity,
-            # never the whole note (which is what this used to store).
-            context = getattr(node, "isolated_context", "") or sentences_about(
-                node.name or "", new_content
-            )
+            context = node.isolated_context
             ntype = (getattr(node, "type", "") or "").lower().strip() or "thing"
             ctx_key = (context or "").strip()
             if name not in name_to_contexts:
@@ -1214,32 +1135,8 @@ class IngestionWorkflow:
         raw = asyncio.run(
             self._llm.ingestion_generate(prompt, temperature=0.1, json_mode=True)
         )
-        got = _CommunityName.model_validate_json(self._llm._clean_json(raw or ""))
-        return got.name.strip() or None, got.summary.strip() or None
-
-    @staticmethod
-    def _name_fits_members(name: str | None, member_rows: list[dict]) -> bool:
-        """A usable community name shares a real word with at least one member.
-
-        Anything the model invents from thin air — "Transient Echoes", "Node
-        Cluster 3" — fails this; a name anchored in the entities passes.
-        """
-        words = {w for w in re.split(r"[^a-z0-9]+", (name or "").lower()) if len(w) >= 3}
-        members = " ".join(str(row.get("name") or "") for row in member_rows).lower()
-        member_words = set(re.split(r"[^a-z0-9]+", members))
-        return bool(words & member_words)
-
-    @staticmethod
-    def _derive_fallback_community_name(member_rows: list[dict]) -> str:
-        """Create a readable deterministic fallback from member names."""
-        member_names = [row.get("name") for row in member_rows if row.get("name")]
-        if not member_names:
-            return "Related knowledge topics"
-        if len(member_names) == 1:
-            return f"About {member_names[0]}"
-        if len(member_names) == 2:
-            return f"{member_names[0]} and {member_names[1]}"
-        return f"{member_names[0]} and related topics"
+        got = model_output.parse(raw, _CommunityName, stage="community summary", model=self._llm.get_ingestion_model())
+        return got.name, got.summary
 
     @staticmethod
     def _format_member_context(rows: list[dict]) -> str:
@@ -1260,7 +1157,6 @@ class IngestionWorkflow:
         self,
         member_rows: list[dict],
         community_level: int,
-        strict_naming: bool = False,
     ) -> tuple[str | None, str | None]:
         """Generate a community name and summary in a single LLM call.
 
@@ -1285,18 +1181,12 @@ class IngestionWorkflow:
             "- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\n"
             'Return ONLY this JSON: {"name": "<name>", "summary": "<summary>"}'
         )
-        if strict_naming:
-            prompt += (
-                "\n\nThis is a retry because the previous name was too generic. "
-                "The name must be specific and user-facing."
-            )
         return self._name_and_summary(prompt)
 
     def _build_rollup_summary(
         self,
         child_community_rows: list[dict],
         community_level: int,
-        strict_naming: bool = False,
     ) -> tuple[str | None, str | None]:
         """Generate a community name and summary by rolling up from child community summaries.
 
@@ -1329,11 +1219,6 @@ class IngestionWorkflow:
             "- Do NOT use the words isolated / node / cluster / community / group as the central theme\n\n"
             'Return ONLY this JSON: {"name": "<name>", "summary": "<summary>"}'
         )
-        if strict_naming:
-            prompt += (
-                "\n\nThis is a retry because the previous name was too generic. "
-                "The name must be specific and user-facing."
-            )
         return self._name_and_summary(prompt)
 
     def rebuild_leiden_communities(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
@@ -1541,47 +1426,6 @@ class IngestionWorkflow:
                         f"[Community] Summary failed for {cluster_label}: {_summ_err}"
                     )
                     return None
-
-                # Reject generic names and retry up to 2 times.
-                for retry_idx in range(2):
-                    if self._name_fits_members(name, member_rows):
-                        break
-                    if _tracker.cancel_recompute.is_set():
-                        return None
-                    logger.warning(
-                        f"[Community] {cluster_label}: rejecting generic name "
-                        f"'{name or '(empty)'}' (retry {retry_idx + 1}/2)"
-                    )
-                    try:
-                        if rollup_rows:
-                            rn, rs = self._build_rollup_summary(
-                                rollup_rows, community_level, strict_naming=True
-                            )
-                        else:
-                            rn, rs = self._build_community_summary(
-                                member_rows, community_level, strict_naming=True
-                            )
-                        if rn:
-                            name = rn
-                        if rs:
-                            summary = rs
-                    except (
-                        Exception
-                    ) as _retry_err:  # pylint: disable=broad-exception-caught
-                        logger.warning(
-                            f"[Community] {cluster_label}: name retry failed: {_retry_err}"
-                        )
-
-                if not self._name_fits_members(name, member_rows):
-                    logger.warning(
-                        f"[Community] {cluster_label}: using fallback name after generic output '{name}'"
-                    )
-                    name = self._derive_fallback_community_name(member_rows)
-                if not summary:
-                    summary = (
-                        f"Community at level {community_level} containing "
-                        f"{len(member_entity_ids)} related nodes."
-                    )
 
                 community_id = f"community_l{community_level}_{uuid.uuid4().hex}"
 

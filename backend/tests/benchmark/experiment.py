@@ -94,7 +94,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", help="run name; results go to Results/<name>/")
     ap.add_argument("--dataset", choices=["hotpotqa", "musique"])
-    ap.add_argument("--questions", type=int, help="first N questions (and, with --ingest, only their notes)")
+    ap.add_argument("--questions", type=int, help="N questions (and, with --ingest, only their notes)")
+    ap.add_argument("--offset", type=int, default=0, help="...starting at this question (held-out slices)")
+    ap.add_argument("--evaluator", choices=["full", "retrieval"], default="full",
+                    help="full = the whole loop with an answering model; retrieval = search-and-expand only, against the gold notes")
+    ap.add_argument("--queries-from", nargs="*", default=[], metavar="RESULTS.json",
+                    help="retrieval evaluator: also run the follow-up queries these past runs recorded")
+    ap.add_argument("--no-cache", action="store_true", help="do not replay unchanged model calls from <repo>/llm-cache")
     ap.add_argument("--restore", metavar="SNAPSHOT", help="start from this snapshot instead of the current data dir")
     ap.add_argument("--fresh", action="store_true", help="start from an empty data dir")
     ap.add_argument("--ingest", action="store_true", help="ingest the dataset's notes before evaluating")
@@ -136,7 +142,10 @@ def main() -> None:
     DATA.mkdir(exist_ok=True)
     (DATA / ".experiment").write_text(args.name)
 
-    env = {**os.environ, "BENCHMARK_MODE": "true", **overrides,
+    cache = {} if args.no_cache else {"LLM_CALL_CACHE_DIR": str(REPO / "llm-cache")}
+    failures = DATA / "logs" / "invalid_model_output.jsonl"
+    failures.unlink(missing_ok=True)  # counted per run
+    env = {**os.environ, "BENCHMARK_MODE": "true", **cache, **overrides,
            "ORB_DATA_DIR": str(DATA), "ORB_BENCH_PROGRESS": str(DATA / "prepare_progress.json")}
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
               "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,
@@ -153,19 +162,21 @@ def main() -> None:
         # already present, so it is the one to call; --download is the permission to fetch new ones.
         selection = get_json("/api/v1/benchmark/config")["selection"]
         catalogue = {m["id"]: m for m in get_json("/api/v1/models", 60)["local"]["downloadable"]}
-        chat_id = args.chat_model if args.chat_model in catalogue else selection.get("chat_id")
+        # Ingestion model first, chat model last: the last one set up is what the manifest selects.
+        wanted = [m for m in (args.ingestion_model, args.chat_model) if m in catalogue] or [selection.get("chat_id")]
         if not args.download:
-            missing = [chat_id] if chat_id in catalogue and not catalogue[chat_id]["downloaded"] else []
+            missing = [m for m in wanted if m in catalogue and not catalogue[m]["downloaded"]]
             missing += [f"{k}={v}" for k, v in overrides.items() if k in ("EMBED_MODEL_ID", "RERANK_MODEL_ID")
                         and v not in (selection.get("embed_id"), selection.get("reranker_id"))]
             if missing:
                 sys.exit(f"[experiment] not downloaded yet: {', '.join(missing)}. Re-run with --download.")
-        req = Request(BASE_URL + "/api/v1/setup/download-models", method="POST",
-                      data=json.dumps({"chat_id": chat_id}).encode(), headers={"content-type": "application/json"})
-        try:
-            urlopen(req, timeout=14400).read()  # noqa: S310 — loopback; a first download can take a while
-        except HTTPError as exc:
-            sys.exit(f"[experiment] model setup failed: {exc.read().decode()}")
+        for model_id in dict.fromkeys(wanted):
+            req = Request(BASE_URL + "/api/v1/setup/download-models", method="POST",
+                          data=json.dumps({"chat_id": model_id}).encode(), headers={"content-type": "application/json"})
+            try:
+                urlopen(req, timeout=14400).read()  # noqa: S310 — loopback; a first download can take a while
+            except HTTPError as exc:
+                sys.exit(f"[experiment] model setup failed for {model_id}: {exc.read().decode()}")
         if args.provider or args.chat_model or args.ingestion_model:
             # Pinned on the KB, which lives in the data dir: no shared manifest is touched.
             pin = {"provider": args.provider, "model": args.chat_model,
@@ -184,7 +195,7 @@ def main() -> None:
         if args.ingest:
             cmd = [sys.executable, "tests/benchmark/prepare_dataset.py", "--dataset", args.dataset, "--resume"]
             if args.questions:
-                cmd += ["--questions", str(args.questions)]
+                cmd += ["--questions", str(args.questions), "--question-offset", str(args.offset)]
             t0 = time.monotonic()
             run(cmd, env)
             wait_until("ingestion to drain", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
@@ -200,8 +211,13 @@ def main() -> None:
             run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from,
                  "--output", str(out / "synthesis.json")], env)
         elif not args.no_eval:
-            cmd = [sys.executable, "tests/benchmark/evaluate.py", "--dataset", args.dataset,
-                   "--output", str(out / f"{args.dataset}.json")]
+            if args.evaluator == "retrieval":
+                cmd = [sys.executable, "tests/benchmark/retrieval_eval.py", "--dataset", args.dataset,
+                       "--output", str(out / "retrieval.json"), "--queries-from", *args.queries_from]
+            else:
+                cmd = [sys.executable, "tests/benchmark/evaluate.py", "--dataset", args.dataset,
+                       "--output", str(out / f"{args.dataset}.json")]
+            cmd += ["--offset", str(args.offset)]
             if args.questions:
                 cmd += ["--limit", str(args.questions)]
             run(cmd, env)
@@ -212,6 +228,13 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             server.kill()
         record["finished"] = datetime.now().isoformat(timespec="seconds")
+        tally: dict[str, int] = {}
+        if failures.is_file():
+            for line in failures.read_text(encoding="utf-8").splitlines():
+                stage = json.loads(line)["stage"]
+                tally[stage] = tally.get(stage, 0) + 1
+            shutil.copyfile(failures, out / "invalid_model_output.jsonl")
+        record["invalid_replies"] = tally  # a result, not an error: how often the model gave nothing usable
         (out / "config.json").write_text(json.dumps(record, indent=2))
     if args.snapshot:
         save_snapshot(args.snapshot, record.get("server", {}).get("selection") or {})

@@ -17,19 +17,31 @@ names an entity that was not listed, or uses a predicate outside the vocabulary,
 model-and-prompt pair and is counted as one. It is not repaired, coerced, fuzzy-matched or silently dropped.
 The way to get valid output is to ask for it better (prompt, schema, output format, model), not to clean it up after.
 
-Where the inherited pipeline breaks the rule today (each is a candidate lever: with it, without it, and what replaces it):
+How the rule is enforced (branch `orb-testing-strict`, 2026-09-21):
 
-| Site | What it does |
-|---|---|
-| `LLMService._clean_json` + the `json_repair` dependency | Every structured reply is unwrapped from code fences and passed through a JSON repairer before parsing. |
-| `schemas/extraction.py`: about ten `mode="before"` validators | Absorb the malformed shapes local models emit (wrong container types, missing keys, stray values) instead of rejecting them. |
-| `relationship_type` validator | Any predicate outside the closed vocabulary is rewritten to `related_to`. This is why nearly every edge in the first extraction was `related_to`. |
-| `match_entity_name` / `_norm_name` in the ingestion agent | Relationship and context rows that name an entity slightly differently are matched back by normalised name; unmatched ones are dropped quietly. |
-| Regex in `ingestion_agent.py`, `extraction_chunking.py`, `llm.py`, `ingestion.py` | Parsing and splitting of model output and note text by pattern. Each needs classifying: input handling (allowed) or output fixing (not). |
+- Every structured reply goes through `services/model_output.parse`: `json` + the schema, as written. A reply that
+  does not parse or fit raises `ModelOutputError`, is recorded in the request trace (`invalid_output`) and appended to
+  `DATA_DIR/logs/invalid_model_output.jsonl` with stage, model, reason and the raw text. The count is a result.
+- Replies are constrained to valid JSON while they are generated (`json_mode`: llama.cpp JSON grammar, OpenAI
+  `response_format`, Gemini `response_mime_type`). Constraining to a full schema is not used: a code comment in
+  `local_models.py` records that it emptied nested arrays on small models. Untested since; a candidate lever.
+- Schemas have required fields and no `before` validators. Predicates are a `Literal` of the closed vocabulary.
+  A relationship or description must name an entity exactly as listed. Chunk extractions merge on the exact name.
+- `EXTRACTION_ATTEMPTS` (default 1) may ask again; it never repairs. A truncated reply on an unsplittable chunk fails.
+- A research step must set exactly one of `answer` / `next_query`; an answer such as "INSUFFICIENT" is returned as the
+  answer, not reinterpreted. An unusable step reply is a counted step that produced nothing.
 
-Nothing records how often these fire, so nobody knows how much of the current scores depend on them.
-The harness scorer also normalises (`normalize_answer`, first-line extraction, fuzzy match). That is the published
-HotpotQA metric, kept so numbers stay comparable; a strict raw exact match is to be reported beside it.
+Removed: `_clean_json` and the `json-repair` dependency, all tolerant validators and shape unwrapping, predicate rewriting
+to `related_to`, `match_entity_name`, the regex sentence fallback that invented an entity description when the model gave
+none (`sentences_about`), the fall-back from task-split to chunking when the entity pass returned nothing, the swallowed
+task-split passes, community-name fit check with its two retries and invented fallback name, the graph layer's predicate
+sanitiser, every regex in the pipeline packages, and (as attachment code) the extraction-block markup and vault migration sweep.
+
+Still to decide, not LLM output but in the same spirit: the graph stores and looks up entities by lower-cased name, so
+"Ama" and "ama" from two notes become one node. That is entity resolution across notes and is a lever to test, not a repair.
+
+The harness scorer normalises answers (`normalize_answer`, first-line extraction, fuzzy match). That is the published
+HotpotQA metric and the owner chose to keep it.
 
 ## 1. Hazards
 
@@ -136,6 +148,37 @@ candidate with `name`, `type`, `score`, `notes`, sorted, before any cut) and `st
 Datasets: HotpotQA, 100 questions, 990 notes, 2 gold and 8 distractor notes per question, all level hard,
 79 bridge and 21 comparison. MuSiQue from LongBench, 50 questions, 526 notes, 2 to 4 hops.
 
+## 4b. Covering many routes on one machine
+
+One Mac, one heavy model in memory at a time, one writer on the graph: running pipelines side by side would only make
+the models thrash. Breadth comes from not repeating work, which is the useful idea in Dream-RSI: record an expensive
+stage once, then judge many variants against the record.
+
+| Stage | Levers (`tests/benchmark/levers.py`) | Cost of one variant | How it is kept cheap |
+|---|---|---|---|
+| extract | ingestion model, attempts, chunk size, context window | hours | unchanged extraction calls replay from the model-call cache |
+| index | embedding model, community summaries | minutes once extractions are cached | one snapshot per distinct set of extract + index levers, built once |
+| retrieve | reranker, top-k, thresholds, graph expansion, evidence cap | seconds per query | `--evaluator retrieval`: no answering model, scored on the gold notes; `replay.py` then sweeps the filters offline |
+| loop | iterations, the model that plans and answers | about three minutes a question | successive halving: small rungs first, survivors go on |
+| answer | the answering model over fixed evidence | one call a question | `synthesis.py` |
+
+- **Model-call cache** (`LLM_CALL_CACHE_DIR`, on by default under `experiment.py`, stored in `<repo>/llm-cache`). Keyed on provider,
+  endpoint, model, the exact messages and the generation parameters. A changed prompt, model or note misses on its own; there
+  are no versions to bump. It survives `--fresh`, so rebuilding an index with a different embedding model re-runs no extraction.
+  Consequence: a repeated run is a replay, not a second sample. To measure sampling variance, pass `--no-cache`.
+- **`sweep.py SPEC.json`** expands a spec (baseline, levers to vary, one-at-a-time or grid) into variants, builds each distinct
+  index once, runs the rungs, keeps the better part of the field after each, scores the held-out slice once at the end for
+  the baseline and the winners, and writes `Results/<sweep>/report.md`: scores, paired statistics against the baseline, time per
+  question and unusable replies by stage. `--plan` prints what would run. Finished runs are skipped, so a sweep can be stopped and resumed.
+- A full grid is for cheap stages only. Eight levers at three values is 6,561 hour-long runs; screen one lever at a time, then
+  combine the winners in a small grid.
+- Prompts are not levers yet. They are the largest lever, and they live inline in `llm.py` and `ingestion_agent.py`. Varying
+  them from a spec needs them moved into named files first. Until then a prompt change is a code change, which the cache
+  handles correctly on its own.
+
+Specs for the first round are in `backend/sweeps/`: `round1-retrieval.json` (nine retrieval variants over one index, no answering
+model) and `round1-loop.json` (loop limit and four smaller answering models, three rungs, held-out slice).
+
 ## 5. Measuring honestly
 
 - At N=100 the standard error on exact match is about five points. A gap that size between two runs is noise.
@@ -202,6 +245,19 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, baseline `base-e4b` (pipeline as it was, repairs included).** Gemma 4 E4B ingest and chat, 20 HotpotQA questions,
+  199 notes, default knobs, no community summaries. Ingest 7.7 h (137 s a note, no failures). Exact match 45 %, F1 0.704,
+  contains 60 %, retrieval recall 0.825, 227 s a question. Where the 8 misses went (`replay.py`): 6 retrieved but answered
+  wrong, 2 gold note never surfaced, none cut by the filters. No filter setting beats the recall ceiling of 0.825, so the
+  rerank filters are not the problem; tightening the evidence cap only raises precision. Three questions ran out of loop
+  iterations and returned their last finding, a full sentence, as the answer, which cannot match. The other wrong answers are
+  yes/no and answer-form errors ("between 1986 and 2013" for "from 1986 to 2013"). Aim next at the answering step and the loop limit, not retrieval filters.
+- **2026-09-21, strict pipeline, cache and sweeps (branch `orb-testing-strict`).** Built in a second worktree so the baseline plan
+  running from `orb-testing` keeps the code it started with. The rule is enforced (section 0), the model-call cache and the
+  retrieval-only evaluator are in, and `sweep.py` with the lever registry replaces hand-written plans (section 4b).
+  Verified by 471 unit tests, dry-run plans and synthetic replay files. **Not yet run against a live pipeline**: the machine is
+  busy with the baseline. First live step after merging: a one-question run, then `round1-retrieval`.
+  Expect the strict pipeline to fail notes the old one silently patched; that failure rate per model is the first new result.
 - **2026-09-21, plan launched.** `plan.sh` started detached at 09:45 (`Results/plan.log`): 20 HotpotQA questions,
   199 notes, first notes at 155 to 180 s each, so the shared E4B index is due after roughly nine hours.
   The first launch attempt failed within seconds and exposed three faults, all fixed in `6daf616`:

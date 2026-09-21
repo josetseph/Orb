@@ -2,11 +2,11 @@
 
 # pylint: disable=import-outside-toplevel,protected-access
 import asyncio
-import re
 import uuid
 from datetime import datetime
 from typing import Any, List, Optional, TypedDict
 
+from app.core.config import settings
 from app.core.log import get_logger
 from app.services import ingestion_checkpoint as checkpoint
 from app.schemas.extraction import (
@@ -14,15 +14,16 @@ from app.schemas.extraction import (
     ContextPass,
     EntityPass,
     Extraction,
+    Node,
     NoteInput,
     RelationshipPass,
 )
+from app.services import model_output
 from app.services.extraction_budget import record_success, record_truncation
 from app.workflows.extraction_chunking import (
     MIN_SPLIT_TOKENS,
     chunk_token_budget,
     merge_extractions,
-    normalize_entity_name as _norm_name,
     split_for_extraction,
 )
 
@@ -38,113 +39,6 @@ def _require_workflow(state: "IngestionState"):
             "(KB-scoped IngestionWorkflow from process_note)"
         )
     return wf
-
-# Blocks appended by multimodal_node — strip before re-processing so re-ingest
-# does not duplicate vision/transcription/Marlin output in the vault .md.
-# Extraction output is delimited and carries the attachment it came from, so a
-# block can be found, replaced or removed on its own — and can sit directly
-# under its attachment instead of being piled at the end of the note. HTML
-# comments render as nothing, so the note reads as if they were not there.
-EXTRACT_OPEN = '<!-- orb:extract src="{src}" -->'
-EXTRACT_CLOSE = "<!-- /orb:extract -->"
-# A block may carry how its attachment is ingested. No mode = graphed like the
-# rest of the note. ``pending`` = over LARGE_ATTACHMENT_TOKENS and waiting for
-# the user; ``index`` = searchable passages, no entities; ``summary`` = the
-# body is a model-written summary of the attachment, which is what gets graphed.
-_OPEN = r'<!-- orb:extract src="([^"]*)"(?: mode="([a-z]+)")? -->'
-EXTRACT_BLOCK_RE = re.compile(r"\n*" + _OPEN + r".*?<!-- /orb:extract -->", re.S)
-_EXTRACT_SRC_RE = re.compile(_OPEN)
-_BLOCK_PARTS_RE = re.compile(_OPEN + r"\n?(.*?)\n?<!-- /orb:extract -->", re.S)
-UNGRAPHED_MODES = ("pending", "index")
-ATTACHMENT_MODES = ("graph", "summary", "index")
-
-
-def extract_open(src: str, mode: str = "") -> str:
-    return f'<!-- orb:extract src="{src}"' + (f' mode="{mode}"' if mode else "") + " -->"
-
-
-def extraction_blocks(content: str) -> list[dict[str, str]]:
-    """Every delimited block as ``{src, key, mode, body}``."""
-    return [
-        {"src": src, "key": attachment_key(src), "mode": mode or "", "body": body}
-        for src, mode, body in _BLOCK_PARTS_RE.findall(content or "")
-    ]
-
-
-def graph_text(content: str) -> str:
-    """The note as entity extraction should see it: without the blocks that
-    are waiting for a decision or are indexed for search only."""
-    return EXTRACT_BLOCK_RE.sub(
-        lambda m: "" if m.group(2) in UNGRAPHED_MODES else m.group(0), content or ""
-    ).strip()
-
-
-# Pre-marker format: blocks were appended with no closing delimiter. Only
-# ``wrap_legacy_enrichment_blocks`` reads this, to give such blocks markers.
-_ENRICHMENT_BLOCK_RE = re.compile(
-    r"\n\n\[(?:"
-    r"PDF Extraction \([^\]]+\)|"
-    r"Image:[^\]]+|"
-    r"Audio Transcript \([^\]]+\)|"
-    r"Video Audio Transcript \([^\]]+\)|"
-    r"Video Visual Analysis \([^\]]+\)|"
-    r"Word Extraction \([^\]]+\)|"
-    r"Spreadsheet Extraction \([^\]]+\)|"
-    r"Unsupported \([^\]]+\)"
-    r")\]"
-)
-
-
-def attachment_key(url: str) -> str:
-    """Canonical identity of an attachment URL: no query, unquoted, lowercase.
-
-    The legacy ``/vault-files/<kb>/`` prefix is dropped, so the old absolute
-    form and the canonical relative form of one file share a key — an
-    extraction block written before the vault sweep still matches its link.
-    """
-    from urllib.parse import unquote
-
-    raw = (url or "").strip().split("?", 1)[0]
-    return unquote(re.sub(r"^/vault-files/[^/]+/", "", raw)).lower()
-
-
-def _block_key(block: str) -> str:
-    m = _EXTRACT_SRC_RE.search(block)
-    return attachment_key(m.group(1)) if m else ""
-
-
-def wrap_legacy_enrichment_blocks(content: str) -> str:
-    """Give pre-marker enrichment blocks the delimiters newer ones carry.
-
-    Each legacy header and the text up to the next header, the next delimited
-    block, or the end of the note becomes one ``orb:extract`` block with an
-    empty ``src`` — so it is found, kept or dropped by the same rules as any
-    other block. Text already inside a delimited block is left alone, which
-    also makes this idempotent.
-    """
-    if not content:
-        return content or ""
-
-    def _wrap_run(text: str) -> str:
-        heads = list(_ENRICHMENT_BLOCK_RE.finditer(text))
-        if not heads:
-            return text
-        parts = [text[: heads[0].start()]]
-        for i, head in enumerate(heads):
-            end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
-            body = text[head.start() : end].strip("\n")
-            parts.append(f"\n\n{EXTRACT_OPEN.format(src='')}\n{body}\n{EXTRACT_CLOSE}")
-        return "".join(parts)
-
-    out: list[str] = []
-    last = 0
-    for m in EXTRACT_BLOCK_RE.finditer(content):
-        out.append(_wrap_run(content[last : m.start()]))
-        out.append(m.group(0))
-        last = m.end()
-    out.append(_wrap_run(content[last:]))
-    return "".join(out)
-
 
 def _build_extraction_prompt(extraction_content: str) -> str:
     """Knowledge Architect prompt for one note (or one chunk of a long note)."""
@@ -289,20 +183,6 @@ Now apply this entire process to the following note and return only the JSON out
 """
 
 
-# Unified file link parsing (canonical ``attachments/…``, legacy ``/vault-files/…``
-# and optional remote http(s)):
-#   [📎 Filename](attachments/...) · [🎤 Voice Recording](...) · ![alt](...)
-#
-# URLs may contain unencoded spaces and commas (common for uploaded filenames),
-# so the pattern does not stop at whitespace. They may also contain *balanced*
-# parentheses — "Report (2026).pdf" is a legal markdown link target. Stopping at
-# the first ")" truncated the URL, so the attachment was silently dropped: the
-# file never reached PDF/image extraction and never rendered in the note. One
-# level of nesting covers real filenames.
-_ATTACHMENT_URL = r"(?:https?://|/vault-files/|attachments/)(?:[^()\n]|\([^()\n]*\))+"
-ATTACHMENT_LINK_RE = re.compile(rf"\[(📎|🎤)\s*(.*?)\]\(({_ATTACHMENT_URL})\)")
-IMAGE_LINK_RE = re.compile(rf"!\[([^\]]*)\]\(({_ATTACHMENT_URL})\)")
-
 # ── Task-split extraction ────────────────────────────────────────────────────
 #
 # Output size, not context size, is what stops a long note going up in one
@@ -439,38 +319,19 @@ def _entity_lines(nodes, with_type: bool = True) -> str:
     )
 
 
-_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
-
-
-def match_entity_name(returned: str, known: set[str]) -> str | None:
-    """Resolve a name a pass handed back to one of the known entities.
-
-    Tolerates the shapes a model reaches for when echoing a list: a trailing
-    "(Type)", a leading bullet, surrounding quotes. Returns the canonical key,
-    or None when it genuinely names something that was never extracted.
-    """
-    for candidate in (returned, _TRAILING_PAREN_RE.sub("", returned or "")):
-        cleaned = (candidate or "").strip().lstrip("-*").strip().strip("\"'")
-        key = _norm_name(cleaned)
-        if key and key in known:
-            return key
-    return None
-
-
-_MAX_EXTRACTION_ATTEMPTS = 3
 _MAX_SPLIT_DEPTH = 3
 
 
 async def _extract_chunk(
     llm, text: str, count_tokens, depth: int = 0, budget: int = 0
 ) -> Extraction:
-    """Extract one chunk. Truncated output → split in half and merge, so a
-    long note never yields a silently repaired, half-empty graph."""
+    """Extract one chunk. Truncated output → split in half and merge. A reply that
+    cannot be used as written is an error; ``EXTRACTION_ATTEMPTS`` re-asks, it never repairs."""
     last_error: Exception | None = None
-    for attempt in range(_MAX_EXTRACTION_ATTEMPTS):
+    attempts = max(1, settings.EXTRACTION_ATTEMPTS)
+    for attempt in range(attempts):
         try:
-            # Free-form generate + JSON clean (not grammar-constrained sampling),
-            # which small models often empty out for nested relationship arrays.
+            # json_mode constrains the reply to valid JSON as it is generated.
             raw, meta = await checkpoint.generate_with_meta(
                 llm, _build_extraction_prompt(text), temperature=0.1, json_mode=True
             )
@@ -495,16 +356,14 @@ async def _extract_chunk(
                             for half in halves
                         ]
                         return merge_extractions(parts)
-                logger.warning(
-                    "Extraction output truncated on a chunk too small to split — "
-                    "repairing the partial JSON"
+                raise model_output.reject(
+                    "extraction", model_name, "output truncated on a chunk too small to split", raw
                 )
-            else:
-                record_success(model_name, tokens, budget)
-            return Extraction.model_validate_json(llm._clean_json(raw))
+            record_success(model_name, tokens, budget)
+            return model_output.parse(raw, Extraction, stage="extraction", model=model_name)
         except Exception as exc:  # pylint: disable=broad-exception-caught
             last_error = exc
-            if attempt < _MAX_EXTRACTION_ATTEMPTS - 1:
+            if attempt < attempts - 1:
                 # In-process GGUF chat can return empty/invalid JSON under KV-cache
                 # pressure; a pause lets Metal/CPU recover before retrying.
                 wait = 30 * (attempt + 1)
@@ -513,22 +372,17 @@ async def _extract_chunk(
                 )
                 await asyncio.sleep(wait)
     raise RuntimeError(
-        f"Extraction failed after {_MAX_EXTRACTION_ATTEMPTS} attempts: {last_error}"
+        f"Extraction failed after {attempts} attempt(s): {last_error}"
     )
 
 
 async def _call_pass(llm, prompt: str, model_cls, label: str):
-    """One task-split call, parsed into ``model_cls``. Never raises."""
-    try:
-        raw, meta = await checkpoint.generate_with_meta(
-            llm, prompt, temperature=0.1, json_mode=True
-        )
-        if meta.get("truncated"):
-            logger.warning("[Extraction] %s truncated — result may be partial", label)
-        return model_cls.model_validate_json(llm._clean_json(raw))
-    except Exception as exc:  # pylint: disable=broad-exception-caught
-        logger.warning("[Extraction] %s failed: %s", label, exc)
-        return model_cls()
+    """One task-split call, parsed into ``model_cls`` exactly as the model wrote it."""
+    raw, meta = await checkpoint.generate_with_meta(llm, prompt, temperature=0.1, json_mode=True)
+    model_name = llm.get_ingestion_model()
+    if meta.get("truncated"):
+        raise model_output.reject(label, model_name, "output truncated", raw)
+    return model_output.parse(raw, model_cls, stage=label, model=model_name)
 
 
 async def _extract_task_split(
@@ -550,18 +404,14 @@ async def _extract_task_split(
         llm, _build_entity_prompt(content), EntityPass, "entity pass"
     )
     calls += 1
-    nodes = [n for n in entities.nodes if (n.name or "").strip()]
+    nodes = list(entities.nodes)
     sample = ", ".join(n.name for n in nodes[:8])
     _log(
         f"[Extraction] Pass 1/3 (call 1) — {len(nodes)} entities from the whole note"
         + (f": {sample}{' …' if len(nodes) > 8 else ''}" if sample else "")
     )
     if not nodes:
-        # Nothing to hang relationships or contexts on; fall back rather than
-        # return an empty graph for a note that clearly has content.
-        logger.warning("[Extraction] Entity pass found nothing — falling back to chunking")
-        merged, chunks = await _extract_by_chunks(llm, content, count, budget, logs)
-        return merged, calls + chunks
+        raise model_output.reject("entity pass", llm.get_ingestion_model(), "listed no entities for a note with content")
 
     lines = _entity_lines(nodes)
     rels = await _call_pass(
@@ -571,19 +421,15 @@ async def _extract_task_split(
         "relationship pass",
     )
     calls += 1
-    known = {_norm_name(n.name) for n in nodes}
-    kept = []
+    known = {n.name for n in nodes}
     for r in rels.relationships:
-        src = match_entity_name(r.source_name, known)
-        tgt = match_entity_name(r.target_name, known)
-        if src is None or tgt is None:
-            continue
-        kept.append(r)
-    dropped = len(rels.relationships) - len(kept)
-    _log(
-        f"[Extraction] Pass 2/3 (call 2) — {len(kept)} relationships from the whole note"
-        + (f", {dropped} dropped for naming an unlisted entity" if dropped else "")
-    )
+        for end in (r.source_name, r.target_name):
+            if end not in known:
+                raise model_output.reject(
+                    "relationship pass", llm.get_ingestion_model(), f"names {end!r}, which is not one of the listed entities"
+                )
+    kept = list(rels.relationships)
+    _log(f"[Extraction] Pass 2/3 (call 2) — {len(kept)} relationships from the whole note")
 
     # Contexts get the whole document whenever it fits, so every entity is
     # described from all of it rather than from a fragment. This pass is
@@ -600,8 +446,11 @@ async def _extract_task_split(
             f"(~{count(content)} tokens, budget {ctx_budget})"
         )
     described: dict[str, list[str]] = {}
+    # A name the model canonicalised may appear verbatim in no piece. It still has to be
+    # asked about somewhere, or the pipeline would fail the model for a question never put.
+    everywhere = [n for n in nodes if not any(_entities_mentioned_in([n], p) for p in pieces)] if len(pieces) > 1 else []
     for piece in pieces:
-        present = _entities_mentioned_in(nodes, piece) if len(pieces) > 1 else nodes
+        present = _entities_mentioned_in(nodes, piece) + everywhere if len(pieces) > 1 else nodes
         for start in range(0, len(present), _CONTEXT_BATCH):
             batch = present[start : start + _CONTEXT_BATCH]
             got = await _call_pass(
@@ -611,38 +460,34 @@ async def _extract_task_split(
                 "context pass",
             )
             calls += 1
-            described_now = sum(1 for r in got.contexts if (r.isolated_context or "").strip())
+            described_now = len(got.contexts)
             _log(
                 f"[Extraction] Pass 3/3 (call {calls}) — asked about {len(batch)} "
                 f"entities over {'the whole document' if len(pieces) == 1 else f'piece {pieces.index(piece) + 1}/{len(pieces)}'}"
                 f", described {described_now}"
             )
-            unmatched = 0
             for row in got.contexts:
-                text = (row.isolated_context or "").strip()
-                key = match_entity_name(row.name, known) if text else None
-                if not text or key is None:
-                    unmatched += 1 if text else 0
-                    continue
-                bucket = described.setdefault(key, [])
-                if text not in bucket:
-                    bucket.append(text)
-            if unmatched:
-                logger.warning(
-                    "[Extraction] %d description(s) named an entity that was "
-                    "not extracted — discarded",
-                    unmatched,
-                )
+                if row.name not in known:
+                    raise model_output.reject(
+                        "context pass", llm.get_ingestion_model(), f"describes {row.name!r}, which is not one of the listed entities"
+                    )
+                bucket = described.setdefault(row.name, [])
+                if row.isolated_context not in bucket:
+                    bucket.append(row.isolated_context)
 
-    for node in nodes:
-        node.isolated_context = " ".join(described.get(_norm_name(node.name), []))
-    _log(
-        f"[Extraction] Pass 3/3 — described {sum(1 for n in nodes if n.isolated_context)}"
-        f"/{len(nodes)} entities over {len(pieces)} text piece(s); {calls} calls total"
-    )
+    missing = [n.name for n in nodes if n.name not in described]
+    if missing:
+        raise model_output.reject(
+            "context pass", llm.get_ingestion_model(), f"left {len(missing)} listed entit(y/ies) undescribed, e.g. {missing[0]!r}"
+        )
+    _log(f"[Extraction] Pass 3/3 — described {len(nodes)} entities over {len(pieces)} text piece(s); {calls} calls total")
 
     return (
-        Extraction(nodes=nodes, relationships=kept, title=entities.title),
+        Extraction(
+            nodes=[Node(name=n.name, type=n.type, isolated_context=" ".join(described[n.name])) for n in nodes],
+            relationships=kept,
+            title=entities.title,
+        ),
         calls,
     )
 
@@ -734,7 +579,7 @@ async def extraction_node(
     # text. Auto-generated titles are not included — they don't originate from
     # the note itself and would pollute the extraction.
     # Parked and index-only attachments are not graphed.
-    extraction_content = graph_text(state["content"])
+    extraction_content = state["content"]
     if state["input"].title:
         extraction_content = f"# {state['input'].title}\n\n{extraction_content}"
 
@@ -881,7 +726,7 @@ async def storage_node(state: IngestionState):
         title = await asyncio.to_thread(
             _wf._write_ontology,
             note_id,
-            graph_text(state["content"]),
+            state["content"],
             state["extraction"],
             created_at,
             custom_title,  # Pass custom title if provided
@@ -923,20 +768,10 @@ async def summarization_node(state: IngestionState):
     try:
         await _wf._update_neighborhoods(
             state["extraction"].nodes,
-            graph_text(state["content"]),
+            state["content"],
             note_created_at=state.get("created_at"),
             note_id=state.get("note_id"),
         )
-        # Index-only attachments: searchable passages under one document node.
-        # After the context refresh, which clears everything this note indexed.
-        documents = [b for b in extraction_blocks(state["content"]) if b["mode"] == "index"]
-        if documents and state.get("note_id"):
-            await _wf._update_note_processing_status(
-                state["note_id"], "Indexing documents for search", None
-            )
-            await _wf._index_documents(
-                state["note_id"], documents, state.get("created_at")
-            )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"[Agent] Context indexing failed: {e}", exc_info=True)
         logs.append(

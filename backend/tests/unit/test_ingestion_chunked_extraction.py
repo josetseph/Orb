@@ -34,9 +34,6 @@ class _StubLLM:
     def get_ingestion_model(self):
         return "stub"
 
-    def _clean_json(self, raw: str) -> str:
-        return raw
-
     @staticmethod
     def _note_text(prompt: str) -> str:
         # The note is the last thing in the prompt, after the final blank line.
@@ -54,7 +51,8 @@ class _StubLLM:
             for w in dict.fromkeys(words)
         ]
         rels = [
-            {"source_name": words[0], "target_name": words[-1], "relationship_type": "precedes"}
+            {"source_name": words[0], "target_name": words[-1], "relationship_type": "precedes",
+             "natural_language": f"{words[0]} comes before {words[-1]}"}
         ] if len(words) > 1 else []
         payload = {"title": f"Title for {words[0]}", "nodes": nodes, "relationships": rels}
         return json.dumps(payload), {"finish_reason": "stop", "truncated": False}
