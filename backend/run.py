@@ -134,7 +134,8 @@ def start_sidecars(data_dir: Path) -> None:
     storage.mkdir(parents=True, exist_ok=True)
     log("Starting Qdrant")
     q = _spawn([str(qdrant)], cwd=storage, logfile=logs / "qdrant.log",
-               env={"QDRANT__STORAGE__STORAGE_PATH": str(storage), "QDRANT__SERVICE__HTTP_PORT": str(QDRANT_PORT)})
+               env={"QDRANT__STORAGE__STORAGE_PATH": str(storage), "QDRANT__SERVICE__HTTP_PORT": str(QDRANT_PORT),
+                    "QDRANT__SERVICE__HOST": "127.0.0.1"})  # loopback only, like Meilisearch
     _wait(f"http://127.0.0.1:{QDRANT_PORT}/", q)
     log("Starting Meilisearch")
     m = _spawn([str(meili), "--db-path", str(data_dir / "meilisearch"), "--http-addr", f"127.0.0.1:{MEILI_PORT}",
