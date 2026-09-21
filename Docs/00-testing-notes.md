@@ -113,6 +113,19 @@ Shared weights on this machine (`/Users/josetseph/Projects/models/gguf`): Gemma 
 Qwen3 Embedding 4B Q4 (2560 dimensions), Qwen3 Reranker 4B Q4. Desktop selection: 12B chat, those two for
 embed and rerank. 26 GB RAM.
 
+### Cost of a run on this machine (from `smoke-e4b`, Gemma 4 E4B Q4, 26 GB RAM, desktop app also running)
+
+| Stage | Measured | What it means |
+|---|---|---|
+| Ingest one note | 84 to 321 s, mean 171 s; extraction is 95 % of it, storage and indexing about 10 s | 990 HotpotQA notes is about 47 hours of extraction. A full-set ingest per ingestion variant is not practical locally. |
+| Background communities after 10 notes | about 750 s: 70 second-level clusters (mean size 1.5, 48 of them single-entity orphans), each summarised by a model call | Roughly 40 % on top of ingestion, and it grows with the graph. |
+| Answer one question | 178 s: three model steps of 10, 24 and 52 s, the rest is search, rerank and model swaps | 100 questions is about 5 hours per chat-model or retrieval variant. |
+
+Planning consequences: build snapshots on question subsets (`--questions 20` is 200 notes, about 10 hours with E4B),
+reuse one snapshot for every chat-model and retrieval experiment, and lean on `synthesis.py` and `replay.py`,
+which cost one model call per question and nothing at all. Ingestion variants are the expensive axis; a cloud
+ingestion model or a much smaller local one is the way to make them affordable.
+
 ## 7. Open questions
 
 1. Fresh baseline on the current pipeline: E4B ingest and chat, `BENCHMARK_MODE`, default knobs.
@@ -122,14 +135,28 @@ embed and rerank. 26 GB RAM.
    well is the bigger win for system load.
 4. Where are questions actually lost: never surfaced, cut by filters, or answered wrong? `replay.py`
    on the baseline decides whether to work on ingestion, retrieval filters, or the answering prompt.
+6. The one validation question needed all three loop iterations and answered on the last allowed step.
+   With `MAX_LOOP_ITERATIONS=3` a 2-hop question has no slack; 3 and 4-hop MuSiQue questions cannot finish.
+7. Is per-note extraction (mean 171 s for a paragraph) dominated by the number of passes? It runs entity,
+   relationship and context passes separately. Fewer or merged passes is the obvious ingestion speed lever.
+8. Are second-level communities worth their cost at this granularity? 70 clusters from 10 notes, mean size 1.5.
+   A minimum cluster size would cut most of those model calls. Does retrieval quality move if it does?
+9. In the first extraction nearly every relationship was typed `related_to` even where the text gave a
+   specific predicate ("is the director of"). Check across notes; typed edges are what graph expansion can use.
 5. Would smaller embedding and reranker models (0.6B) cost accuracy? They are loaded on every search.
 
 ## 8. Log
 
+- **2026-09-21, validation run `smoke-e4b`.** First live end-to-end run: 1 HotpotQA question, its 10 notes,
+  Gemma 4 E4B for ingestion and answering, default knobs, `BENCHMARK_MODE`. Passed: answer `YES` (exact match),
+  recall 1.0, precision 0.222, 178 s for the question; traces, config, snapshot all written.
+  `replay.py` on the real trace reproduces the live precision and recall exactly, so the offline simulation
+  mirrors the pipeline. It also caught a bug the unit suite could not: the cut attachment stage was what
+  seeded `content` and `logs` in the agent state (fixed in `0cf13ca`, pinned by `test_ingestion_entrypoint.py`).
+  N=1 proves the plumbing, not the pipeline. Timings from this run are in section 6.
 - **2026-09-21.** Harness built: traces, `experiment.py`, `compare.py`, `replay.py`, `synthesis.py`.
   Offline tools verified on a synthetic results file. Found and fixed the `paths.json` hazard and the shared
-  manifest hazard (section 1). End-to-end run against a live pipeline still pending at time of writing.
-- **2026-09-20.** Resynced to `main` at `63c602e`. `main` had dropped LangGraph, moved the step protocol to
+  manifest hazard (section 1). - **2026-09-20.** Resynced to `main` at `63c602e`. `main` had dropped LangGraph, moved the step protocol to
   JSON and removed `BENCHMARK_MODE`; re-added it on the new protocol. `evaluate.py` adapted to bare
   `linked_notes` ids and the new `sources` list. Docker replaced by `run.py`.
 - **2026-09-18.** Branch created from `main`; product-only code cut; harness and `Results/` moved here

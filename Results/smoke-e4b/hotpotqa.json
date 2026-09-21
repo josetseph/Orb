@@ -1,0 +1,356 @@
+{
+  "timestamp": "2026-09-21T09:24:48.143072",
+  "dataset": "hotpotqa",
+  "num_tests": 1,
+  "metrics": {
+    "total_tests": 1,
+    "valid_tests": 1,
+    "error_count": 0,
+    "answer_exact_match": 1.0,
+    "answer_f1": 1.0,
+    "answer_fuzzy_match": 1.0,
+    "answer_contains_expected": 1.0,
+    "retrieval_precision": 0.2222222222222222,
+    "retrieval_recall": 1.0,
+    "retrieval_f1": 0.3636363636363636,
+    "avg_response_time_ms": 177811.6092920027
+  },
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-12b-q4",
+      "embed_id": "qwen3-embed-4b-q4",
+      "reranker_id": "qwen3-rerank-4b-q4",
+      "embedding_dims": 2560,
+      "chat_path": "/Users/josetseph/Projects/Technical/personal/Orb-testing/models/gguf/gemma-4-12B-it-Q4_K_M.gguf",
+      "embed_path": "/Users/josetseph/Projects/Technical/personal/Orb-testing/models/gguf/Qwen3-Embedding-4B-Q4_K_M.gguf",
+      "reranker_path": "/Users/josetseph/Projects/Technical/personal/Orb-testing/models/gguf/Qwen3-Reranker-4B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-4b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-4b-q4"
+    }
+  },
+  "note_titles": {
+    "ecb9d91b-3c9f-400e-871e-b8c49613ba49": "Doctor Strange (2016 Film) Production Details",
+    "718d5536-6b56-43e0-8e24-5cc0c454da7d": "Biography of Conrad Brooks",
+    "87b2a6ee-14d8-4d81-84b3-dc39505a394b": "Sinister Film Details",
+    "a9079d62-c25e-481b-97d2-7c1c97311f0c": "Adam Collis's Filmography and Education",
+    "3d9c8193-f1b7-45ef-bd9c-fc539285b095": "Deliver Us from Evil Film Production Details",
+    "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5": "Biography of Ed Wood",
+    "c6764d1f-42ba-423c-a786-dd036bd55e51": "Tyler Bates' Career as a Musician and Composer",
+    "cda6d538-1c03-4a49-9e38-fe49aba5e357": "Geographical and Historical Context of Woodson, Arkansas",
+    "1f0a8f94-0051-4c93-9f08-0291202368be": "Scott Derrickson's Career and Biography",
+    "84cc9545-856d-4c98-92af-10e463821aa1": "Ed Wood Film Details"
+  },
+  "results": [
+    {
+      "test_id": "5a8b57f25542995d1e6f1371",
+      "question": "Were Scott Derrickson and Ed Wood of the same nationality?",
+      "expected_answer": "yes",
+      "actual_answer": "YES",
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0,
+      "retrieved_note_titles": [
+        "Scott Derrickson's Career and Biography",
+        "Tyler Bates' Career as a Musician and Composer",
+        "Adam Collis's Filmography and Education",
+        "Deliver Us from Evil Film Production Details",
+        "Biography of Ed Wood",
+        "Doctor Strange (2016 Film) Production Details",
+        "Biography of Conrad Brooks",
+        "Ed Wood Film Details",
+        "Geographical and Historical Context of Woodson, Arkansas"
+      ],
+      "retrieval_precision": 0.2222222222222222,
+      "retrieval_recall": 1.0,
+      "total_time_ms": 177811.6092920027,
+      "error": null,
+      "context": [
+        {
+          "name": "scott derrickson",
+          "text": "scott derrickson is a person. Scott Derrickson is an American director, screenwriter, and producer. He was born on July 16, 1966, and resides in Los Angeles, California. He is recognized for directing horror films such as Sinister, The Exorcism of Emily Rose, and Deliver Us From Evil, in addition to the 2016 Marvel Cinematic Universe installment, Doctor Strange. - 2026-09-21T08:43:36.939840 Scott Derrickson is a person who directed the film Sinister and also co-wrote it with C. Robert Cargill. - 2026-09-21T09:02:45.343220 Scott Derrickson is the individual whose short film \"Love in the Ruins\" (1995) Adam Collis worked on as an assistant director. - 2026-09-21T09:00:30.121472 Scott Derrickson is the director of the film Deliver Us from Evil. - 2026-09-21T08:56:44.694588 Scott Derrickson is one of the directors that Tyler Bates has collaborated with. - 2026-09-21T08:51:23.696092 Scott Derrickson directed the film Doctor Strange (2016 film) and co-wrote it with Jon Spaihts and C. Robert Cargill."
+        },
+        {
+          "name": "edward davis wood jr.",
+          "text": "edward davis wood jr. is a person. Edward Davis Wood Jr. was an American filmmaker, actor, writer, producer, and director. His lifespan spanned from October 10, 1924 to December 10, 1978. Edward Davis Wood Jr. was an American filmmaker, actor, writer, producer, and director. His lifespan spanned from October 10, 1924 to December 10, 1978. - 2026-09-21T08:55:09.360129"
+        },
+        {
+          "name": "american",
+          "text": "american is a concept. American describes the origin or nationality associated with the film Deliver Us from Evil. - 2026-09-21T08:56:44.694588 American describes the nationality of Edward Davis Wood Jr. - 2026-09-21T08:55:09.360129 Tyler Bates is identified as an American individual. - 2026-09-21T08:51:23.696092 Adam Collis is identified as being American. - 2026-09-21T09:00:30.121472 Scott Derrickson is identified as American. - 2026-09-21T08:43:36.939840 Conrad Brooks is identified as an American."
+        },
+        {
+          "name": "ed wood (film)",
+          "text": "ed wood (film) is a work. Ed Wood (film) is a 1994 American biographical period comedy-drama film. It was directed and produced by Tim Burton, and it stars Johnny Depp as cult filmmaker Ed Wood."
+        },
+        {
+          "name": "ed wood",
+          "text": "ed wood is a person. Ed Wood is a cult filmmaker whose life period is concerned within the film Ed Wood (film). Johnny Depp plays him in that film. - 2026-09-21T08:40:46.318778 Ed Wood's films were a starting point for Conrad Brooks' career. There was ongoing interest in the films of Ed Wood, which led to Conrad Brooks reemerging."
+        },
+        {
+          "name": "ed wood sr.",
+          "text": "ed wood sr. is a person. Ed Wood Sr. was a prominent plantation owner, trader, and businessman active at the turn of the 20th century. He owned the Wood Plantation, which is noted as the largest among his plantations."
+        }
+      ],
+      "trace": [
+        {
+          "kind": "step",
+          "iteration": 1,
+          "query": null,
+          "docs": [],
+          "llm_seconds": 10.18,
+          "can_answer": false,
+          "answer": null,
+          "next_query": "Scott Derrickson nationality",
+          "finding": ""
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Scott Derrickson nationality",
+          "top_n": 10,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "entity_match",
+              "score": 0.992768,
+              "notes": [
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "c6764d1f-42ba-423c-a786-dd036bd55e51"
+              ]
+            },
+            {
+              "name": "director and producer",
+              "type": "community_summary",
+              "score": 0.012438,
+              "notes": []
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Scott Derrickson nationality",
+          "top_n": 10,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "graph_expansion",
+              "score": 0.995493,
+              "notes": [
+                "a9079d62-c25e-481b-97d2-7c1c97311f0c",
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "3d9c8193-f1b7-45ef-bd9c-fc539285b095",
+                "c6764d1f-42ba-423c-a786-dd036bd55e51",
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5",
+                "ecb9d91b-3c9f-400e-871e-b8c49613ba49"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "step",
+          "iteration": 2,
+          "query": "Scott Derrickson nationality",
+          "docs": [
+            "scott derrickson",
+            "scott derrickson"
+          ],
+          "llm_seconds": 23.69,
+          "can_answer": false,
+          "answer": null,
+          "next_query": "Ed Wood nationality",
+          "finding": "Scott Derrickson is an American director, screenwriter, and producer. The documents do not mention Ed Wood's nationality."
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Ed Wood nationality",
+          "top_n": 10,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "edward davis wood jr.",
+              "type": "vector_match",
+              "score": 0.966159,
+              "notes": [
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5"
+              ]
+            },
+            {
+              "name": "american",
+              "type": "vector_match",
+              "score": 0.952809,
+              "notes": [
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "c6764d1f-42ba-423c-a786-dd036bd55e51"
+              ]
+            },
+            {
+              "name": "ed wood (film)",
+              "type": "entity_match",
+              "score": 0.770032,
+              "notes": [
+                "84cc9545-856d-4c98-92af-10e463821aa1"
+              ]
+            },
+            {
+              "name": "ed wood",
+              "type": "entity_match",
+              "score": 0.712598,
+              "notes": [
+                "84cc9545-856d-4c98-92af-10e463821aa1",
+                "718d5536-6b56-43e0-8e24-5cc0c454da7d"
+              ]
+            },
+            {
+              "name": "ed wood sr.",
+              "type": "entity_match",
+              "score": 0.228327,
+              "notes": [
+                "cda6d538-1c03-4a49-9e38-fe49aba5e357"
+              ]
+            },
+            {
+              "name": "writer",
+              "type": "vector_match",
+              "score": 0.148212,
+              "notes": [
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5"
+              ]
+            },
+            {
+              "name": "filmmaker",
+              "type": "vector_match",
+              "score": 0.101665,
+              "notes": [
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5",
+                "a9079d62-c25e-481b-97d2-7c1c97311f0c"
+              ]
+            },
+            {
+              "name": "Tim Burton's Ed Wood Film",
+              "type": "community_summary",
+              "score": 0.056249,
+              "notes": []
+            },
+            {
+              "name": "actor",
+              "type": "vector_match",
+              "score": 0.056147,
+              "notes": [
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5",
+                "a9079d62-c25e-481b-97d2-7c1c97311f0c"
+              ]
+            },
+            {
+              "name": "Johnny Depp's portrayal of Ed Wood",
+              "type": "community_summary",
+              "score": 0.036609,
+              "notes": []
+            },
+            {
+              "name": "producer",
+              "type": "vector_match",
+              "score": 0.020164,
+              "notes": [
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5"
+              ]
+            },
+            {
+              "name": "director",
+              "type": "vector_match",
+              "score": 0.016328,
+              "notes": [
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5"
+              ]
+            },
+            {
+              "name": "Ed Wood Sr. and His Plantation Holdings",
+              "type": "community_summary",
+              "score": 0.013157,
+              "notes": []
+            },
+            {
+              "name": "Tim Burton's Ed Wood Film Production and Casting",
+              "type": "community_summary",
+              "score": 0.01171,
+              "notes": []
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Ed Wood nationality",
+          "top_n": 10,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "edward davis wood jr.",
+              "type": "graph_expansion",
+              "score": 0.931557,
+              "notes": [
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5",
+                "1f0a8f94-0051-4c93-9f08-0291202368be",
+                "b3f3af9c-2486-450f-8b1c-d2d948b0a5b5"
+              ]
+            },
+            {
+              "name": "american",
+              "type": "graph_expansion",
+              "score": 0.926108,
+              "notes": [
+                "718d5536-6b56-43e0-8e24-5cc0c454da7d"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "step",
+          "iteration": 3,
+          "query": "Ed Wood nationality",
+          "docs": [
+            "edward davis wood jr.",
+            "american",
+            "ed wood (film)",
+            "ed wood",
+            "ed wood sr.",
+            "writer",
+            "filmmaker",
+            "Tim Burton's Ed Wood Film",
+            "actor",
+            "edward davis wood jr.",
+            "american"
+          ],
+          "llm_seconds": 51.73,
+          "can_answer": true,
+          "answer": "YES",
+          "next_query": null,
+          "finding": "Scott Derrickson is American. Edward Davis Wood Jr., who is a filmmaker, actor, writer, producer, and director, is also stated to be American."
+        }
+      ]
+    }
+  ]
+}
