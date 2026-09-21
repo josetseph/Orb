@@ -513,7 +513,7 @@ Document written by `index_node`: `{node_id, name, type, isolated_contexts?: [<c
 
 ### 10.4 SQLite `notes` (metadata only)
 
-`processed`, `failed`, `processing_stage`, `processing_model`, `title`. Never `content` (kept `""`). The pipeline only **reads** `attachment_modes` (`_attachment_modes`); it is written by `PUT /api/v1/notes/{id}/attachments/mode`. Full stage vocabulary:
+`processed`, `failed`, `processing_stage`, `processing_model`, `title`. There is no body column: the body is the vault file. The pipeline only **reads** `attachment_modes` (`_attachment_modes`); it is written by `PUT /api/v1/notes/{id}/attachments/mode`. Full stage vocabulary:
 
 | Source | Strings |
 |---|---|

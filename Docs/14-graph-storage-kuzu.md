@@ -341,7 +341,7 @@ SET r.note_id = $note_id
 Properties of this contract:
 - Direction is always **note → entity**.
 - `MERGE` on the edge makes re-ingestion idempotent for entities still mentioned.
-- **Nothing removes stale edges on re-ingest.** If a note is edited so that it no longer mentions entity X and is re-ingested, `(note)-[:REFERENCES]->(X)` remains until the note is deleted. Evidence lookups can therefore cite a note that no longer contains the entity.
+- **Re-ingest takes back what the note asserted before.** `GraphService.clear_note_contribution(note_id)` runs at the start of `_write_ontology`: it deletes the note's `REFERENCES` edges and un-counts its `SEMANTIC_REL` assertions (deleting edges no other note restated), and `delete_orphan_entities` sweeps entities nothing references any more once the new extraction is written. An edge records only its first asserting note, so a note that merely reinforced one is not un-counted (a `ponytail:` comment marks the upgrade path).
 - `ON MATCH SET note.kind = 'note'` repairs a note id that was previously created as a bare `indexable` stub (possible via `create_or_update_relationship`'s endpoint MERGE if an entity name collided with a note id — unlikely but handled).
 - `_update_node_summary` (the per-entity context accumulator) also MERGEs indexable nodes (`MERGE (n:Node {id}) ON CREATE SET n.kind='indexable' SET n.name, n.type`) but never creates `REFERENCES`; an entity reached only through that path has no note evidence.
 

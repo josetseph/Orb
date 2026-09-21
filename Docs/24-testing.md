@@ -333,7 +333,7 @@ There is no separate `typecheck` script, but `npm run build` is `tsc --noEmit &&
 |---|---|
 | Python formatter (black/ruff-format) | none |
 | Python type checker (mypy/pyright) | none |
-| Frontend unit tests (jest/vitest/@testing-library) | none — no dev dependency, no test files under `frontend/` |
+| Frontend unit tests | vitest, pure logic only (`npm test`): `lib/utils`, the notes `_lib` helpers (attachments, wikilinks, folder tree, vault URLs, processing status, large attachments). No component or hook tests — see §7. |
 | E2E (playwright/cypress) | none |
 | Desktop (`desktop/`) tests or lint | none |
 | Pre-commit hooks | none (`.pre-commit-config.yaml` absent) |

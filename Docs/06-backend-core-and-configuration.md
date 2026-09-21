@@ -489,7 +489,6 @@ All tables share the pattern: `String` UUID4 primary key generated in Python (`d
 | Column | Type | Nullable | Default | Meaning |
 |---|---|---|---|---|
 | `id` | String PK | no | uuid4 | Note id used in every `/notes/{id}` route, Qdrant payloads, Kuzu `note_id`, wikilink edges |
-| `content` | Text | yes | `""` | **Legacy, never read.** `persist_note_body` keeps it empty; `note_files.note_body` returns `""` when the vault file is missing. A pre-vault row with a non-empty body is moved into the vault file by `vault_sync.sync_vault_notes` (written via `persist_note_body`, or just blanked when the file already exists) — see doc 09 §4.3. |
 | `title` | String | yes | — | Display title; kept in sync with the vault filename (`72413b9`) |
 | `rel_path` | String | yes | — | Path of the `.md` file **relative to the KB's `vault_path`** (e.g. `Life/Daily Log/2026-08-01.md`). `NULL` only for legacy rows. |
 | `created_at` | DateTime(tz) | — | utcnow | Creation (client may pass `created_at` on create) |
