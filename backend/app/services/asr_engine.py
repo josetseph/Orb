@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import platform
+import re
 from dataclasses import dataclass
 from importlib.util import find_spec
 from pathlib import Path
@@ -391,27 +392,72 @@ def speaker_at(turns: list[Turn], when: float) -> str | None:
     return nearest.speaker
 
 
-def label_speakers(transcript: Transcript, turns: list[Turn]) -> str:
-    """``Speaker 1: …`` paragraphs, one per run of the same speaker.
+# A transcript line: a sentence, a pause, or this many seconds, whichever first.
+MAX_LINE_SECONDS = 12.0
+MAX_LINE_GAP = 1.0
+# Short cues ("Yes.", "Okay.") read better joined to their neighbour.
+JOIN_GAP = 1.5
+JOIN_CHARS = 140
+_STAMP_RE = re.compile(r"^\[\d+:\d{2}\] ", re.M)
 
-    Words are attributed by midpoint. Labels are numbered in order of first
-    appearance rather than pyannote's arbitrary SPEAKER_xx ids. Without word
-    timings or turns the plain transcript comes back unchanged.
+
+def timed_lines(transcript: Transcript, turns: list[Turn]) -> str:
+    """``[MM:SS] Speaker 1: …`` lines; without turns, ``[MM:SS] …``.
+
+    Words are attributed by midpoint and speakers numbered by first appearance
+    rather than pyannote's arbitrary SPEAKER_xx ids. A line ends on . ? !, a
+    pause, a change of speaker, or ``MAX_LINE_SECONDS``. Minutes do not roll
+    over into hours, so a stamp reads straight off a player. Without word
+    timings the plain transcript comes back unchanged.
     """
-    if not transcript.words or not turns:
+    if not transcript.words:
         return transcript.text
     names: dict[str, str] = {}
-    lines: list[list[str]] = []
-    current: str | None = None
+    cues: list[tuple[float, float, str, list[str]]] = []  # start, end, speaker, words
     for word in transcript.words:
-        speaker = speaker_at(turns, (word.start + word.end) / 2) or ""
-        if speaker not in names:
+        speaker = (speaker_at(turns, (word.start + word.end) / 2) or "") if turns else ""
+        if speaker and speaker not in names:
             names[speaker] = f"Speaker {len(names) + 1}"
-        if speaker != current or not lines:
-            lines.append([f"{names[speaker]}:"])
-            current = speaker
-        lines[-1].append(word.word)
-    return "\n\n".join(" ".join(line) for line in lines)
+        last = cues[-1] if cues else None
+        if (
+            last is None
+            or speaker != last[2]
+            or last[3][-1].endswith((".", "?", "!"))
+            or word.start - last[1] > MAX_LINE_GAP
+            or word.end - last[0] > MAX_LINE_SECONDS
+        ):
+            cues.append((word.start, word.end, speaker, [word.word]))
+        else:
+            cues[-1] = (last[0], word.end, speaker, last[3] + [word.word])
+
+    lines: list[str] = []
+    prev: tuple[float, float, str, list[str]] | None = None
+    for cue in cues:
+        text = " ".join(cue[3])
+        if prev and cue[2] == prev[2] and cue[0] - prev[1] < JOIN_GAP and len(lines[-1]) < JOIN_CHARS:
+            lines[-1] += " " + text
+        else:
+            minutes, seconds = divmod(int(max(cue[0], 0.0)), 60)
+            who = f"{names[cue[2]]}: " if cue[2] else ""
+            lines.append(f"[{minutes:02d}:{seconds:02d}] {who}{text}")
+        prev = cue
+    return "\n".join(lines)
+
+
+def untimed(text: str) -> str:
+    """The transcript as the summariser reads it: no stamps, one paragraph per
+    run of a speaker. Timestamps cost about half as many tokens again and a
+    summary has no use for them."""
+    out: list[str] = []
+    who_before = None
+    for line in _STAMP_RE.sub("", text or "").splitlines():
+        who, sep, said = line.partition(": ")
+        if sep and who.startswith("Speaker ") and who == who_before:
+            out[-1] += " " + said
+        else:
+            out.append(line)
+            who_before = who if sep and who.startswith("Speaker ") else None
+    return "\n\n".join(o for o in out if o.strip())
 
 
 def split_audio_into_chunks(audio, sr: int, max_chunk_sec: float = MAX_CHUNK_SECONDS):

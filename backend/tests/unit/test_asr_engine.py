@@ -158,18 +158,23 @@ class TestSpeakerLabels:
     def _turns(self):
         return [ae.Turn(0.0, 1.0, "SPEAKER_01"), ae.Turn(1.9, 3.0, "SPEAKER_00"), ae.Turn(3.9, 5.0, "SPEAKER_01")]
 
-    def test_labels_number_speakers_by_first_appearance(self):
-        out = ae.label_speakers(self._transcript(), self._turns())
-        assert out == "Speaker 1: Good morning.\n\nSpeaker 2: Thanks, professor.\n\nSpeaker 1: Let's begin."
+    def test_lines_are_stamped_and_speakers_numbered_by_first_appearance(self):
+        out = ae.timed_lines(self._transcript(), self._turns())
+        assert out.splitlines()[0].startswith("[00:00] Speaker 1: Good morning.")
+        assert "Speaker 2: Thanks, professor." in out and out.count("Speaker 1:") == 2
 
     def test_word_in_a_gap_goes_to_the_nearest_turn(self):
         assert ae.speaker_at(self._turns(), 1.5) == "SPEAKER_00"
 
-    def test_without_timings_or_turns_text_is_unchanged(self):
+    def test_without_turns_lines_are_still_timed_and_without_words_text_is_plain(self):
         t = self._transcript()
-        assert ae.label_speakers(ae.Transcript(t.text, []), self._turns()) == t.text
-        assert ae.label_speakers(t, []) == t.text
+        assert ae.timed_lines(t, []).startswith("[00:00] Good morning.")
+        assert ae.timed_lines(ae.Transcript(t.text, []), self._turns()) == t.text
 
+    def test_untimed_gives_the_summariser_speaker_paragraphs(self):
+        text = "[00:01] Speaker 1: Hello.\n[00:05] Speaker 1: Welcome.\n[01:10] Speaker 2: Hi."
+        assert ae.untimed(text) == "Speaker 1: Hello. Welcome.\n\nSpeaker 2: Hi."
+        assert ae.untimed("[00:01] Hello.\n[00:05] Welcome.") == "Hello.\n\nWelcome."
 
 
 class TestChunking:
@@ -215,12 +220,12 @@ class TestRestorePunctuation:
         ae.restore_punctuation(words, "Hello, world.".split())
         assert [(w.word, w.start) for w in words] == [("Hello,", 0.0), ("world.", 1.0)]
 
-    def test_labels_keep_their_full_stops_after_a_mismatch(self):
+    def test_lines_keep_their_full_stops_after_a_mismatch(self):
         words = self._words("good", "morning", "uh", "thanks", "professor")
         ae.restore_punctuation(words, "Good morning. Thanks, professor.".split())
         turns = [ae.Turn(0.0, 2.6, "A"), ae.Turn(2.9, 5.0, "B")]
-        out = ae.label_speakers(ae.Transcript("Good morning. Thanks, professor.", words), turns)
-        assert out == "Speaker 1: Good morning. uh\n\nSpeaker 2: Thanks, professor."
+        out = ae.timed_lines(ae.Transcript("Good morning. Thanks, professor.", words), turns)
+        assert "Speaker 1: Good morning." in out and "Speaker 2: Thanks, professor." in out
 
 
 def test_diarizer_uses_the_accelerator_and_frees_it(monkeypatch):

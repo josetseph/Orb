@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
-from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import delete, or_, select
@@ -197,36 +196,6 @@ async def ingest_existing_note(
     }
 
 
-class AttachmentModeInput(BaseModel):
-    """The user's answer for one large attachment."""
-
-    link: str
-    mode: Literal["graph", "summary", "index"]
-
-
-@router.put("/api/v1/notes/{note_id}/attachments/mode")
-async def set_attachment_mode(
-    note_id: str,
-    body: AttachmentModeInput,
-    background_tasks: BackgroundTasks,
-    db: AsyncSession = Depends(get_db),
-    kb: KBContext = Depends(get_kb),
-):
-    """Record how a large attachment should be ingested, then re-ingest the note.
-
-    Ingestion parks an attachment over ``LARGE_ATTACHMENT_TOKENS`` as a
-    ``pending`` block and graphs the rest of the note; this is the answer.
-    The parked block keeps its extracted text, so nothing is read twice.
-    """
-    from app.workflows.agents.ingestion_agent import attachment_key
-
-    note = await _get_note_or_404(db, kb, note_id)
-    # Reassign: SQLAlchemy does not see in-place edits of a JSON column.
-    note.attachment_modes = {**(note.attachment_modes or {}), attachment_key(body.link): body.mode}
-    await db.commit()
-    return await ingest_existing_note(note_id, background_tasks, db, kb)
-
-
 @router.post("/api/v1/notes/{note_id}/ingest/cancel")
 async def cancel_note_ingestion(
     note_id: str, db: AsyncSession = Depends(get_db), kb: KBContext = Depends(get_kb)
@@ -261,7 +230,7 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
         parse_attachments,
         place_extraction,
         remove_extraction,
-        resolve_large_attachment,
+        finish_attachment,
     )
     from app.services.multimedia import multimedia_service
 
@@ -300,14 +269,11 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             section = await extract_attachment(kind, item, _noop_status, wf._llm)  # pylint: disable=protected-access
             if not section.strip():
                 raise ValueError("Extraction produced no text")
-            # Same size rule as a full ingest: a book-length file is parked for
-            # the user's answer instead of being graphed on the next ingest.
-            mode = ""
-            if kind != "image":
-                section, mode = await resolve_large_attachment(
-                    section, item["lower_url"], item["filename"], wf._llm,  # pylint: disable=protected-access
-                    dict(note.attachment_modes or {}), _noop_status,
-                )
+            # Same rule as a full ingest: recordings and long documents become
+            # a summary plus searchable full text.
+            section, mode = await finish_attachment(
+                kind, section, item["filename"], wf._llm, _noop_status  # pylint: disable=protected-access
+            )
             content = place_extraction(remove_extraction(body, url), item["link"], section, mode)
             await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
         _attachment_jobs[key] = {"status": "done", "error": None}

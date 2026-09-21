@@ -314,11 +314,10 @@ class MultimodalRuntime:
         )
         if not speakers or not transcript.words:
             return transcript.text
+        # Speaker labels are the optional half: with no turns the lines are
+        # still timed, just unlabelled.
         turns = self._speaker_turns(self._load_audio_mono_16k(audio_path))
-        if not turns:
-            # The transcript is already in hand; labels are the optional half.
-            return transcript.text
-        return asr_engine.label_speakers(transcript, turns)
+        return asr_engine.timed_lines(transcript, turns)
 
     def _diarizer_ready(self) -> bool:
         from app.core.config import settings
@@ -387,7 +386,7 @@ class MultimodalRuntime:
             if self.device != "cpu":
                 self._unload_except("")
             turns = self._speaker_turns(audio)
-        return asr_engine.label_speakers(transcript, turns) if turns else transcript.text
+        return asr_engine.timed_lines(transcript, turns)
 
     def _asr_generate(self, audio) -> str:
         """Run the loaded transformers Qwen3-ASR over one mono 16 kHz clip."""

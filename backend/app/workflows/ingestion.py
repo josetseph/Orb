@@ -764,19 +764,10 @@ class IngestionWorkflow:
 
         return title
 
-    async def _attachment_modes(self, note_id: str) -> dict[str, str]:
-        """The user's answers for this note's large attachments, by attachment key."""
-        from app.core.database import AsyncSessionLocal
-        from app.models.note import Note
-
-        async with AsyncSessionLocal() as session:
-            note = await session.get(Note, note_id)
-            return dict((note.attachment_modes if note else None) or {})
-
     async def _index_documents(
         self, note_id: str, documents: list[dict], note_created_at: str | None
     ) -> None:
-        """Make index-only attachments searchable without graphing them.
+        """Make the full text of notes blocks searchable without graphing it.
 
         Each becomes ONE node (type ``document``) referenced by the note, with
         its text stored as passages in the contexts collection — the same

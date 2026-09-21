@@ -53,16 +53,23 @@ multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY
 # comments render as nothing, so the note reads as if they were not there.
 EXTRACT_OPEN = '<!-- orb:extract src="{src}" -->'
 EXTRACT_CLOSE = "<!-- /orb:extract -->"
-# A block may carry how its attachment is ingested. No mode = graphed like the
-# rest of the note. ``pending`` = over LARGE_ATTACHMENT_TOKENS and waiting for
-# the user; ``index`` = searchable passages, no entities; ``summary`` = the
-# body is a model-written summary of the attachment, which is what gets graphed.
+# A block may carry ``mode="notes"``: its body is a model-written summary
+# followed by the attachment's full text under ``## Transcript`` (recordings)
+# or ``## Full text`` (long documents). The summary is what gets graphed; the
+# full text is stored as searchable passages. No mode = graphed like the rest
+# of the note.
 _OPEN = r'<!-- orb:extract src="([^"]*)"(?: mode="([a-z]+)")? -->'
 EXTRACT_BLOCK_RE = re.compile(r"\n*" + _OPEN + r".*?<!-- /orb:extract -->", re.S)
 _EXTRACT_SRC_RE = re.compile(_OPEN)
 _BLOCK_PARTS_RE = re.compile(_OPEN + r"\n?(.*?)\n?<!-- /orb:extract -->", re.S)
-UNGRAPHED_MODES = ("pending", "index")
-ATTACHMENT_MODES = ("graph", "summary", "index")
+NOTES_MODE = "notes"
+_FULL_TEXT_RE = re.compile(r"^## (?:Transcript|Full text)[ \t]*$", re.M)
+
+
+def split_notes(body: str) -> tuple[str, str]:
+    """``(summary part, full text)`` of a notes block's body."""
+    m = _FULL_TEXT_RE.search(body or "")
+    return (body[: m.start()].rstrip(), body[m.end() :].strip()) if m else (body or "", "")
 
 
 def extract_open(src: str, mode: str = "") -> str:
@@ -78,23 +85,17 @@ def extraction_blocks(content: str) -> list[dict[str, str]]:
 
 
 def graph_text(content: str) -> str:
-    """The note as entity extraction should see it: without the blocks that
-    are waiting for a decision or are indexed for search only."""
-    return EXTRACT_BLOCK_RE.sub(
-        lambda m: "" if m.group(2) in UNGRAPHED_MODES else m.group(0), content or ""
-    ).strip()
+    """The note as entity extraction should see it: a notes block contributes
+    its summary, never the full text under it."""
 
-
-def set_block_mode(content: str, key: str, mode: str, body: str | None = None) -> str:
-    """Rewrite one block's mode (and optionally its body), leaving the rest alone."""
-
-    def _swap(m: re.Match) -> str:
-        if attachment_key(m.group(1)) != key:
+    def _summary_only(m: re.Match) -> str:
+        if m.group(2) != NOTES_MODE:
             return m.group(0)
-        text = m.group(3) if body is None else body.strip("\n")
-        return f"{extract_open(m.group(1), mode)}\n{text}\n{EXTRACT_CLOSE}"
+        body = _BLOCK_PARTS_RE.search(m.group(0)).group(3)
+        return f"\n\n{extract_open(m.group(1), NOTES_MODE)}\n{split_notes(body)[0]}\n{EXTRACT_CLOSE}"
 
-    return _BLOCK_PARTS_RE.sub(_swap, content or "")
+    return EXTRACT_BLOCK_RE.sub(_summary_only, content or "").strip()
+
 
 # Pre-marker format: blocks were appended with no closing delimiter. Only
 # ``wrap_legacy_enrichment_blocks`` reads this, to give such blocks markers.
@@ -201,30 +202,38 @@ def remove_extraction(content: str, src_url: str) -> str:
     )
 
 
-async def resolve_large_attachment(  # pylint: disable=too-many-arguments,too-many-positional-arguments
-    section: str, key: str, filename: str, llm, decisions: dict[str, str], set_status
-) -> tuple[str, str]:
+_AUDIO_KINDS = ("audio", "video_audio")
+# "[<Kind> (<file name>)]:" — the name may itself contain brackets.
+_HEADER_RE = re.compile(r"^\s*(\[.*?\)\]:)[ \t]*")
+
+
+async def finish_attachment(kind: str, section: str, filename: str, llm, set_status) -> tuple[str, str]:
     """``(section, mode)`` for one attachment's extracted text.
 
-    The one place the size rule lives — a full ingest and the editor's
-    "process this item" both go through it. At or under
-    ``LARGE_ATTACHMENT_TOKENS`` the text is graphed. Over it, the user's
-    recorded answer applies; with no answer yet the block is parked as
-    ``pending`` with its text kept, so answering never costs a second read.
+    The one place this rule lives — a full ingest and the editor's "process
+    this item" both go through it. A recording always becomes notes: a
+    structured summary, then the timed transcript. Any other attachment does
+    once its text passes ``LARGE_ATTACHMENT_TOKENS``. The summary is graphed
+    and the full text indexed for search (``graph_text``, ``_index_documents``),
+    so a lecture or a book costs one summary instead of hours of extraction.
+    Anything smaller is graphed in full, with no summary call.
     """
-    if llm.ingestion_count_tokens(section) <= settings.LARGE_ATTACHMENT_TOKENS:
+    head = _HEADER_RE.match(section)
+    header, text = (head.group(1), section[head.end() :]) if head else ("", section)
+    text = text.strip()
+    if not text:
         return section, ""
-    choice = decisions.get(key)
-    if choice == "index":
-        return section, "index"
-    if choice == "summary":
-        await set_status(f"Summarising {filename}", llm.get_ingestion_model())
-        summary = await llm.summarize_document(filename, section)
-        return f"[Summary ({filename})]: {summary}", "summary"
-    if choice == "graph":
+    if kind in _AUDIO_KINDS:
+        from app.services.asr_engine import untimed
+
+        await set_status(f"Writing notes for {filename}", llm.get_ingestion_model())
+        summary = await llm.summarize_transcript(filename, untimed(text))
+        return f"{header}\n{summary.strip()}\n\n## Transcript\n{text}", NOTES_MODE
+    if kind == "image" or llm.ingestion_count_tokens(text) <= settings.LARGE_ATTACHMENT_TOKENS:
         return section, ""
-    logger.info("[Attachments] %s is large and has no decision yet — parked", filename)
-    return section, "pending"
+    await set_status(f"Summarising {filename}", llm.get_ingestion_model())
+    summary = await llm.summarize_document(filename, text)
+    return f"{header}\n## Summary\n{summary.strip()}\n\n## Full text\n{text}", NOTES_MODE
 
 
 def place_extraction(content: str, src_url: str, section: str, mode: str = "") -> str:
@@ -1047,26 +1056,6 @@ async def multimodal_node(
             content = place_extraction(content, src_url, section, mode)
             content_changed = True
 
-        # Large attachments: the user decides how each is ingested. A block
-        # parked as ``pending`` keeps its extracted text, so answering never
-        # costs a second transcription or PDF read.
-        decisions: dict[str, str] = (
-            await _wf._attachment_modes(state["note_id"]) if state.get("note_id") else {}
-        )
-
-        async def _resolve(section: str, key: str, filename: str) -> tuple[str, str]:
-            return await resolve_large_attachment(
-                section, key, filename, _llm, decisions, _set_status
-            )
-
-        for block in extraction_blocks(content):
-            if block["mode"] == "pending" and decisions.get(block["key"]):
-                name = block["src"].rsplit("/", 1)[-1]
-                body, mode = await _resolve(block["body"], block["key"], name)
-                if mode != "pending":
-                    content = set_block_mode(content, block["key"], mode, body)
-                    content_changed = True
-
         async def _run_phase(
             phase_name: str,
             model_name: str | None,
@@ -1087,9 +1076,9 @@ async def multimodal_node(
                         mode = ""
                     else:
                         section = await extract_attachment(kind, item, _set_status, _llm)
-                        section, mode = await _resolve(
-                            section, item["lower_url"], filename
-                        ) if section else (section, "")
+                        section, mode = await finish_attachment(
+                            kind, section, filename, _llm, _set_status
+                        )
                     if section:
                         _append(section, item["link"], mode)
                 except Exception as e:  # pylint: disable=broad-exception-caught
@@ -1440,9 +1429,14 @@ async def summarization_node(state: IngestionState):
             note_created_at=state.get("created_at"),
             note_id=state.get("note_id"),
         )
-        # Index-only attachments: searchable passages under one document node.
-        # After the context refresh, which clears everything this note indexed.
-        documents = [b for b in extraction_blocks(state["content"]) if b["mode"] == "index"]
+        # Notes blocks: the full text becomes searchable passages under one
+        # document node. After the context refresh, which clears everything
+        # this note indexed.
+        documents = [
+            {**b, "body": split_notes(b["body"])[1]}
+            for b in extraction_blocks(state["content"])
+            if b["mode"] == NOTES_MODE
+        ]
         if documents and state.get("note_id"):
             await _wf._update_note_processing_status(
                 state["note_id"], "Indexing documents for search", None

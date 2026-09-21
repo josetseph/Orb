@@ -1,47 +1,43 @@
-"""Large attachments are parked until the user picks graph / summary / index."""
+"""Recordings and long documents become notes: a graphed summary plus searchable full text."""
 
 import asyncio
+from types import SimpleNamespace
 
 from app.workflows.agents import ingestion_agent as ia
 from app.workflows.ingestion import _passages
 
 LINK = "attachments/Book%20%282%29-a45eb768.pdf"
 KEY = ia.attachment_key(LINK)
+NOTES_BODY = "[PDF Extraction (Book)]:\n## Summary\nshort version\n\n## Full text\nlong long text"
 
 
-def _note(mode: str, body: str = "[PDF Extraction (Book)]: text") -> str:
+def _note(mode: str, body: str = NOTES_BODY) -> str:
     return f"mine\n[📎 Book]({LINK})\n\n{ia.extract_open(LINK, mode)}\n{body}\n{ia.EXTRACT_CLOSE}\n\nafter"
 
 
 def test_marker_round_trips_with_and_without_a_mode():
-    for mode in ("", "pending", "index", "summary"):
+    for mode in ("", "notes"):
         (block,) = ia.extraction_blocks(_note(mode))
         assert (block["key"], block["mode"]) == (KEY, mode)
-        assert ia.extraction_srcs(_note(mode)) == {KEY}  # parked still counts as processed
+        assert ia.extraction_srcs(_note(mode)) == {KEY}
 
 
-def test_only_graphable_text_reaches_extraction():
-    assert "text" in ia.graph_text(_note(""))
-    assert "text" in ia.graph_text(_note("summary"))
-    for mode in ia.UNGRAPHED_MODES:
-        out = ia.graph_text(_note(mode))
-        assert "text" not in out and "mine" in out and "after" in out
+def test_a_notes_block_contributes_its_summary_only():
+    out = ia.graph_text(_note("notes"))
+    assert "short version" in out and "long long text" not in out
+    assert "mine" in out and "after" in out
+    assert "long long text" in ia.graph_text(_note(""))  # a plain block is graphed whole
 
 
-def test_set_block_mode_rewrites_one_block_only():
-    other = f'{ia.extract_open("attachments/o.pdf")}\nkeep\n{ia.EXTRACT_CLOSE}'
-    out = ia.set_block_mode(_note("pending") + "\n" + other, KEY, "index")
-    modes = {b["key"]: b["mode"] for b in ia.extraction_blocks(out)}
-    assert modes == {KEY: "index", "attachments/o.pdf": ""}
-    out = ia.set_block_mode(_note("pending"), KEY, "summary", "[Summary (Book)]: short")
-    assert ia.extraction_blocks(out)[0]["body"] == "[Summary (Book)]: short"
-    assert ia.set_block_mode(_note("pending"), KEY, "").count('mode="') == 0
+def test_split_notes_handles_both_headings_and_plain_bodies():
+    assert ia.split_notes(NOTES_BODY) == ("[PDF Extraction (Book)]:\n## Summary\nshort version", "long long text")
+    assert ia.split_notes("# T\n\n## Summary\ns\n\n## Transcript\n[00:01] Speaker 1: hi")[1] == "[00:01] Speaker 1: hi"
+    assert ia.split_notes("no sections here") == ("no sections here", "")
 
 
-def test_strip_keeps_a_parked_block_while_its_link_remains():
-    kept = ia._strip_prior_multimedia_enrichment(_note("pending"), keep={KEY})
-    assert 'mode="pending"' in kept
-    assert "orb:extract" not in ia._strip_prior_multimedia_enrichment(_note("pending"), keep=set())
+def test_strip_keeps_a_notes_block_while_its_link_remains():
+    assert 'mode="notes"' in ia._strip_prior_multimedia_enrichment(_note("notes"), keep={KEY})
+    assert "orb:extract" not in ia._strip_prior_multimedia_enrichment(_note("notes"), keep=set())
 
 
 def test_passages_split_on_paragraphs_and_break_up_giants():
@@ -53,6 +49,9 @@ def test_passages_split_on_paragraphs_and_break_up_giants():
 
 
 class _LLM:
+    def __init__(self):
+        self.calls = []
+
     def get_ingestion_model(self):
         return "stub"
 
@@ -60,16 +59,63 @@ class _LLM:
         return len(text.split())
 
     async def summarize_document(self, filename, text):
+        self.calls.append(("document", filename))
         return f"short version of {filename}"
 
+    async def summarize_transcript(self, filename, text):
+        self.calls.append(("transcript", filename, text))
+        return f"# Title\n\n## Summary\n### Flow Summary\nabout {filename}"
 
-def _run(monkeypatch, content, decisions, tokens_limit=5, extractor_must_not_run=False):
+
+async def _status(*a, **k):
+    return None
+
+
+def _finish(monkeypatch, kind, section, limit=5):
+    monkeypatch.setattr(ia.settings, "LARGE_ATTACHMENT_TOKENS", limit)
+    llm = _LLM()
+    return llm, asyncio.run(ia.finish_attachment(kind, section, "f.ext", llm, _status))
+
+
+def test_a_recording_always_gets_notes_with_its_timed_transcript(monkeypatch):
+    timed = "[00:01] Speaker 1: Good morning.\n[00:04] Speaker 1: Let's begin.\n[00:09] Speaker 2: Okay."
+    llm, (body, mode) = _finish(monkeypatch, "audio", f"\n\n[Audio Transcript (f.ext)]: {timed}", limit=10_000)
+    assert mode == "notes"
+    summary, transcript = ia.split_notes(body)
+    assert summary.startswith("[Audio Transcript (f.ext)]:\n# Title") and transcript == timed
+    # The summariser reads speaker paragraphs, not stamped lines.
+    assert llm.calls == [("transcript", "f.ext", "Speaker 1: Good morning. Let's begin.\n\nSpeaker 2: Okay.")]
+
+
+def test_a_long_document_is_summarised_and_a_short_one_is_not(monkeypatch):
+    llm, (body, mode) = _finish(monkeypatch, "pdf", "\n\n[PDF Extraction (My [v2] file.pdf)]: " + "word " * 50)
+    assert mode == "notes" and llm.calls == [("document", "f.ext")]
+    summary, full = ia.split_notes(body)
+    assert summary == "[PDF Extraction (My [v2] file.pdf)]:\n## Summary\nshort version of f.ext"
+    assert full.startswith("word word")
+
+    llm, (body, mode) = _finish(monkeypatch, "pdf", "\n\n[PDF Extraction (f)]: tiny", limit=10_000)
+    assert (mode, llm.calls) == ("", []) and body.endswith("tiny")
+
+
+def test_images_are_never_summarised(monkeypatch):
+    llm, (_, mode) = _finish(monkeypatch, "image", "[Image: x]\n" + "word " * 50)
+    assert (mode, llm.calls) == ("", [])
+
+
+def test_full_ingest_and_process_this_item_share_the_rule(monkeypatch):
+    from app.api import notes as notes_api
+    from app.schemas.extraction import NoteInput
+    import app.core.database as database
+
+    docx = "attachments/Book-11111111.docx"
+    note_md = f"intro\n\n[📎 Book.docx]({docx})\n\noutro"
+
     async def fake_extract(kind, item, set_status, llm):
-        assert not extractor_must_not_run, "a parked attachment was extracted again"
         return "[Word Extraction (Book.docx)]: " + "word " * 50
 
     monkeypatch.setattr(ia, "extract_attachment", fake_extract)
-    monkeypatch.setattr(ia.settings, "LARGE_ATTACHMENT_TOKENS", tokens_limit)
+    monkeypatch.setattr(ia.settings, "LARGE_ATTACHMENT_TOKENS", 5)
     monkeypatch.setattr(ia.multimedia_service, "extract_docx_images", lambda url: [])
     saved = {}
 
@@ -77,70 +123,16 @@ def _run(monkeypatch, content, decisions, tokens_limit=5, extractor_must_not_run
         _llm = _LLM()
         kb_id = "kb"
 
-        async def _attachment_modes(self, note_id):
-            return decisions
-
         async def _update_note_processing_status(self, *a, **k):
             return None
 
         async def _persist_note_body(self, note_id, body):
             saved["body"] = body
 
-    from app.schemas.extraction import NoteInput
-
-    state = {"input": NoteInput(content=content), "logs": [], "workflow": WF(), "note_id": "n1"}
-    return asyncio.run(ia.multimodal_node(state))["content"]
-
-
-DOCX = "attachments/Book-11111111.docx"
-DOC_NOTE = f"intro\n\n[📎 Book.docx]({DOCX})\n\noutro"
-
-
-def test_large_attachment_is_parked_with_its_text_until_answered(monkeypatch):
-    out = _run(monkeypatch, DOC_NOTE, {})
-    (block,) = ia.extraction_blocks(out)
-    assert block["mode"] == "pending" and "word word" in block["body"]
-    assert "word word" not in ia.graph_text(out) and "intro" in ia.graph_text(out)
-
-
-def test_small_attachment_is_graphed_without_asking(monkeypatch):
-    out = _run(monkeypatch, DOC_NOTE, {}, tokens_limit=10_000)
-    assert ia.extraction_blocks(out)[0]["mode"] == ""
-
-
-def test_answers_are_applied_to_new_and_to_parked_attachments(monkeypatch):
-    key = ia.attachment_key(DOCX)
-    assert ia.extraction_blocks(_run(monkeypatch, DOC_NOTE, {key: "index"}))[0]["mode"] == "index"
-    assert ia.extraction_blocks(_run(monkeypatch, DOC_NOTE, {key: "graph"}))[0]["mode"] == ""
-
-    parked = _run(monkeypatch, DOC_NOTE, {})
-    out = _run(monkeypatch, parked, {key: "summary"}, extractor_must_not_run=True)
-    (block,) = ia.extraction_blocks(out)
-    assert block["mode"] == "summary"
-    assert block["body"] == "[Summary (Book-11111111.docx)]: short version of Book-11111111.docx"
-
-
-def test_process_this_item_parks_a_large_attachment_too(monkeypatch, tmp_path):
-    """The editor's per-attachment action must not slip a book past the prompt."""
-    from types import SimpleNamespace
-
-    from app.api import notes as notes_api
-
-    async def fake_extract(kind, item, set_status, llm):
-        return "[Word Extraction (Book.docx)]: " + "word " * 50
-
-    monkeypatch.setattr(ia, "extract_attachment", fake_extract)
-    monkeypatch.setattr(ia.settings, "LARGE_ATTACHMENT_TOKENS", 5)
-    monkeypatch.setattr(notes_api, "note_body", lambda note, kb: DOC_NOTE)
-    saved = {}
-
-    class WF:
-        _llm = _LLM()
-
-        async def _persist_note_body(self, note_id, body):
-            saved["body"] = body
-
-    note = SimpleNamespace(id="n1", kb_id="kb", attachment_modes=None)
+    state = {"input": NoteInput(content=note_md), "logs": [], "workflow": WF(), "note_id": "n1"}
+    out = asyncio.run(ia.multimodal_node(state))["content"]
+    assert ia.extraction_blocks(out)[0]["mode"] == "notes"
+    assert "word word" not in ia.graph_text(out) and "short version" in ia.graph_text(out)
 
     class Session:
         async def __aenter__(self):
@@ -150,19 +142,10 @@ def test_process_this_item_parks_a_large_attachment_too(monkeypatch, tmp_path):
             return False
 
         async def execute(self, _q):
-            return SimpleNamespace(scalar_one_or_none=lambda: note)
-
-    import app.core.database as database
+            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="n1", kb_id="kb"))
 
     monkeypatch.setattr(database, "AsyncSessionLocal", Session)
+    monkeypatch.setattr(notes_api, "note_body", lambda note, kb: note_md)
     kb = SimpleNamespace(kb_id="kb", get_ingestion_workflow=lambda: WF())
-    url = f"/vault-files/kb/{DOCX}"
-
-    asyncio.run(notes_api._run_attachment_job(kb, "n1", url))
-    assert notes_api._attachment_jobs[("kb", "n1", url)]["status"] == "done"
-    (block,) = ia.extraction_blocks(saved["body"])
-    assert block["mode"] == "pending" and "word word" in block["body"]
-
-    note.attachment_modes = {ia.attachment_key(DOCX): "index"}  # already answered
-    asyncio.run(notes_api._run_attachment_job(kb, "n1", url))
-    assert ia.extraction_blocks(saved["body"])[0]["mode"] == "index"
+    asyncio.run(notes_api._run_attachment_job(kb, "n1", f"/vault-files/kb/{docx}"))
+    assert ia.extraction_blocks(saved["body"])[0]["mode"] == "notes"

@@ -61,6 +61,44 @@ class _ResearchStep(BaseModel):
     next_query: str | None = None
 
 
+# Notes for a recording. The shape and rules come from the sibling
+# local-transcription-service project, where they were tuned against lectures.
+_TRANSCRIPT_NOTES = """You write the notes for a recording. Output markdown in exactly this shape:
+
+# <title of three to six words>
+
+## Summary
+### Flow Summary
+<one or two sentences: what kind of session this was and what it covered>
+
+### <topic heading>
+- <point>
+    - <sub-point, only where one is needed>
+
+### Next Steps
+- (Speaker N) <something that speaker said they or others will do>
+
+### Decisions Made
+- <decision>
+
+Rules:
+- Write three to five topic sections, in the order the topics came up.
+- Use only what the source says. Add no facts, names or figures of your own.
+- Copy numbers, amounts, dates and names exactly as they appear.
+- The source comes from automatic speech recognition, which mishears words. \
+Where a phrase makes no sense in context, leave that point out rather than guess.
+- Bullets are short fragments, not full sentences.
+- If no next steps or no decisions were stated, write "- None stated." under that heading.
+- Output the markdown only: no preamble, no code fence."""
+
+_TRANSCRIPT_PART = (
+    "You are given one part of a long transcript. List, as plain bullets and in order, "
+    "every topic covered, every fact, figure and name, every decision, and every action "
+    "someone said they will take, with the speaker label of who said it. Use only what "
+    "the transcript says; where a phrase makes no sense, leave it out rather than guess."
+)
+
+
 class LLMService:
     """Multi-provider LLM client supporting generation and ingestion routing."""
 
@@ -405,9 +443,9 @@ class LLMService:
         )
         return (text or "").strip() or (existing or "")
 
-    async def summarize_document(self, filename: str, text: str) -> str:
-        """A few pages of summary for a large attachment the user chose not to
-        graph in full. Long inputs are summarised piece by piece, then merged."""
+    def _pieces(self, text: str) -> list[str]:
+        """``text`` in paragraph-bounded pieces of about half the ingestion
+        context, so each piece leaves room for the answer."""
         budget = max(2000, (self.ingestion_context_tokens() or 8192) // 2)
         pieces, current, size = [], [], 0
         for para in text.split("\n"):
@@ -419,20 +457,46 @@ class LLMService:
             size += tokens
         if current:
             pieces.append("\n".join(current))
+        return pieces
+
+    async def summarize_document(self, filename: str, text: str) -> str:
+        """A few pages of summary for a long document; this is what gets
+        graphed in its place. Long inputs go piece by piece, then merge."""
 
         async def _one(part: str, what: str) -> str:
             return (await self.ingestion_generate(
                 f"Summarise {what} of the document \"{filename}\" for someone who will "
                 "search and ask questions about it later. Keep the key concepts, named "
-                "people, organisations, methods, findings and definitions. Plain prose, "
-                f"no preamble.\n\nTEXT:\n{part}\n\nSUMMARY:",
+                "people, organisations, methods, findings and definitions. Use only what "
+                "the text says; copy numbers and names exactly. Plain prose, no preamble."
+                f"\n\nTEXT:\n{part}\n\nSUMMARY:",
                 temperature=0.2,
             )).strip()
 
+        pieces = self._pieces(text)
         if len(pieces) == 1:
             return await _one(pieces[0], "this text")
         partial = [await _one(p, f"part {i + 1} of {len(pieces)}") for i, p in enumerate(pieces)]
         return await _one("\n\n".join(partial), "these section summaries")
+
+    async def summarize_transcript(self, filename: str, text: str) -> str:
+        """Notes for a recording: a title, a flow summary, topic sections, next
+        steps by speaker, decisions. Markdown; this is what gets graphed."""
+        pieces = self._pieces(text)
+        source = pieces[0]
+        if len(pieces) > 1:
+            notes = [
+                (await self.ingestion_generate(
+                    f"{_TRANSCRIPT_PART}\n\nTRANSCRIPT PART {i + 1} OF {len(pieces)}:\n{p}",
+                    temperature=0.2,
+                )).strip()
+                for i, p in enumerate(pieces)
+            ]
+            source = "\n\n".join(notes)
+        out = await self.ingestion_generate(
+            f"{_TRANSCRIPT_NOTES}\n\nRECORDING: {filename}\n\nSOURCE:\n{source}", temperature=0.2
+        )
+        return out.strip()
 
     def _reason_step_sync(self, prompt: str, model: str | None = None) -> str:
         """Synchronous lightweight reasoning call for query rewrite."""

@@ -768,11 +768,6 @@ export const api = {
     return http.get("/llm/endpoint-models", { base_url: baseUrl });
   },
 
-  /** Answer for an attachment ingestion parked as too large; re-ingests the note. */
-  async setAttachmentMode(noteId: string, link: string, mode: "graph" | "summary" | "index", kb = "default") {
-    return http.put(`/notes/${noteId}/attachments/mode${kbQuery(kb)}`, { link, mode });
-  },
-
   async getLocalRuntime(): Promise<LocalRuntimeSettings> {
     return http.get("/settings/local-runtime");
   },
