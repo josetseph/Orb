@@ -142,7 +142,7 @@ See `Graph3DCanvas` props in 18 §11.1. Colouring: node colour = `nodeColor(node
 
 ### 4.3 Camera
 
-`useGraph3DCamera` installs listeners on `window` once the graph exposes `camera()`/`renderer()` (polled at 100 ms). Controls (also printed in the HUD): left-drag look, right-drag pan, wheel fly, `W/A/S/D` move, `Q/E` up/down, click node → modal, `/` or Ctrl/Cmd+K → search. While a modal or the search overlay is open (`modalOpenRef`) mouse/wheel/WASD are ignored and held keys are cleared. Keys are not captured when focus is in an input/textarea/contenteditable. `flyToNode(node)` = 1.2 s cubic ease to 80 units from the node, continuously looking at it; used by search.
+`useGraph3DCamera` installs listeners on `window` once the graph exposes `camera()`/`renderer()` (polled at 100 ms). Controls (also printed in the HUD): left-drag look, right-drag pan, wheel fly, `W/A/S/D` move, `Q/E` up/down, click node → modal, `/` or Ctrl/Cmd+K → search. While a modal or the search overlay is open (`modalOpenRef`) mouse/wheel/WASD are ignored and held keys are cleared. Keys are not captured when focus is in an input/textarea/contenteditable. `flyToNode(node)` = 1.2 s cubic ease to eight node radii from the node (80 units for a leaf, more for a hub), continuously looking at it; used by search.
 
 ### 4.4 Proximity labels
 
