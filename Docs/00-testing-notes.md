@@ -125,7 +125,8 @@ Ingestion (`workflows/ingestion.py`, `workflows/agents/ingestion_agent.py`):
 | `tests/benchmark/compare.py` | Pair runs per question. First file is the baseline. |
 | `tests/benchmark/replay.py` | Offline: where questions are lost, and a sweep of top-k, threshold, context cap. |
 | `tests/benchmark/synthesis.py` | Re-answer from a run's frozen evidence with another model. |
-| `tests/benchmark/plan.sh` | The ordered list of experiments. Skips finished runs, so it is safe to restart. `QUESTIONS`, `DATASET`, `PYTHON` env vars. |
+| `tests/benchmark/sweep.py` + `sweeps/*.json` | A whole round from a spec: variants, shared indexes, rungs, held-out slice, one report. See 4b. |
+| `tests/benchmark/retrieval_eval.py` | Search alone against the gold notes, no answering model. |
 | `evaluate.py`, `prepare_dataset.py`, `fetch_notes.py` | The manual loop; `--questions N` ingests only the notes the first N questions use. |
 
 Switches, all defaulting to the app's behaviour. Flags of `experiment.py`: `--provider`, `--chat-model`,
@@ -245,6 +246,14 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, plan stopped, strict branch merged, ready state.** The owner stopped testing after the baseline; the rest of the old
+  plan (model comparisons on the patched pipeline) was not run and `plan.sh` is gone. `orb-testing-strict` is merged into
+  `orb-testing`. `experiment.py` and `sweep.py` now turn SIGINT and SIGTERM into a clean stop: a backgrounded process inherits
+  SIGINT=ignore, so the documented stop had done nothing and the run had to be killed. A spec can name an existing snapshot
+  as its baseline index (`"index": "hp20-e4b"`), so the 7.7-hour E4B ingest is reused by `round1-retrieval` and `round1-loop`.
+  That index was built by the pipeline as it was, repairs included: fair for comparing retrieval and loop levers against each
+  other, not a strict-pipeline extraction result. `round1-ingestion` builds its own indexes with the strict pipeline.
+  To start: `cd backend && .venv/bin/python tests/benchmark/sweep.py sweeps/round1-retrieval.json` (add `--plan` to look first).
 - **2026-09-21, baseline `base-e4b` (pipeline as it was, repairs included).** Gemma 4 E4B ingest and chat, 20 HotpotQA questions,
   199 notes, default knobs, no community summaries. Ingest 7.7 h (137 s a note, no failures). Exact match 45 %, F1 0.704,
   contains 60 %, retrieval recall 0.825, 227 s a question. Where the 8 misses went (`replay.py`): 6 retrieved but answered
