@@ -246,6 +246,18 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, first strict result: the predicate vocabulary does not fit encyclopedic notes.** A live check of the strict
+  pipeline (E4B, the 10 notes of HotpotQA question 1) was stopped by the owner after 7 notes: 4 ingested, 3 rejected. All three
+  rejections were the same thing. The reply was valid JSON with every field present (the JSON constraint works), but it used
+  predicates outside the closed vocabulary: `produced` 6, `stars` 5, `directed` 2, `authored_by` 2, `stars_in`, `concerns`,
+  `based_on`, `released_on`. 19 of 45 relationships in those replies. The old pipeline rewrote every one of them to
+  `related_to` without a trace, which is why the first extraction looked almost entirely `related_to`. The vocabulary was
+  written for personal notes (`works_at`, `friend_of`, `attends`); film and biography notes need `directed`, `produced`,
+  `acted_in`, `based_on`. This is a design question for the owner, not something to patch: widen the vocabulary, allow
+  free predicates (retrieval words an edge with its stored sentence anyway), or constrain the predicate to the list while it
+  is generated. Until it is settled, strict ingestion of these datasets will reject a large share of notes with E4B.
+  Raw replies: `Results/check/strict/invalid_model_output.jsonl`. **Still unverified live:** the retrieval evaluator,
+  synthesis replay and cache replay. `tests/benchmark/live_check.sh` runs all four steps; run it before the first sweep.
 - **2026-09-21, plan stopped, strict branch merged, ready state.** The owner stopped testing after the baseline; the rest of the old
   plan (model comparisons on the patched pipeline) was not run and `plan.sh` is gone. `orb-testing-strict` is merged into
   `orb-testing`. `experiment.py` and `sweep.py` now turn SIGINT and SIGTERM into a clean stop: a backgrounded process inherits
