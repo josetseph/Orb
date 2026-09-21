@@ -6,6 +6,10 @@ pipeline in `backend/`, the HotpotQA / MuSiQue benchmark harness in
 shell, no frontend. Use it to try a pipeline variation, score it, and keep or
 drop it. The product lives on `main`.
 
+**Read [Docs/00-testing-notes.md](Docs/00-testing-notes.md) first.** It is this branch's living record: hazards,
+the pipeline facts experiments depend on, how to measure honestly, baselines, open questions and a dated log.
+Update it in the same commit as any change or finding worth keeping.
+
 ## Run the pipeline
 
 ```bash
