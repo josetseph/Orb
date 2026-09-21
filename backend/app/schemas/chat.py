@@ -52,3 +52,5 @@ class ChatInput(BaseModel):
 
     query: str = Field(min_length=1)
     request_id: str | None = None
+    # Benchmark harness: return every rerank candidate and loop step with the answer.
+    trace: bool = False

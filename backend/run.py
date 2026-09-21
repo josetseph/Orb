@@ -59,7 +59,13 @@ def _download(url: str, dest: Path) -> None:
     log(f"Downloading {url}")
     tmp = dest.with_suffix(dest.suffix + ".partial")
     with urlopen(url, timeout=600) as resp, open(tmp, "wb") as out:  # noqa: S310
-        shutil.copyfileobj(resp, out, 1 << 20)
+        total, done, shown = int(resp.headers.get("Content-Length") or 0), 0, -1
+        while chunk := resp.read(1 << 20):
+            out.write(chunk)
+            done += len(chunk)
+            if total and done * 10 // total > shown:
+                shown = done * 10 // total
+                log(f"  {dest.name}: {shown * 10}% of {total >> 20} MB")
     tmp.replace(dest)
 
 
@@ -165,12 +171,41 @@ def load_dotenv(path: Path) -> None:
 
 
 def main() -> int:
+    # Installed before anything slow: a backgrounded process inherits SIGINT=ignore,
+    # and uvicorn re-raises the signal after shutdown, which would skip `finally`.
+    def on_signal(signum, _frame):
+        stop_sidecars()
+        sys.exit(128 + signum)
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, on_signal)
+
     here = Path(__file__).resolve().parent
     sys.path.insert(0, str(here))
     load_dotenv(here / ".env")
-    from app.core.paths import ensure_data_layout, resolve_data_dir
+    from app.core import paths as orb_paths
 
-    data_dir = ensure_data_layout(resolve_data_dir())
+    # The desktop app's paths.json points DATA_DIR and the default vault at real
+    # user data. Benchmarks must never see it: borrow its models dir (read-only
+    # GGUF reuse), then pin everything else to this repo.
+    desktop = orb_paths.load_paths_file()
+    if "ORB_MODELS_DIR" not in os.environ:
+        # Own models dir, shared weights: MODELS_DIR/manifest.json holds the model
+        # selection, and the desktop app reads the same file. Link its gguf/ folder
+        # (downloads are reused both ways) and start from a copy of its manifest.
+        models = here.parent / "models"
+        models.mkdir(exist_ok=True)
+        shared = Path(desktop["models_dir"]).expanduser() if desktop.get("models_dir") else None
+        if shared and (shared / "gguf").is_dir() and not (models / "gguf").exists():
+            (models / "gguf").symlink_to(shared / "gguf", target_is_directory=True)
+        if shared and (shared / "manifest.json").is_file() and not (models / "manifest.json").exists():
+            shutil.copyfile(shared / "manifest.json", models / "manifest.json")
+        os.environ["ORB_MODELS_DIR"] = str(models)
+    os.environ.setdefault("ORB_DATA_DIR", str(here.parent / "data"))
+    data_dir = Path(os.environ["ORB_DATA_DIR"]).expanduser().resolve()
+    os.environ["ORB_PATHS_FILE"] = str(data_dir / "paths.json")
+    orb_paths._PATHS_CACHE = None  # pylint: disable=protected-access  # re-read from the pinned file
+    data_dir = orb_paths.ensure_data_layout(orb_paths.resolve_data_dir())
     # settings are read once at import: fix the sidecar addresses before app.* loads
     os.environ.update(QDRANT_HOST="127.0.0.1", QDRANT_PORT=str(QDRANT_PORT), MEILI_HOST="127.0.0.1",
                       MEILI_PORT=str(MEILI_PORT), MEILI_MASTER_KEY=MEILI_MASTER_KEY)
@@ -184,16 +219,17 @@ def main() -> int:
         if key and credentials.get(name) != key:
             credentials.set(name, key)
             log(f"Stored {name} API key from the environment")
+    from app.services.kb_registry import kb_registry
+
+    for meta in kb_registry.list_kbs():
+        vault = Path(meta.get("vault_path") or "").expanduser().resolve()
+        if data_dir != vault and data_dir not in vault.parents:
+            log(f"REFUSING TO START: KB '{meta.get('name')}' uses vault {vault}, outside {data_dir}.")
+            return 2
     try:
         start_sidecars(data_dir)
         import uvicorn
 
-        def on_signal(signum, _frame):
-            stop_sidecars()
-            sys.exit(128 + signum)
-
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(sig, on_signal)
         log(f"Starting API on http://127.0.0.1:{API_PORT}")
         uvicorn.run("app.main:app", host="127.0.0.1", port=API_PORT)
         return 0

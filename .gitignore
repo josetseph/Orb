@@ -50,3 +50,7 @@ backend/tests/benchmark/musique_notes/
 /.github/hooks
 /.github/prompts
 .github/copilot-instructions.md
+
+# Benchmark branch: local model manifest + gguf symlink, and data-dir snapshots
+/models
+/snapshots

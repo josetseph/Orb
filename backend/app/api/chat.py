@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import get_kb
 from app.core.log import get_logger
 from app.schemas.chat import ChatInput
+from app.services import trace
 from app.services.ai_gate import require_ai
 from app.services.kb_registry import KBContext
 
@@ -25,6 +26,9 @@ async def chat(body: ChatInput, kb: KBContext = Depends(get_kb)):
     def _progress(stage: str, model: str | None = None) -> None:
         logger.info("[Chat %s] %s%s", request_id[:8], stage, f" ({model})" if model else "")
 
+    events = trace.start() if body.trace else None
     result = await kb.get_chat_workflow().chat(body.query, history=[], progress_callback=_progress)
     result["request_id"] = request_id
+    if events is not None:
+        result["trace"] = events
     return result

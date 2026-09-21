@@ -65,6 +65,10 @@ class EvaluationResult:
     generation_time_ms: float = 0.0
     total_time_ms: float = 0.0
 
+    # Replay inputs: every rerank candidate + loop step, and the evidence the answer cited
+    trace: list = field(default_factory=list)
+    context: list = field(default_factory=list)
+
     # Error tracking
     error: Optional[str] = None
 
@@ -227,6 +231,69 @@ def fuzzy_match(
     return jaccard >= threshold
 
 
+def score_answer(expected: str, actual: str) -> dict:
+    """Answer-quality metrics. The extracted first line is scored, not the whole reply."""
+    extracted = extract_answer_from_response(actual)
+    return {
+        "exact_match": normalize_answer(expected) == normalize_answer(extracted),
+        "fuzzy_match": fuzzy_match(expected, actual),
+        "answer_contains_expected": normalize_answer(expected) in normalize_answer(extracted),
+        "answer_f1": compute_answer_f1(extracted, expected),
+    }
+
+
+def expected_note_names(test_case: dict) -> set[str]:
+    """Lower-cased gold note names, as retrieval precision/recall matches them."""
+    facts = test_case.get("supporting_facts", [])
+    if facts and isinstance(facts[0], str):
+        raw = facts
+    else:
+        notes = test_case.get("required_notes", test_case.get("notes", []))
+        raw = [fn.replace(".md", "").replace("_", " ").strip() for fn in notes]
+    return {html.unescape(name).lower() for name in raw}
+
+
+def match_titles(titles: list[str], expected: set[str]) -> set[str]:
+    """Gold names found as a substring of any retrieved note title."""
+    found = set()
+    for title in titles:
+        low = html.unescape(title).lower()
+        for name in expected:
+            if name in low:
+                found.add(name)
+                break
+    return found
+
+
+def result_row(r: "EvaluationResult") -> dict:
+    return {
+        "test_id": r.test_id,
+        "question": r.question,
+        "expected_answer": r.expected_answer,
+        "actual_answer": r.actual_answer,
+        "exact_match": r.exact_match,
+        "fuzzy_match": r.fuzzy_match,
+        "answer_contains_expected": r.answer_contains_expected,
+        "answer_f1": r.answer_f1,
+        "retrieved_note_titles": r.retrieved_note_titles,
+        "retrieval_precision": r.retrieval_precision,
+        "retrieval_recall": r.retrieval_recall,
+        "total_time_ms": r.total_time_ms,
+        "error": r.error,
+        "context": r.context,
+        "trace": r.trace,
+    }
+
+
+def fetch_config(base_url: str) -> dict:
+    """Models and retrieval knobs the server is running with (empty if unreachable)."""
+    try:
+        return httpx.get(f"{base_url}/api/v1/benchmark/config", timeout=30).json()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+        print(f"Warning: could not fetch server config: {e}")
+        return {}
+
+
 async def fetch_note_title_map(base_url: str) -> dict[str, str]:
     """Pre-fetch all notes and return {note_id: title} for retrieval metric matching."""
     async with httpx.AsyncClient(timeout=60.0) as client:
@@ -246,7 +313,7 @@ async def query_orb(question: str, base_url: str = "http://localhost:8700") -> d
         try:
             response = await client.post(
                 f"{base_url}/api/v1/chat",
-                json={"query": question},
+                json={"query": question, "trace": True},
             )
             response.raise_for_status()
             return response.json()
@@ -348,64 +415,27 @@ async def evaluate_single(
     contexts, titles, note_ids = extract_contexts_from_response(
         response, note_title_map
     )
+    result.trace = response.get("trace") or []
+    result.context = [
+        {"name": (d.get("original_obj") or {}).get("name", ""), "text": d.get("text", "")}
+        for d in response.get("context", [])
+    ]
     result.retrieved_contexts = contexts
     result.retrieved_note_titles = titles
     result.retrieved_note_ids = note_ids
 
-    # Extract just the answer portion (first line before reasoning)
-    actual_answer_extracted = extract_answer_from_response(actual_answer)
-
-    # Basic answer quality metrics (all use extracted answer, not full response)
-    result.exact_match = normalize_answer(expected_answer) == normalize_answer(
-        actual_answer_extracted
-    )
-    result.fuzzy_match = fuzzy_match(expected_answer, actual_answer)
-    result.answer_contains_expected = normalize_answer(
-        expected_answer
-    ) in normalize_answer(actual_answer_extracted)
-
-    # Token-level F1 score (standard QA metric)
-    result.answer_f1 = compute_answer_f1(actual_answer_extracted, expected_answer)
+    for key, value in score_answer(expected_answer, actual_answer).items():
+        setattr(result, key, value)
 
     # Retrieval quality metrics
     # Match expected note filenames to retrieved note IDs
     # Expected: ["Scott Derrickson.md", "Ed Wood.md"]
     # Retrieved: note IDs from linked_notes
     if expected_notes and (titles or note_ids):
-        # Build mapping from filename to note by checking if filename (without .md) appears in title.
-        # Use supporting_facts entity names if available — they are already clean Wikipedia
-        # article titles without filename extensions or underscores.
-        supporting_facts = test_case.get("supporting_facts", [])
-        if supporting_facts and isinstance(supporting_facts[0], str):
-            # Manifest already contains parsed clean names (e.g. ['Scott Derrickson', 'Ed Wood'])
-            raw_expected_names = supporting_facts
-        else:
-            # Fall back to required_notes filenames (strip .md / underscores)
-            raw_expected_names = [
-                fn.replace(".md", "").replace("_", " ").strip() for fn in expected_notes
-            ]
-
-        # HTML-decode expected names so that manifest entities like "Tunnels &amp; Trolls"
-        # correctly match note titles containing "Tunnels & Trolls".
-        expected_names = set(html.unescape(name).lower() for name in raw_expected_names)
-
-        # Check if any retrieved title contains the expected name as a substring.
-        # Use only lowercase (not full normalize_answer) to avoid apostrophe mangling:
-        # "Derrickson's Career..." lowercased contains "scott derrickson" as a prefix.
-        # Also HTML-decode retrieved titles for symmetry.
-        retrieved_matches = set()
-        for title in titles:
-            title_lower = html.unescape(title).lower()
-            for expected_name in expected_names:
-                if expected_name in title_lower:
-                    retrieved_matches.add(expected_name)
-                    break
-
-        true_positives = len(retrieved_matches)
+        expected_names = expected_note_names(test_case)
+        true_positives = len(match_titles(titles, expected_names))
         result.retrieval_precision = true_positives / len(titles) if titles else 0
-        result.retrieval_recall = (
-            true_positives / len(expected_names) if expected_names else 0
-        )
+        result.retrieval_recall = true_positives / len(expected_names) if expected_names else 0
 
     if verbose:
         print(f"\n{'='*60}")
@@ -624,21 +654,9 @@ def main():
             "dataset": args.dataset,
             "num_tests": len(results),
             "metrics": metrics,
-            "results": [
-                {
-                    "test_id": r.test_id,
-                    "question": r.question,
-                    "expected_answer": r.expected_answer,
-                    "actual_answer": r.actual_answer,
-                    "exact_match": r.exact_match,
-                    "fuzzy_match": r.fuzzy_match,
-                    "retrieval_precision": r.retrieval_precision,
-                    "retrieval_recall": r.retrieval_recall,
-                    "total_time_ms": r.total_time_ms,
-                    "error": r.error,
-                }
-                for r in results
-            ],
+            "config": fetch_config(args.base_url),
+            "note_titles": asyncio.run(fetch_note_title_map(args.base_url)),
+            "results": [result_row(r) for r in results],
         }
         with open(output_path, "w") as f:
             json.dump(output_data, f, indent=2)

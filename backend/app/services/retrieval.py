@@ -12,6 +12,7 @@ from typing import List
 
 from app.core.config import settings
 from app.core.log import get_logger
+from app.services import trace
 from app.services.graph import GraphService, graph_service
 from app.services.qdrant_service import QdrantService, qdrant_service
 from app.services.meilisearch_service import MeilisearchService, meilisearch_service
@@ -1357,6 +1358,7 @@ class RetrievalService:
         question_attribute: str | None = None,
         expected_entity_types: list[str] | None = None,
         score_threshold: float | None = None,
+        stage: str = "search",
     ) -> list[dict]:  # pylint: disable=too-many-arguments,too-many-positional-arguments
         """Rank candidates and return the top_n highest-scoring ones.
 
@@ -1430,6 +1432,23 @@ class RetrievalService:
             )
 
         candidates.sort(key=lambda c: c.get("rerank_score", 0.0), reverse=True)
+
+        trace.record(
+            "rerank",
+            stage=stage,
+            query=query,
+            top_n=top_n,
+            score_threshold=score_threshold,
+            candidates=[
+                {
+                    "name": (c.get("original_obj") or {}).get("name") or c.get("name", ""),
+                    "type": c.get("type"),
+                    "score": round(c.get("rerank_score", 0.0), 6),
+                    "notes": [n if isinstance(n, str) else n.get("id") for n in c.get("linked_notes", [])],
+                }
+                for c in candidates
+            ],
+        )
 
         if top_n is not None and len(candidates) > top_n:
             logger.info(
@@ -1554,6 +1573,7 @@ class RetrievalService:
                             expanded,
                             top_n=settings.RERANKER_TOP_K,
                             question_attribute=_loop_question_attr,
+                            stage="expansion",
                         )
                         for d in expanded:
                             name = (d.get("original_obj") or {}).get("name") or d.get(
@@ -1595,6 +1615,7 @@ class RetrievalService:
                 f"Reasoning over retrieved context ({iteration + 1}/{settings.MAX_LOOP_ITERATIONS})",
                 "Gemma4",
             )
+            _t_step = time.perf_counter()
             result = await llm.iterative_step(
                 original_question=query,
                 accumulated_steps=accumulated_steps,
@@ -1610,6 +1631,17 @@ class RetrievalService:
                 f"next_query={result.get('next_query')!r}"
             )
 
+            trace.record(
+                "step",
+                iteration=iteration + 1,
+                query=current_query,
+                docs=[(d.get("original_obj") or {}).get("name") or d.get("name", "") for d in docs],
+                llm_seconds=round(time.perf_counter() - _t_step, 2),
+                can_answer=bool(result["can_answer"]),
+                answer=result.get("final_answer"),
+                next_query=result.get("next_query"),
+                finding=result.get("full_answer", ""),
+            )
             # Store step findings for the next iteration's context
             if docs and (result.get("full_answer") or result.get("reasoning")):
                 accumulated_steps.append(

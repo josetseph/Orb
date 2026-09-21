@@ -25,6 +25,7 @@ import argparse
 import asyncio
 import json
 import re
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,8 @@ from pathlib import Path
 import httpx
 
 BASE_DIR = Path(__file__).parent
-PROGRESS_FILE = BASE_DIR / ".prepare_progress.json"
+# experiment.py points this into the data dir so a snapshot carries its own ingest state.
+PROGRESS_FILE = Path(os.environ.get("ORB_BENCH_PROGRESS") or BASE_DIR / ".prepare_progress.json")
 API_BASE = "http://localhost:8000"
 
 # How often (seconds) to poll /status while waiting for ingestion to complete.
@@ -274,6 +276,7 @@ async def prepare(
     limit: int | None,
     resume: bool,
     dry_run: bool,
+    questions: int | None = None,
 ) -> None:
     manifest_path = BASE_DIR / f"{dataset}_manifest.json"
     if not manifest_path.exists():
@@ -296,7 +299,7 @@ async def prepare(
     # Collect all unique note filenames referenced by the manifest
     all_note_files: list[str] = []
     seen: set[str] = set()
-    for tc in manifest["test_cases"]:
+    for tc in manifest["test_cases"][:questions]:
         for fname in (
             tc.get("all_notes", [])
             + tc.get("notes", [])
@@ -462,6 +465,10 @@ def main() -> None:
         "--limit", type=int, default=None, help="Ingest at most N notes"
     )
     parser.add_argument(
+        "--questions", type=int, default=None,
+        help="Ingest only the notes the first N questions reference (pairs with evaluate.py --limit N)",
+    )
+    parser.add_argument(
         "--resume", action="store_true", help="Skip already-ingested notes"
     )
     parser.add_argument(
@@ -489,6 +496,7 @@ def main() -> None:
             limit=args.limit,
             resume=args.resume,
             dry_run=args.dry_run,
+            questions=args.questions,
         )
     )
 

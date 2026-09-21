@@ -20,40 +20,79 @@ python run.py                              # downloads Qdrant + Meilisearch once
 No Docker. `run.py` reads `backend/.env` itself (the app no longer does), seeds cloud keys
 from `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `HUGGINGFACE_API_KEY` into the
 keychain-backed credential store, and `LLM_BASE_URL` points at any OpenAI-compatible server.
-Data (SQLite, Kuzu, Qdrant, Meili, vault, logs) goes to `../data`, or `ORB_DATA_DIR`.
-Use a fresh `ORB_DATA_DIR` per experiment so runs never share an index.
+Data (SQLite, Kuzu, Qdrant, Meili, vault, logs) goes to `<repo>/data`.
 
 The pipeline code is `main`'s as of `63c602e`; to pick up newer pipeline work see *Syncing* below.
 
-## Benchmark loop
+## Isolation from the desktop app
+
+The desktop app's `paths.json` points `DATA_DIR` at your real Orb data and the default
+vault at your real notes, and the app binds both at import. On this branch:
+
+- `run.py` always uses `<repo>/data` and a branch-local paths file, and refuses to start if
+  any knowledge base's vault sits outside the data dir.
+- `<repo>/models/` holds this branch's own `manifest.json` (the model selection). Its `gguf/`
+  is a symlink to your desktop models folder, so downloads are shared and selections are not.
+- `backend/conftest.py` pins every test run to a temp dir.
+
+Never start the API here with bare `uvicorn app.main:app`: that resolves to the real data.
+
+## Experiments
+
+One command per run. It restores a snapshot, boots the pipeline with that run's settings,
+ingests if asked, evaluates, snapshots if asked, and shuts everything down.
 
 ```bash
 cd backend
-python tests/benchmark/fetch_notes.py                          # once: downloads + writes note .md files
-python tests/benchmark/prepare_dataset.py --dataset hotpotqa   # ingest 990 notes (--resume / --retry-failed / --limit N)
-python tests/benchmark/evaluate.py --dataset hotpotqa --verbose
-python tests/benchmark/prepare_dataset.py --dataset musique    # 526 notes, 2–4 hop
-python tests/benchmark/evaluate.py --dataset musique --verbose
+python tests/benchmark/fetch_notes.py                 # once: materialise the note files
+
+# 1. Ingest once per ingestion variant and keep the index (the slow part)
+python tests/benchmark/experiment.py ingest-e4b --dataset hotpotqa --questions 20 \
+    --fresh --ingest --no-eval --snapshot hotpot20-e4b --ingestion-model <id>
+
+# 2. Try answering models and retrieval knobs against that same index
+python tests/benchmark/experiment.py base   --dataset hotpotqa --questions 20 --restore hotpot20-e4b
+python tests/benchmark/experiment.py qwen   --dataset hotpotqa --questions 20 --restore hotpot20-e4b --chat-model <id>
+python tests/benchmark/experiment.py loops5 --dataset hotpotqa --questions 20 --restore hotpot20-e4b --set MAX_LOOP_ITERATIONS=5
+
+# 3. Cheapest model test: answer from the evidence `base` already retrieved (no retrieval at all)
+python tests/benchmark/experiment.py qwen-synth --restore hotpot20-e4b --chat-model <id> \
+    --synthesis-from ../Results/base/hotpotqa.json
+
+# 4. Read the results
+python tests/benchmark/compare.py ../Results/base/hotpotqa.json ../Results/qwen/hotpotqa.json ../Results/loops5/hotpotqa.json
+python tests/benchmark/replay.py  ../Results/base/hotpotqa.json
 ```
 
-Scores land in `backend/tests/benchmark/results/<dataset>_<timestamp>.json`
-(gitignored). Metrics: EM, token F1, fuzzy, contains; retrieval P/R/F1 against
-the manifest's supporting notes. Details in
-[backend/tests/benchmark/README.md](backend/tests/benchmark/README.md).
+Model ids come from `GET /api/v1/models` (`local.downloadable[].id`, `local.installed[].ref`).
+`--provider gemini --chat-model gemini-2.5-flash` runs a cloud model; `--provider openai_compat
+--base-url http://127.0.0.1:1234 --chat-model <name>` runs anything LM Studio, Ollama or
+llama-server is serving. Models are pinned on the knowledge base, which lives in the data dir.
+`--set KEY=VALUE` overrides any setting in `backend/app/core/config.py` for that run.
 
-## Recording an experiment
+What each tool tells you:
 
-One folder per variation under `Results/`, same shape as the existing ones:
+| Tool | Question it answers | Cost |
+|---|---|---|
+| `experiment.py` | What does this model / setting score, end to end? | full run |
+| `compare.py` | Is the difference between two runs real? Pairs runs per question: McNemar exact test on flipped answers, bootstrap interval on F1. At N=100 a five-point exact-match gap is noise. | none |
+| `replay.py` | Where are questions lost: gold note never surfaced, surfaced then cut by the filters, or retrieved and answered wrong? And would other `RERANKER_TOP_K` / `RERANKER_SCORE_THRESHOLD` / context-cap values keep more gold notes? | none, reads recorded traces |
+| `synthesis.py` | Given identical evidence, which model answers correctly? | one model call per question |
 
+A snapshot is only valid with the embedding model it was built with (recorded as `selection`
+in every result file) and only restored into `<repo>/data`, because vault paths are absolute.
+Results go to `Results/<run>/`: the scores, per-question traces, `config.json`, `server.log`.
+
+The manual loop still works against a server started with `python run.py`:
+
+```bash
+python tests/benchmark/prepare_dataset.py --dataset hotpotqa [--questions N] [--resume] [--retry-failed]
+python tests/benchmark/evaluate.py --dataset hotpotqa [--limit N] --verbose
 ```
-Results/<Variation name>/
-├── <MODEL>_<DATASET>_REPORT.md    # what changed, config table, headline metrics vs. baseline
-├── <model>_<dataset>_results.json # copied from backend/tests/benchmark/results/
-└── <model>_logs/                  # DATA_DIR/logs/* from the run (optional)
-```
 
-Baseline to beat: `Results/Results (After Optimizations)` — Gemma4 E4B,
-HotpotQA N=100, EM 62 %, F1 0.736, retrieval recall 0.610.
+Baseline to beat: `Results/Results (After Optimizations)`: Gemma4 E4B, HotpotQA N=100,
+EM 62 %, F1 0.736, retrieval recall 0.610. Those runs allowed up to 10 loop iterations;
+`MAX_LOOP_ITERATIONS` now defaults to 3, which is at most two searches per question.
 
 ## Where the pipeline is
 

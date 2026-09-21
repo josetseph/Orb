@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.api import (
     admin,
+    benchmark,
     chat,
     credentials,
     health,
@@ -25,4 +26,5 @@ def register_all_routers(app: FastAPI) -> None:
     app.include_router(chat.router)
     app.include_router(notes.router)
     app.include_router(admin.router)
+    app.include_router(benchmark.router)
     app.include_router(kb.router)
