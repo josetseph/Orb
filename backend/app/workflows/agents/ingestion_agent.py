@@ -201,6 +201,32 @@ def remove_extraction(content: str, src_url: str) -> str:
     )
 
 
+async def resolve_large_attachment(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    section: str, key: str, filename: str, llm, decisions: dict[str, str], set_status
+) -> tuple[str, str]:
+    """``(section, mode)`` for one attachment's extracted text.
+
+    The one place the size rule lives — a full ingest and the editor's
+    "process this item" both go through it. At or under
+    ``LARGE_ATTACHMENT_TOKENS`` the text is graphed. Over it, the user's
+    recorded answer applies; with no answer yet the block is parked as
+    ``pending`` with its text kept, so answering never costs a second read.
+    """
+    if llm.ingestion_count_tokens(section) <= settings.LARGE_ATTACHMENT_TOKENS:
+        return section, ""
+    choice = decisions.get(key)
+    if choice == "index":
+        return section, "index"
+    if choice == "summary":
+        await set_status(f"Summarising {filename}", llm.get_ingestion_model())
+        summary = await llm.summarize_document(filename, section)
+        return f"[Summary ({filename})]: {summary}", "summary"
+    if choice == "graph":
+        return section, ""
+    logger.info("[Attachments] %s is large and has no decision yet — parked", filename)
+    return section, "pending"
+
+
 def place_extraction(content: str, src_url: str, section: str, mode: str = "") -> str:
     """Put one extraction block directly beneath the attachment it came from.
 
@@ -1029,20 +1055,9 @@ async def multimodal_node(
         )
 
         async def _resolve(section: str, key: str, filename: str) -> tuple[str, str]:
-            """``(section, mode)`` for one attachment's extracted text."""
-            if _llm.ingestion_count_tokens(section) <= settings.LARGE_ATTACHMENT_TOKENS:
-                return section, ""
-            choice = decisions.get(key)
-            if choice == "index":
-                return section, "index"
-            if choice == "summary":
-                await _set_status(f"Summarising {filename}", _llm.get_ingestion_model())
-                summary = await _llm.summarize_document(filename, section)
-                return f"[Summary ({filename})]: {summary}", "summary"
-            if choice == "graph":
-                return section, ""
-            logger.info("[Attachments] %s is large and has no decision yet — parked", filename)
-            return section, "pending"
+            return await resolve_large_attachment(
+                section, key, filename, _llm, decisions, _set_status
+            )
 
         for block in extraction_blocks(content):
             if block["mode"] == "pending" and decisions.get(block["key"]):

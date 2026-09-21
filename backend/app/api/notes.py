@@ -261,6 +261,7 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
         parse_attachments,
         place_extraction,
         remove_extraction,
+        resolve_large_attachment,
     )
     from app.services.multimedia import multimedia_service
 
@@ -299,7 +300,15 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             section = await extract_attachment(kind, item, _noop_status, wf._llm)  # pylint: disable=protected-access
             if not section.strip():
                 raise ValueError("Extraction produced no text")
-            content = place_extraction(remove_extraction(body, url), item["link"], section)
+            # Same size rule as a full ingest: a book-length file is parked for
+            # the user's answer instead of being graphed on the next ingest.
+            mode = ""
+            if kind != "image":
+                section, mode = await resolve_large_attachment(
+                    section, item["lower_url"], item["filename"], wf._llm,  # pylint: disable=protected-access
+                    dict(note.attachment_modes or {}), _noop_status,
+                )
+            content = place_extraction(remove_extraction(body, url), item["link"], section, mode)
             await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
         _attachment_jobs[key] = {"status": "done", "error": None}
     except asyncio.CancelledError:

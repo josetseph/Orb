@@ -184,6 +184,11 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | POST | `/api/v1/notes/{note_id}/move` | kb | Move note into folder | [#](#post-apiv1notesnote_idmove) |
 | POST | `/api/v1/notes/{note_id}/ingest` | kb | Force (re)ingest one note | [#](#post-apiv1notesnote_idingest) |
 | PUT | `/api/v1/notes/{note_id}/attachments/mode` | kb | Answer for a large attachment (graph / summary / index), then re-ingest | [#](#put-apiv1notesnote_idattachmentsmode) |
+| POST | `/api/v1/notes/{note_id}/ingest/cancel` | kb | Stop this note's ingestion | [#](#post-apiv1notesnote_idingestcancel) |
+| POST | `/api/v1/notes/{note_id}/dismiss-failure` | kb | Clear a failed-ingest flag without re-running | [#](#post-apiv1notesnote_iddismiss-failure) |
+| POST | `/api/v1/notes/{note_id}/attachments/process` | kb + AI | Extract one attachment now, outside a full ingest | [#](#post-apiv1notesnote_idattachmentsprocess) |
+| POST | `/api/v1/notes/{note_id}/attachments/cancel` | kb | Stop one attachment job | [#](#post-apiv1notesnote_idattachmentscancel) |
+| GET | `/api/v1/notes/{note_id}/attachments/jobs` | kb | Status of this note's attachment jobs | [#](#get-apiv1notesnote_idattachmentsjobs) |
 | POST | `/api/v1/ingest` | kb | Legacy create+ingest | [#](#post-apiv1ingest) |
 | POST | `/api/v1/notes/reingest-vault` | kb | Re-queue every note in KB | [#](#post-apiv1notesreingest-vault) |
 
@@ -660,6 +665,33 @@ Creates the row and vault file **without a title** (`persist_note_body(new_note,
 ```json
 {"note_id": "…", "status": "processing_started" | "saved_without_ingestion", "content": "…", "created_at": "…", "processed": false}
 ```
+
+#### POST /api/v1/notes/{note_id}/ingest/cancel
+
+No body. Cancels the note's running or queued ingestion task (`workflows/ingestion.cancel_ingestion(kb_id, note_id)`); the pipeline's cancellation handler puts the note back to plain `"Saved"`. Response `{"note_id", "status": "cancelling" | "not_running"}` — `not_running` when no task exists or it already finished. A model call already executing in a worker thread runs to completion; its output is discarded. **404** unknown note.
+
+#### POST /api/v1/notes/{note_id}/dismiss-failure
+
+No body. Sets `failed=False`, `processing_stage="Saved"`, `processing_model=None` and leaves `processed` alone — a note that will never be ingested should not keep showing as failed. Nothing is re-run. Response `{"id", "failed": false}`. **404** unknown note.
+
+#### POST /api/v1/notes/{note_id}/attachments/process
+
+Body `ProcessAttachmentInput {url: str, force: bool = false}`. Runs ONE linked attachment through its extractor (`extract_attachment`: PDF text and page renders, image description, Word, spreadsheet, audio/video transcription) and writes the result into the vault `.md` as that attachment's `orb:extract` block — without graphing anything. Ingestion skips attachments that already carry a block, so this is how a recording is transcribed once and never again.
+
+- Gated by `require_ai` (**503** when no model is configured). **404** unknown note, and **404** `Attachment not found in this note` when `url` is not linked from the body (compared by `attachment_key`, so the legacy `/vault-files/<kb>/…` form and the vault-relative form match).
+- Already has a block and `force` is false → `{"status": "already_processed"}`, nothing runs. `force: true` removes the old block first (`remove_extraction`) and replaces it.
+- Otherwise starts an `asyncio` task (not a `BackgroundTask`, so it can be cancelled by url), records it in the in-process `_attachment_jobs[(kb_id, note_id, url)]` and answers `{"note_id", "url", "status": "running"}`; a second call while it runs answers the same without starting another.
+- The job holds `multimedia_concurrency_limit`, so it queues behind a running ingest's multimedia phase. Afterwards it unloads the speech model (audio/video) and Marlin (video).
+- **Large attachments.** Non-image results go through the same `resolve_large_attachment` rule as a full ingest: over `LARGE_ATTACHMENT_TOKENS` with no recorded answer the block is written `mode="pending"` (text kept) and the note shows the graph / summarize / index prompt; a recorded answer in `notes.attachment_modes` is applied directly.
+- Poll `attachments/jobs` for the outcome; `_attachment_jobs` is per process and cleared by a restart.
+
+#### POST /api/v1/notes/{note_id}/attachments/cancel
+
+Body `ProcessAttachmentInput` (`url`; `force` ignored). Cancels that attachment's running job. Response `{"note_id", "url", "status": "cancelling" | "not_running"}`; the job then records `cancelled`. As with ingestion, a model call already in a thread finishes and its output is dropped. **404** unknown note.
+
+#### GET /api/v1/notes/{note_id}/attachments/jobs
+
+Response `{"jobs": {"<url>": {"status": "running" | "done" | "failed" | "cancelled", "error": str | null}}}` — every job started for this note since the backend started, keyed by the `url` the client sent. The editor polls it and reloads the note when a job turns `done`. **404** unknown note.
 
 #### POST /api/v1/notes/reingest-vault
 

@@ -118,3 +118,51 @@ def test_answers_are_applied_to_new_and_to_parked_attachments(monkeypatch):
     (block,) = ia.extraction_blocks(out)
     assert block["mode"] == "summary"
     assert block["body"] == "[Summary (Book-11111111.docx)]: short version of Book-11111111.docx"
+
+
+def test_process_this_item_parks_a_large_attachment_too(monkeypatch, tmp_path):
+    """The editor's per-attachment action must not slip a book past the prompt."""
+    from types import SimpleNamespace
+
+    from app.api import notes as notes_api
+
+    async def fake_extract(kind, item, set_status, llm):
+        return "[Word Extraction (Book.docx)]: " + "word " * 50
+
+    monkeypatch.setattr(ia, "extract_attachment", fake_extract)
+    monkeypatch.setattr(ia.settings, "LARGE_ATTACHMENT_TOKENS", 5)
+    monkeypatch.setattr(notes_api, "note_body", lambda note, kb: DOC_NOTE)
+    saved = {}
+
+    class WF:
+        _llm = _LLM()
+
+        async def _persist_note_body(self, note_id, body):
+            saved["body"] = body
+
+    note = SimpleNamespace(id="n1", kb_id="kb", attachment_modes=None)
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, _q):
+            return SimpleNamespace(scalar_one_or_none=lambda: note)
+
+    import app.core.database as database
+
+    monkeypatch.setattr(database, "AsyncSessionLocal", Session)
+    kb = SimpleNamespace(kb_id="kb", get_ingestion_workflow=lambda: WF())
+    url = f"/vault-files/kb/{DOCX}"
+
+    asyncio.run(notes_api._run_attachment_job(kb, "n1", url))
+    assert notes_api._attachment_jobs[("kb", "n1", url)]["status"] == "done"
+    (block,) = ia.extraction_blocks(saved["body"])
+    assert block["mode"] == "pending" and "word word" in block["body"]
+
+    note.attachment_modes = {ia.attachment_key(DOCX): "index"}  # already answered
+    asyncio.run(notes_api._run_attachment_job(kb, "n1", url))
+    assert ia.extraction_blocks(saved["body"])[0]["mode"] == "index"
