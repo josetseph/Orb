@@ -1,0 +1,16 @@
+{
+  "name": "round1-loop",
+  "dataset": "hotpotqa",
+  "dev": [0, 20],
+  "holdout": [20, 30],
+  "baseline": {"provider": "local", "chat_model": "gemma4-e4b-q4", "ingestion_model": "gemma4-e4b-q4"},
+  "vary": {
+    "MAX_LOOP_ITERATIONS": [5, 8],
+    "chat_model": ["qwen35-4b-q4", "qwen35-9b-q4", "qwen35-2b-q4", "gemma4-e2b-q4"]
+  },
+  "design": "one-at-a-time",
+  "evaluator": "full",
+  "rungs": [5, 10, 20],
+  "keep": 0.5,
+  "metric": "answer_f1"
+}

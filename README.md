@@ -75,6 +75,23 @@ Model ids come from `GET /api/v1/models` (`local.downloadable[].id`, `local.inst
 llama-server is serving. Models are pinned on the knowledge base, which lives in the data dir.
 `--set KEY=VALUE` overrides any setting in `backend/app/core/config.py` for that run.
 
+### A whole round at once
+
+```bash
+python tests/benchmark/sweep.py sweeps/round1-retrieval.json --plan     # what would run, and which indexes it needs
+python tests/benchmark/sweep.py sweeps/round1-retrieval.json            # run it; safe to stop and re-run
+```
+
+A spec names a baseline and the levers to vary (`tests/benchmark/levers.py` lists every lever and the stage it belongs to).
+Runs are sequential: one Mac, one model in memory. Breadth comes from not repeating work. Variants that share their
+extraction and index levers share one index. Unchanged model calls replay from `<repo>/llm-cache`. Small rungs run first
+and only the better part of the field goes on. `--evaluator retrieval` scores search alone against the gold notes with no
+answering model. The report lands in `Results/<sweep>/report.md`.
+
+Model replies are used as written or not at all: nothing is repaired, coerced or loosely matched. An unusable reply is
+counted per stage and model (`invalid_replies` in each run's `config.json`, raw text in `invalid_model_output.jsonl`).
+That count is a result.
+
 What each tool tells you:
 
 | Tool | Question it answers | Cost |

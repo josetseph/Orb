@@ -451,6 +451,7 @@ async def evaluate_single(
 async def run_evaluation(
     manifest_path: Path,
     limit: Optional[int] = None,
+    offset: int = 0,
     base_url: str = "http://localhost:8000",
     verbose: bool = False,
 ) -> list[EvaluationResult]:
@@ -459,9 +460,7 @@ async def run_evaluation(
     with open(manifest_path, "r") as f:
         manifest = json.load(f)
 
-    test_cases = manifest["test_cases"]
-    if limit:
-        test_cases = test_cases[:limit]
+    test_cases = manifest["test_cases"][offset : offset + limit if limit else None]
 
     print(f"\n🧪 Evaluating {len(test_cases)} test cases from {manifest['dataset']}")
     print(f"   Endpoint: {base_url}")
@@ -582,6 +581,7 @@ def main():
     parser.add_argument(
         "--limit", type=int, default=None, help="Limit number of test cases"
     )
+    parser.add_argument("--offset", type=int, default=0, help="Skip the first N test cases (held-out slices)")
     parser.add_argument(
         "--base-url",
         type=str,
@@ -625,6 +625,7 @@ def main():
         run_evaluation(
             manifest_path,
             limit=args.limit,
+            offset=args.offset,
             base_url=args.base_url,
             verbose=args.verbose,
         )

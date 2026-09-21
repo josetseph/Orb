@@ -148,6 +148,37 @@ candidate with `name`, `type`, `score`, `notes`, sorted, before any cut) and `st
 Datasets: HotpotQA, 100 questions, 990 notes, 2 gold and 8 distractor notes per question, all level hard,
 79 bridge and 21 comparison. MuSiQue from LongBench, 50 questions, 526 notes, 2 to 4 hops.
 
+## 4b. Covering many routes on one machine
+
+One Mac, one heavy model in memory at a time, one writer on the graph: running pipelines side by side would only make
+the models thrash. Breadth comes from not repeating work, which is the useful idea in Dream-RSI: record an expensive
+stage once, then judge many variants against the record.
+
+| Stage | Levers (`tests/benchmark/levers.py`) | Cost of one variant | How it is kept cheap |
+|---|---|---|---|
+| extract | ingestion model, attempts, chunk size, context window | hours | unchanged extraction calls replay from the model-call cache |
+| index | embedding model, community summaries | minutes once extractions are cached | one snapshot per distinct set of extract + index levers, built once |
+| retrieve | reranker, top-k, thresholds, graph expansion, evidence cap | seconds per query | `--evaluator retrieval`: no answering model, scored on the gold notes; `replay.py` then sweeps the filters offline |
+| loop | iterations, the model that plans and answers | about three minutes a question | successive halving: small rungs first, survivors go on |
+| answer | the answering model over fixed evidence | one call a question | `synthesis.py` |
+
+- **Model-call cache** (`LLM_CALL_CACHE_DIR`, on by default under `experiment.py`, stored in `<repo>/llm-cache`). Keyed on provider,
+  endpoint, model, the exact messages and the generation parameters. A changed prompt, model or note misses on its own; there
+  are no versions to bump. It survives `--fresh`, so rebuilding an index with a different embedding model re-runs no extraction.
+  Consequence: a repeated run is a replay, not a second sample. To measure sampling variance, pass `--no-cache`.
+- **`sweep.py SPEC.json`** expands a spec (baseline, levers to vary, one-at-a-time or grid) into variants, builds each distinct
+  index once, runs the rungs, keeps the better part of the field after each, scores the held-out slice once at the end for
+  the baseline and the winners, and writes `Results/<sweep>/report.md`: scores, paired statistics against the baseline, time per
+  question and unusable replies by stage. `--plan` prints what would run. Finished runs are skipped, so a sweep can be stopped and resumed.
+- A full grid is for cheap stages only. Eight levers at three values is 6,561 hour-long runs; screen one lever at a time, then
+  combine the winners in a small grid.
+- Prompts are not levers yet. They are the largest lever, and they live inline in `llm.py` and `ingestion_agent.py`. Varying
+  them from a spec needs them moved into named files first. Until then a prompt change is a code change, which the cache
+  handles correctly on its own.
+
+Specs for the first round are in `backend/sweeps/`: `round1-retrieval.json` (nine retrieval variants over one index, no answering
+model) and `round1-loop.json` (loop limit and four smaller answering models, three rungs, held-out slice).
+
 ## 5. Measuring honestly
 
 - At N=100 the standard error on exact match is about five points. A gap that size between two runs is noise.
@@ -214,6 +245,12 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, strict pipeline, cache and sweeps (branch `orb-testing-strict`).** Built in a second worktree so the baseline plan
+  running from `orb-testing` keeps the code it started with. The rule is enforced (section 0), the model-call cache and the
+  retrieval-only evaluator are in, and `sweep.py` with the lever registry replaces hand-written plans (section 4b).
+  Verified by 471 unit tests, dry-run plans and synthetic replay files. **Not yet run against a live pipeline**: the machine is
+  busy with the baseline. First live step after merging: a one-question run, then `round1-retrieval`.
+  Expect the strict pipeline to fail notes the old one silently patched; that failure rate per model is the first new result.
 - **2026-09-21, plan launched.** `plan.sh` started detached at 09:45 (`Results/plan.log`): 20 HotpotQA questions,
   199 notes, first notes at 155 to 180 s each, so the shared E4B index is due after roughly nine hours.
   The first launch attempt failed within seconds and exposed three faults, all fixed in `6daf616`:

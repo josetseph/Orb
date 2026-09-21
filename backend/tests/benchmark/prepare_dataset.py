@@ -277,6 +277,7 @@ async def prepare(
     resume: bool,
     dry_run: bool,
     questions: int | None = None,
+    question_offset: int = 0,
 ) -> None:
     manifest_path = BASE_DIR / f"{dataset}_manifest.json"
     if not manifest_path.exists():
@@ -299,7 +300,7 @@ async def prepare(
     # Collect all unique note filenames referenced by the manifest
     all_note_files: list[str] = []
     seen: set[str] = set()
-    for tc in manifest["test_cases"][:questions]:
+    for tc in manifest["test_cases"][question_offset : question_offset + questions if questions else None]:
         for fname in (
             tc.get("all_notes", [])
             + tc.get("notes", [])
@@ -466,8 +467,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--questions", type=int, default=None,
-        help="Ingest only the notes the first N questions reference (pairs with evaluate.py --limit N)",
+        help="Ingest only the notes N questions reference (pairs with evaluate.py --limit N)",
     )
+    parser.add_argument("--question-offset", type=int, default=0, help="...starting at this question")
     parser.add_argument(
         "--resume", action="store_true", help="Skip already-ingested notes"
     )
@@ -497,6 +499,7 @@ def main() -> None:
             resume=args.resume,
             dry_run=args.dry_run,
             questions=args.questions,
+            question_offset=args.question_offset,
         )
     )
 
