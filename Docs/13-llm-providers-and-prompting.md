@@ -219,7 +219,8 @@ Returns `(content, {"finish_reason", "truncated"})`: Gemini `candidates[0].finis
 | `analyze_query(query)` | sync | one JSON chat call via `_chat` (temperature 0), `lru_cache(64)` per `(query, today)` | — | dict (see §9) or safe defaults `{"intent":"search","entities":[],"keywords":query.split(),…}` |
 | `iterative_step(...)` | async (`to_thread(_reason_step, json_mode=True)`) | via `_reason_step` | — | protocol dict (below) |
 | `ingestion_generate[_with_meta](prompt, temperature=0.1, max_tokens=None, json_mode=False)` | async | ingestion clients | none | text (+meta) |
-| `summarize_document(filename, text)` | async | via `ingestion_generate(temperature=0.2)` — one call per piece, plus one merge call when there was more than one piece | none | stripped summary text (§9.13a) |
+| `summarize_document(filename, text)` | async | via `ingestion_generate(temperature=0.2)` — one call per piece (`_pieces`), plus one merge call when there was more than one piece | none | stripped summary text (§9.13a) |
+| `summarize_transcript(filename, text)` | async | via `ingestion_generate(temperature=0.2)` — one call when the transcript fits one piece (`_pieces`); else one bullet-notes call per piece, then one notes call over those | none | stripped markdown notes (§9.13b) |
 
 ### 7.1 Thinking extraction
 
@@ -408,10 +409,19 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 ### 9.13a Document summary — `LLMService.summarize_document(filename, text)`
 
-- **Purpose**: the "Summarize instead" answer for a large attachment (doc 11 §6.4): a few pages of summary are graphed in place of the full text. Called only by `ingestion_agent.multimodal_node` (`_resolve`), which writes the result as `[Summary (<filename>)]: …` into a `mode="summary"` block.
-- **Splitting**: `budget = max(2000, (ingestion_context_tokens() or 8192) // 2)` tokens; the text is split on `\n` and lines are packed into pieces up to that budget (`ingestion_count_tokens(line) + 1` each). A single line over the budget is not cut.
-- **Prompt** (per piece): `"Summarise {what} of the document \"{filename}\" for someone who will search and ask questions about it later. Keep the key concepts, named people, organisations, methods, findings and definitions. Plain prose, no preamble.\n\nTEXT:\n{part}\n\nSUMMARY:"` with `{what}` = `this text` (one piece), `part i of n` (several), or `these section summaries` for the final merge call over the partial summaries joined by blank lines.
-- **Call**: `ingestion_generate(prompt, temperature=0.2)`, sequentially; no system prompt, no JSON mode. **Format**: plain text, stripped; errors propagate and fail the note (through `media_errors` for a fresh attachment, directly for a block that was parked).
+- **Purpose**: the summary half of a notes block for a long document (doc 11 §6.4): a few pages of prose are graphed while the full text is indexed for search. Called only by `ingestion_agent.finish_attachment`, for a non-image, non-recording attachment over `LARGE_ATTACHMENT_TOKENS`; the result is written under `## Summary` in a `mode="notes"` block.
+- **Splitting** (`_pieces(text)`, shared with §9.13b): `budget = max(2000, (ingestion_context_tokens() or 8192) // 2)` tokens — about half the ingestion context, so each piece leaves room for the answer; the text is split on `\n` and lines are packed into pieces up to that budget (`ingestion_count_tokens(line) + 1` each). A single line over the budget is not cut.
+- **Prompt** (per piece): `"Summarise {what} of the document \"{filename}\" for someone who will search and ask questions about it later. Keep the key concepts, named people, organisations, methods, findings and definitions. Use only what the text says; copy numbers and names exactly. Plain prose, no preamble.\n\nTEXT:\n{part}\n\nSUMMARY:"` with `{what}` = `this text` (one piece), `part i of n` (several), or `these section summaries` for the final merge call over the partial summaries joined by blank lines.
+- **Call**: `ingestion_generate(prompt, temperature=0.2)`, sequentially; no system prompt, no JSON mode. **Format**: plain text, stripped; errors propagate and fail the note through `media_errors` (or fail the editor's per-attachment job).
+
+### 9.13b Recording notes — `LLMService.summarize_transcript(filename, text)`
+
+- **Purpose**: the summary half of a notes block for a recording (doc 11 §6.4). Called only by `ingestion_agent.finish_attachment`, for **every** `audio` / `video_audio` attachment whatever its length, with `asr_engine.untimed(transcript)` as `text` — no `[MM:SS]` stamps, one paragraph per run of a speaker, because the stamps cost about half as many tokens again and a summary has no use for them.
+- **Prompts**: both are module constants in `llm.py` and come from the sibling `local-transcription-service` project, where they were tuned against lectures.
+  - `_TRANSCRIPT_NOTES` — "You write the notes for a recording. Output markdown in exactly this shape:" `# <title of three to six words>`, `## Summary`, `### Flow Summary` (one or two sentences), `### <topic heading>` sections of short bullets (sub-bullets only where needed), `### Next Steps` as `- (Speaker N) …`, `### Decisions Made`. Rules: three to five topic sections in the order the topics came up; use only what the source says — no added facts, names or figures; copy numbers, amounts, dates and names exactly; the source is automatic speech recognition, so where a phrase makes no sense leave the point out rather than guess; bullets are short fragments; `- None stated.` under an empty Next Steps / Decisions heading; markdown only, no preamble, no code fence.
+  - `_TRANSCRIPT_PART` — for one part of a long transcript: list as plain bullets, in order, every topic, fact, figure, name, decision and action someone said they will take, with the speaker label; only what the transcript says; drop what makes no sense.
+- **Call**: `pieces = _pieces(text)`. One piece → one call `"{_TRANSCRIPT_NOTES}\n\nRECORDING: {filename}\n\nSOURCE:\n{piece}"`. Several → one `"{_TRANSCRIPT_PART}\n\nTRANSCRIPT PART i OF n:\n{piece}"` call per piece, sequentially, then the notes prompt with `SOURCE` = those bullet lists joined by blank lines. All through `ingestion_generate(prompt, temperature=0.2)`; no system prompt, no JSON mode.
+- **Format**: markdown, stripped, written as is under the block's header line. The shape is requested, not validated or repaired. Errors propagate as in §9.13a.
 
 ### 9.14 Non-LLM model prompts (for completeness)
 

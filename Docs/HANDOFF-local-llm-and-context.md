@@ -42,7 +42,7 @@ models so the next request reloads with the new values. `null` means automatic.
 | `EMBED_N_CTX` / `RERANK_N_CTX` | 8192 / 8192 | embedder and reranker context |
 | `MODEL_IDLE_SECONDS` | 300 | unload after idle; 0 = never |
 | `EXTRACTION_CHUNK_TOKENS` | null | pin the extraction chunk size; null = learned (§4) |
-| `LARGE_ATTACHMENT_TOKENS` | 20000 | ask the user before ingesting a bigger attachment (§5) |
+| `LARGE_ATTACHMENT_TOKENS` | 20000 | a document over this is summarised for the graph and indexed in full for search (§5) |
 
 The `ORB_*` environment variables that remain (`ORB_DATA_DIR`, `ORB_MODELS_DIR`, `ORB_PATHS_FILE`,
 download staging, build pins) are process plumbing between the Tauri shell, the Python runtime and
@@ -114,28 +114,38 @@ on**, with Gemma 4 E4B. The defaults above are unchanged.
 - Re-ingesting a note is idempotent: `GraphService.clear_note_contribution` takes back what the note
   asserted before the new extraction is written, and orphaned entities are swept afterwards.
 
-## 5. Large attachments: ask first
+## 5. Recordings and long documents: notes, not a full graph
 
 An attachment's extracted text goes into the note as a delimited block:
-`<!-- orb:extract src="…" mode="pending|index|summary" -->` … `<!-- /orb:extract -->`
-(no `mode` = graphed normally).
+`<!-- orb:extract src="…" -->` … `<!-- /orb:extract -->`, graphed in full. The one variant is
+`mode="notes"`: the usual header line, a model-written summary, then the full text under
+`## Transcript` (recordings) or `## Full text` (documents). Nothing is asked — an earlier version
+parked big attachments and showed a graph / summarize / index prompt; that prompt, its
+`pending` / `index` / `summary` modes, `notes.attachment_modes` and
+`PUT /notes/{id}/attachments/mode` are gone (`core/database._sqlite_repairs` drops the column).
 
-- `resolve_large_attachment` (in `ingestion_agent.py`) is the one place the size rule lives. A full
-  ingest and the editor's per-attachment action (`api/notes._run_attachment_job`) both call it.
-- Over `LARGE_ATTACHMENT_TOKENS` with no recorded answer → the block is written `mode="pending"`
-  **with its text kept**, and the rest of the note is graphed immediately. The note shows a prompt
-  (`LargeAttachmentPrompt.tsx`): *Graph the whole document* (default), *Summarize instead*,
-  *Index for search*. `PUT /api/v1/notes/{id}/attachments/mode` stores the answer in
-  `notes.attachment_modes` and re-ingests; the parked block is rewritten in place, never re-read.
-- `graph_text(content)` removes `pending` and `index` blocks before anything reaches entity
-  extraction.
-- **Summary**: `LLMService.summarize_document` (piecewise, then merged); the block body becomes the
-  summary and that is what gets graphed.
-- **Index**: `IngestionWorkflow._index_documents` creates ONE node (`type='document'`), splits the
-  text into ~1200-character passages, embeds them and stores them in the *contexts* collection under
-  that node. No LLM call. Retrieval needs no special case: vector hits on contexts accumulate only
-  the matching passages into the candidate's text. The node's description is a fixed one-liner on
-  purpose, so a match by name does not pull every passage into the prompt.
+- `finish_attachment(kind, section, filename, llm, set_status)` (in `ingestion_agent.py`) is the one
+  place the rule lives. A full ingest and the editor's per-attachment action
+  (`api/notes._run_attachment_job`) both call it.
+- **Recordings** (`audio`, `video_audio`) always become notes, whatever their length:
+  `LLMService.summarize_transcript` reads `asr_engine.untimed(text)` — the transcript without its
+  `[MM:SS]` stamps, which cost about half as many tokens again — and writes a title, a flow summary,
+  three to five topic sections, next steps by speaker and decisions. Stage `Writing notes for <file>`.
+- **Any other non-image attachment** becomes notes only when its text is over
+  `LARGE_ATTACHMENT_TOKENS` (ingestion-model tokens): `LLMService.summarize_document`, plain prose.
+  Stage `Summarising <file>`. Smaller ones are graphed in full with no summary call. Images never.
+- Both summarisers share `_pieces`: paragraph-bounded pieces of about half the ingestion context,
+  summarised one by one and then merged, so a text larger than the window still fits.
+- `graph_text(content)` reduces every notes block to its summary part (`split_notes`) before
+  anything reaches entity extraction, `_write_ontology` or `_update_neighborhoods`.
+- The full text goes to `IngestionWorkflow._index_documents`, which creates ONE node
+  (`type='document'`), splits the text into ~1200-character passages, embeds them and stores them in
+  the *contexts* collection under that node. No LLM call. Retrieval needs no special case: vector
+  hits on contexts accumulate only the matching passages into the candidate's text. The node's
+  description is a fixed one-liner on purpose, so a match by name does not pull every passage into
+  the prompt.
+- Blocks written before this (plain, no mode) stay graphed in full until the attachment is redone
+  from the editor; nothing migrates them.
 
 ## 6. How chat spends the window
 

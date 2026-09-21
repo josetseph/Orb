@@ -1,7 +1,7 @@
 # Plan: better transcripts and lecture notes from audio attachments
 
 For a coding agent picking up work on Orb. Written 2026-09-21 against Orb main at `3bd480f`.
-**Phase 1 (§3) is implemented** — `restore_punctuation` and GPU diarization in `asr_engine.py`, tests in `test_asr_engine.py`. Phase 2 (§4) is not started: it waits on the owner's answers to §5. Every claim about Orb names the file it lives in; verify before
+**Phase 1 (§3) is implemented** (`10edef8`) — `restore_punctuation` and GPU diarization in `asr_engine.py`, tests in `test_asr_engine.py`. **Phase 2 (§4) is implemented** (`ba995da`), in a larger form than §4 first proposed: the owner answered §5, and the large-attachment prompt this plan was written around was removed in the same commit. §4.1 says what was built; §2 and the body of §4 are kept as the record of the starting point. Every claim about Orb names the file it lives in; verify before
 changing behaviour. Read `Docs/HANDOFF-local-llm-and-context.md` and
 `Docs/11-multimedia-enrichment.md` first.
 
@@ -25,7 +25,9 @@ What was measured there, on an M3 with 24 GB, torch 2.13, pyannote 4.0.7:
 | 86-minute class as tokens (Gemma 4 tokenizer) | 13,648 plain text; 15,689 as speaker paragraphs; 23,717 as `[MM:SS] Speaker N:` lines |
 | Gemma 4 E4B Q4_K_M, 32k context, title + structured summary of that class | one call, fits with room; diarize + summarize took 519 s together |
 
-## 2. What Orb does today
+## 2. What Orb did when this was written (`3bd480f`)
+
+None of this is current: `label_speakers` is now `timed_lines`, and `resolve_large_attachment`, the `pending` block and *Summarize instead* no longer exist (§4.1).
 
 - `multimodal_runtime.transcribe_audio_path` transcribes, and when the aligner and diarizer are
   downloaded, returns `asr_engine.label_speakers(...)`: `Speaker 1: …` paragraphs, one per run of a
@@ -66,7 +68,7 @@ No product decision in this phase. Both are changes to `backend/app/services/asr
 
 `transcribe_with_mlx` restores punctuation only when `len(tokens) == len(words)` over the whole
 recording. `align_with_transformers` has the same check per 30-second chunk. When it fails,
-`label_speakers` rebuilds the note's transcript from bare words, so a long lecture enters the vault,
+`label_speakers` (now `timed_lines`) rebuilds the note's transcript from bare words, so a long lecture enters the vault,
 and then entity extraction, with no punctuation at all. On the MLX path the comparison spans the
 whole recording, so on long audio it should be expected to fail.
 
@@ -115,6 +117,32 @@ This is the smallest version: it only changes what *Summarize instead* produces 
 nothing for a recording under 20,000 tokens, which is graphed in full with no summary. Whether that
 is enough is decision 5.1.
 
+### 4.1 As built (`ba995da`)
+
+The owner's answers (§5) made the smallest version the wrong one, so the last two bullets above were
+not built. What exists:
+
+- `LLMService.summarize_transcript(filename, text)` in `services/llm.py`, as the first bullet
+  describes. It shares `_pieces` (paragraph-bounded pieces of about half the ingestion context) with
+  `summarize_document`: one call with `_TRANSCRIPT_NOTES` when the transcript fits one piece, else
+  per-part bullets with `_TRANSCRIPT_PART`, then the notes prompt over those.
+- `ingestion_agent.finish_attachment(kind, section, filename, llm, set_status) -> (section, mode)`
+  replaces `resolve_large_attachment`; the attachment `kind` is threaded through as proposed. A
+  recording (`audio`, `video_audio`) always becomes a `mode="notes"` block: header line, the notes,
+  `## Transcript`, the timed transcript. The summariser reads `asr_engine.untimed(text)`.
+- The same treatment for long documents, with no prompt (the owner's extension): any other non-image
+  attachment over `LARGE_ATTACHMENT_TOKENS` becomes a notes block with `## Summary` (from
+  `summarize_document`) and `## Full text`. Smaller documents are graphed in full; images never.
+- One block holds both halves. `split_notes(body)` cuts at the `## Transcript` / `## Full text`
+  heading; `graph_text` graphs the summary part only; `summarization_node` sends the full text to
+  `IngestionWorkflow._index_documents` (passages under one `type='document'` node, no LLM call).
+- `asr_engine.timed_lines` replaces `label_speakers`: `[MM:SS] Speaker N: …` lines.
+- Removed: the `pending` / `index` / `summary` modes, `resolve_large_attachment`, `set_block_mode`,
+  `notes.attachment_modes` (the column is dropped by `core/database._sqlite_repairs`),
+  `PUT /api/v1/notes/{id}/attachments/mode`, and the frontend prompt.
+- Blocks written earlier stay plain and graphed in full until the attachment is redone from the
+  editor. Nothing migrates them.
+
 ## 5. Decisions for the owner
 
 These change product behaviour, so they are not the implementing agent's to make.
@@ -123,21 +151,32 @@ These change product behaviour, so they are not the implementing agent's to make
    attachment (§4 as written); always, as a second block under the transcript; or a per-note action
    in the editor. "Always" adds one LLM call per recording to every ingest, on a machine where one
    heavy model is resident at a time, so it also adds a model swap.
+   **Answer: always, for recordings.** Not as a second block — see 2.
 2. **Summary and transcript, or summary instead of transcript?** Today `mode="summary"` replaces the
    text in the block. For a lecture the transcript is the thing the user searches. Keeping both means
    a summary block that is graphed plus the transcript as `mode="index"`, which is two blocks for one
    attachment; `extraction_blocks` and `set_block_mode` key blocks by `src`, so that needs a design,
    not a patch.
+   **Answer: both, in one block.** The summary is graphed and the transcript is indexed for search;
+   a heading line inside the block (`## Transcript`) separates them, so one `src` still has one
+   block (§4.1).
 3. **Timestamps in the transcript.** `[MM:SS] Speaker N:` lines make a transcript navigable, and the
    sibling writes them. In Orb they cost 51% more tokens than speaker paragraphs for the same class
    (23,717 vs 15,689), which pushes an 86-minute lecture over `LARGE_ATTACHMENT_TOKENS` and puts a
    timestamp in front of every sentence that entity extraction reads. Only worth it if the note page
    can seek the audio from a timestamp; check whether it can before deciding.
+   **Answer: yes.** Both costs named above no longer apply: recordings skip the token threshold,
+   entity extraction never reads the transcript, and the summariser reads the `untimed` form.
 4. **A glossary pass.** The benchmark's remaining errors are misheard technical terms ("ethical
    hacking" as "physical helping", a cafeteria named KONO as "corner"). A workspace's existing
    entity names are exactly the glossary a correction pass would need, and Orb has them. This is
    untested anywhere. If wanted, prototype it in the sibling project first, against the same Wispr
    reference, before it touches ingestion.
+   **Not done.** Still untested anywhere.
+
+The owner also extended the recordings treatment to long documents and removed the prompt: over
+`LARGE_ATTACHMENT_TOKENS` a document is summarised for the graph and indexed in full, without asking
+(§4.1).
 
 ## 6. Not doing
 
@@ -159,7 +198,8 @@ These change product behaviour, so they are not the implementing agent's to make
 ## 8. Verification
 
 From `backend/` with `DATA_DIR` on a scratch folder: `pytest tests/unit`, `pytest tests/integration`.
-For Phase 2 add unit tests beside `tests/unit/test_large_attachments.py`: an audio section over the
-threshold with decision `summary` calls `summarize_transcript`, a PDF section still calls
-`summarize_document`. Then the app loop in `HANDOFF` §7, and one real ingest of a lecture recording,
+Phase 2's tests are `tests/unit/test_large_attachments.py`, rewritten with the feature (9 tests): a
+recording always gets notes and the summariser reads the untimed text, a long document calls
+`summarize_document` and a short one calls nothing, images never, and a full ingest and "process
+this item" share the rule. Then the app loop in `HANDOFF` §7, and one real ingest of a lecture recording,
 reading the summary against the transcript for invented figures or names.

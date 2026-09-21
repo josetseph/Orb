@@ -196,7 +196,6 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 | `processAttachment(noteId, url, force=false, kb)` | `POST /notes/{id}/attachments/process?kb=` `{url, force}` | Runs transcription/description/extraction for one attachment now. |
 | `cancelAttachment(noteId, url, kb)` | `POST /notes/{id}/attachments/cancel?kb=` `{url}` | |
 | `getAttachmentJobs(noteId, kb)` | `GET /notes/{id}/attachments/jobs?kb=` | `{jobs: Record<url, AttachmentJob>}`; polled by `useAttachmentJobs`. |
-| `setAttachmentMode(noteId, link, mode, kb)` | `PUT /notes/{id}/attachments/mode?kb=` `{link, mode}` with `mode: "graph" \| "summary" \| "index"` | The answer for an attachment ingestion parked as too large; the server stores it and re-ingests the note. Called by `LargeAttachmentPrompt` via `notes/page.tsx` ([19](19-frontend-notes-editor.md)). |
 | `getLocalRuntime()` / `saveLocalRuntime(data)` | `GET` / `PUT /settings/local-runtime` | The fourteen Models → Local runtime keys (`LocalRuntimeSettings`); `PUT` sends the full object. |
 | `batchDeleteNotes(ids, kb)` | `POST /notes/batch-delete?kb=` `{ids}` | Max 100 ids (server rule). Returns `{deleted, failed, deleted_count, failed_count}`. |
 | `reingestVault(kb)` | `POST /notes/reingest-vault?kb=` | |

@@ -153,7 +153,7 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 
 `relationship_id` is stored in the payload (and encoded in the point id); points written before it was added lack it.
 
-**`<slug>_node_isolated_contexts`** — N points per entity. The same collection holds the **passages of indexed documents**: a large attachment the user chose to "Index for search" is split into ~1200-character passages (`ingestion._passages`) and written by `IngestionWorkflow._index_documents` with `upsert_node_items` under one `type='document'` node ([10 §6.5](10-ingestion-pipeline.md)). Its `node_cores` point carries the vector of the file name and a fixed description `"Indexed document (N passages, searchable, not graphed)."`; its Meili document has `type='document'` and `isolated_contexts` = the passages.
+**`<slug>_node_isolated_contexts`** — N points per entity. The same collection holds the **passages of indexed documents**: the full text of a notes block — a recording's transcript, or a document over `LARGE_ATTACHMENT_TOKENS` — is split into ~1200-character passages (`ingestion._passages`) and written by `IngestionWorkflow._index_documents` with `upsert_node_items` under one `type='document'` node ([10 §6.5](10-ingestion-pipeline.md)). Its `node_cores` point carries the vector of the file name and a fixed description `"Indexed document (N passages, searchable, not graphed)."`; its Meili document has `type='document'` and `isolated_contexts` = the passages.
 
 | Field | Type | Written by | Notes |
 |---|---|---|---|

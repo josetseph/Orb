@@ -786,7 +786,7 @@ class IngestionWorkflow:
 
             def _write(node_id=node_id, name=name, passages=passages):
                 vectors = embedding_service.embed_documents(passages)
-                description = f"Indexed document ({len(passages)} passages, searchable, not graphed)."
+                description = f"Full text of an attachment, {len(passages)} searchable passages; its summary is in the note."
                 self._graph.execute_query(
                     """
                     MERGE (note:Node {id: $note_id}) ON CREATE SET note.kind = 'note'

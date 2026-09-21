@@ -149,3 +149,50 @@ def test_full_ingest_and_process_this_item_share_the_rule(monkeypatch):
     kb = SimpleNamespace(kb_id="kb", get_ingestion_workflow=lambda: WF())
     asyncio.run(notes_api._run_attachment_job(kb, "n1", f"/vault-files/kb/{docx}"))
     assert ia.extraction_blocks(saved["body"])[0]["mode"] == "notes"
+
+
+def test_process_this_item_runs_a_video_as_two_passes(monkeypatch):
+    """The audio pass gets notes; the visual pass keeps its own block."""
+    from app.api import notes as notes_api
+    import app.core.database as database
+
+    mov = "attachments/Talk-22222222.mov"
+    note_md = f"intro\n\n[📎 Talk.mov]({mov})\n\noutro"
+    seen = []
+
+    async def fake_extract(kind, item, set_status, llm):
+        seen.append(kind)
+        if kind == "video_audio":
+            return "[Video Audio Transcript (Talk.mov)]: [00:01] Speaker 1: Hello."
+        return "[Video Visual Analysis (Talk.mov)]:\n\na slide"
+
+    monkeypatch.setattr(ia, "extract_attachment", fake_extract)
+    monkeypatch.setattr(ia.multimedia_service, "unload_local_models", lambda family=None: None)
+    monkeypatch.setattr(ia.multimedia_service, "unload_marlin", lambda: None)
+    saved = {}
+
+    class WF:
+        _llm = _LLM()
+
+        async def _persist_note_body(self, note_id, body):
+            saved["body"] = body
+
+    class Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def execute(self, _q):
+            return SimpleNamespace(scalar_one_or_none=lambda: SimpleNamespace(id="n1", kb_id="kb"))
+
+    monkeypatch.setattr(database, "AsyncSessionLocal", Session)
+    monkeypatch.setattr(notes_api, "note_body", lambda note, kb: note_md)
+    kb = SimpleNamespace(kb_id="kb", get_ingestion_workflow=lambda: WF())
+    asyncio.run(notes_api._run_attachment_job(kb, "n1", f"/vault-files/kb/{mov}"))
+
+    assert seen == ["video_audio", "video_visual"]
+    modes = sorted(b["mode"] for b in ia.extraction_blocks(saved["body"]))
+    assert modes == ["", "notes"]
+    assert "[00:01] Speaker 1: Hello." in saved["body"] and "a slide" in ia.graph_text(saved["body"])

@@ -230,6 +230,7 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
         parse_attachments,
         place_extraction,
         remove_extraction,
+        VIDEO_PASSES,
         finish_attachment,
     )
     from app.services.multimedia import multimedia_service
@@ -266,15 +267,24 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             kind = classify_attachment(item)
             if not kind:
                 raise ValueError(f"Orb cannot read {item['filename']}")
-            section = await extract_attachment(kind, item, _noop_status, wf._llm)  # pylint: disable=protected-access
-            if not section.strip():
+            # A video is two passes, each with its own block — as in a full ingest.
+            content = remove_extraction(body, url)
+            produced = False
+            for one in VIDEO_PASSES if kind == "video" else (kind,):
+                section = await extract_attachment(one, item, _noop_status, wf._llm)  # pylint: disable=protected-access
+                if one == "video_audio":
+                    await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
+                if not section.strip():
+                    continue
+                # Same rule as a full ingest: recordings and long documents
+                # become a summary plus searchable full text.
+                section, mode = await finish_attachment(
+                    one, section, item["filename"], wf._llm, _noop_status  # pylint: disable=protected-access
+                )
+                content = place_extraction(content, item["link"], section, mode)
+                produced = True
+            if not produced:
                 raise ValueError("Extraction produced no text")
-            # Same rule as a full ingest: recordings and long documents become
-            # a summary plus searchable full text.
-            section, mode = await finish_attachment(
-                kind, section, item["filename"], wf._llm, _noop_status  # pylint: disable=protected-access
-            )
-            content = place_extraction(remove_extraction(body, url), item["link"], section, mode)
             await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
         _attachment_jobs[key] = {"status": "done", "error": None}
     except asyncio.CancelledError:

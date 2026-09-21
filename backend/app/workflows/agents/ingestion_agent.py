@@ -203,6 +203,7 @@ def remove_extraction(content: str, src_url: str) -> str:
 
 
 _AUDIO_KINDS = ("audio", "video_audio")
+VIDEO_PASSES = ("video_audio", "video_visual")
 # "[<Kind> (<file name>)]:" — the name may itself contain brackets.
 _HEADER_RE = re.compile(r"^\s*(\[.*?\)\]:)[ \t]*")
 
@@ -933,9 +934,9 @@ async def resolve_image_titles(content: str, pending: list[dict[str, str]], llm)
 async def extract_attachment(kind: str, item: dict[str, str], set_status, llm) -> str:
     """Run one extractor and return its section text ("" when nothing came out).
 
-    ``kind`` is a value from ``classify_attachment``; "video" runs both the
-    Qwen3-ASR and Marlin passes, while multimodal_node uses "video_audio" /
-    "video_visual" separately so it can release each model between phases.
+    ``kind`` is a value from ``classify_attachment``, except that a video is
+    run as two passes, "video_audio" then "video_visual" (``VIDEO_PASSES``):
+    each writes its own block, and the speech model is released in between.
     """
     filename = item["filename"]
     url = item["url"]
@@ -996,14 +997,6 @@ async def extract_attachment(kind: str, item: dict[str, str], set_status, llm) -
             return ""
         logger.info(f'Video Visual Result: "{visual_text.replace(chr(10), " ")[:100]}"')
         return f"\n\n[Video Visual Analysis ({filename})]:\n\n{visual_text}"
-
-    if kind == "video":
-        await set_status("Transcribing video audio", "Qwen3-ASR")
-        audio = await extract_attachment("video_audio", item, set_status, llm)
-        await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
-        await set_status("Analyzing video visuals", "Marlin")
-        visual = await extract_attachment("video_visual", item, set_status, llm)
-        return "\n".join(s for s in (audio, visual) if s)
 
     raise ValueError(f"Unsupported attachment kind: {kind}")
 

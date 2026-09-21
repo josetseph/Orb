@@ -183,7 +183,6 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | POST | `/api/v1/notes/batch-delete` | kb | Delete ≤100 notes | [#](#post-apiv1notesbatch-delete) |
 | POST | `/api/v1/notes/{note_id}/move` | kb | Move note into folder | [#](#post-apiv1notesnote_idmove) |
 | POST | `/api/v1/notes/{note_id}/ingest` | kb | Force (re)ingest one note | [#](#post-apiv1notesnote_idingest) |
-| PUT | `/api/v1/notes/{note_id}/attachments/mode` | kb | Answer for a large attachment (graph / summary / index), then re-ingest | [#](#put-apiv1notesnote_idattachmentsmode) |
 | POST | `/api/v1/notes/{note_id}/ingest/cancel` | kb | Stop this note's ingestion | [#](#post-apiv1notesnote_idingestcancel) |
 | POST | `/api/v1/notes/{note_id}/dismiss-failure` | kb | Clear a failed-ingest flag without re-running | [#](#post-apiv1notesnote_iddismiss-failure) |
 | POST | `/api/v1/notes/{note_id}/attachments/process` | kb + AI | Extract one attachment now, outside a full ingest | [#](#post-apiv1notesnote_idattachmentsprocess) |
@@ -646,16 +645,6 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 `process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
 
-#### PUT /api/v1/notes/{note_id}/attachments/mode
-
-The user's answer for an attachment that ingestion parked as too large (over `LARGE_ATTACHMENT_TOKENS`; the block in the body carries `mode="pending"` — [11 §6.4](11-multimedia-enrichment.md)). Body (`AttachmentModeInput`): `link: str` (the attachment link as written in the note / the marker's `src`), `mode: "graph" | "summary" | "index"` — anything else → **422**. **404** unknown/wrong KB.
-
-Stores the decision in the `notes.attachment_modes` JSON column under `attachment_key(link)` (the dict is reassigned, not mutated, so SQLAlchemy sees the change), commits, then calls the same code as [`POST /notes/{id}/ingest`](#post-apiv1notesnote_idingest) and returns its response (so `require_ai()` → **503** applies, after the decision is already saved). On that run `multimodal_node` rewrites the parked block in place from the text it already holds — `graph` → graphed in full, `summary` → a model-written summary is graphed, `index` → searchable passages under one `document` node, nothing extracted. A decision only acts on a `pending` block or a fresh extraction.
-
-```json
-{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}
-```
-
 #### POST /api/v1/ingest
 
 Legacy combined endpoint for batch scripts. Body (`NoteInput`): `content: str` (required), `created_at: str | null`, `title: str | null`, `skip_ingestion: bool = false`. `require_ai()` unless `skip_ingestion`. `created_at` is parsed with `datetime.fromisoformat` (naive → UTC); a non-ISO string → **422** `"created_at: …"`.
@@ -682,7 +671,7 @@ Body `ProcessAttachmentInput {url: str, force: bool = false}`. Runs ONE linked a
 - Already has a block and `force` is false → `{"status": "already_processed"}`, nothing runs. `force: true` removes the old block first (`remove_extraction`) and replaces it.
 - Otherwise starts an `asyncio` task (not a `BackgroundTask`, so it can be cancelled by url), records it in the in-process `_attachment_jobs[(kb_id, note_id, url)]` and answers `{"note_id", "url", "status": "running"}`; a second call while it runs answers the same without starting another.
 - The job holds `multimedia_concurrency_limit`, so it queues behind a running ingest's multimedia phase. Afterwards it unloads the speech model (audio/video) and Marlin (video).
-- **Large attachments.** Non-image results go through the same `resolve_large_attachment` rule as a full ingest: over `LARGE_ATTACHMENT_TOKENS` with no recorded answer the block is written `mode="pending"` (text kept) and the note shows the graph / summarize / index prompt; a recorded answer in `notes.attachment_modes` is applied directly.
+- **Recordings and long documents.** The extracted text goes through the same `finish_attachment` rule as a full ingest ([11 §6.4](11-multimedia-enrichment.md)): an audio file always gets a `mode="notes"` block (model-written notes, then `## Transcript`), and any other non-image attachment over `LARGE_ATTACHMENT_TOKENS` gets one too (`## Summary`, then `## Full text`). Nothing is asked. A video handled here is one combined section and follows the document rule, not the recording rule. The summary is an ingestion-model call, so the job can take noticeably longer than the extraction alone; the block is graphed and indexed on the note's next ingest.
 - Poll `attachments/jobs` for the outcome; `_attachment_jobs` is per process and cleared by a restart.
 
 #### POST /api/v1/notes/{note_id}/attachments/cancel
@@ -1080,7 +1069,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 | `exportChat` | `GET /chat/conversations/{id}/export` | backend route is broken (500) — see 6 |
 | `upload` | `POST /upload` | direct-to-API origin via bridge; 10 min timeout |
 | `getNotes` / `getNote` / `getNoteStatus` | `GET /notes`, `/notes/{id}`, `/notes/{id}/status` | all send `kb` |
-| `createNote` / `updateNote` / `updateNoteOnUnload` / `deleteNote` / `batchDeleteNotes` / `moveNote` / `ingestNote` / `setAttachmentMode` | notes routes | `setAttachmentMode` → `PUT /notes/{id}/attachments/mode` `{link, mode}` |
+| `createNote` / `updateNote` / `updateNoteOnUnload` / `deleteNote` / `batchDeleteNotes` / `moveNote` / `ingestNote` | notes routes | |
 | `moveVaultFile` / `deleteVaultFile` / `listVaultFolders` / `mkdirVaultFolder` / `resolveVaultLocalPath` | vault routes | |
 | `getGraph3DFull` / `getNodeDetail` | graph 3d routes | TS type for `getGraph3DFull` declares `facts` which the backend omits |
 | `searchEntities` / `scanTextEntities` / `getNoteEntitySubgraph` | graph entity routes | |

@@ -254,7 +254,7 @@ From the module docstring plus what the code actually uses:
 |---|---|---|---|
 | `note` | the SQLite `notes.id` (UUID string) | notes API / ingestion | `_write_ontology` MERGEs `Node {id: note_id}`; the same id is used as `REFERENCES.note_id` |
 | `indexable` | `node_<uuid4>` | `_write_ontology` | only after **both** `QdrantService.find_node_ids_by_names` and `GraphService.find_nodes_by_exact_names` fail to find the normalised name |
-| `indexable`, `type='document'` | `node_<uuid5(NAMESPACE_URL, "<kb_id>/<attachment key>")>` | `IngestionWorkflow._index_documents` | a large attachment the user chose to "Index for search" ([10 §6.5](10-ingestion-pipeline.md)); deterministic, so a re-ingest lands on the same node. `name` = lower-cased file name |
+| `indexable`, `type='document'` | `node_<uuid5(NAMESPACE_URL, "<kb_id>/<attachment key>")>` | `IngestionWorkflow._index_documents` | the full text of a `mode="notes"` enrichment block — a recording's transcript or a long document ([10 §6.5](10-ingestion-pipeline.md)); the block's summary is graphed as ordinary entities beside it; deterministic, so a re-ingest lands on the same node. `name` = lower-cased file name |
 | `community` | `community_l<level>_<uuid4.hex>` | `rebuild_leiden_communities._commit_community` | every rebuild (old ids are deleted first — community ids are **not stable across rebuilds**) |
 | `temporal_digest` | `digest_<period>_<key>` with `-`→`_` and `W`→`w` (e.g. `digest_month_2024_05`, `digest_week_2024_w21`, `digest_year_2024`) | `build_temporal_digests` | deterministic; rebuilt in place |
 
