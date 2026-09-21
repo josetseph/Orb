@@ -124,7 +124,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### C10. Attachments live only under `attachments/`, grouped by note folder
 - Rejected: attachments beside their notes (media rows in the vault tree, `list_vault_media_files`, the `media_files` key of `GET /vault/folders`); a flat `attachments/` for every upload.
 - Rationale: one place to look, one boundary to guard, and an Obsidian-style vault where every non-markdown file is under one folder; grouping by the owning note's folder keeps a big vault browsable without coupling a note's location to its files (C9).
-- Enforced: `POST /api/v1/upload?folder=` → `local_storage.store_upload` writes `attachments/<folder>/<stem>-<8hex><ext>` (`..`/absolute → 400); `vault_ops.move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment ↔ note-folder moves and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`; `vault_sync.migrate_vault_files` v3 (`<vault>/.orb/migrated-v3`) moves stray files in once and rewrites their links.
+- Enforced: `POST /api/v1/upload?folder=` → `local_storage.store_upload` writes `attachments/<folder>/<stem>-<8hex><ext>` (`..`/absolute → 400); `vault_ops.move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment ↔ note-folder moves and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`; `vault_sync.migrate_vault_files` v3 (`<vault>/.orb/migrated-v4`) moves stray files in once and rewrites their links.
 
 ---
 

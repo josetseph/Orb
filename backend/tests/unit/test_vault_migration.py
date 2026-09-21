@@ -35,7 +35,7 @@ def test_sweep_rewrites_once(tmp_path, monkeypatch):
     )
     assert clean.read_text() == "nothing to do\n"
     assert "attachments/attachments" in (tmp_path / "attachments" / "x.md").read_text()
-    assert (tmp_path / ".orb" / "migrated-v3").exists()
+    assert (tmp_path / ".orb" / "migrated-v4").exists()
 
     note.write_text("![b](attachments/attachments/b.png)")
     assert vault_sync.migrate_vault_files(tmp_path) == 0
@@ -62,7 +62,7 @@ def test_v2_relativises_links_from_any_workspace_id(tmp_path):
         "![ok](attachments/already.png)\n"
         "[web](https://example.com/vault-files/not/ours.png)\n"
     )
-    assert (tmp_path / ".orb" / "migrated-v3").exists()
+    assert (tmp_path / ".orb" / "migrated-v4").exists()
     before = note.read_text()
     assert vault_sync.migrate_vault_files(tmp_path) == 0
     assert note.read_text() == before
@@ -94,7 +94,29 @@ def test_v3_moves_stray_files_under_attachments(tmp_path):
         "![old](attachments/Cloud%20Computing/diagram.png)\n"
         "[r](attachments/root%202.pdf)\n"
     )
-    assert (tmp_path / ".orb" / "migrated-v3").exists()
+    assert (tmp_path / ".orb" / "migrated-v4").exists()
     before = note.read_text()
     assert vault_sync.migrate_vault_files(tmp_path) == 0
     assert note.read_text() == before
+
+
+def test_v4_repoints_a_link_whose_file_moved_inside_attachments(tmp_path):
+    """An older build moved the file but could not rewrite a name with parentheses."""
+    name = "Prosit - Capacity Building (2)-a45eb768.pdf"
+    (tmp_path / "attachments" / "Seminar").mkdir(parents=True)
+    (tmp_path / "attachments" / "Seminar" / name).write_bytes(b"%PDF")
+    (tmp_path / "attachments" / "kept-11111111.pdf").write_bytes(b"%PDF")
+    flat = "attachments/Prosit%20-%20Capacity%20Building%20%282%29-a45eb768.pdf"
+    note = tmp_path / "n.md"
+    note.write_text(
+        f'[📎 x]({flat})\n<!-- orb:extract src="{flat}" -->\nbody\n<!-- /orb:extract -->\n'
+        "[ok](attachments/kept-11111111.pdf) [gone](attachments/nowhere-22222222.pdf)\n",
+        encoding="utf-8",
+    )
+
+    assert vault_sync.migrate_vault_files(tmp_path) == 1
+    text = note.read_text(encoding="utf-8")
+    fixed = "attachments/Seminar/Prosit%20-%20Capacity%20Building%20%282%29-a45eb768.pdf"
+    assert f"]({fixed})" in text and f'src="{fixed}"' in text and flat not in text
+    assert "(attachments/kept-11111111.pdf)" in text  # existing target untouched
+    assert "(attachments/nowhere-22222222.pdf)" in text  # no home: left alone

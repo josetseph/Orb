@@ -310,7 +310,7 @@ All helpers compute `rel = path.resolve().relative_to(vault.resolve())`, skip an
 
 Called from `GET /api/v1/notes` (default `sync_vault=true`, wrapped in try/except so a scan failure never breaks listing) and from the setup flow. Algorithm:
 
-0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v3`, doc 09 §4.3), then the vault is walked.
+0. One-time repairs first: `migrate_vault_files(vault)` in a thread (the vault sweep gated by `<vault>/.orb/migrated-v4`, doc 09 §4.3), then the vault is walked.
 1. `rels = iter_vault_md_files(vault)`; load all `Note` rows for `kb.kb_id`; build `by_rel` (normalised `rel_path` → row) and `by_title` (`title.lower()` → row).
 2. For each `rel` on disk with no row:
    - **Adoption**: `adoptable(stem)` returns a row whose `title.lower() == stem`, whose current `rel_path` is **root-level** (no `/`), and whose current file is **not on disk** — i.e. "a root note was moved into a folder outside Orb". The row's `rel_path` is repointed, `updated_at` bumped, `updated += 1`. The on-disk check exists because *"a second note of the same name in another folder would steal the root note's row and orphan the root file"* (added in `f8f527f`).
