@@ -196,3 +196,28 @@ def test_process_this_item_runs_a_video_as_two_passes(monkeypatch):
     modes = sorted(b["mode"] for b in ia.extraction_blocks(saved["body"]))
     assert modes == ["", "notes"]
     assert "[00:01] Speaker 1: Hello." in saved["body"] and "a slide" in ia.graph_text(saved["body"])
+
+
+def test_transcript_notes_use_one_call_when_the_transcript_fits(monkeypatch):
+    from app.services.llm import LLMService
+
+    svc = LLMService.__new__(LLMService)
+    svc.provider = svc.ingestion_provider = "openai"
+    calls = []
+
+    def fake_chat(messages, **kw):
+        calls.append([m["role"] for m in messages] + [messages[1]["content"][:12]])
+        return "# T\n\n## Summary", {}
+
+    monkeypatch.setattr(svc, "_chat", fake_chat)
+    monkeypatch.setattr(svc, "ingestion_count_tokens", lambda text: len(text.split()))
+    text = "\n".join(f"Speaker 1: line {i} " + "word " * 20 for i in range(100))  # ~2.3k "tokens"
+
+    monkeypatch.setattr(svc, "ingestion_context_tokens", lambda: 32768)
+    asyncio.run(svc.summarize_transcript("a.m4a", text))
+    assert calls == [["system", "user", "RECORDING: a"]]  # fits: no part-by-part pass
+
+    calls.clear()
+    monkeypatch.setattr(svc, "ingestion_context_tokens", lambda: 3400)  # now it cannot fit
+    asyncio.run(svc.summarize_transcript("a.m4a", text))
+    assert len(calls) >= 3 and calls[0][2].startswith("PART 1 OF") and calls[-1][2] == "RECORDING: a"

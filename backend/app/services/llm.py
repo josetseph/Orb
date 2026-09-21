@@ -91,6 +91,10 @@ Where a phrase makes no sense in context, leave that point out rather than guess
 - If no next steps or no decisions were stated, write "- None stated." under that heading.
 - Output the markdown only: no preamble, no code fence."""
 
+# Left free in the window for the notes themselves; a finished set is a few
+# hundred words.
+_NOTES_OUTPUT_TOKENS = 2048
+
 _TRANSCRIPT_PART = (
     "You are given one part of a long transcript. List, as plain bullets and in order, "
     "every topic covered, every fact, figure and name, every decision, and every action "
@@ -443,10 +447,10 @@ class LLMService:
         )
         return (text or "").strip() or (existing or "")
 
-    def _pieces(self, text: str) -> list[str]:
-        """``text`` in paragraph-bounded pieces of about half the ingestion
-        context, so each piece leaves room for the answer."""
-        budget = max(2000, (self.ingestion_context_tokens() or 8192) // 2)
+    def _pieces(self, text: str, budget: int | None = None) -> list[str]:
+        """``text`` in paragraph-bounded pieces of ``budget`` tokens — by
+        default half the ingestion context, so each leaves room for the answer."""
+        budget = budget or max(2000, (self.ingestion_context_tokens() or 8192) // 2)
         pieces, current, size = [], [], 0
         for para in text.split("\n"):
             tokens = self.ingestion_count_tokens(para) + 1
@@ -481,22 +485,35 @@ class LLMService:
 
     async def summarize_transcript(self, filename: str, text: str) -> str:
         """Notes for a recording: a title, a flow summary, topic sections, next
-        steps by speaker, decisions. Markdown; this is what gets graphed."""
-        pieces = self._pieces(text)
-        source = pieces[0]
-        if len(pieces) > 1:
-            notes = [
-                (await self.ingestion_generate(
-                    f"{_TRANSCRIPT_PART}\n\nTRANSCRIPT PART {i + 1} OF {len(pieces)}:\n{p}",
-                    temperature=0.2,
-                )).strip()
-                for i, p in enumerate(pieces)
-            ]
-            source = "\n\n".join(notes)
-        out = await self.ingestion_generate(
-            f"{_TRANSCRIPT_NOTES}\n\nRECORDING: {filename}\n\nSOURCE:\n{source}", temperature=0.2
+        steps by speaker, decisions. Markdown; this is what gets graphed.
+
+        One call whenever the transcript fits the window with room for the
+        notes: splitting a lecture in two and merging the halves loses the
+        thread of it (a 157-minute class came back as notes on the small talk
+        after it). Only a transcript that cannot fit goes part by part.
+        """
+
+        async def _ask(system: str, user: str) -> str:
+            out, _ = await asyncio.to_thread(
+                self._chat,
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                temperature=0.2,
+                ingestion=True,
+            )
+            return (out or "").strip()
+
+        room = self.ingestion_context_tokens() - self.ingestion_count_tokens(_TRANSCRIPT_NOTES)
+        pieces = self._pieces(text, max(2000, room - _NOTES_OUTPUT_TOKENS))
+        if len(pieces) == 1:
+            return await _ask(_TRANSCRIPT_NOTES, f"RECORDING: {filename}\n\nTRANSCRIPT:\n{pieces[0]}")
+        notes = [
+            await _ask(_TRANSCRIPT_PART, f"PART {i} OF {len(pieces)}:\n{piece}")
+            for i, piece in enumerate(pieces, start=1)
+        ]
+        return await _ask(
+            _TRANSCRIPT_NOTES,
+            f"RECORDING: {filename}\n\nNOTES ON THE RECORDING, IN ORDER:\n" + "\n\n".join(notes),
         )
-        return out.strip()
 
     def _reason_step_sync(self, prompt: str, model: str | None = None) -> str:
         """Synchronous lightweight reasoning call for query rewrite."""
