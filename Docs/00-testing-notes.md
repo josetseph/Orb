@@ -14,6 +14,7 @@ If something here stops being true, fix or delete it; do not leave it to rot.
 | A downloaded embedding model that differs from the snapshot's. | `select-chat-model` resizes Qdrant collections to the embed model's dimensions. Vectors in a snapshot are only valid for the embed model that built them. | Every result file records `config.selection` (chat, embed, reranker ids). Keep embed and reranker fixed across runs you intend to compare. |
 | Snapshots restored anywhere but `<repo>/data`. | The KB registry stores absolute vault paths; a snapshot elsewhere points back at the original location. | `experiment.py` only ever restores into `<repo>/data`. |
 | A backgrounded process inherits `SIGINT = ignore`. | `kill -INT` on a runner that has not installed handlers does nothing; it keeps the Kuzu lock and the ports. | `run.py` installs handlers first thing. If a run will not start with "Could not set lock on file", look for a stray `run.py`. |
+| `POST /api/v1/setup/select-chat-model` on its own. | It rewrites the selection but keeps a file path only for a model whose id did not change, so switching to an already-downloaded model leaves no chat path and every AI route returns 503. | Use `/api/v1/setup/download-models`: it records paths and only downloads what is missing. `experiment.py` does this and checks `configured` before doing any work. |
 | Kuzu is single-writer. | Two backends on one data dir: the second fails at import. | One experiment at a time. |
 
 ## 2. How this branch is built
@@ -175,6 +176,14 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, plan launched.** `plan.sh` started detached at 09:45 (`Results/plan.log`): 20 HotpotQA questions,
+  199 notes, first notes at 155 to 180 s each, so the shared E4B index is due after roughly nine hours.
+  The first launch attempt failed within seconds and exposed three faults, all fixed in `6daf616`:
+  selecting a model without the download route drops its recorded file path and the server then reports no model
+  (the download route is the only one that records paths; it is a no-op for files already present);
+  an interrupted run let the plan cascade through every dependent run; and a blocked download thread kept the
+  server alive after SIGTERM. Stop the plan with `pkill -INT -f tests/benchmark/experiment.py`; re-running
+  `plan.sh` resumes, skipping finished runs and continuing an interrupted ingest.
 - **2026-09-21, variations and plan.** Added `CHAT_MAX_CONTEXT_DOCS`, `EMBED_MODEL_ID`, `RERANK_MODEL_ID`, `--download`,
   standalone `--communities`, snapshot embed guard, ingest resume marker, and `plan.sh`: one E4B index on 20 HotpotQA
   questions, then baseline, loop limits, small reranker, five answering models (synthesis replay then full loop),
