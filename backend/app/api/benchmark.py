@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import get_kb
 from app.core.config import settings
+from app.services import trace
 from app.services.ai_gate import require_ai
 from app.services.kb_registry import KBContext
 from app.services.local_models import load_manifest
@@ -60,6 +61,26 @@ async def benchmark_idle(kb: KBContext = Depends(get_kb)):
         or status["temporal_digests"]["running"]
     )
     return {"idle": not busy, "status": status}
+
+
+class RetrieveInput(BaseModel):
+    query: str = Field(min_length=1)
+
+
+@router.post("/api/v1/benchmark/retrieve")
+async def retrieve(body: RetrieveInput, kb: KBContext = Depends(get_kb)):
+    """One search-and-expand for one query, exactly as the research loop runs it, with no answering model.
+
+    Returns the trace: every reranked candidate with its score before any cut. Retrieval levers can be
+    judged against the gold notes for a whole query bank in the time one full question takes.
+    """
+    require_ai(kb)
+    kb.get_chat_workflow()  # builds the KB's lazily created services
+    events = trace.start()
+    started = time.perf_counter()
+    analysis = kb.llm.analyze_query(body.query)
+    await kb.retrieval_service.search_with_expansion(body.query, analysis.get("question_attribute") or None, set())
+    return {"trace": events, "seconds": round(time.perf_counter() - started, 2)}
 
 
 class SynthesizeInput(BaseModel):

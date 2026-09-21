@@ -81,32 +81,50 @@ def main() -> None:
     live = (knobs.get("RERANKER_TOP_K", 10), knobs.get("RERANKER_SCORE_THRESHOLD", 0.05), 6)
 
     # 1. where questions are lost
-    buckets = {"answered": [], "never surfaced": [], "surfaced, then cut": [], "retrieved, answered wrong": []}
+    retrieval_only = run.get("mode") == "retrieval"
+    buckets = ({"gold notes kept": [], "never surfaced": [], "surfaced, then cut": []} if retrieval_only
+               else {"answered": [], "never surfaced": [], "surfaced, then cut": [], "retrieved, answered wrong": []})
     for r in rows:
         gold = expected_note_names(cases[r["test_id"]])
         everything = simulate(r["trace"], 10_000, 0.0, 10_000, titles)
         kept = simulate(r["trace"], *live, titles)
-        if r["exact_match"] or r.get("answer_contains_expected"):
+        if not retrieval_only and (r["exact_match"] or r.get("answer_contains_expected")):
             buckets["answered"].append(r)
         elif len(match_titles(everything, gold)) < len(gold):
             buckets["never surfaced"].append(r)
         elif len(match_titles(kept, gold)) < len(gold):
             buckets["surfaced, then cut"].append(r)
         else:
-            buckets["retrieved, answered wrong"].append(r)
+            buckets["gold notes kept" if retrieval_only else "retrieved, answered wrong"].append(r)
     print(f"\n{len(rows)} questions with traces  |  recorded settings: top_k={live[0]} threshold={live[1]} cap={live[2]}\n")
     print("Where questions are lost")
     for name, items in buckets.items():
         print(f"  {name:28s} {len(items):4d}  {len(items) / len(rows):6.1%}")
     for name in ("never surfaced", "surfaced, then cut", "retrieved, answered wrong"):
-        for r in buckets[name][:3]:
-            print(f"    [{name}] {r['question'][:90]}  (expected {r['expected_answer']!r}, got {r['actual_answer'][:40]!r})")
+        for r in buckets.get(name, [])[:3]:
+            detail = f"query {r['query']!r}" if retrieval_only else f"expected {r['expected_answer']!r}, got {r['actual_answer'][:40]!r}"
+            print(f"    [{name}] {r['question'][:90]}  ({detail})")
 
-    steps = [sum(1 for e in r["trace"] if e.get("kind") == "step") for r in rows]
-    searches = [sum(1 for e in r["trace"] if e.get("kind") == "rerank" and e.get("stage") == "search") for r in rows]
-    exhausted = sum(1 for r in rows if not any(e.get("can_answer") for e in r["trace"] if e.get("kind") == "step"))
-    print(f"\nLoop: {sum(steps) / len(rows):.1f} model steps and {sum(searches) / len(rows):.1f} searches per question; "
-          f"{exhausted} of {len(rows)} ran out of iterations without answering")
+    invalid: dict[str, int] = {}
+    for row in rows:
+        for event in row["trace"]:
+            if event.get("kind") == "invalid_output":
+                invalid[event["stage"]] = invalid.get(event["stage"], 0) + 1
+    if invalid:
+        print(f"\nUnusable model replies: {sum(invalid.values())}  " + ", ".join(f"{k}: {v}" for k, v in sorted(invalid.items())))
+
+    calls = [e for row in rows for e in row["trace"] if e.get("kind") == "llm_call"]
+    if calls:
+        fresh = [e for e in calls if not e["cached"]]
+        print(f"Model calls: {len(calls)} ({len(calls) - len(fresh)} replayed from the cache), "
+              f"{sum(e['seconds'] for e in fresh):.0f} s generating")
+
+    if not retrieval_only:
+        steps = [sum(1 for e in row["trace"] if e.get("kind") == "step") for row in rows]
+        searches = [sum(1 for e in row["trace"] if e.get("kind") == "rerank" and e.get("stage") == "search") for row in rows]
+        exhausted = sum(1 for row in rows if not any(e.get("can_answer") for e in row["trace"] if e.get("kind") == "step"))
+        print(f"\nLoop: {sum(steps) / len(rows):.1f} model steps and {sum(searches) / len(rows):.1f} searches per question; "
+              f"{exhausted} of {len(rows)} ran out of iterations without answering")
 
     # 2. filter sweep
     gold_sets = [expected_note_names(cases[r["test_id"]]) for r in rows]

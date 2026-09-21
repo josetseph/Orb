@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     MAX_LOOP_ITERATIONS: int = 3
     # Benchmark runs: short extracted answers + the HotPotQA/MuSiQue reasoning rules.
     BENCHMARK_MODE: bool = False
+    # Experiment cache: every model call keyed by provider, model, exact messages and generation
+    # parameters; an unchanged call is replayed from disk. Unset = off, which is the app's behaviour.
+    LLM_CALL_CACHE_DIR: str | None = None
     # How many times an extraction call may be asked again after an unusable reply.
     # A reply is never repaired; every unusable one is counted either way.
     EXTRACTION_ATTEMPTS: int = 1

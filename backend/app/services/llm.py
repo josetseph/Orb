@@ -3,11 +3,15 @@
 # pylint: disable=wrong-import-order,import-outside-toplevel
 import asyncio
 import functools
+import hashlib
+import json
+import time
+from pathlib import Path
 from typing import Optional
 
 from app.core.config import settings
 from app.core.log import get_logger
-from app.services import model_output
+from app.services import model_output, trace
 from app.services.credentials import (
     InvalidEndpointError,
     credentials,
@@ -193,7 +197,40 @@ class LLMService:
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
-    def _chat(  # pylint: disable=too-many-locals,too-many-branches
+    def _chat(self, messages: list[dict], **kwargs) -> tuple[str, dict]:
+        """``_chat_provider`` behind the experiment cache (``LLM_CALL_CACHE_DIR``; off when unset).
+
+        The key is everything that decides the reply: provider, endpoint, model, the exact
+        messages and the generation parameters. Change a prompt, a model or a note and the key
+        changes with it, so there are no versions to maintain, and a stage whose inputs did not
+        change costs nothing to run again. The reply is stored as the model wrote it.
+        """
+        started = time.perf_counter()
+        ingestion = kwargs.get("ingestion", False)
+        model = kwargs.get("model") or (self.get_ingestion_model() if ingestion else self.get_chat_model())
+        path = None
+        if settings.LLM_CALL_CACHE_DIR:
+            key = hashlib.sha256(json.dumps([
+                self.ingestion_provider if ingestion else self.provider, self.get_base_url(), model, messages,
+                kwargs.get("temperature"), kwargs.get("max_tokens"), kwargs.get("json_mode", False),
+                settings.LLAMA_REPEAT_PENALTY, settings.LLAMA_MAX_TOKENS,
+            ], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            path = Path(settings.LLM_CALL_CACHE_DIR) / key[:2] / f"{key}.json"
+            if path.is_file():
+                hit = json.loads(path.read_text(encoding="utf-8"))
+                trace.record("llm_call", model=model, ingestion=ingestion, cached=True, seconds=0.0)
+                return hit["text"], hit["meta"]
+        text, meta = self._chat_provider(messages, **kwargs)
+        trace.record("llm_call", model=model, ingestion=ingestion, cached=False,
+                     seconds=round(time.perf_counter() - started, 2))
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"model": model, "text": text, "meta": meta}, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(path)
+        return text, meta
+
+    def _chat_provider(  # pylint: disable=too-many-locals,too-many-branches
         self,
         messages: list[dict],
         *,

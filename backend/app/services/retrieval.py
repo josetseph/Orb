@@ -1494,6 +1494,45 @@ class RetrievalService:
 
         return candidates
 
+    async def search_with_expansion(
+        self,
+        query: str,
+        question_attribute: str | None,
+        surfaced_names: set[str],
+        progress: Callable[[str, str | None], None] = lambda *_: None,
+    ) -> tuple[list[dict], list[dict]]:
+        """One retrieval for one query: ranked search results, then their reranked graph neighbours.
+
+        The research loop calls this once per iteration and the benchmark's retrieval evaluator
+        calls it directly, so both run exactly the same code. ``surfaced_names`` is updated in place.
+        """
+
+        def _names(docs: list[dict]) -> list[str]:
+            return [(d.get("original_obj") or {}).get("name") or d.get("name", "") for d in docs]
+
+        selected = await self.hybrid_search(query)
+        logger.info(f"  [IterLoop] hybrid_search returned {len(selected)} ranked candidates")
+        surfaced_names.update(n for n in _names(selected) if n)
+
+        expanded: list[dict] = []
+        try:
+            progress("Expanding graph neighbors", None)
+            expanded = await self._expand_relevant_neighbors(selected, query, surfaced_names)
+            logger.info(f"  [IterLoop] Graph expansion: {len(expanded)} neighbors")
+            if expanded:
+                progress("Reranking graph neighbors", settings.MODEL_RERANKER_LOCAL)
+                expanded = await self._apply_reranker_logging(
+                    query,
+                    expanded,
+                    top_n=settings.RERANKER_TOP_K,
+                    question_attribute=question_attribute,
+                    stage="expansion",
+                )
+                surfaced_names.update(n for n in _names(expanded) if n)
+        except Exception as _exp_err:  # pylint: disable=broad-exception-caught
+            logger.warning(f"  [IterLoop] Graph expansion failed: {_exp_err}")
+        return selected, expanded
+
     async def retrieve_with_iterative_loop(  # pylint: disable=too-many-nested-blocks,too-many-locals,too-many-branches,too-many-statements,unused-argument
         self,
         query: str,
@@ -1567,46 +1606,9 @@ class RetrievalService:
                     f"Searching knowledge base ({iteration + 1}/{settings.MAX_LOOP_ITERATIONS})",
                     "Embeddings + Reranker",
                 )
-                selected_docs = await self.hybrid_search(current_query)
-                logger.info(
-                    f"  [IterLoop] hybrid_search returned {len(selected_docs)} ranked candidates"
+                selected_docs, expanded = await self.search_with_expansion(
+                    current_query, _loop_question_attr, surfaced_names, _progress
                 )
-
-                for d in selected_docs:
-                    name = (d.get("original_obj") or {}).get("name") or d.get(
-                        "name", ""
-                    )
-                    if name:
-                        surfaced_names.add(name)
-
-                # Graph expansion
-                expanded: list[dict] = []
-                try:
-                    _progress("Expanding graph neighbors", None)
-                    expanded = await self._expand_relevant_neighbors(
-                        selected_docs, current_query, surfaced_names
-                    )
-                    logger.info(
-                        f"  [IterLoop] Graph expansion: {len(expanded)} neighbors"
-                    )
-                    if expanded:
-                        _progress("Reranking graph neighbors", settings.MODEL_RERANKER_LOCAL)
-                        expanded = await self._apply_reranker_logging(
-                            current_query,
-                            expanded,
-                            top_n=settings.RERANKER_TOP_K,
-                            question_attribute=_loop_question_attr,
-                            stage="expansion",
-                        )
-                        for d in expanded:
-                            name = (d.get("original_obj") or {}).get("name") or d.get(
-                                "name", ""
-                            )
-                            if name:
-                                surfaced_names.add(name)
-                except Exception as _exp_err:  # pylint: disable=broad-exception-caught
-                    logger.warning(f"  [IterLoop] Graph expansion failed: {_exp_err}")
-
                 docs = selected_docs + expanded
 
                 # Accumulate unique docs into all_docs. A graph_expansion doc
