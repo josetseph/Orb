@@ -955,6 +955,11 @@ async def summarization_node(state: IngestionState):
 
 async def run_ingestion_agent(state: IngestionState) -> IngestionState:
     """Run the three stages in order, stopping at the first that reports an error."""
+    # The attachment stage that used to run first also seeded these two. Without it,
+    # extraction would read a missing key, or worse, run on the empty initial content.
+    state.setdefault("logs", [])
+    if not state.get("content"):
+        state["content"] = (state["input"].content or "").strip()
     for node in (extraction_node, storage_node, summarization_node):
         state.update(await node(state))
         if state.get("errors"):
