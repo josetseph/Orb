@@ -53,6 +53,7 @@ python tests/benchmark/fetch_notes.py                 # once: materialise the no
 # 1. Ingest once per ingestion variant and keep the index (the slow part)
 python tests/benchmark/experiment.py ingest-e4b --dataset hotpotqa --questions 20 \
     --fresh --ingest --no-eval --snapshot hotpot20-e4b --ingestion-model <id>
+#    add --communities to also build community summaries (on request only since main 52041d8)
 
 # 2. Try answering models and retrieval knobs against that same index
 python tests/benchmark/experiment.py base   --dataset hotpotqa --questions 20 --restore hotpot20-e4b
