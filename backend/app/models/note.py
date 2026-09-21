@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Index, String
+from sqlalchemy import JSON, Boolean, Column, DateTime, Index, String
 
 from app.core.database import Base
 
@@ -35,6 +35,9 @@ class Note(Base):  # pylint: disable=too-few-public-methods
     )
     processed = Column(Boolean, default=False)
     failed = Column(Boolean, default=False)
+    # {attachment key: "graph" | "summary" | "index"} — the user's answer for
+    # attachments over LARGE_ATTACHMENT_TOKENS (see ingestion_agent).
+    attachment_modes = Column(JSON, nullable=True)
     processing_stage = Column(String, nullable=True)
     processing_model = Column(String, nullable=True)
     kb_id = Column(String, nullable=False, default="default", index=True)

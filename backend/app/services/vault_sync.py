@@ -81,14 +81,18 @@ def _normalize_vault_targets(text: str) -> str:
     return _BARE_DOUBLED_RE.sub(r"\1attachments/", _VAULT_TARGET_RE.sub(_fix, text))
 
 
+_ATTACHMENT_LINK_RE = re.compile(r"\]\((attachments/[^)\s]*(?:\([^)]*\)[^)\s]*)*)\)")
+
+
 def migrate_vault_files(vault: Path) -> int:
-    """One-time in-place sweep of legacy vault shapes; gated by ``.orb/migrated-v3``.
+    """One-time in-place sweep of legacy vault shapes; gated by ``.orb/migrated-v4``.
 
     v2 added the relative-link rewrite, v3 moves stray non-markdown files under
-    ``attachments/``; every step is idempotent, so an older vault simply runs
-    the whole sweep once more.
+    ``attachments/``, v4 re-points links whose file was moved inside
+    ``attachments/`` by an older build that failed to rewrite them. Every step
+    is idempotent, so an older vault simply runs the whole sweep once more.
     """
-    marker = vault / ".orb" / "migrated-v3"
+    marker = vault / ".orb" / "migrated-v4"
     if marker.exists():
         return 0
     from app.services.vault_ops import rewrite_refs_in_text, unique_rel_path
@@ -103,6 +107,13 @@ def migrate_vault_files(vault: Path) -> int:
         path.rename(vault / new_rel)
         moved.append((rel, new_rel))
 
+    # Upload names end in a random 8-hex suffix, so a filename identifies one
+    # attachment wherever it sits: a link to a missing path is re-pointed when
+    # exactly one file under attachments/ carries that name.
+    by_name: dict[str, list[str]] = {}
+    for _path, rel in _iter_rel(vault, lambda p, r: p.is_file() and r.startswith("attachments/")):
+        by_name.setdefault(rel.rsplit("/", 1)[-1], []).append(rel)
+
     rewritten = 0
     for rel in iter_vault_md_files(vault):
         path = vault / rel
@@ -113,13 +124,18 @@ def migrate_vault_files(vault: Path) -> int:
         fixed = wrap_legacy_enrichment_blocks(_normalize_vault_targets(text))
         for old_rel, new_rel in moved:
             fixed = rewrite_refs_in_text(fixed, old_rel, new_rel)
+        for target in set(_ATTACHMENT_LINK_RE.findall(fixed)):
+            old_rel = unquote(target)
+            homes = by_name.get(old_rel.rsplit("/", 1)[-1], [])
+            if len(homes) == 1 and homes[0] != old_rel and not (vault / old_rel).exists():
+                fixed = rewrite_refs_in_text(fixed, old_rel, homes[0])
         if fixed != text:
             mark_self_write(vault, rel)
             path.write_text(fixed, encoding="utf-8")
             rewritten += 1
     marker.parent.mkdir(exist_ok=True)
     marker.touch()
-    logger.info("Vault migration v3 (%s): %d files moved, %d files rewritten", vault, len(moved), rewritten)
+    logger.info("Vault migration v4 (%s): %d files moved, %d files rewritten", vault, len(moved), rewritten)
     return rewritten
 
 

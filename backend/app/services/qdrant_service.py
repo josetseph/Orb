@@ -3,7 +3,6 @@
 # pylint: disable=wrong-import-order
 from __future__ import annotations
 
-import os
 import re
 import time
 import uuid
@@ -28,8 +27,8 @@ logger = get_logger("QdrantService")
 
 # Points per upsert request. A 2560-dim vector is ~27 KB of REST JSON, so this
 # keeps a request near 3 MB — well inside Qdrant's limit, with headroom for
-# larger embedding models. Override with ORB_QDRANT_UPSERT_BATCH.
-_UPSERT_BATCH_SIZE = max(1, int(os.environ.get("ORB_QDRANT_UPSERT_BATCH", "128")))
+# larger embedding models.
+_UPSERT_BATCH_SIZE = 128
 
 
 class QdrantService:

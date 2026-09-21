@@ -97,6 +97,8 @@ def main() -> None:
     ap.add_argument("--fresh", action="store_true", help="start from an empty data dir")
     ap.add_argument("--ingest", action="store_true", help="ingest the dataset's notes before evaluating")
     ap.add_argument("--no-eval", action="store_true", help="ingest/snapshot only")
+    ap.add_argument("--communities", action="store_true",
+                    help="after ingesting, rebuild community summaries (on-demand in the app; one model call per cluster)")
     ap.add_argument("--snapshot", metavar="NAME", help="save the data dir under this name when done")
     ap.add_argument("--synthesis-from", metavar="RESULTS.json", help="replay answering only, over that run's evidence")
     ap.add_argument("--provider", help="LLM provider for this run: local | gemini | openai | anthropic | openai_compat")
@@ -121,7 +123,7 @@ def main() -> None:
     env = {**os.environ, "BENCHMARK_MODE": "true", **overrides,
            "ORB_DATA_DIR": str(DATA), "ORB_BENCH_PROGRESS": str(DATA / "prepare_progress.json")}
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
-              "ingest": args.ingest, "overrides": overrides, "provider": args.provider,
+              "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,
               "chat_model": args.chat_model, "ingestion_model": args.ingestion_model, "started": datetime.now().isoformat(timespec="seconds"),
               "commit": subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()}
 
@@ -148,8 +150,14 @@ def main() -> None:
                 cmd += ["--questions", str(args.questions)]
             t0 = time.monotonic()
             run(cmd, env)
-            wait_until("background graph jobs", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
+            wait_until("ingestion to drain", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
             record["ingest_seconds"] = round(time.monotonic() - t0)
+            if args.communities:
+                t0 = time.monotonic()
+                urlopen(Request(BASE_URL + "/api/v1/admin/rebuild-communities", method="POST"), timeout=60).read()  # noqa: S310
+                time.sleep(10)  # the rebuild is a background task; give its running flag time to rise
+                wait_until("the community rebuild", lambda: get_json("/api/v1/benchmark/idle")["idle"], 14400, server)
+                record["communities_seconds"] = round(time.monotonic() - t0)
 
         if args.synthesis_from:
             run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from,

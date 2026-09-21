@@ -78,19 +78,11 @@ def build_kb_llm_service(
     )
 
 
-def _system_model_for(provider: str, *, ingestion: bool) -> str | None:
+def _system_model_for(provider: str) -> str | None:
     """What the global Settings would use for ``provider`` (no service construction)."""
     is_global = provider == (settings.LLM_PROVIDER or "").lower().strip()
-    if ingestion and is_global and settings.INGESTION_MODEL:
-        return settings.INGESTION_MODEL
     if is_global and settings.CHAT_MODEL:
         return settings.CHAT_MODEL
-    if provider == "local" and ingestion:
-        # INGESTION_LLM_MODEL defaults to the "local-chat" placeholder, which
-        # resolves to the Setup selection at runtime — show that selection.
-        local_ingest = settings.INGESTION_LLM_MODEL
-        if local_ingest and local_ingest != "local-chat":
-            return local_ingest
     return {
         "local": settings.LLM_MODEL,
         "openai": settings.OPENAI_MODEL,
@@ -103,11 +95,9 @@ def _system_model_for(provider: str, *, ingestion: bool) -> str | None:
 def effective_llm_config(meta: dict) -> dict:
     """Resolved provider/model for a KB row: overrides layered over system Settings."""
     provider = (_clean_override(meta.get("llm_provider")) or settings.LLM_PROVIDER or "local").lower()
-    model = _clean_override(meta.get("llm_model")) or _system_model_for(provider, ingestion=False)
+    model = _clean_override(meta.get("llm_model")) or _system_model_for(provider)
     ingestion_model = (
         _clean_override(meta.get("llm_ingestion_model"))
-        or _clean_override(meta.get("llm_model"))
-        or _system_model_for(provider, ingestion=True)
         or model
     )
     base_url = _clean_override(meta.get("llm_base_url")) or (

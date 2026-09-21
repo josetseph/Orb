@@ -20,9 +20,16 @@ _lock = threading.Lock()
 _SETTING_FOR = {
     "provider": "LLM_PROVIDER",
     "model": "CHAT_MODEL",
-    "ingestion_model": "INGESTION_MODEL",
     "base_url": "LLM_BASE_URL",
 }
+# Local runtime knobs: key == lower-cased Settings attribute.
+LOCAL_RUNTIME_KEYS: tuple[str, ...] = (
+    "llama_n_ctx", "llama_max_tokens", "llama_swa_full", "llama_flash_attn",
+    "llama_backend", "llama_n_gpu_layers", "llama_n_threads", "llama_repeat_penalty",
+    "llama_prompt_reserve", "embed_n_ctx", "rerank_n_ctx", "model_idle_seconds",
+    "extraction_chunk_tokens", "large_attachment_tokens",
+)
+_SETTING_FOR.update({k: k.upper() for k in LOCAL_RUNTIME_KEYS})
 MUTABLE_KEYS: frozenset[str] = frozenset(_SETTING_FOR)
 
 
@@ -63,5 +70,6 @@ def save(overrides: dict) -> None:
 def apply_to_settings(overrides: dict) -> None:
     """Mutate the global ``settings`` object with the given overrides."""
     for key, attr in _SETTING_FOR.items():
-        if overrides.get(key) is not None:
+        # A stored null is meaningful for the local-runtime keys ("automatic").
+        if key in overrides and (overrides[key] is not None or key in LOCAL_RUNTIME_KEYS):
             setattr(settings, attr, overrides[key])

@@ -47,14 +47,11 @@ async def benchmark_config(kb: KBContext = Depends(get_kb)):
 
 @router.get("/api/v1/benchmark/idle")
 async def benchmark_idle(kb: KBContext = Depends(get_kb)):
-    """True once ingestion and its background graph jobs have drained: safe to evaluate or snapshot."""
+    """True once ingestion and any requested graph rebuild have drained: safe to evaluate or snapshot."""
     status = kb.get_ingestion_workflow().get_maintenance_status()
-    community = status["community_detection"]
     busy = (
         status["ingestion"]["active"]
-        or community["running"]
-        or community["needed"]
-        or community["timer_armed"]
+        or status["community_detection"]["running"]
         or status["temporal_digests"]["running"]
     )
     return {"idle": not busy, "status": status}

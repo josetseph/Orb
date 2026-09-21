@@ -289,12 +289,6 @@ def get_option(model_id: str) -> ModelOption | None:
 
 
 def total_ram_gb() -> float:
-    forced = os.environ.get("ORB_RAM_GB")
-    if forced:
-        try:
-            return float(forced)
-        except ValueError:
-            pass
     try:
         if sys.platform == "win32":
             import ctypes
@@ -313,31 +307,28 @@ def total_ram_gb() -> float:
 
 
 def detect_accel_backend() -> dict:
-    """Lightweight accel detect (avoids importing local_models/settings)."""
-    forced = (os.environ.get("ORB_LLAMA_BACKEND") or "auto").lower().strip()
-    n_gpu = -1
-    env_layers = os.environ.get("ORB_LLAMA_N_GPU_LAYERS")
-    if env_layers not in (None, ""):
-        try:
-            n_gpu = int(env_layers)
-        except ValueError:
-            pass
+    """Lightweight accel detect (avoids importing local_models)."""
+    from app.core.config import settings
+
+    forced = (settings.LLAMA_BACKEND or "auto").lower().strip()
+    env_layers = settings.LLAMA_N_GPU_LAYERS
+    n_gpu = -1 if env_layers is None else int(env_layers)
     if forced in ("cpu", "metal", "cuda", "vulkan"):
         return {
             "backend": forced,
             "n_gpu_layers": 0 if forced == "cpu" else n_gpu if n_gpu != -1 else -1,
-            "reason": f"forced via ORB_LLAMA_BACKEND={forced}",
+            "reason": f"forced in Settings: {forced}",
         }
     if sys.platform == "darwin":
         return {
             "backend": "metal",
-            "n_gpu_layers": n_gpu if env_layers else -1,
+            "n_gpu_layers": n_gpu,
             "reason": f"macOS {platform.machine()}: prefer Metal",
         }
     if shutil.which("nvidia-smi"):
         return {
             "backend": "cuda",
-            "n_gpu_layers": n_gpu if env_layers else -1,
+            "n_gpu_layers": n_gpu,
             "reason": "NVIDIA GPU detected",
         }
     return {"backend": "cpu", "n_gpu_layers": 0, "reason": "CPU fallback"}

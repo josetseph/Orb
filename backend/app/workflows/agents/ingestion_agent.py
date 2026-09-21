@@ -47,11 +47,37 @@ def _require_workflow(state: "IngestionState"):
 # comments render as nothing, so the note reads as if they were not there.
 EXTRACT_OPEN = '<!-- orb:extract src="{src}" -->'
 EXTRACT_CLOSE = "<!-- /orb:extract -->"
-EXTRACT_BLOCK_RE = re.compile(
-    r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->",
-    re.S,
-)
-_EXTRACT_SRC_RE = re.compile(r'<!-- orb:extract src="([^"]*)" -->')
+# A block may carry how its attachment is ingested. No mode = graphed like the
+# rest of the note. ``pending`` = over LARGE_ATTACHMENT_TOKENS and waiting for
+# the user; ``index`` = searchable passages, no entities; ``summary`` = the
+# body is a model-written summary of the attachment, which is what gets graphed.
+_OPEN = r'<!-- orb:extract src="([^"]*)"(?: mode="([a-z]+)")? -->'
+EXTRACT_BLOCK_RE = re.compile(r"\n*" + _OPEN + r".*?<!-- /orb:extract -->", re.S)
+_EXTRACT_SRC_RE = re.compile(_OPEN)
+_BLOCK_PARTS_RE = re.compile(_OPEN + r"\n?(.*?)\n?<!-- /orb:extract -->", re.S)
+UNGRAPHED_MODES = ("pending", "index")
+ATTACHMENT_MODES = ("graph", "summary", "index")
+
+
+def extract_open(src: str, mode: str = "") -> str:
+    return f'<!-- orb:extract src="{src}"' + (f' mode="{mode}"' if mode else "") + " -->"
+
+
+def extraction_blocks(content: str) -> list[dict[str, str]]:
+    """Every delimited block as ``{src, key, mode, body}``."""
+    return [
+        {"src": src, "key": attachment_key(src), "mode": mode or "", "body": body}
+        for src, mode, body in _BLOCK_PARTS_RE.findall(content or "")
+    ]
+
+
+def graph_text(content: str) -> str:
+    """The note as entity extraction should see it: without the blocks that
+    are waiting for a decision or are indexed for search only."""
+    return EXTRACT_BLOCK_RE.sub(
+        lambda m: "" if m.group(2) in UNGRAPHED_MODES else m.group(0), content or ""
+    ).strip()
+
 
 # Pre-marker format: blocks were appended with no closing delimiter. Only
 # ``wrap_legacy_enrichment_blocks`` reads this, to give such blocks markers.
@@ -80,11 +106,6 @@ def attachment_key(url: str) -> str:
 
     raw = (url or "").strip().split("?", 1)[0]
     return unquote(re.sub(r"^/vault-files/[^/]+/", "", raw)).lower()
-
-
-def extraction_srcs(content: str) -> set[str]:
-    """Keys of every attachment that already has an extraction block."""
-    return {attachment_key(s) for s in _EXTRACT_SRC_RE.findall(content or "")}
 
 
 def _block_key(block: str) -> str:
@@ -124,33 +145,6 @@ def wrap_legacy_enrichment_blocks(content: str) -> str:
     out.append(_wrap_run(content[last:]))
     return "".join(out)
 
-
-def remove_extraction(content: str, src_url: str) -> str:
-    """Drop the extraction block(s) for one attachment, leaving the rest as is."""
-    key = attachment_key(src_url)
-    return EXTRACT_BLOCK_RE.sub(
-        lambda m: "" if _block_key(m.group(0)) == key else m.group(0),
-        content or "",
-    )
-
-
-def place_extraction(content: str, src_url: str, section: str) -> str:
-    """Put one extraction block directly beneath the attachment it came from.
-
-    Falls back to appending when the link cannot be located — a note edited
-    mid-ingest, or an attachment reached by a different spelling of its URL.
-    """
-    body = section.strip("\n")
-    if not body.strip():
-        return content
-    block = f"\n\n{EXTRACT_OPEN.format(src=src_url)}\n{body}\n{EXTRACT_CLOSE}"
-    idx = content.find(src_url) if src_url else -1
-    if idx == -1:
-        return content.rstrip() + block
-    line_end = content.find("\n", idx)
-    if line_end == -1:
-        return content.rstrip() + block
-    return content[:line_end] + block + content[line_end:]
 
 def _build_extraction_prompt(extraction_content: str) -> str:
     """Knowledge Architect prompt for one note (or one chunk of a long note)."""
@@ -739,7 +733,8 @@ async def extraction_node(
     # Prepend the user-provided title so the LLM sees it as part of the source
     # text. Auto-generated titles are not included — they don't originate from
     # the note itself and would pollute the extraction.
-    extraction_content = state["content"]
+    # Parked and index-only attachments are not graphed.
+    extraction_content = graph_text(state["content"])
     if state["input"].title:
         extraction_content = f"# {state['input'].title}\n\n{extraction_content}"
 
@@ -886,7 +881,7 @@ async def storage_node(state: IngestionState):
         title = await asyncio.to_thread(
             _wf._write_ontology,
             note_id,
-            state["content"],
+            graph_text(state["content"]),
             state["extraction"],
             created_at,
             custom_title,  # Pass custom title if provided
@@ -928,10 +923,20 @@ async def summarization_node(state: IngestionState):
     try:
         await _wf._update_neighborhoods(
             state["extraction"].nodes,
-            state["content"],
+            graph_text(state["content"]),
             note_created_at=state.get("created_at"),
             note_id=state.get("note_id"),
         )
+        # Index-only attachments: searchable passages under one document node.
+        # After the context refresh, which clears everything this note indexed.
+        documents = [b for b in extraction_blocks(state["content"]) if b["mode"] == "index"]
+        if documents and state.get("note_id"):
+            await _wf._update_note_processing_status(
+                state["note_id"], "Indexing documents for search", None
+            )
+            await _wf._index_documents(
+                state["note_id"], documents, state.get("created_at")
+            )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"[Agent] Context indexing failed: {e}", exc_info=True)
         logs.append(

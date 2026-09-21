@@ -18,7 +18,6 @@ staying conservative forever.
 from __future__ import annotations
 
 import json
-import os
 import threading
 from pathlib import Path
 
@@ -53,14 +52,11 @@ def _store_path() -> Path:
 
 
 def _pinned() -> int | None:
-    """An explicit ORB_EXTRACTION_CHUNK_TOKENS disables learning."""
-    raw = (os.environ.get("ORB_EXTRACTION_CHUNK_TOKENS") or "").strip()
-    if not raw:
-        return None
-    try:
-        return max(FLOOR, int(raw))
-    except ValueError:
-        return None
+    """An explicit chunk size in Settings disables learning."""
+    from app.core.config import settings
+
+    pinned = settings.EXTRACTION_CHUNK_TOKENS
+    return max(FLOOR, int(pinned)) if pinned else None
 
 
 def _load() -> dict:

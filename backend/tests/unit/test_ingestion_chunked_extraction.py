@@ -9,6 +9,8 @@ import json
 
 import pytest
 
+from app.core import config
+
 # The package re-exports the compiled graph as ``ingestion_agent``, shadowing the
 # module attribute — load the module itself.
 agent = importlib.import_module("app.workflows.agents.ingestion_agent")
@@ -79,7 +81,7 @@ async def test_long_note_is_chunked_on_paragraphs_and_merged(monkeypatch):
     routes an oversized note to task-split instead. Chunking remains the
     fallback (and the context pass), so its contract still has to hold.
     """
-    monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "400")
+    monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", 400)
     paras = ["\n".join(f"p{p}w{w}" for w in range(50)) for p in range(20)]  # 1000 words
     note = "\n\n".join(paras)
     llm = _StubLLM(truncate_over=10_000)
@@ -94,7 +96,7 @@ async def test_long_note_is_chunked_on_paragraphs_and_merged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_truncated_chunk_is_split_and_reextracted(monkeypatch):
-    monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "4000")
+    monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", 4000)
     # 600 words in ONE paragraph: fits the chunk budget, but the stub model
     # truncates anything over 450 words — the agent must halve and retry.
     note = " ".join(f"w{i}" for i in range(600))

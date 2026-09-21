@@ -9,13 +9,15 @@ import json
 
 import pytest
 
+from app.core import config
+
 from app.services import extraction_budget as eb
 
 
 @pytest.fixture(autouse=True)
 def store(tmp_path, monkeypatch):
     monkeypatch.setattr(eb, "resolve_data_dir", lambda: tmp_path)
-    monkeypatch.delenv("ORB_EXTRACTION_CHUNK_TOKENS", raising=False)
+    monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", None)
     return tmp_path
 
 
@@ -96,18 +98,14 @@ class TestConvergence:
 
 class TestExplicitOverrideWins:
     def test_env_pins_the_value(self, monkeypatch):
-        monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "12000")
+        monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", 12000)
         assert eb.learned_budget("m", 4000) == 12000
 
     def test_env_also_disables_learning(self, monkeypatch, store):
-        monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "12000")
+        monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", 12000)
         eb.record_truncation("m", 12000)
         assert eb.learned_budget("m", 4000) == 12000
         assert not (store / "extraction_budgets.json").exists()
-
-    def test_a_bad_value_is_ignored(self, monkeypatch):
-        monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "not-a-number")
-        assert eb.learned_budget("m", 4000) == 4000
 
 
 class TestPersistence:

@@ -1,6 +1,7 @@
 """Unit tests for paragraph-bounded extraction chunking and result merging."""
 
 from app.schemas.extraction import ExtractedRelationship, Extraction, Node
+from app.core import config
 from app.workflows.extraction_chunking import (
     MIN_SPLIT_TOKENS,
     chunk_token_budget,
@@ -52,22 +53,22 @@ class TestSplitForExtraction:
 
 class TestChunkTokenBudget:
     def test_budget_fits_prompt_and_expected_output(self, monkeypatch):
-        monkeypatch.delenv("ORB_EXTRACTION_CHUNK_TOKENS", raising=False)
+        monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", None)
         budget = chunk_token_budget(16384, 1900)
         # input + ~2.5× output must fit under the window
         assert budget * 3.5 <= 16384 - 1900
         assert budget >= MIN_SPLIT_TOKENS
 
     def test_large_context_is_capped(self, monkeypatch):
-        monkeypatch.delenv("ORB_EXTRACTION_CHUNK_TOKENS", raising=False)
+        monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", None)
         assert chunk_token_budget(128000, 2000) == 4000
 
     def test_env_override_raises_or_lowers_cap(self, monkeypatch):
-        monkeypatch.setenv("ORB_EXTRACTION_CHUNK_TOKENS", "1500")
+        monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", 1500)
         assert chunk_token_budget(128000, 2000) == 1500
 
     def test_never_below_min_split(self, monkeypatch):
-        monkeypatch.delenv("ORB_EXTRACTION_CHUNK_TOKENS", raising=False)
+        monkeypatch.setattr(config.settings, "EXTRACTION_CHUNK_TOKENS", None)
         assert chunk_token_budget(1000, 2000) == MIN_SPLIT_TOKENS
 
 

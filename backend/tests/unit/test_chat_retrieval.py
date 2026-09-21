@@ -70,3 +70,19 @@ class TestIterativeLoop:
     def test_runtime_error_propagates(self, svc):
         with pytest.raises(RuntimeError, match="context window"):
             _run_loop(svc, [], RuntimeError("Prompt is ~9k tokens; context window is 8k"))
+
+
+
+def test_vector_evidence_survives_a_keyword_hit_on_the_same_node():
+    from app.services.retrieval import fold_vector_hits
+
+    keyword_hit = {"name": "Handbook.docx"}  # a keyword hit carries no text
+    found = {"handbook.docx"}
+    fresh = fold_vector_hits(
+        [keyword_hit],
+        [{"name": "handbook.docx", "summary": "re-applied every 14 months"}, {"name": "tema harbour", "summary": "a port"}],
+        found,
+    )
+    assert keyword_hit["summary"] == "re-applied every 14 months"
+    assert [n["name"] for n in fresh] == ["tema harbour"] and fresh[0]["_source"] == "vector"
+    assert found == {"handbook.docx", "tema harbour"}

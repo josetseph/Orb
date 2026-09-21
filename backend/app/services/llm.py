@@ -105,11 +105,7 @@ class LLMService:
         """Build the chat clients for the main provider and the ingestion provider."""
         self.chat_client, self.gemini_client, self.anthropic_client = self._build_clients(self.provider)
 
-        raw = (self._ingestion_provider_override or settings.INGESTION_PROVIDER or "").strip().lower()
-        if raw in ("ollama", "lm_studio"):
-            logger.warning("INGESTION_PROVIDER=%s is deprecated; using in-process local", raw)
-            raw = "local"
-        self.ingestion_provider = raw or self.provider
+        self.ingestion_provider = self._ingestion_provider_override or self.provider
         if self.ingestion_provider == self.provider:
             # Alias main clients — no extra connections needed.
             self.i_chat_client, self.i_gemini_client, self.i_anthropic_client = (
@@ -865,29 +861,12 @@ class LLMService:
         return provider_model_map.get(self.provider, settings.LLM_MODEL)
 
     def get_ingestion_model(self) -> str | None:
-        """Return the configured ingestion model for the active ingestion provider.
+        """The model ingestion runs on: the model selected for chat.
 
-        Per-instance override wins (ingestion model, else the instance's chat
-        model), then INGESTION_MODEL, then the provider-specific keys.
+        One selection drives both. The only exception is a workspace that ticked
+        "use a different model for note ingestion" (the per-instance override).
         """
-        override = getattr(self, "_ingestion_model_override", None) or getattr(
-            self, "_chat_model_override", None
-        )
-        if override:
-            return override
-        if settings.INGESTION_MODEL:
-            return settings.INGESTION_MODEL
-        p = getattr(self, "ingestion_provider", self.provider)
-        _local = settings.INGESTION_LLM_MODEL or settings.LLM_MODEL or None
-        ingestion_model_map = {
-            "local": _local,
-            "openai_compat": settings.LLM_MODEL or None,
-            "gemini": settings.INGESTION_GEMINI_MODEL or settings.GEMINI_MODEL or None,
-            "openai": settings.OPENAI_MODEL or None,
-            "anthropic": settings.ANTHROPIC_MODEL or None,
-            "huggingface": settings.HUGGINGFACE_MODEL or None,
-        }
-        return ingestion_model_map.get(p)
+        return getattr(self, "_ingestion_model_override", None) or self.get_chat_model()
 
     # ── Ingestion-specific generation ─────────────────────────────────────────
 

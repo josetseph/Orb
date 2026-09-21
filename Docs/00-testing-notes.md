@@ -19,7 +19,11 @@ If something here stops being true, fix or delete it; do not leave it to rot.
 ## 2. How this branch is built
 
 `backend/` is `main`'s backend with product-only code cut out. It is not a fork that merges.
-To resync: take `main`'s `backend/` wholesale, re-cut, restore the branch-only files.
+To resync after a small gap, apply main's changes as a three-way patch:
+`git diff <last-sync> origin/main -- backend > p.patch && git apply --3way --exclude=<files cut here> p.patch`.
+Conflicts only appear where `main` touched code this branch removed; keep the branch side, then cut whatever
+attachment, finance or desktop code the patch added cleanly elsewhere (lint for unreferenced functions, drop tests
+for cut routers). After a large gap, take `main`'s `backend/` wholesale and re-cut. Last synced to `main` at `3bd480f`.
 
 - **Branch-only files:** `backend/run.py`, `backend/conftest.py`, `backend/tests/benchmark/`,
   `backend/app/api/benchmark.py`, `backend/app/services/trace.py`, `backend/.env.example`, `Results/`, this doc.
@@ -53,6 +57,9 @@ Retrieval and answering (`services/retrieval.py`, `workflows/chat.py`, `services
 - Each step is one model call returning JSON (`reasoning`, `finding`, `answer`, `next_query`).
   `BENCHMARK_MODE=true` swaps in the HotPotQA/MuSiQue reasoning and output rules and asks for the bare fact.
   Without it answers are full sentences and exact match collapses.
+- Local runtime knobs are Settings fields now, so `--set` reaches them: `LLAMA_N_CTX` (16384), `LLAMA_FLASH_ATTN`,
+  `LLAMA_SWA_FULL`, `LLAMA_REPEAT_PENALTY`, `LLAMA_PROMPT_RESERVE`, `EMBED_N_CTX`, `RERANK_N_CTX`,
+  `MODEL_IDLE_SECONDS` (300; 0 keeps models loaded), `EXTRACTION_CHUNK_TOKENS` (learned per model when unset).
 - Local inference loads one heavy model at a time (chat, embed, reranker swap in and out). A single
   retrieval iteration is at minimum chat, embed, rerank, chat. Model swaps dominate latency on small RAM.
 - Chat response shape: `answer`, `sources` (`{id, title}` of cited notes), `context` (docs; `linked_notes`
@@ -61,10 +68,15 @@ Retrieval and answering (`services/retrieval.py`, `workflows/chat.py`, `services
 Ingestion (`workflows/ingestion.py`, `workflows/agents/ingestion_agent.py`):
 
 - Three stages in order: extraction, storage, summarisation. No LangGraph; `run_ingestion_agent` is a plain loop.
-- Community detection (Leiden) and temporal digests run in the background after ingestion goes idle.
+- Community detection (Leiden) and temporal digests no longer run after ingestion. Since `main` `52041d8` they run
+  only on request (`POST /api/v1/admin/rebuild-communities`, `.../build-temporal-digests`). `experiment.py --communities`
+  triggers the rebuild after ingest and times it; without the flag an index has no community summaries.
   Evaluate or snapshot only after `GET /api/v1/benchmark/idle` reports idle; `experiment.py` waits for it.
-- Ingestion model and chat model are independent. An index built by one ingestion model can be
-  queried by any chat model, which is what makes snapshots worth keeping.
+- Ingestion runs on the chat model unless the KB carries its own ingestion pin (`main` `ab5419a`);
+  `experiment.py --ingestion-model` sets that pin. An index built by one ingestion model can be queried by
+  any chat model, which is what makes snapshots worth keeping.
+- A node found by both keyword and vector search used to lose its matched text and drop out of the candidates
+  (`main` `5b260ee`, `fold_vector_hits`). Any result recorded before that fix under-reports recall.
 
 ## 4. The harness
 
@@ -118,7 +130,7 @@ embed and rerank. 26 GB RAM.
 | Stage | Measured | What it means |
 |---|---|---|
 | Ingest one note | 84 to 321 s, mean 171 s; extraction is 95 % of it, storage and indexing about 10 s | 990 HotpotQA notes is about 47 hours of extraction. A full-set ingest per ingestion variant is not practical locally. |
-| Background communities after 10 notes | about 750 s: 70 second-level clusters (mean size 1.5, 48 of them single-entity orphans), each summarised by a model call | Roughly 40 % on top of ingestion, and it grows with the graph. |
+| Community rebuild after 10 notes (then automatic, now `--communities`) | about 750 s: 70 second-level clusters (mean size 1.5, 48 of them single-entity orphans), each summarised by a model call | Roughly 40 % on top of ingestion, and it grows with the graph. |
 | Answer one question | 178 s: three model steps of 10, 24 and 52 s, the rest is search, rerank and model swaps | 100 questions is about 5 hours per chat-model or retrieval variant. |
 
 Planning consequences: build snapshots on question subsets (`--questions 20` is 200 notes, about 10 hours with E4B),
@@ -139,7 +151,8 @@ ingestion model or a much smaller local one is the way to make them affordable.
    With `MAX_LOOP_ITERATIONS=3` a 2-hop question has no slack; 3 and 4-hop MuSiQue questions cannot finish.
 7. Is per-note extraction (mean 171 s for a paragraph) dominated by the number of passes? It runs entity,
    relationship and context passes separately. Fewer or merged passes is the obvious ingestion speed lever.
-8. Are second-level communities worth their cost at this granularity? 70 clusters from 10 notes, mean size 1.5.
+8. Are community summaries worth their cost at all for these question sets, and at this granularity? Run one
+   snapshot with `--communities` and one without. 70 clusters from 10 notes, mean size 1.5.
    A minimum cluster size would cut most of those model calls. Does retrieval quality move if it does?
 9. In the first extraction nearly every relationship was typed `related_to` even where the text gave a
    specific predicate ("is the director of"). Check across notes; typed edges are what graph expansion can use.
@@ -147,6 +160,12 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-21, sync to `main` `3bd480f`.** Fifteen commits since `63c602e`, applied as a three-way patch; two
+  conflicts, both in attachment code, kept the branch side. Taken: the keyword-plus-vector candidate fix,
+  on-demand communities and digests, ingestion on the selected model, llama.cpp knobs as Settings, the learned
+  extraction budget changes. Cut again: the large-attachment prompt (route, `resolve_large_attachment`,
+  `summarize_document`, its tests) and the settings-router test. `/benchmark/idle` and `experiment.py` adapted;
+  `--communities` added. 412 unit and 2 integration tests pass. `smoke-e4b` and its snapshot predate this sync.
 - **2026-09-21, validation run `smoke-e4b`.** First live end-to-end run: 1 HotpotQA question, its 10 notes,
   Gemma 4 E4B for ingestion and answering, default knobs, `BENCHMARK_MODE`. Passed: answer `YES` (exact match),
   recall 1.0, precision 0.222, 178 s for the question; traces, config, snapshot all written.

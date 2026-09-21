@@ -11,9 +11,6 @@ def system_settings(monkeypatch):
     monkeypatch.setattr(config.settings, "LLM_PROVIDER", "local", raising=False)
     monkeypatch.setattr(config.settings, "LLM_MODEL", "gemma4-12b-q4", raising=False)
     monkeypatch.setattr(config.settings, "CHAT_MODEL", None, raising=False)
-    monkeypatch.setattr(config.settings, "INGESTION_MODEL", None, raising=False)
-    # Default "local-chat" placeholder resolves to the Setup selection at runtime.
-    monkeypatch.setattr(config.settings, "INGESTION_LLM_MODEL", None, raising=False)
     monkeypatch.setattr(config.settings, "GEMINI_MODEL", "gemini-2.5-flash", raising=False)
     monkeypatch.setattr(config.settings, "OPENAI_MODEL", None, raising=False)
 
@@ -154,3 +151,8 @@ class TestLLMServiceEndpoint:
     def test_endpoint_without_a_key_uses_a_placeholder(self):
         """llama-server / LM Studio accept any token; the SDK demands one."""
         assert LLMService.get_endpoint_key("https://nokey.test/v1") == "not-needed"
+
+
+def test_ingestion_follows_the_globally_selected_chat_model(monkeypatch):
+    monkeypatch.setattr(config.settings, "CHAT_MODEL", "gguf/picked-in-settings.gguf", raising=False)
+    assert _svc().get_ingestion_model() == "gguf/picked-in-settings.gguf"
