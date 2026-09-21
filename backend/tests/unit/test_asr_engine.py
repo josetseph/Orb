@@ -270,3 +270,44 @@ def test_diarizer_uses_the_accelerator_and_frees_it(monkeypatch):
     turns = ae.speaker_turns(np.zeros(16000, dtype="float32"), 16000, __import__("pathlib").Path("/x"), step=2.0, max_speakers=None)
     assert [t.speaker for t in turns] == ["SPEAKER_00"]
     assert seen == {"device": "mps", "freed": True}  # device comes from the shared resolver
+
+
+def test_mlx_transcribes_in_segments_and_offsets_word_times(monkeypatch, tmp_path):
+    """A long recording goes through in bounded pieces; times index the whole file."""
+    import sys
+    import types
+
+    import numpy as np
+
+    calls = []
+
+    def transcribe(audio, **kw):
+        chunk, sr = audio
+        calls.append((len(chunk) / sr, kw["model"], kw.get("forced_aligner")))
+        n = len(calls)
+        return types.SimpleNamespace(
+            text=f"Part {n}, done.",
+            segments=[{"text": "part", "start": 1.0, "end": 1.5}, {"text": str(n), "start": 2.0, "end": 2.2},
+                      {"text": "done", "start": 3.0, "end": 3.4}],
+        )
+
+    cleared = []
+    lib = types.ModuleType("mlx_qwen3_asr")
+    lib.transcribe = transcribe
+    loaders = types.ModuleType("mlx_qwen3_asr.load_models")
+    loaders._ModelHolder = types.SimpleNamespace(clear=lambda: cleared.append(True))
+    monkeypatch.setitem(sys.modules, "mlx_qwen3_asr", lib)
+    monkeypatch.setitem(sys.modules, "mlx_qwen3_asr.load_models", loaders)
+    monkeypatch.setattr(ae, "MLX_SEGMENT_SECONDS", 10.0)
+
+    audio = np.ones(16000 * 25, dtype="float32")  # 25 s → three pieces of at most 10 s
+    out = ae.transcribe_with_mlx(tmp_path / "model", audio, language="en", aligner_path=tmp_path / "aligner")
+
+    assert len(calls) >= 3 and all(seconds <= 10.0 for seconds, _, _ in calls)
+    assert abs(sum(seconds for seconds, _, _ in calls) - 25.0) < 0.01  # nothing dropped at the cuts
+    assert {m for _, m, _ in calls} == {str(tmp_path / "model")}  # same path: the library reuses the weights
+    assert out.text.startswith("Part 1, done. Part 2, done.")
+    assert out.words[0].word == "Part" and out.words[2].word == "done."  # punctuation restored per segment
+    starts = [w.start for w in out.words if w.word == "Part"]
+    assert starts == sorted(starts) and starts[1] > 5.0  # later segments are shifted by their offset
+    assert cleared == [True]  # the library's model cache is emptied afterwards

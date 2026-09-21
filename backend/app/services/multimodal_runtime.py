@@ -306,9 +306,12 @@ class MultimodalRuntime:
             logger.info("Speaker labels skipped: aligner/diarizer not downloaded")
         with self._lock:
             self._unload_except("")
+        audio = self._load_audio_mono_16k(audio_path)
+        if audio.size == 0:
+            return ""
         transcript = asr_engine.transcribe_with_mlx(
             choice.model_path,
-            audio_path,
+            audio,
             language=settings.ASR_LANGUAGE,
             aligner_path=aligner if speakers else None,
         )
@@ -316,8 +319,7 @@ class MultimodalRuntime:
             return transcript.text
         # Speaker labels are the optional half: with no turns the lines are
         # still timed, just unlabelled.
-        turns = self._speaker_turns(self._load_audio_mono_16k(audio_path))
-        return asr_engine.timed_lines(transcript, turns)
+        return asr_engine.timed_lines(transcript, self._speaker_turns(audio))
 
     def _diarizer_ready(self) -> bool:
         from app.core.config import settings

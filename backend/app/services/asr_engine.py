@@ -245,49 +245,89 @@ class Turn:
     speaker: str
 
 
+# A recording is transcribed in segments this long, cut at pauses. The MLX
+# library takes a whole file in one call, and the memory it holds on the GPU
+# grows with the audio: a 188-minute lecture filled 24 GB and 36 GB of swap,
+# and took several times longer than its length warranted. Bounded segments
+# keep memory flat however long the recording is.
+MLX_SEGMENT_SECONDS = 600.0
+
+
 def transcribe_with_mlx(
     model_path: Path,
-    audio_path: str,
+    audio,
     *,
     language: str | None,
     aligner_path: Path | None = None,
+    sample_rate: int = 16000,
 ) -> Transcript:
-    """Transcribe on the Apple GPU. ``language=None`` lets the model detect it.
+    """Transcribe mono float32 ``audio`` on the Apple GPU, segment by segment.
 
-    With ``aligner_path`` the library also emits one timed entry per word; the
-    aligner strips punctuation, but the raw text keeps it token-for-token, so
-    it is restored from there.
+    ``language=None`` lets the model detect it. With ``aligner_path`` the
+    library also emits one timed entry per word; the aligner strips
+    punctuation, which ``restore_punctuation`` puts back per segment. Word
+    times are shifted by each segment's offset, so they index the whole
+    recording. The library caches loaded models by path, so segments after the
+    first reuse the weights; the cache is cleared at the end, because it would
+    otherwise hold the speech model through diarization and the summary.
     """
     import mlx_qwen3_asr  # type: ignore
 
-    logger.info("Transcribing with Qwen3-ASR via MLX (%s)", model_path.name)
     extra = {}
     if aligner_path is not None:
         extra = {"return_timestamps": True, "forced_aligner": str(aligner_path)}
+    segments = split_audio_into_chunks(audio, sample_rate, MLX_SEGMENT_SECONDS)
+    logger.info(
+        "Transcribing with Qwen3-ASR via MLX (%s): %.0f min in %d segment(s)",
+        model_path.name, len(audio) / sample_rate / 60, len(segments),
+    )
+    texts: list[str] = []
+    words: list[Word] = []
     try:
-        result = mlx_qwen3_asr.transcribe(
-            audio_path,
-            model=str(model_path),
-            language=language_name(language),
-            verbose=False,
-            **extra,
-        )
-        text = (getattr(result, "text", "") or "").strip()
-        words = [
-            Word(str(e.get("text") or "").strip(), float(e.get("start") or 0.0), float(e.get("end") or 0.0))
-            for e in (_as_dict(x) for x in (getattr(result, "segments", None) or []))
-            if str(e.get("text") or "").strip()
-        ]
-        restore_punctuation(words, text.split())
-        return Transcript(text, words)
+        for index, (chunk, offset) in enumerate(segments, start=1):
+            result = mlx_qwen3_asr.transcribe(
+                (chunk, sample_rate),
+                model=str(model_path),
+                language=language_name(language),
+                verbose=False,
+                **extra,
+            )
+            text = (getattr(result, "text", "") or "").strip()
+            part = [
+                Word(
+                    str(e.get("text") or "").strip(),
+                    float(e.get("start") or 0.0) + offset,
+                    float(e.get("end") or 0.0) + offset,
+                )
+                for e in (_as_dict(x) for x in (getattr(result, "segments", None) or []))
+                if str(e.get("text") or "").strip()
+            ]
+            restore_punctuation(part, text.split())
+            if text:
+                texts.append(text)
+            words += part
+            _clear_mlx_cache()
+            if len(segments) > 1:
+                logger.info("Transcribed segment %d/%d", index, len(segments))
+        return Transcript(" ".join(texts), words)
     finally:
-        # The weights are dropped with the call; give Metal its buffers back.
         try:
-            import mlx.core as mx  # type: ignore
+            from mlx_qwen3_asr.load_models import _ModelHolder  # type: ignore
 
-            mx.clear_cache()
+            _ModelHolder.clear()
         except Exception:  # pylint: disable=broad-exception-caught
             pass
+        _clear_mlx_cache()
+
+
+def _clear_mlx_cache() -> None:
+    """Give Metal back the buffers the last call used."""
+    try:
+        import mlx.core as mx  # type: ignore
+
+        mx.clear_cache()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
 
 
 def _bare(token: str) -> str:
