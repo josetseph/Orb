@@ -1,14 +1,34 @@
 {
   "name": "round1-retrieval",
   "dataset": "hotpotqa",
-  "dev": [0, 20],
-  "baseline": {"provider": "local", "chat_model": "gemma4-e4b-q4", "ingestion_model": "gemma4-e4b-q4"},
+  "dev": [
+    0,
+    20
+  ],
+  "baseline": {
+    "provider": "local",
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4"
+  },
   "vary": {
-    "VECTOR_PRE_RERANK_THRESHOLD": [0.3, 0.6],
-    "GRAPH_EXPAND_TOP_NEIGHBORS": [0, 5, 20],
-    "GRAPH_EXPAND_SCORE_THRESHOLD": [0.1, 0.3],
-    "RERANK_MODEL_ID": ["qwen3-rerank-0.6b-q4"]
+    "VECTOR_PRE_RERANK_THRESHOLD": [
+      0.3,
+      0.6
+    ],
+    "GRAPH_EXPAND_TOP_NEIGHBORS": [
+      0,
+      5,
+      20
+    ],
+    "GRAPH_EXPAND_SCORE_THRESHOLD": [
+      0.1,
+      0.3
+    ],
+    "RERANK_MODEL_ID": [
+      "qwen3-rerank-0.6b-q4"
+    ]
   },
   "design": "one-at-a-time",
-  "evaluator": "retrieval"
+  "evaluator": "retrieval",
+  "index": "hp20-e4b"
 }

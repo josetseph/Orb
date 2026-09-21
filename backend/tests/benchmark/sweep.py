@@ -12,7 +12,8 @@ A spec names a baseline, the levers to vary and how:
      "vary": {"MAX_LOOP_ITERATIONS": [5, 8], "RERANKER_TOP_K": [5, 20]},
      "design": "one-at-a-time",        // or "grid"
      "evaluator": "full",              // or "retrieval": no answering model, scored on the gold notes
-     "rungs": [5, 10, 20], "keep": 0.5, "metric": "answer_f1"}
+     "rungs": [5, 10, 20], "keep": 0.5, "metric": "answer_f1",
+     "index": "hp20-e4b"}              // optional: reuse this snapshot as the baseline's index
 
 Everything runs in sequence: one machine, one model in memory at a time. Breadth comes from not repeating
 work. Variants that share their extract and index levers share one index, built once. Unchanged model calls
@@ -28,6 +29,7 @@ import hashlib
 import itertools
 import json
 import math
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -67,6 +69,9 @@ def index_name(levers: dict, spec: dict) -> str:
     """Snapshot name for the index these levers need: only extract and index levers take part."""
     span = [spec["dev"][0], max(spec["dev"][1], spec.get("holdout", spec["dev"])[1])]
     parts = {k: v for k, v in sorted(levers.items()) if BY_NAME[k].stage in INDEX_STAGES or k == "provider"}
+    base = {k: v for k, v in sorted(spec["baseline"].items()) if BY_NAME[k].stage in INDEX_STAGES or k == "provider"}
+    if spec.get("index") and parts == base:
+        return spec["index"]  # an existing snapshot stands in for the baseline's index; it must cover the span
     digest = hashlib.sha256(json.dumps([spec["dataset"], span, parts], sort_keys=True).encode()).hexdigest()[:8]
     return f"idx-{spec['dataset']}-{digest}"
 
@@ -120,7 +125,7 @@ def experiment(name: str, args: list[str], proof: Path, plan: bool) -> None:
         _planned.add(name)
         return
     code = subprocess.run(cmd, cwd=BACKEND, check=False).returncode
-    if code >= 128:
+    if code >= 128 or code < 0:
         raise SystemExit(f"== {name} was interrupted; stopping the sweep")
 
 
@@ -180,7 +185,18 @@ def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
     return out
 
 
+def stop_on_signal() -> None:
+    """A process started in the background inherits SIGINT=ignore, so ``pkill -INT`` would do nothing.
+    Both signals become KeyboardInterrupt, which unwinds through ``finally`` and shuts the server down."""
+    def interrupt(signum, _frame):
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, interrupt)
+
+
 def main() -> None:
+    stop_on_signal()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("spec")
     ap.add_argument("--plan", action="store_true", help="print what would run and stop")

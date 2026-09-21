@@ -54,3 +54,10 @@ def test_lever_args_speak_experiment_py():
 def test_the_baseline_always_survives_and_the_best_half_joins_it():
     scored = [("base", 0.1), ("a", 0.9), ("b", 0.5), ("c", 0.7), ("d", None)]
     assert sweep.survivors(scored, 0.5) == ["base", "a", "c"]
+
+
+def test_a_named_snapshot_stands_in_for_the_baseline_index_only():
+    spec = {**SPEC, "index": "hp20-e4b"}
+    assert sweep.index_name(SPEC["baseline"], spec) == "hp20-e4b"
+    assert sweep.index_name({**SPEC["baseline"], "RERANKER_TOP_K": 5}, spec) == "hp20-e4b"
+    assert sweep.index_name({**SPEC["baseline"], "ingestion_model": "qwen35-4b-q4"}, spec) != "hp20-e4b"

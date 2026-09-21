@@ -90,7 +90,18 @@ def run(cmd: list[str], env: dict) -> None:
     subprocess.run(cmd, cwd=BACKEND, env=env, check=True)
 
 
+def stop_on_signal() -> None:
+    """A process started in the background inherits SIGINT=ignore, so ``pkill -INT`` would do nothing.
+    Both signals become KeyboardInterrupt, which unwinds through ``finally`` and shuts the server down."""
+    def interrupt(signum, _frame):
+        raise KeyboardInterrupt
+
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        signal.signal(sig, interrupt)
+
+
 def main() -> None:
+    stop_on_signal()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("name", help="run name; results go to Results/<name>/")
     ap.add_argument("--dataset", choices=["hotpotqa", "musique"])
