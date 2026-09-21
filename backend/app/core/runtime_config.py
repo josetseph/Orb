@@ -27,7 +27,7 @@ LOCAL_RUNTIME_KEYS: tuple[str, ...] = (
     "llama_n_ctx", "llama_max_tokens", "llama_swa_full", "llama_flash_attn",
     "llama_backend", "llama_n_gpu_layers", "llama_n_threads", "llama_repeat_penalty",
     "llama_prompt_reserve", "embed_n_ctx", "rerank_n_ctx", "model_idle_seconds",
-    "extraction_chunk_tokens",
+    "extraction_chunk_tokens", "large_attachment_tokens",
 )
 _SETTING_FOR.update({k: k.upper() for k in LOCAL_RUNTIME_KEYS})
 MUTABLE_KEYS: frozenset[str] = frozenset(_SETTING_FOR)

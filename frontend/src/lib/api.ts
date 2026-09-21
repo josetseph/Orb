@@ -116,6 +116,7 @@ export interface LocalRuntimeSettings {
   rerank_n_ctx: number;
   model_idle_seconds: number;
   extraction_chunk_tokens: number | null;
+  large_attachment_tokens: number;
 }
 
 export const api = {
@@ -765,6 +766,11 @@ export const api = {
   /** Ask an OpenAI-compatible server which models it serves. */
   async getEndpointModels(baseUrl: string): Promise<{ base_url: string; models: string[] }> {
     return http.get("/llm/endpoint-models", { base_url: baseUrl });
+  },
+
+  /** Answer for an attachment ingestion parked as too large; re-ingests the note. */
+  async setAttachmentMode(noteId: string, link: string, mode: "graph" | "summary" | "index", kb = "default") {
+    return http.put(`/notes/${noteId}/attachments/mode${kbQuery(kb)}`, { link, mode });
   },
 
   async getLocalRuntime(): Promise<LocalRuntimeSettings> {

@@ -6,6 +6,7 @@ import re
 import threading
 import time
 import uuid
+from urllib.parse import unquote
 from collections import defaultdict
 
 from pydantic import BaseModel
@@ -65,6 +66,25 @@ def cancel_ingestion(kb_id: str, note_id: str) -> bool:
         return False
     task.cancel()
     return True
+
+
+def _passages(text: str, target_chars: int = 1200) -> list[str]:
+    """Split a document into passages of about 300 tokens on paragraph breaks."""
+    out: list[str] = []
+    current = ""
+    for para in (p.strip() for p in text.split("\n")):
+        if not para:
+            continue
+        if current and len(current) + len(para) > target_chars:
+            out.append(current)
+            current = ""
+        current = f"{current}\n{para}".strip()
+        while len(current) > target_chars * 2:  # one giant paragraph
+            out.append(current[:target_chars])
+            current = current[target_chars:]
+    if current:
+        out.append(current)
+    return out
 
 
 class IngestionWorkflow:
@@ -743,6 +763,72 @@ class IngestionWorkflow:
             logger.info(f"[Ontology] Removed entity {nid} no longer mentioned by any note")
 
         return title
+
+    async def _attachment_modes(self, note_id: str) -> dict[str, str]:
+        """The user's answers for this note's large attachments, by attachment key."""
+        from app.core.database import AsyncSessionLocal
+        from app.models.note import Note
+
+        async with AsyncSessionLocal() as session:
+            note = await session.get(Note, note_id)
+            return dict((note.attachment_modes if note else None) or {})
+
+    async def _index_documents(
+        self, note_id: str, documents: list[dict], note_created_at: str | None
+    ) -> None:
+        """Make index-only attachments searchable without graphing them.
+
+        Each becomes ONE node (type ``document``) referenced by the note, with
+        its text stored as passages in the contexts collection — the same
+        place entity sentences live, so vector search, the reranker and chat
+        pick up the matching passages with no retrieval changes. The node's
+        description stays a fixed one-liner: retrieval falls back to it when
+        the document is matched by name, and must not pull in every passage.
+        Runs after the context refresh, which clears what this note indexed.
+        """
+        for doc in documents:
+            name = unquote(doc["src"].rsplit("/", 1)[-1]).lower()
+            node_id = f"node_{uuid.uuid5(uuid.NAMESPACE_URL, f'{self.kb_id}/{doc['key']}')}"
+            passages = _passages(doc["body"])
+            if not passages:
+                continue
+
+            def _write(node_id=node_id, name=name, passages=passages):
+                vectors = embedding_service.embed_documents(passages)
+                description = f"Indexed document ({len(passages)} passages, searchable, not graphed)."
+                self._graph.execute_query(
+                    """
+                    MERGE (note:Node {id: $note_id}) ON CREATE SET note.kind = 'note'
+                    MERGE (n:Node {id: $id}) ON CREATE SET n.kind = 'indexable'
+                    SET n.name = $name, n.type = 'document'
+                    MERGE (note)-[r:REFERENCES]->(n) SET r.note_id = $note_id
+                    """,
+                    {"note_id": note_id, "id": node_id, "name": name},
+                )
+                self._qdrant.upsert_node_core(
+                    node_id=node_id, name=name, node_type="document",
+                    description_vector=embedding_service.embed_documents([name])[0],
+                    description=description,
+                )
+                self._qdrant.upsert_node_items(
+                    self._qdrant._col_contexts,  # pylint: disable=protected-access
+                    node_id,
+                    [
+                        {
+                            "content": text, "vector": vector, "name": name,
+                            "type": "document", "note_id": note_id,
+                            "note_created_at": note_created_at or "",
+                        }
+                        for text, vector in zip(passages, vectors)
+                    ],
+                )
+                self._meili.index_node(
+                    node_id=node_id, name=name, node_type="document",
+                    isolated_contexts=passages, relationship_natural_language="",
+                )
+
+            await asyncio.to_thread(_write)
+            logger.info(f"[Documents] '{name}' indexed as {len(passages)} passage(s), not graphed")
 
     async def _update_neighborhoods(
         self,

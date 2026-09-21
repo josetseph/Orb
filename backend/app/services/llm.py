@@ -405,6 +405,35 @@ class LLMService:
         )
         return (text or "").strip() or (existing or "")
 
+    async def summarize_document(self, filename: str, text: str) -> str:
+        """A few pages of summary for a large attachment the user chose not to
+        graph in full. Long inputs are summarised piece by piece, then merged."""
+        budget = max(2000, (self.ingestion_context_tokens() or 8192) // 2)
+        pieces, current, size = [], [], 0
+        for para in text.split("\n"):
+            tokens = self.ingestion_count_tokens(para) + 1
+            if current and size + tokens > budget:
+                pieces.append("\n".join(current))
+                current, size = [], 0
+            current.append(para)
+            size += tokens
+        if current:
+            pieces.append("\n".join(current))
+
+        async def _one(part: str, what: str) -> str:
+            return (await self.ingestion_generate(
+                f"Summarise {what} of the document \"{filename}\" for someone who will "
+                "search and ask questions about it later. Keep the key concepts, named "
+                "people, organisations, methods, findings and definitions. Plain prose, "
+                f"no preamble.\n\nTEXT:\n{part}\n\nSUMMARY:",
+                temperature=0.2,
+            )).strip()
+
+        if len(pieces) == 1:
+            return await _one(pieces[0], "this text")
+        partial = [await _one(p, f"part {i + 1} of {len(pieces)}") for i, p in enumerate(pieces)]
+        return await _one("\n\n".join(partial), "these section summaries")
+
     def _reason_step_sync(self, prompt: str, model: str | None = None) -> str:
         """Synchronous lightweight reasoning call for query rewrite."""
         text, _ = self._chat(

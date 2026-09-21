@@ -21,6 +21,7 @@ const ROWS: Array<{ key: Key; title: string; description: string; kind: "int" | 
   { key: "llama_repeat_penalty", title: "Repeat penalty", description: "1.0 disables it.", kind: "float" },
   { key: "embed_n_ctx", title: "Embedding context", description: "Tokens per embedded passage.", kind: "int" },
   { key: "rerank_n_ctx", title: "Reranker context", description: "Tokens per query-passage pair.", kind: "int" },
+  { key: "large_attachment_tokens", title: "Ask before ingesting attachments over (tokens)", description: "Larger attachments wait for you to pick: graph, summarize, or index for search.", kind: "int" },
   { key: "extraction_chunk_tokens", title: "Extraction chunk (tokens)", description: "Empty = learned per model from truncated outputs.", kind: "int?" },
 ];
 

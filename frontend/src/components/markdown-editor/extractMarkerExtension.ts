@@ -11,9 +11,9 @@ import { isAudioUrl, isImageUrl, isVideoUrl, vaultRelPath } from "@/lib/utils";
  * slim rules around the visible body. A block holding the cursor never
  * collapses, so nobody loses the line they are editing.
  */
-const OPEN_RE = /<!-- orb:extract src="([^"]*)" -->/g;
+const OPEN_RE = /<!-- orb:extract src="([^"]*)"(?: mode="[a-z]+")? -->/g;
 const CLOSE = "<!-- /orb:extract -->";
-const MARKER_RE = /<!-- (\/?)orb:extract(?: src="([^"]*)")? -->/g;
+const MARKER_RE = /<!-- (\/?)orb:extract(?: src="([^"]*)")?(?: mode="[a-z]+")? -->/g;
 
 /** Same identity the backend uses: no query, unquoted, lowercase — and
  * vault-relative, so a marker written as `/vault-files/<kb>/attachments/x`

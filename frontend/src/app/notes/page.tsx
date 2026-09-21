@@ -25,6 +25,8 @@ import { NotesSidebar } from "./_components/NotesSidebar";
 import { NoteEditorHeader, type ViewMode } from "./_components/NoteEditorHeader";
 import { NotesEmptyState } from "./_components/NotesEmptyState";
 import { noteStatus } from "./_components/NoteStatusBadge";
+import { LargeAttachmentPrompt } from "./_components/LargeAttachmentPrompt";
+import { pendingAttachments } from "./_lib/large-attachments";
 import { DatePickerModal } from "./_components/DatePickerModal";
 import { FilePreviewModal } from "./_components/FilePreviewModal";
 import { FolderDialog } from "./_components/FolderDialog";
@@ -336,6 +338,15 @@ export default function NotesPage() {
                       ))}
                     </div>
                   )}
+
+                  <LargeAttachmentPrompt
+                    pending={pendingAttachments(selectedNote.content)}
+                    onChoose={async (link, mode) => {
+                      await api.setAttachmentMode(selectedNote.id, link, mode, currentKB);
+                      ingest.setIngestingNoteIds((prev) => new Set([...prev, selectedNote.id]));
+                      await list.fetchNotes(list.searchQuery, list.processedFilter);
+                    }}
+                  />
 
                   <MarkdownNoteEditor
                     key={selectedNote.id}

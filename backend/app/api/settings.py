@@ -37,6 +37,7 @@ class LocalRuntimeSettings(BaseModel):
     rerank_n_ctx: int = Field(ge=512)
     model_idle_seconds: float = Field(ge=0)
     extraction_chunk_tokens: int | None = Field(default=None, ge=1)
+    large_attachment_tokens: int = Field(default=20000, ge=1000)
 
 
 def _local_runtime_state() -> dict:

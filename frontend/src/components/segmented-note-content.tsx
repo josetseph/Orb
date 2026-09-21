@@ -29,7 +29,7 @@ interface Segment {
 // `[Image: <title>]`. Splitting on the delimiters means no header list to keep
 // in step with the backend.
 
-const BLOCK_RE = /<!-- orb:extract src="[^"]*" -->([\s\S]*?)<!-- \/orb:extract -->/g;
+const BLOCK_RE = /<!-- orb:extract src="[^"]*"(?: mode="[a-z]+")? -->([\s\S]*?)<!-- \/orb:extract -->/g;
 const HEADER_RE = /^\s*\[([^\]:(]+?)(?::\s*([^\]]*)|\s*\(([^)]*)\))?\]:?/;
 
 function segmentTypeFor(kind: string): Exclude<SegmentType, "text"> {

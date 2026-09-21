@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     RERANK_N_CTX: int = 8192
     MODEL_IDLE_SECONDS: float = 300  # 0 = keep models loaded
     EXTRACTION_CHUNK_TOKENS: int | None = None  # None = learned per model
+    # An attachment whose extracted text is larger than this is parked until
+    # the user picks: graph it, summarise it, or index it for search only.
+    LARGE_ATTACHMENT_TOKENS: int = 20000
 
     QDRANT_HOST: str = "127.0.0.1"
     QDRANT_PORT: int = 6333

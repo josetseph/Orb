@@ -69,6 +69,8 @@ def _sqlite_repairs(sync_conn) -> None:
             logger.warning("notes.content still holds %d bodies; column kept", left)
         else:
             sync_conn.exec_driver_sql("ALTER TABLE notes DROP COLUMN content")
+    if "attachment_modes" not in {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(notes)")}:
+        sync_conn.exec_driver_sql("ALTER TABLE notes ADD COLUMN attachment_modes JSON")
     # Rolling chat summary (added after 1.0); create_all never alters a table.
     cols = {r[1] for r in sync_conn.exec_driver_sql("PRAGMA table_info(chat_conversations)")}
     if cols and "summary" not in cols:

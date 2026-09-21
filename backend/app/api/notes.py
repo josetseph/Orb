@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import delete, or_, select
@@ -194,6 +195,36 @@ async def ingest_existing_note(
         "status": "processing_started",
         "message": "Note ingestion has been queued",
     }
+
+
+class AttachmentModeInput(BaseModel):
+    """The user's answer for one large attachment."""
+
+    link: str
+    mode: Literal["graph", "summary", "index"]
+
+
+@router.put("/api/v1/notes/{note_id}/attachments/mode")
+async def set_attachment_mode(
+    note_id: str,
+    body: AttachmentModeInput,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    kb: KBContext = Depends(get_kb),
+):
+    """Record how a large attachment should be ingested, then re-ingest the note.
+
+    Ingestion parks an attachment over ``LARGE_ATTACHMENT_TOKENS`` as a
+    ``pending`` block and graphs the rest of the note; this is the answer.
+    The parked block keeps its extracted text, so nothing is read twice.
+    """
+    from app.workflows.agents.ingestion_agent import attachment_key
+
+    note = await _get_note_or_404(db, kb, note_id)
+    # Reassign: SQLAlchemy does not see in-place edits of a JSON column.
+    note.attachment_modes = {**(note.attachment_modes or {}), attachment_key(body.link): body.mode}
+    await db.commit()
+    return await ingest_existing_note(note_id, background_tasks, db, kb)
 
 
 @router.post("/api/v1/notes/{note_id}/ingest/cancel")

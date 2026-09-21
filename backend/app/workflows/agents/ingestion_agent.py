@@ -53,11 +53,48 @@ multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY
 # comments render as nothing, so the note reads as if they were not there.
 EXTRACT_OPEN = '<!-- orb:extract src="{src}" -->'
 EXTRACT_CLOSE = "<!-- /orb:extract -->"
-EXTRACT_BLOCK_RE = re.compile(
-    r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->",
-    re.S,
-)
-_EXTRACT_SRC_RE = re.compile(r'<!-- orb:extract src="([^"]*)" -->')
+# A block may carry how its attachment is ingested. No mode = graphed like the
+# rest of the note. ``pending`` = over LARGE_ATTACHMENT_TOKENS and waiting for
+# the user; ``index`` = searchable passages, no entities; ``summary`` = the
+# body is a model-written summary of the attachment, which is what gets graphed.
+_OPEN = r'<!-- orb:extract src="([^"]*)"(?: mode="([a-z]+)")? -->'
+EXTRACT_BLOCK_RE = re.compile(r"\n*" + _OPEN + r".*?<!-- /orb:extract -->", re.S)
+_EXTRACT_SRC_RE = re.compile(_OPEN)
+_BLOCK_PARTS_RE = re.compile(_OPEN + r"\n?(.*?)\n?<!-- /orb:extract -->", re.S)
+UNGRAPHED_MODES = ("pending", "index")
+ATTACHMENT_MODES = ("graph", "summary", "index")
+
+
+def extract_open(src: str, mode: str = "") -> str:
+    return f'<!-- orb:extract src="{src}"' + (f' mode="{mode}"' if mode else "") + " -->"
+
+
+def extraction_blocks(content: str) -> list[dict[str, str]]:
+    """Every delimited block as ``{src, key, mode, body}``."""
+    return [
+        {"src": src, "key": attachment_key(src), "mode": mode or "", "body": body}
+        for src, mode, body in _BLOCK_PARTS_RE.findall(content or "")
+    ]
+
+
+def graph_text(content: str) -> str:
+    """The note as entity extraction should see it: without the blocks that
+    are waiting for a decision or are indexed for search only."""
+    return EXTRACT_BLOCK_RE.sub(
+        lambda m: "" if m.group(2) in UNGRAPHED_MODES else m.group(0), content or ""
+    ).strip()
+
+
+def set_block_mode(content: str, key: str, mode: str, body: str | None = None) -> str:
+    """Rewrite one block's mode (and optionally its body), leaving the rest alone."""
+
+    def _swap(m: re.Match) -> str:
+        if attachment_key(m.group(1)) != key:
+            return m.group(0)
+        text = m.group(3) if body is None else body.strip("\n")
+        return f"{extract_open(m.group(1), mode)}\n{text}\n{EXTRACT_CLOSE}"
+
+    return _BLOCK_PARTS_RE.sub(_swap, content or "")
 
 # Pre-marker format: blocks were appended with no closing delimiter. Only
 # ``wrap_legacy_enrichment_blocks`` reads this, to give such blocks markers.
@@ -90,7 +127,7 @@ def attachment_key(url: str) -> str:
 
 def extraction_srcs(content: str) -> set[str]:
     """Keys of every attachment that already has an extraction block."""
-    return {attachment_key(s) for s in _EXTRACT_SRC_RE.findall(content or "")}
+    return {attachment_key(m[0]) for m in _EXTRACT_SRC_RE.findall(content or "")}
 
 
 def _block_key(block: str) -> str:
@@ -164,7 +201,7 @@ def remove_extraction(content: str, src_url: str) -> str:
     )
 
 
-def place_extraction(content: str, src_url: str, section: str) -> str:
+def place_extraction(content: str, src_url: str, section: str, mode: str = "") -> str:
     """Put one extraction block directly beneath the attachment it came from.
 
     Falls back to appending when the link cannot be located — a note edited
@@ -173,7 +210,7 @@ def place_extraction(content: str, src_url: str, section: str) -> str:
     body = section.strip("\n")
     if not body.strip():
         return content
-    block = f"\n\n{EXTRACT_OPEN.format(src=src_url)}\n{body}\n{EXTRACT_CLOSE}"
+    block = f"\n\n{extract_open(src_url, mode)}\n{body}\n{EXTRACT_CLOSE}"
     idx = content.find(src_url) if src_url else -1
     if idx == -1:
         return content.rstrip() + block
@@ -979,10 +1016,41 @@ async def multimodal_node(
 
         import os
 
-        def _append(section: str, src_url: str = "") -> None:
+        def _append(section: str, src_url: str = "", mode: str = "") -> None:
             nonlocal content, content_changed
-            content = place_extraction(content, src_url, section)
+            content = place_extraction(content, src_url, section, mode)
             content_changed = True
+
+        # Large attachments: the user decides how each is ingested. A block
+        # parked as ``pending`` keeps its extracted text, so answering never
+        # costs a second transcription or PDF read.
+        decisions: dict[str, str] = (
+            await _wf._attachment_modes(state["note_id"]) if state.get("note_id") else {}
+        )
+
+        async def _resolve(section: str, key: str, filename: str) -> tuple[str, str]:
+            """``(section, mode)`` for one attachment's extracted text."""
+            if _llm.ingestion_count_tokens(section) <= settings.LARGE_ATTACHMENT_TOKENS:
+                return section, ""
+            choice = decisions.get(key)
+            if choice == "index":
+                return section, "index"
+            if choice == "summary":
+                await _set_status(f"Summarising {filename}", _llm.get_ingestion_model())
+                summary = await _llm.summarize_document(filename, section)
+                return f"[Summary ({filename})]: {summary}", "summary"
+            if choice == "graph":
+                return section, ""
+            logger.info("[Attachments] %s is large and has no decision yet — parked", filename)
+            return section, "pending"
+
+        for block in extraction_blocks(content):
+            if block["mode"] == "pending" and decisions.get(block["key"]):
+                name = block["src"].rsplit("/", 1)[-1]
+                body, mode = await _resolve(block["body"], block["key"], name)
+                if mode != "pending":
+                    content = set_block_mode(content, block["key"], mode, body)
+                    content_changed = True
 
         async def _run_phase(
             phase_name: str,
@@ -1001,10 +1069,14 @@ async def multimodal_node(
                         section = await asyncio.to_thread(
                             describe_image_section, item, pending_image_titles, _llm
                         )
+                        mode = ""
                     else:
                         section = await extract_attachment(kind, item, _set_status, _llm)
+                        section, mode = await _resolve(
+                            section, item["lower_url"], filename
+                        ) if section else (section, "")
                     if section:
-                        _append(section, item["link"])
+                        _append(section, item["link"], mode)
                 except Exception as e:  # pylint: disable=broad-exception-caught
                     logger.error(f"[{phase_name}] File Processing Failed: {e}")
                     media_errors.append(f"{filename}: {e}")
@@ -1159,7 +1231,8 @@ async def extraction_node(
     # Prepend the user-provided title so the LLM sees it as part of the source
     # text. Auto-generated titles are not included — they don't originate from
     # the note itself and would pollute the extraction.
-    extraction_content = state["content"]
+    # Parked and index-only attachments are not graphed.
+    extraction_content = graph_text(state["content"])
     if state["input"].title:
         extraction_content = f"# {state['input'].title}\n\n{extraction_content}"
 
@@ -1306,7 +1379,7 @@ async def storage_node(state: IngestionState):
         title = await asyncio.to_thread(
             _wf._write_ontology,
             note_id,
-            state["content"],
+            graph_text(state["content"]),
             state["extraction"],
             created_at,
             custom_title,  # Pass custom title if provided
@@ -1348,10 +1421,20 @@ async def summarization_node(state: IngestionState):
     try:
         await _wf._update_neighborhoods(
             state["extraction"].nodes,
-            state["content"],
+            graph_text(state["content"]),
             note_created_at=state.get("created_at"),
             note_id=state.get("note_id"),
         )
+        # Index-only attachments: searchable passages under one document node.
+        # After the context refresh, which clears everything this note indexed.
+        documents = [b for b in extraction_blocks(state["content"]) if b["mode"] == "index"]
+        if documents and state.get("note_id"):
+            await _wf._update_note_processing_status(
+                state["note_id"], "Indexing documents for search", None
+            )
+            await _wf._index_documents(
+                state["note_id"], documents, state.get("created_at")
+            )
     except Exception as e:  # pylint: disable=broad-exception-caught
         logger.error(f"[Agent] Context indexing failed: {e}", exc_info=True)
         logs.append(
