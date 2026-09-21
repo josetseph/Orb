@@ -23,6 +23,32 @@ logging.getLogger("transformers.tokenization_utils_base").setLevel(logging.ERROR
 logger = get_logger("RetrievalService")
 
 
+def fold_vector_hits(
+    known_nodes: list[dict], vector_results: list[dict], names_found: set[str]
+) -> list[dict]:
+    """Vector hits not seen yet, in order; the rest are folded into what was.
+
+    A node already found by name or keyword keeps its place, but gains the
+    sentences that matched the question: they are the best evidence for it,
+    and a keyword hit carries no text of its own — dropping them left such a
+    node with nothing to show and it fell out of the candidates altogether.
+    """
+    by_name = {(n.get("name") or "").lower().strip(): n for n in known_nodes}
+    fresh: list[dict] = []
+    for vnode in vector_results:
+        key = (vnode.get("name") or "").lower().strip()
+        if key not in names_found:
+            vnode["_source"] = "vector"
+            fresh.append(vnode)
+            names_found.add(key)
+        elif vnode.get("summary") and key in by_name:
+            known = by_name[key]
+            have = known.get("summary") or ""
+            if vnode["summary"] not in have:
+                known["summary"] = f"{vnode['summary']} {have}".strip()
+    return fresh
+
+
 class RetrievalService:
     """Orchestrates multi-stage retrieval: vector → keyword → graph expansion → reranking."""
 
@@ -1147,12 +1173,9 @@ class RetrievalService:
             else:
                 logger.info("  [Vector] Qdrant returned no hits")
 
-            for vnode in vector_results:
-                _vkey = (vnode["name"] or "").lower().strip()
-                if _vkey not in node_names_found:
-                    vnode["_source"] = "vector"
-                    vector_nodes.append(vnode)
-                    node_names_found.add(_vkey)
+            vector_nodes.extend(
+                fold_vector_hits(entity_nodes, vector_results, node_names_found)
+            )
 
             # STEP 2.5: NAME VARIANT EXPANSION for vector-found person entities
             # Catches "Margaret Johnson" -> "Margaret Johnson-Williams" for

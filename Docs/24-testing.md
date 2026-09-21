@@ -39,6 +39,7 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `LLAMA_MAX_TOKENS`, GGUF resolution, `response_format` pass-through in JSON mode, eager projector init dropping a broken projector so text chat still works. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf`, `TestJsonMode`, `TestEagerProjectorInit` (17 tests) |
 | `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
 | `backend/tests/unit/test_vault_migration.py` | The one-time vault sweep (`vault_sync.migrate_vault_files`): legacy link shapes fixed in place and the second run is a no-op; v2 relativises `/vault-files/<any kb>/…` links and their markers; v3 moves stray non-`.md` files under `attachments/` and rewrites their links; `.orb/migrated-v4` marker written. | 3 tests |
+| `backend/tests/unit/test_large_attachments.py` | The large attachment guard: the `orb:extract` marker round-trips with and without `mode="…"`, `graph_text` drops `pending`/`index` blocks, `set_block_mode` rewrites one block only, the strip step keeps a parked block while its link remains, `ingestion._passages` splits on paragraphs and cuts giants; `multimodal_node` with stubs — a large attachment is parked with its text until answered, a small one is graphed without asking, and answers apply both to a new attachment (`index`, `graph`) and to an already-parked one (`summary`, with the extractor asserted not to run again). | 8 tests (3 drive `multimodal_node` through `asyncio.run`) |
 | `backend/tests/unit/test_upload_folder.py` | `store_upload` puts a file in `attachments/<note folder>/`, root notes upload flat, and `..`/absolute folders raise `Invalid folder`. | 3 tests |
 | `backend/tests/unit/test_vault_folders.py` | Folder moves carry everything and rewrite the extraction marker with the link, a folder cannot move into itself, `move_vault_file` refuses moves across the `attachments/` boundary, folder delete removes the tree; `TestStripRefs` pins that deleting an attachment strips every link form and leaves unrelated notes untouched. | 5 tests + `TestStripRefs` |
 | `backend/tests/unit/test_desktop_runtime.py` | Meili master key random for fresh installs and sticky, legacy `orb-dev-key` kept when data exists, `boot-status.json` written atomically, Firefly `.env`/`runtime.json` keys; `TestFireflyEnvQuoting` pins `_env_quote` (single quotes; double-quoted escaped fallback on an apostrophe). | 6 tests |
@@ -121,7 +122,7 @@ The pattern the live tests rely on is three idioms, documented in §13:
 
 ## 5. Unit test modules — contract pinned and why it matters
 
-46 modules under `backend/tests/unit/`. "Status" is against the current sources.
+61 modules under `backend/tests/unit/`. "Status" is against the current sources.
 
 | Module | Target | Tests | Status |
 |---|---|---|---|
@@ -134,13 +135,14 @@ The pattern the live tests rely on is three idioms, documented in §13:
 | `test_qdrant_contract.py` | `QdrantService.upsert_node_core` / `search_node_cores` | 13 | pass |
 | `test_extraction_chunking.py` | `app/workflows/extraction_chunking.py` | 15 | pass |
 | `test_ingestion_chunked_extraction.py` | `ingestion_agent._extract_with_chunking`, `_batch_image_titles` | 4 (async) | pass |
-| `test_kb_llm_config.py` | `kb_registry.effective_llm_config`, `LLMService.get_chat_model/get_ingestion_model` | 18 | pass |
+| `test_kb_llm_config.py` | `kb_registry.effective_llm_config`, `LLMService.get_chat_model/get_ingestion_model` | 19 | pass |
 | `test_local_runtime_budget.py` | `LocalLlamaRuntime` budgeting / GGUF resolution / `response_format` pass-through / eager projector init | 17 | pass |
 | `test_model_load_clock.py` | `ModelLoadClock` | 4 | pass |
 | `test_vault_migration.py` | `vault_sync.migrate_vault_files` (one-time sweep v1/v2/v3 + marker) | 3 | pass |
+| `test_large_attachments.py` | `ingestion_agent` marker helpers (`extract_open`, `extraction_blocks`, `graph_text`, `set_block_mode`), `ingestion._passages`, the size guard in `multimodal_node` | 8 | pass |
 | `test_note_created_at.py` | `schemas.note` / `POST /ingest` `created_at` parsing | 4 | pass |
 | `test_ingestion_community_names.py` | `IngestionWorkflow._name_and_summary`, `_name_fits_members` | 2 | pass |
-| (31 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
+| (45 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
 
 ### 5.1 `test_chat_context.py` — follow-up query rewriting
 
@@ -344,7 +346,7 @@ There is no separate `typecheck` script, but `npm run build` is `tsc --noEmit &&
 | Gap | Detail | Risk |
 |---|---|---|
 | Unit suite needs a full environment | The suite imports every service module, so `requirements.txt` (including `llama-cpp-python`) must be installed alongside `requirements-dev.txt`; `backend/.venv` is partial. | New contributors must build a venv first. |
-| Frontend tests cover pure logic only | `frontend/src/**/*.test.ts` (vitest 5, `environment: "node"`, `@` alias from `vitest.config.ts`) pin `lib/utils.ts` (file URLs, media sniffing incl. the deliberate mkv/avi exclusion, YouTube embeds, `errMessage`), `parse-note-attachments`, `wikilinks` (normalise/resolve/create-target), `folder-tree` and `rewrite-vault-urls`. No component, hook or DOM tests. | Editor (CodeMirror wikilink autocomplete), chat polling and graph canvas logic are still unverified; `parseSegments` in `components/segmented-note-content.tsx` is not exported, so it stays untested. |
+| Frontend tests cover pure logic only | `frontend/src/**/*.test.ts` (vitest 5, `environment: "node"`, `@` alias from `vitest.config.ts`) pin `lib/utils.ts` (file URLs, media sniffing incl. the deliberate mkv/avi exclusion, YouTube embeds, `errMessage`), `parse-note-attachments`, `large-attachments` (`pendingAttachments`: parked blocks give a readable name and a size; graphed, indexed and summarised blocks are ignored — 2 tests), `wikilinks` (normalise/resolve/create-target), `folder-tree` and `rewrite-vault-urls`. No component, hook or DOM tests. | Editor (CodeMirror wikilink autocomplete), chat polling and graph canvas logic are still unverified; `parseSegments` in `components/segmented-note-content.tsx` is not exported, so it stays untested. |
 | Desktop runtime partly covered, shell not at all | `tests/unit/test_desktop_runtime.py` (Meili key, status file, Firefly `.env` quoting) and `tests/integration/test_desktop_runtime_ports.py` (`_port` env override, `free_ports` never kills its own pid and counts strangers, Firefly `.env` under a temp data dir, sticky `APP_KEY`, mode 0600) import `app.desktop_runtime` without running `main()`. `desktop/src-tauri` has no tests; sidecar boot and downloads are exercised only by hand. | |
 | Integration smoke only, stores offline | `tests/integration/test_api_smoke.py` boots the real app with `TestClient` against a temp `DATA_DIR` with `QDRANT_PORT`/`MEILI_PORT` pointed at a dead port: `/health`, KB list/create, note create → vault file → GET round-trip → PUT → DELETE, `/vault/folders`, upload into `attachments/<folder>/`, and the 400 on moving across the `attachments/` boundary. Marked `integration`; `pytest.ini` sets `testpaths = tests/unit` so it only runs when asked. | Kuzu/Qdrant/Meili write paths, vault sync and ingestion status transitions are still covered only by the benchmark scripts, which need a full running app and an LLM. |
 | No coverage, no type checking, no formatter | See §6.4. | |

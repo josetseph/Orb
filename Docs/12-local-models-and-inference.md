@@ -741,7 +741,7 @@ These live in `local_models.py` and are covered by `backend/tests/unit/test_loca
 
 ## 14. Configuration and environment variables
 
-Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS` and `EXTRACTION_CHUNK_TOKENS` are **`Settings` fields edited in the app** (Models → Local runtime): `GET`/`PUT /api/v1/settings/local-runtime` validates them, saves them to `DATA_DIR/runtime_config.json` (`runtime_config.LOCAL_RUNTIME_KEYS`), applies them to `settings`, and unloads the chat/embed/reranker models so the next request reloads with the new values. `null` means automatic. The `ORB_*` rows are process plumbing read with `os.environ.get` (paths and download staging), not user knobs.
+Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS`, `EXTRACTION_CHUNK_TOKENS` and `LARGE_ATTACHMENT_TOKENS` are **`Settings` fields edited in the app** (Models → Local runtime): `GET`/`PUT /api/v1/settings/local-runtime` validates them, saves them to `DATA_DIR/runtime_config.json` (`runtime_config.LOCAL_RUNTIME_KEYS`), applies them to `settings`, and unloads the chat/embed/reranker models so the next request reloads with the new values. `null` means automatic. The `ORB_*` rows are process plumbing read with `os.environ.get` (paths and download staging), not user knobs.
 
 | Variable | Default | Read by | Effect |
 |---|---|---|---|
@@ -761,6 +761,7 @@ Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS` and `E
 | `EMBED_N_CTX` | `8192` | `_load_embed_unlocked` | embed model context |
 | `RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | reranker context (also sizes the `logits_all` buffer) |
 | `MODEL_IDLE_SECONDS` | `300` | `model_idle_seconds` | idle unload for chat/embed/reranker; `0` = never |
+| `LARGE_ATTACHMENT_TOKENS` (ORB-only) | `20000` | `ingestion_agent.multimodal_node` | attachments with more extracted tokens wait for a graph / summary / index choice (doc 11 §6.4) |
 | `EXTRACTION_CHUNK_TOKENS` (ORB-only) | `4000` ceiling | `workflows/extraction_chunking.chunk_token_budget` | max input tokens per extraction chunk (doc 10) |
 | `HF_TOKEN`, `HF_HUB_*` | — | `huggingface_hub.snapshot_download` (HF snapshots only) | auth / mirrors for Qwen3-ASR / aligner / diarizer / Marlin; GGUF and projector downloads ignore them |
 | `FORCE_QWENVL_VIDEO_READER`, `VIDEO_MAX_PIXELS`, `FPS`, `FPS_MAX_FRAMES`, `FPS_MIN_FRAMES` | `pyav`, `200704`, `2.0`, `240`, `4` (setdefault) | qwen-vl-utils via Marlin | video frame sampling |

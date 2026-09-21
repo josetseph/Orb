@@ -43,7 +43,8 @@
 | `backend/app/api/notes.py` | `POST /api/v1/notes/{id}/ingest`, `POST /api/v1/ingest`, `GET /api/v1/notes/{id}/status`, note delete (graph orphan cleanup) | `router`, `_delete_note_impl` |
 | `backend/app/api/admin.py` | `reingest-all`, `reset-ingestion-data`, `rebuild-communities`, `build-temporal-digests`, `maintenance-status` | `router` |
 | `backend/app/api_desktop.py` | `POST /api/v1/notes/reingest-vault` | `router` |
-| `backend/app/models/note.py` | SQLite `notes` columns the pipeline mutates: `processed`, `failed`, `processing_stage`, `processing_model`, `title` | `Note` |
+| `backend/app/models/note.py` | SQLite `notes` columns the pipeline mutates: `processed`, `failed`, `processing_stage`, `processing_model`, `title`; and reads: `attachment_modes` | `Note` |
+| `backend/tests/unit/test_large_attachments.py` | Marker modes, `graph_text`, `set_block_mode`, `_passages`, and the park / answer flow through `multimodal_node` | — |
 | `backend/tests/unit/test_extraction_schemas.py` | Unit tests for the tolerant extraction schema | — |
 | `backend/tests/unit/test_extraction_chunking.py` | Tests for splitting/budget/merge helpers (word-count tokenizer stub) | — |
 | `backend/tests/unit/test_ingestion_chunked_extraction.py` | Tests `_extract_with_chunking` / `_extract_chunk` / `_batch_image_titles` against a stub LLM that truncates large chunks | — |
@@ -243,7 +244,7 @@ The tracker is registered **before** waiting for the semaphore so a running rebu
 2. `content = _strip_prior_multimedia_enrichment(input.content, keep=linked)` where `linked` is the set of attachment keys still referenced in the note: every delimited `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` block (`EXTRACT_BLOCK_RE`) whose `src` is *not* in `keep` is removed and the result `rstrip()`ed; blocks for attachments still in the note survive so they are not re-transcribed (`extraction_srcs(content)` then drops those attachments from the work list). **Only delimited blocks are touched** — a bare `[Image: …]` the user typed is their text, and nothing is truncated from the first header any more. Pre-marker enrichment output (a `\n\n[PDF Extraction (…)]`, `[Image:…]`, `[Audio Transcript (…)]`, `[Video Audio Transcript (…)]`, `[Video Visual Analysis (…)]`, `[Word Extraction (…)]`, `[Spreadsheet Extraction (…)]` or `[Unsupported (…)]` header with no closing delimiter, matched by `_ENRICHMENT_BLOCK_RE`) is given markers once by `wrap_legacy_enrichment_blocks(content)` — each header plus the text up to the next header, the next delimited block, or the end of the note becomes one block with `src=""`; text already inside a delimited block is left alone, so the function is idempotent. It runs from the one-time vault sweep `vault_sync.migrate_vault_files` (doc 09 / doc 22), not per ingest.
 3. Attachment discovery: `parse_attachments(content, kb_id)` — `[📎 name](url)` / `[🎤 name](url)` via `ATTACHMENT_LINK_RE`, and `![alt](url)` via `IMAGE_LINK_RE`, where the target (`_ATTACHMENT_URL`) is `https?://…`, `/vault-files/…` or the canonical relative `attachments/…` and runs to the closing `)` (spaces and one level of balanced parentheses allowed). De-duplicated by `attachment_key` (lower-cased, unquoted, no query string, any `/vault-files/<kb>/` prefix dropped). Each item carries `link` (as written) and `url` (the serving URL the extractors open — `vault_file_url(link, kb_id)`).
 4. Classification (`classify_attachment`, by the key's suffix): `pdf` (`.pdf`), `video` (`.mp4 .mov .webm .mkv .avi`), `image` (`.jpg .jpeg .png .webp .gif`), `docx` (`.docx`), `spreadsheet` (`.xlsx .xls .csv .tsv`), `audio` (`.m4a .mp3 .wav .ogg .aac` **or** emoji `🎤`); the order matters — a video suffix wins over `🎤`. Anything else is `unsupported`: a `.doc` gets a `[Unsupported (<name>)]: legacy .doc format — re-save as .docx …` block under its link, the rest are logged `Skipped (Unsupported Type)`. Images embedded in each `.docx` are extracted first (`extract_docx_images`, ≤ 20, parts ≥ 8 KB) and appended to the image list as temp files.
-5. Phases, each via `_run_phase(stage, model, items, kind)` which sets the stage once and then processes items sequentially through `extract_attachment` (or `describe_image_section` for images), collecting exceptions into `media_errors` instead of aborting; each returned section is placed directly under its link by `place_extraction(content, item["link"], section)` inside `<!-- orb:extract src="<link>" -->…<!-- /orb:extract -->` markers:
+5. Phases, each via `_run_phase(stage, model, items, kind)` which sets the stage once and then processes items sequentially through `extract_attachment` (or `describe_image_section` for images), collecting exceptions into `media_errors` instead of aborting; each returned section is placed directly under its link by `place_extraction(content, item["link"], section, mode)` inside `<!-- orb:extract src="<link>" [mode="pending|index|summary"] -->…<!-- /orb:extract -->` markers. For every non-image attachment `_resolve(section, key, filename)` picks the mode: text at or under `LARGE_ATTACHMENT_TOKENS` (`llm.ingestion_count_tokens`) → no mode (graphed); over it, the user's stored decision from `notes.attachment_modes` (`IngestionWorkflow._attachment_modes(note_id)`) applies — `graph` → no mode, `index` → `mode="index"`, `summary` → the body becomes `[Summary (<filename>)]: …` from `llm.summarize_document` (stage `"Summarising <filename>"`), and no decision → `mode="pending"` with the extracted text kept in the block. Before the phases run, parked `pending` blocks whose key now has a decision are rewritten in place the same way (`set_block_mode`), without re-reading the file. Images are never parked. Full detail: [11](11-multimedia-enrichment.md) §6.4.
 
    | Phase | Stage string | Model string | Handler → block body |
    |---|---|---|---|
@@ -262,12 +263,12 @@ The tracker is registered **before** waiting for the semaphore so a running rebu
 
 6. If `media_errors` is non-empty → `raise RuntimeError("Multimedia processing failed for: <file>: <err>; …")`. The note fails; no vault write happens (enrichment that succeeded for other attachments is discarded).
 7. If content changed (blocks appended, or prior blocks stripped and nothing re-appended) and `note_id` is set: stage `"Saving extracted attachment text"`, then `workflow._persist_note_body(note_id, content)` — loads the `Note` row, resolves its KB via `kb_registry.get_kb(note.kb_id)`, and calls `note_files.persist_note_body(note, kb, content)` (writes the vault `.md`). Raises `RuntimeError` if the note has no vault.
-8. Returns `content.strip()` — so the extraction sees the enriched text, and `processed_content` in the return value equals the vault body modulo trailing whitespace.
+8. Returns `content.strip()` — so the extraction sees the enriched text (minus parked and index-only blocks, §6.3), and `processed_content` in the return value equals the vault body modulo trailing whitespace.
 
 ### 6.3 `extraction_node`
 
 - Stage `"Extracting knowledge graph"`, model `_llm.get_ingestion_model() or "LLM"` (the KB's ingestion model id; falls back to the literal `"LLM"` when no model is configured).
-- Input text: `extraction_content = state["content"]`; if `input.title` is set it is prepended as `# {title}\n\n`. (Re-ingested notes always carry their current `note.title`, so in practice the title is present after the first ingest.)
+- Input text: `extraction_content = graph_text(state["content"])` — the note without its `mode="pending"` and `mode="index"` extraction blocks (`UNGRAPHED_MODES`), so a large attachment that is waiting for a decision or is indexed for search only never reaches entity extraction; the rest of the note is graphed immediately and the note completes normally. `storage_node` and `summarization_node` pass the same `graph_text(...)` to `_write_ontology` and `_update_neighborhoods`. If `input.title` is set it is prepended as `# {title}\n\n`. (Re-ingested notes always carry their current `note.title`, so in practice the title is present after the first ingest.)
 - **Chunked extraction** (`_extract_with_chunking(_llm, extraction_content, logs)` → `(Extraction, chunk_count)`):
   1. `count = _llm.ingestion_count_tokens` (real tokenizer of the loaded/selected GGUF for local via `local_llama_runtime.count_tokens`; an estimate for cloud) and `overhead = count(_build_extraction_prompt(""))` (the prompt skeleton, ~1.9k tokens).
   2. `budget = chunk_token_budget(_llm.ingestion_context_tokens(), overhead, model_name)` from `extraction_chunking.py`: `room = context − overhead − 64`; `fits = room / (1 + 2.5)` (extraction JSON is ~2–3× the input); result `= max(400, min(ceiling, fits))` where `ceiling = extraction_budget.learned_budget(model, 4000)` — the per-model output ceiling learned from truncations (see §11, "Chunk budget is learned"), pinned by `EXTRACTION_CHUNK_TOKENS` when set. Local context comes from `_default_chat_n_ctx()` (`LLAMA_N_CTX`); cloud providers report a large window so the learned ceiling binds.
@@ -289,7 +290,7 @@ The tracker is registered **before** waiting for the semaphore so a running rebu
 
 ### 6.4 `storage_node` → `_write_ontology`
 
-`storage_node` sets stage `"Writing graph and note metadata"` / `None`, computes `created_at = input.created_at or datetime.now().isoformat()`, then runs `workflow._write_ontology(note_id, content, extraction, created_at, custom_title=input.title)` in a worker thread, and finally `_update_note_title(note_id, title)` (SQLite `title` column). Any exception → `{"errors": ["Storage failed: …"]}`.
+`storage_node` sets stage `"Writing graph and note metadata"` / `None`, computes `created_at = input.created_at or datetime.now().isoformat()`, then runs `workflow._write_ontology(note_id, graph_text(content), extraction, created_at, custom_title=input.title)` in a worker thread, and finally `_update_note_title(note_id, title)` (SQLite `title` column). Any exception → `{"errors": ["Storage failed: …"]}`.
 
 `_write_ontology` (synchronous; returns the resolved title):
 
@@ -339,7 +340,7 @@ Note: `_write_ontology` does **not** write the note body anywhere, and the extra
 
 Despite the names (kept from an earlier design that generated per-node LLM summaries), this stage generates **no LLM text**. It accumulates verbatim isolated contexts per entity, embeds them, and indexes them.
 
-`summarization_node`: skips (`return {}`) when `errors` is set or `extraction` is missing; otherwise stage `"Indexing entity contexts"` / `"Embeddings"`, then `await workflow._update_neighborhoods(extraction.nodes, content, note_created_at=state["created_at"])`. Any exception → `{"errors": ["Context indexing failed: …"], "status": "FAILED"}`; success → `status="INDEXED"`.
+`summarization_node`: skips (`return {}`) when `errors` is set or `extraction` is missing; otherwise stage `"Indexing entity contexts"` / `"Embeddings"`, then `await workflow._update_neighborhoods(extraction.nodes, graph_text(content), note_created_at=state["created_at"], note_id=state["note_id"])`, and — when the note has `mode="index"` blocks — stage `"Indexing documents for search"` / `None` and `await workflow._index_documents(note_id, documents, created_at)` (below). Any exception → `{"errors": ["Context indexing failed: …"], "status": "FAILED"}`; success → `status="INDEXED"`.
 
 `_update_neighborhoods(nodes, new_content, note_created_at)`:
 
@@ -360,6 +361,18 @@ Despite the names (kept from an earlier design that generated per-node LLM summa
 | 7 | Meilisearch, only after Qdrant succeeded: `rel_nl = " ".join(natural_language of qdrant.get_relationships_for_node_ids([node_id]))`; `contexts_text = " ".join(all contexts)`; if that is empty, fall back to the existing Meili doc's `isolated_contexts` (because `index_node` → `add_documents` **replaces** the whole document, an empty upsert would wipe it); `meili.index_node(node_id, name, node_type, isolated_contexts=contexts, relationship_natural_language=rel_nl)` — `isolated_contexts` is the list of context strings and is stored as a JSON array (failures here are logged inside `index_node`, not raised). | Meili add_documents |
 
 Log line on success: `[NodeSummary] ✓ COMPLETE: '<name>' (type='…', id=…)`.
+
+**Indexed documents — `_index_documents(note_id, documents, note_created_at)`.** `documents` are the `extraction_blocks(content)` entries with `mode == "index"` (a large attachment the user chose to "Index for search", [11](11-multimedia-enrichment.md) §6.4). No LLM call is made. Per document, in one worker thread:
+
+| Step | Action | Store |
+|---|---|---|
+| 1 | `name` = the unquoted, lower-cased file name of `src`; `node_id = "node_" + uuid5(NAMESPACE_URL, "<kb_id>/<attachment key>")` — stable across re-ingests; `passages = _passages(body, target_chars=1200)` (paragraph-bounded, about 300 tokens; a paragraph over twice the target is cut at 1200 chars). No passages → skipped. | — |
+| 2 | `MERGE` the note node and `(n:Node {id})` with `kind='indexable'`, `type='document'`, `name`; `MERGE (note)-[:REFERENCES {note_id}]->(n)`. | Kuzu |
+| 3 | `upsert_node_core(node_id, name, "document", vector of the name, description="Indexed document (N passages, searchable, not graphed).")` — the description is a **fixed one-liner** on purpose: retrieval falls back to it when the document is matched by name, and must not pull in every passage. | Qdrant cores |
+| 4 | All passages embedded in one `embed_documents` call, then `upsert_node_items(contexts collection, node_id, [...])` (delete-by-parent + insert) with payload `content, name, type='document', note_id, note_created_at`. | Qdrant contexts |
+| 5 | `meili.index_node(node_id, name, "document", isolated_contexts=passages, relationship_natural_language="")`. | Meili |
+
+It runs **after** `_update_neighborhoods` because that refresh deletes every context point tagged with this note's id — which includes the passages — so each re-ingest re-embeds them (idempotent). Retrieval needs no change: vector search accumulates only the *matching* passages into the candidate's summary ([16](16-retrieval-and-chat.md)). What is lost: the document's concepts are not entities — no graph nodes of their own, no multi-hop expansion, nothing in the entity panel.
 
 Note the asymmetry: the Qdrant `description` payload and the Meili `isolated_contexts` field are **denormalised copies** of the per-context points; they are rebuilt from the in-memory `existing_contexts` list each time an entity is touched, never from a fresh scroll after the appends.
 
@@ -388,6 +401,8 @@ The `title` column was already updated by `storage_node` (`_update_note_title`) 
 | Qdrant `node_relationships` | Points of deleted edges removed (`delete_relationships`); new edges → new points; reinforced edges untouched. |
 | Qdrant `node_isolated_contexts` | `_update_neighborhoods` deletes this note's points (`note_id` payload) before re-appending; dedup against other notes' contexts compares on `_context_key` (date suffix stripped), so an identical sentence is never stored twice. |
 | Qdrant `node_cores` | `description` / vector rebuilt from the accumulated context list. |
+| Indexed documents (`mode="index"` blocks) | The block is kept (not re-extracted); the context refresh deletes the passages with the note's other contexts and `_index_documents` re-embeds and re-writes them under the same deterministic node id. |
+| Parked blocks (`mode="pending"`) | Kept with their text; rewritten in place once `notes.attachment_modes` holds an answer for their key. |
 | Meilisearch doc | Replaced with the rebuilt `isolated_contexts` array / `relationship_natural_language`. |
 | SQLite | flags reset by the API before queueing; title possibly rewritten. |
 
@@ -451,6 +466,7 @@ Historical name — the current implementation is a **greedy cosine-threshold me
 | 3 | `Extracting knowledge graph` | `extraction_node`, `_extract_with_chunking`, `_extract_chunk`, `merge_extractions` | none | per chunk: truncation → split & merge; other errors → 30 s / 60 s retries; 3rd failure → `errors` → END → **failed**. Rename failure non-fatal. |
 | 4 | `Writing graph and note metadata` | `storage_node` → `_write_ontology`, `_update_note_title` | Kuzu note node, entity nodes, `REFERENCES`, `SEMANTIC_REL`; Qdrant `node_cores` stubs, `node_relationships`; SQLite `title` | Qdrant stub batch failure → abort (Kuzu nodes already written remain). Relationship errors collected → raise after loop (successful edges remain; Qdrant rel batch skipped); Qdrant rel batch returning `False` → abort. Any exception → `errors` → **failed**; no rollback. |
 | 5 | `Indexing entity contexts` (`Embeddings`) | `summarization_node` → `_update_neighborhoods` → `_update_node_summary` | Kuzu entity MERGE; Qdrant `node_isolated_contexts` (+), `node_cores` (overwrite); Meili doc (replace) | context append shortfall or core upsert `False` → `RuntimeError` → **failed** (earlier entities of the same note are already indexed). Meili errors logged, non-fatal. |
+| 5b | `Indexing documents for search` (only with `mode="index"` blocks) | `summarization_node` → `_index_documents`, `_passages` | Kuzu `document` node + `REFERENCES`; Qdrant `node_cores` (fixed description) and `node_isolated_contexts` (passages, replace-by-parent); Meili doc | inside the same `try` as stage 5 → `Context indexing failed: …` → **failed** |
 | 6 | `Ingestion complete` | `_mark_note_processed` | SQLite `processed=1, failed=0` | SQLite failure retried ×3, then note marked failed |
 | 8 | `Ingestion failed` | `_mark_note_failed` | SQLite `processed=0, failed=1` | exception re-raised → aborts later `BackgroundTasks` of the same request |
 | 9 | (none) | `tracker.end_ingestion` | active counter | — |
@@ -465,6 +481,7 @@ Node table `Node(id PK, kind, name, type, pos_x, pos_y, pos_z)`:
 |---|---|---|---|---|
 | `note` | SQLite note id | note title (`"Untitled"` fallback) | NULL | `_write_ontology` |
 | `indexable` | `node_<uuid4>` | normalised lowercase entity name | LLM type lower-cased (`thing` / `unknown` fallbacks) | `_write_ontology`, `_update_node_summary`, `create_or_update_relationship` (defensive MERGE without name) |
+| `indexable` (indexed document) | `node_<uuid5(NAMESPACE_URL, "<kb_id>/<attachment key>")>` | lower-cased file name | `document` | `_index_documents` |
 | `community` | `community_l{0,1,2}_<hex>` | LLM/fallback name | `community` | `create_leiden_community` |
 | `temporal_digest` | `digest_{period}_{key}` | `"May 2026 — Month Digest"` | `temporal_digest` | `create_temporal_digest_node` |
 
@@ -474,7 +491,7 @@ Relationship tables:
 
 | Table | From → To | Properties | Written by |
 |---|---|---|---|
-| `REFERENCES` | note → indexable | `note_id` | `_write_ontology` (MERGE) |
+| `REFERENCES` | note → indexable | `note_id` | `_write_ontology` (MERGE); `_index_documents` (note → `document` node) |
 | `SEMANTIC_REL` | indexable → indexable | `rel_type, relationship_id, ingested_at, last_updated, mention_count, note_id`; schema-only, never set by current writes: `confidence, strength, relevance, edge_weight` (`is_similarity`, `created_at` were dropped from the DDL; old DBs keep the empty columns) | `create_or_update_relationship`, `clear_note_contribution` |
 | `CONTAINS` | community → indexable | — | `create_leiden_community` |
 | `MEMBER_OF` | indexable → community | `level` | `set_node_community_membership` |
@@ -485,24 +502,25 @@ Relationship tables:
 |---|---|---|---|---|
 | cores | `uuid5(NAMESPACE_OID, node_id)` — one point per node | stub: `"{name} ({type}): {isolated_context}"`; later: all contexts joined | `node_id, name, type, description?, community_level? (communities only), period_key? (digests only)` | `upsert_node_cores` (stubs), `upsert_node_core` (merged; communities; digests) |
 | relationships | `uuid5(NAMESPACE_OID, relationship_id)` | `natural_language` text | `relationship_id, natural_language, source_node_id, target_node_id, is_community_rel? (true only for membership sentences)` | `upsert_node_relationships` |
-| isolated_contexts | `uuid4` (append-only) | one context sentence/paragraph | `parent_node_id, content, note_created_at?` | `append_node_item` |
+| isolated_contexts | `uuid4` (append-only) | one context sentence/paragraph | `parent_node_id, content, note_id?, note_created_at?` | `append_node_item` |
+| isolated_contexts (indexed document) | `uuid4`, replaced per document | one ~1200-char passage | `parent_node_id, content, name, type='document', note_id, note_created_at` | `upsert_node_items` from `_index_documents` |
 
 Embedding instruction: documents are embedded **without** any prefix (`embed_documents`); queries get `"Instruct: Given a question, retrieve relevant context.\nQuery: "` only when the embed model name contains `qwen3` (`embed_query`). Ingestion never embeds with an instruction. `QdrantService._prepare_vector` raises `ValueError` if a vector's length ≠ `EMBEDDING_DIMENSIONS` (collections are never resized mid-ingest; that belongs to `sync_embedding_infrastructure` at startup / model change).
 
 ### 10.3 Meilisearch (per-KB index — `MeilisearchService(index_name=…)`, `primaryKey: node_id`; searchable `name, type, isolated_contexts, relationship_natural_language`; filterable `type, community_level`)
 
-Document written by `index_node`: `{node_id, name, type, isolated_contexts?: [<context>, …] (a JSON array), relationship_natural_language?: <all rel NL joined by " ">, community_level?}` — `add_documents` replaces the whole document. Notes are **not** indexed in Meili (only entities, communities, digests).
+Document written by `index_node`: `{node_id, name, type, isolated_contexts?: [<context>, …] (a JSON array), relationship_natural_language?: <all rel NL joined by " ">, community_level?}` — `add_documents` replaces the whole document. Notes are **not** indexed in Meili (only entities, indexed documents — `type='document'`, `isolated_contexts` = the passages — communities, digests).
 
 ### 10.4 SQLite `notes` (metadata only)
 
-`processed`, `failed`, `processing_stage`, `processing_model`, `title`. Never `content` (kept `""`). Full stage vocabulary:
+`processed`, `failed`, `processing_stage`, `processing_model`, `title`. Never `content` (kept `""`). The pipeline only **reads** `attachment_modes` (`_attachment_modes`); it is written by `PUT /api/v1/notes/{id}/attachments/mode`. Full stage vocabulary:
 
 | Source | Strings |
 |---|---|
 | API / watcher | `Saved`, `Queued for ingestion`, `Queued for vault re-ingest`, `Changed on disk — re-ingest when ready`, `External delete detected — review in Orb` |
 | `process_note` | `Queued for ingestion`, `Starting ingestion`, `Ingestion complete`, `Ingestion failed` |
 | `multimodal_node` | `Preparing multimedia attachments`, `Extracting documents`, `Extracting spreadsheets`, `Transcribing audio`, `Transcribing video audio`, `Unloading speech model`, `Analyzing video visuals`, `Unloading video model`, `Reading PDF pages and images`, `PDF: page i/N, extracting text`, `PDF: page i/N, describing image j/M`, `PDF: page i/N, describing page render`, `PDF: page i/N complete`, `Describing images`, `Naming images`, `Saving extracted attachment text` |
-| agent nodes | `Extracting knowledge graph`, `Writing graph and note metadata`, `Indexing entity contexts` |
+| agent nodes | `Extracting knowledge graph`, `Writing graph and note metadata`, `Indexing entity contexts`, `Indexing documents for search` |
 
 `processing_model` values: `Qwen3-ASR`, `Marlin`, `Embeddings`, the ingestion model id (or `vision model` / `LLM` when none is configured), else `None`.
 
@@ -548,6 +566,7 @@ Title prompt (`llm_service.generate_title`): system `"Generate a concise, descri
 | `MULTIMEDIA_CONCURRENCY` | `1` | `ingestion_agent.py` module import | Global semaphore around `multimodal_node`. Read once at import. |
 | `LLM_PROVIDER`, `CHAT_MODEL` | `"local"` / `None` | `init_clients`, `get_ingestion_model` → `get_chat_model` | Ingestion runs on the provider and model selected for chat (Models page); only a per-KB `llm_ingestion_model` ("Use a different model for note ingestion") differs. |
 | `OPENAI_MODEL`, `GEMINI_MODEL`, `ANTHROPIC_MODEL`, `HUGGINGFACE_MODEL`, `LLM_MODEL` | `None` / `"local-chat"` | `get_chat_model` | Provider fallbacks when `CHAT_MODEL` is unset. |
+| `LARGE_ATTACHMENT_TOKENS` (Models → Local runtime) | `20000` | `multimodal_node._resolve` | An attachment whose extracted text is larger than this (ingestion-model tokens) is parked until the user picks graph / summary / index ([11](11-multimedia-enrichment.md) §6.4). Min 1000 through the API. |
 | `EXTRACTION_CHUNK_TOKENS` (Models → Local runtime) | unset (learned per model, starting at `4000`) | `extraction_budget` via `extraction_chunking.chunk_token_budget` | When set, pins the input-token ceiling per extraction chunk (min 400) and disables learning. |
 | `LLAMA_N_CTX` (Models → Local runtime, via `_default_chat_n_ctx`) | see [12](12-local-models-and-inference.md) | `ingestion_context_tokens` | Local context window → chunk budget and output budget. |
 | `MODEL_IDLE_SECONDS` (Models → Local runtime) | 300 | GGUF idle watcher | When resident models are unloaded after ingestion. |
@@ -676,3 +695,4 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 - **`8de5cda`** (Aug 7 2026): batching — stub cores in one upsert, relationship NL embedded and upserted in one batch each, `embed_batch` in llama-cpp, node type resolved from the already-fetched core content, merged-context vector computed in the same embed call as new contexts, community Meili refresh in one write with two bulk Qdrant fetches.
 - **Uncommitted working tree (Sep 2026)**: chunked extraction (`extraction_chunking.py`, `_extract_chunk` split-on-truncation, `ingestion_generate_with_meta`, real token counting, no fixed local `max_tokens`), batched image titling after all multimodal phases (one titling call per note instead of one per image; at the time it also avoided evicting the then-separate vision model), per-KB `LLMService` (`IngestionWorkflow(llm=…)`, `require_ai(kb)`), `[Timing]` log line with `model_load_clock`, and removal of the post-batch model unload in favour of the idle watcher.
 - **Uncommitted working tree (2026-09-19, band-aid pass)**: `RELATIONSHIP_TYPES` closed vocabulary in `schemas/extraction.py` with the coercing validator (default `relates_to` → `related_to`; `clean_rel_type` and the alias validators removed); extraction, rename, image-title and community-name calls use `json_mode=True`; community naming returns `{name, summary}` JSON checked by `_name_fits_members` instead of a generic-name blocklist; `wrap_legacy_enrichment_blocks` + `_strip_prior_multimedia_enrichment(keep=…)` replaced truncate-from-first-header; task-split prompts no longer render doubled braces and `describe_image_section` gets its `llm` argument on the main path; Meili `isolated_contexts` became an array; `extraction_chunking._norm` replaced by `normalize_entity_name`; `_failure_reason` reads the exception's `reason` attribute instead of regexing the message.
+- **`bc34e16`** (2026-09-21): large attachment guard — `LARGE_ATTACHMENT_TOKENS`, marker `mode` attribute, `graph_text` in front of extraction / `_write_ontology` / `_update_neighborhoods`, `_index_documents` + `_passages`, `notes.attachment_modes`, `PUT /notes/{id}/attachments/mode`.

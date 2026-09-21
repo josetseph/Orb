@@ -153,14 +153,15 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 
 `relationship_id` is stored in the payload (and encoded in the point id); points written before it was added lack it.
 
-**`<slug>_node_isolated_contexts`** — N points per entity.
+**`<slug>_node_isolated_contexts`** — N points per entity. The same collection holds the **passages of indexed documents**: a large attachment the user chose to "Index for search" is split into ~1200-character passages (`ingestion._passages`) and written by `IngestionWorkflow._index_documents` with `upsert_node_items` under one `type='document'` node ([10 §6.5](10-ingestion-pipeline.md)). Its `node_cores` point carries the vector of the file name and a fixed description `"Indexed document (N passages, searchable, not graphed)."`; its Meili document has `type='document'` and `isolated_contexts` = the passages.
 
 | Field | Type | Written by | Notes |
 |---|---|---|---|
 | `parent_node_id` | str | `append_node_item`, `upsert_node_items` | entity id |
-| `content` | str | both | verbatim isolated-context sentence from extraction |
+| `content` | str | both | verbatim isolated-context sentence from extraction, or one passage of an indexed document |
+| `note_id` | str | `append_node_item` when given; `_index_documents` items | the contributing note — `delete_note_contexts(note_id)` removes a note's points (entity sentences **and** document passages) at the start of its context refresh, which is why `_index_documents` runs after it |
 | `note_created_at` | str | `append_node_item` when the note has `created_at` | the note's creation date/time string as passed by ingestion (`NoteInput.created_at`, ISO); retrieval matches it with exact `MatchValue`/`MatchAny` on `YYYY-MM-DD` strings, so the stored value must be a bare date for date filters to hit (see gotchas) |
-| *(extra)* | any | `upsert_node_items` forwards any other item keys | currently unused by callers |
+| *(extra)* | any | `upsert_node_items` forwards any other item keys | `_index_documents` sends `name`, `type='document'`, `note_id`, `note_created_at` |
 | *(vector)* | | | embed(content) |
 
 ### 4.6 Write / delete functions
@@ -173,7 +174,7 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 | `upsert_node_relationship` | `(relationship_id, natural_language, nl_vector, source_node_id, target_node_id, is_community_rel=False) -> None` | single point; errors warn-only | none currently (batch used) |
 | `upsert_node_relationships` | `(rels: list[dict]) -> bool` | batch; `True` when all points stored (empty list → `True`), `False` on rejection with `_last_upsert_error` set | `_write_ontology` (`False` ⇒ abort), `_commit_community` |
 | `append_node_item` | `(collection_name, node_id, content, vector, note_created_at=None) -> bool` | one uuid4 point `{parent_node_id, content[, note_created_at]}`; never touches existing points | `_update_node_summary` per new context; `False` count → `RuntimeError` in caller |
-| `upsert_node_items` | `(collection_name, node_id, items) -> None` | delete-by-filter `parent_node_id==node_id` then insert all items (`content`, `vector`, extra keys) — full replace | none currently |
+| `upsert_node_items` | `(collection_name, node_id, items) -> None` | delete-by-filter `parent_node_id==node_id` then insert all items (`content`, `vector`, extra keys) — full replace | `_index_documents` (an indexed document's passages) |
 | `delete_node` | `(node_id) -> None` | deletes core point `uuid5(node_id)`, all `*_node_isolated_contexts` with `parent_node_id==node_id`, and every `*_node_relationships` point whose `source_node_id` or `target_node_id` is the node | `api/notes.py` (note + orphans), `_write_ontology` (re-ingest orphans), `rebuild_leiden_communities` (old communities), `build_temporal_digests` (old digests) |
 | `delete_relationships` | `(relationship_ids) -> None` | deletes the `uuid5(relationship_id)` points | `_write_ontology` (edges dropped by `clear_note_contribution`) |
 | `delete_community_relationships` | `() -> None` | delete-by-filter `is_community_rel == True` in rels | `GraphService.clear_all_communities` |

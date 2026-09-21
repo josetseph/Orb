@@ -1,6 +1,6 @@
 # Multimedia Enrichment
 
-**What this covers.** How attachments referenced from a note's markdown (PDF, images, audio, video, Word, spreadsheets) are discovered, resolved to files on disk, turned into text — speech by the in-process **Qwen3-ASR** (`multimodal_runtime.py` + `asr_engine.py`, MLX on Apple Silicon or transformers elsewhere, with optional speaker labels), video by **Marlin**, images and sparse PDF pages by **the KB's ingestion model itself** (`LLMService.describe_image`: a local GGUF through its vision projector, or a cloud provider's image input), the rest by lightweight parsers (PyMuPDF, python-docx, openpyxl, csv) — and placed into the vault `.md` as delimited enrichment blocks that the extraction stage then reads. It documents `backend/app/services/multimedia.py` end to end, the multimodal phase of the ingestion agent (`multimodal_node`, `parse_attachments`, `classify_attachment`, `extract_attachment`, `place_extraction` in `backend/app/workflows/agents/ingestion_agent.py`), the public entry points of `backend/app/services/multimodal_runtime.py` (`transcribe_audio_path`, `caption_video_path`) with their parameters, the exact block formats and how re-ingest strips them, ordering and model-residency swaps, temp-file rules, error handling, and every config key involved. Model download internals, the ASR engine choice and GGUF/projector residency belong to [12-local-models-and-inference.md](12-local-models-and-inference.md).
+**What this covers.** How attachments referenced from a note's markdown (PDF, images, audio, video, Word, spreadsheets) are discovered, resolved to files on disk, turned into text — speech by the in-process **Qwen3-ASR** (`multimodal_runtime.py` + `asr_engine.py`, MLX on Apple Silicon or transformers elsewhere, with optional speaker labels), video by **Marlin**, images and sparse PDF pages by **the KB's ingestion model itself** (`LLMService.describe_image`: a local GGUF through its vision projector, or a cloud provider's image input), the rest by lightweight parsers (PyMuPDF, python-docx, openpyxl, csv) — and placed into the vault `.md` as delimited enrichment blocks that the extraction stage then reads. It documents `backend/app/services/multimedia.py` end to end, the multimodal phase of the ingestion agent (`multimodal_node`, `parse_attachments`, `classify_attachment`, `extract_attachment`, `place_extraction` in `backend/app/workflows/agents/ingestion_agent.py`), the public entry points of `backend/app/services/multimodal_runtime.py` (`transcribe_audio_path`, `caption_video_path`) with their parameters, the exact block formats and how re-ingest strips them, the **large attachment guard** (an attachment over `LARGE_ATTACHMENT_TOKENS` waits for the user to pick graph / summarize / index-for-search, §6.4), ordering and model-residency swaps, temp-file rules, error handling, and every config key involved. Model download internals, the ASR engine choice and GGUF/projector residency belong to [12-local-models-and-inference.md](12-local-models-and-inference.md).
 
 **Related docs:** [Ingestion pipeline](10-ingestion-pipeline.md) · [Local models & inference](12-local-models-and-inference.md) · [Notes, wikilinks & vault files](09-notes-wikilinks-and-vault-files.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [API reference](07-api-reference.md) · [Frontend notes editor](19-frontend-notes-editor.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -28,14 +28,17 @@
 | Path | Purpose | Key exports |
 |---|---|---|
 | `backend/app/services/multimedia.py` | `MultimediaService`: path resolution, temp-file rules, SSRF guard, per-type extractors, unload helpers; `image_data_url` (JPEG data URL, downscaled) | `multimedia_service`, `MultimediaService`, `image_data_url`, `_format_timestamp` |
-| `backend/app/workflows/agents/ingestion_agent.py` (`multimodal_node`, `parse_attachments`, `classify_attachment`, `extract_attachment`, `describe_image_section`, `resolve_image_titles`, `_batch_image_titles`, `place_extraction`, `EXTRACT_BLOCK_RE`, `_ENRICHMENT_BLOCK_RE`, `wrap_legacy_enrichment_blocks`, `_strip_prior_multimedia_enrichment`, `multimedia_concurrency_limit`) | Discovery, classification, phase ordering, status updates, block placement, vault write-back | see [10](10-ingestion-pipeline.md) §6.2 |
+| `backend/app/workflows/agents/ingestion_agent.py` (`multimodal_node`, `parse_attachments`, `classify_attachment`, `extract_attachment`, `describe_image_section`, `resolve_image_titles`, `_batch_image_titles`, `place_extraction`, `extract_open`, `extraction_blocks`, `graph_text`, `set_block_mode`, `UNGRAPHED_MODES`, `ATTACHMENT_MODES`, `EXTRACT_BLOCK_RE`, `_ENRICHMENT_BLOCK_RE`, `wrap_legacy_enrichment_blocks`, `_strip_prior_multimedia_enrichment`, `multimedia_concurrency_limit`) | Discovery, classification, phase ordering, status updates, block placement, vault write-back | see [10](10-ingestion-pipeline.md) §6.2 |
 | `backend/app/services/llm.py` (`describe_image`, `IMAGE_DESCRIBE_PROMPT`) | One image → text through the KB's ingestion provider (local GGUF projector, Gemini, Anthropic, OpenAI-shaped) | see [13](13-llm-providers-and-prompting.md) §9.13 |
 | `backend/app/services/multimodal_runtime.py` | In-process Qwen3-ASR (transformers engine) / Marlin: `transcribe_audio_path`, `_load_asr`, `_load_aligner`, `_speaker_turns`, `_load_audio_mono_16k*`, `_resolve_ffmpeg_bins`, `caption_video_path`, `unload`, `status` | `multimodal_runtime` |
 | `backend/app/services/asr_engine.py` | Engine choice (`choose`, `detect_engine_for`, `is_asr_bundle`), MLX transcription (`transcribe_with_mlx`), chunking, forced alignment, pyannote diarization and `Speaker N:` labelling | `AsrChoice`, `DEFAULT_REPO`, `ALIGNER_REPO`, `DIARIZER_REPO`, `transcribe_with_mlx`, `speaker_turns`, `label_speakers` |
 | `backend/app/services/multimodal_models.py` | `multimodal_model_path(kind)` for `asr` / `aligner` / `diarizer` / `marlin`, `is_hf_snapshot_ready(path)`, `ensure_multimodal_models` (download) | — |
 | `backend/app/api/files.py` | `POST /api/v1/upload` (ffmpeg transcode of webm/ogg/opus → m4a), `DELETE /api/v1/files/{key}` | `router`, `_transcode_to_m4a` |
 | `backend/app/services/local_storage.py` | `store_upload` → `attachments/<folder>/<file>` (+ serving URL); `vault_rel_from_url`; `vault_file_url`; `remove_upload` | — |
-| `backend/app/core/config.py` | `PDF_VISUAL_*`, `IMAGE_DESCRIBE_MAX_PIXELS`, `MODEL_ASR_{HF,LOCAL}`, `ASR_ENGINE`, `ASR_LANGUAGE`, `ASR_SPEAKERS`, `ASR_DIARIZE_STEP`, `ASR_MAX_SPEAKERS`, `MODEL_MARLIN_{HF,LOCAL}`, `MULTIMEDIA_CONCURRENCY` | `settings` |
+| `backend/app/core/config.py` | `LARGE_ATTACHMENT_TOKENS`, `PDF_VISUAL_*`, `IMAGE_DESCRIBE_MAX_PIXELS`, `MODEL_ASR_{HF,LOCAL}`, `ASR_ENGINE`, `ASR_LANGUAGE`, `ASR_SPEAKERS`, `ASR_DIARIZE_STEP`, `ASR_MAX_SPEAKERS`, `MODEL_MARLIN_{HF,LOCAL}`, `MULTIMEDIA_CONCURRENCY` | `settings` |
+| `backend/app/api/notes.py` (`set_attachment_mode`), `backend/app/models/note.py` (`attachment_modes`) | `PUT /api/v1/notes/{id}/attachments/mode` stores the user's answer for a large attachment and re-ingests (§6.4) | [07](07-api-reference.md) |
+| `backend/app/workflows/ingestion.py` (`_attachment_modes`, `_index_documents`, `_passages`) | Reads the stored answers; indexes `mode="index"` blocks as searchable passages | [10](10-ingestion-pipeline.md) §6.5 |
+| `frontend/src/app/notes/_lib/large-attachments.ts`, `_components/LargeAttachmentPrompt.tsx` | Finds `mode="pending"` blocks and asks the question | [19](19-frontend-notes-editor.md) |
 | `frontend/src/components/segmented-note-content.tsx` | Renders each `orb:extract` block as a labelled segment (kind and label from its header line) | — |
 | `backend/requirements.txt` / `requirements-multimodal.txt` | PyMuPDF, python-docx, openpyxl, av in the base install; torch, `transformers>=5.7`, librosa, pydub, qwen-vl-utils, `pyannote.audio` and (Apple Silicon only) `mlx-qwen3-asr` in the multimodal set | — |
 
@@ -216,7 +219,18 @@ Each block is placed **directly beneath the attachment it came from**, wrapped i
 <!-- /orb:extract -->
 ```
 
-`place_extraction(content, src_url, section)` inserts after the line holding the link (`src_url` is the item's `link` — the target exactly as written, so a legacy `/vault-files/<kb>/…` link gets a marker with that same absolute `src`), falling back to appending at the end when the URL is not found (a note edited mid-ingest). `src` is what lets one block be replaced on its own, independent of ordering; `attachment_key` matches block and link even when one is absolute and the other relative. HTML comments render as nothing; the editor collapses them to a labelled rule (`extractMarkerExtension.ts`) and shows raw text only on the line being edited.
+`place_extraction(content, src_url, section, mode="")` inserts after the line holding the link (`src_url` is the item's `link` — the target exactly as written, so a legacy `/vault-files/<kb>/…` link gets a marker with that same absolute `src`), falling back to appending at the end when the URL is not found (a note edited mid-ingest). `src` is what lets one block be replaced on its own, independent of ordering; `attachment_key` matches block and link even when one is absolute and the other relative. HTML comments render as nothing; the editor collapses them to a labelled rule (`extractMarkerExtension.ts`) and shows raw text only on the line being edited.
+
+The opening marker may carry one optional attribute that says how the attachment is ingested (`extract_open(src, mode)` writes it; `_OPEN = r'<!-- orb:extract src="([^"]*)"(?: mode="([a-z]+)")? -->'` reads it):
+
+```
+<!-- orb:extract src="…" -->                  graphed like the rest of the note (the only form before the guard)
+<!-- orb:extract src="…" mode="pending" -->   over LARGE_ATTACHMENT_TOKENS, waiting for the user; body = the full extracted text
+<!-- orb:extract src="…" mode="index" -->     body = the full extracted text, indexed as searchable passages, not graphed
+<!-- orb:extract src="…" mode="summary" -->   body = "[Summary (<filename>)]: <model-written summary>", which is graphed
+```
+
+`extraction_blocks(content)` returns every block as `{src, key, mode, body}` (`key = attachment_key(src)`, `mode` `""` when absent); `set_block_mode(content, key, mode, body=None)` rewrites one block's mode (and optionally its body) and leaves every other block alone; `graph_text(content)` is the note minus the `UNGRAPHED_MODES = ("pending", "index")` blocks. See §6.4.
 
 Inside the delimiters the body is unchanged — each starts with a bracketed marker:
 
@@ -229,6 +243,7 @@ Inside the delimiters the body is unchanged — each starts with a bracketed mar
 | `[Audio Transcript (<filename>)]` | `: ` | transcript |
 | `[Video Audio Transcript (<filename>)]` | `:\n\n` | transcript |
 | `[Video Visual Analysis (<filename>)]` | `:\n\n` | `### Visual Analysis\n**Scene:** …\n\n**Events:**\n- …` |
+| `[Summary (<filename>)]` (only in a `mode="summary"` block) | `: ` | `LLMService.summarize_document` output; `<filename>` is the link text for a fresh attachment, the `src` basename for a block that was parked first |
 
 `<filename>` is the link text (or URL basename), unescaped — a filename containing `)` or `]` will confuse both the strip regex and the frontend parser. `<title>` is the batched LLM title or the filename.
 
@@ -239,9 +254,8 @@ The final body is `content.strip()`-ed before extraction, and the vault gets the
 Re-ingest **replaces**: prior blocks are removed, then regenerated. It never appends to or skips an existing block, and is idempotent.
 
 ```python
-EXTRACT_BLOCK_RE = re.compile(
-    r"\n*<!-- orb:extract src=\"[^\"]*\" -->.*?<!-- /orb:extract -->", re.S
-)
+_OPEN = r'<!-- orb:extract src="([^"]*)"(?: mode="([a-z]+)")? -->'
+EXTRACT_BLOCK_RE = re.compile(r"\n*" + _OPEN + r".*?<!-- /orb:extract -->", re.S)
 def _strip_prior_multimedia_enrichment(content, keep=None):
     # each delimited block, wherever it sits; blocks whose attachment key is in
     # `keep` (already processed) survive, `keep=None` removes every block
@@ -250,13 +264,32 @@ def _strip_prior_multimedia_enrichment(content, keep=None):
 
 Removing blocks **individually** is what makes text written *below* an extraction survive. The previous rule cut from the first block header to the end of the note, so anything after it was silently deleted on the next ingest.
 
-Only delimited blocks are touched. A bare `[Image: …]` paragraph the user typed is their text and is never stripped. Notes enriched before delimiters existed get their markers from the one-time vault sweep instead: `vault_sync.migrate_vault_files` (run from `sync_vault_notes`, gated by `<vault>/.orb/migrated-v4`) calls `wrap_legacy_enrichment_blocks(content)`, which wraps each legacy header — matched by `_ENRICHMENT_BLOCK_RE` (`PDF Extraction`, `Image:`, `Audio Transcript`, `Video Audio Transcript`, `Video Visual Analysis`, `Word Extraction`, `Spreadsheet Extraction`, `Unsupported`, each preceded by a blank line) — and the text up to the next header, the next delimited block, or the end of the note in `<!-- orb:extract src="" -->…<!-- /orb:extract -->`. Text already inside a delimited block is left alone, so the wrap is idempotent. From then on those blocks are found, kept or dropped by the same rules as any other. `content_changed` is True when stripping alone changed the body, so a re-ingest of a note whose attachments were removed still rewrites the `.md` without the stale blocks.
+Only delimited blocks are touched. A bare `[Image: …]` paragraph the user typed is their text and is never stripped. Notes enriched before delimiters existed get their markers from the one-time vault sweep instead: `vault_sync.migrate_vault_files` (run from `sync_vault_notes`, gated by `<vault>/.orb/migrated-v4`) calls `wrap_legacy_enrichment_blocks(content)`, which wraps each legacy header — matched by `_ENRICHMENT_BLOCK_RE` (`PDF Extraction`, `Image:`, `Audio Transcript`, `Video Audio Transcript`, `Video Visual Analysis`, `Word Extraction`, `Spreadsheet Extraction`, `Unsupported`, each preceded by a blank line) — and the text up to the next header, the next delimited block, or the end of the note in `<!-- orb:extract src="" -->…<!-- /orb:extract -->`. Text already inside a delimited block is left alone, so the wrap is idempotent. From then on those blocks are found, kept or dropped by the same rules as any other. `content_changed` is True when stripping alone changed the body, so a re-ingest of a note whose attachments were removed still rewrites the `.md` without the stale blocks. A block of **any** mode counts as processed (`extraction_srcs` reads the `src` whatever the mode) and is kept while its link remains, so a parked, indexed or summarised attachment is never extracted a second time.
 
 ### 6.3 Consumers of the markers
 
-- Extraction LLM: sees the blocks as ordinary note text (the `[Image: <title>]` line is designed to make the image an extractable named entity).
-- Frontend `segmented-note-content.tsx` splits on the `<!-- orb:extract -->` blocks (`BLOCK_RE`) and maps the header kind to a segment type: `Image…` → image, `Video…` → video, any `…Transcript` → audio, everything else (PDF, Word, Spreadsheet, Unsupported) → document. There is no header list to keep in step with this module.
+- Extraction LLM: sees the blocks as ordinary note text (the `[Image: <title>]` line is designed to make the image an extractable named entity) — except `pending` and `index` blocks, which `graph_text` removes before `extraction_node`, `_write_ontology` and `_update_neighborhoods` see the note (§6.4).
+- `summarization_node`: hands `mode="index"` blocks to `IngestionWorkflow._index_documents` ([10](10-ingestion-pipeline.md) §6.5).
+- Frontend `large-attachments.ts` (`pendingAttachments`) reads `mode="pending"` blocks to render `LargeAttachmentPrompt`.
+- Frontend `segmented-note-content.tsx` splits on the `<!-- orb:extract -->` blocks (`BLOCK_RE`, which accepts the optional `mode` attribute) and maps the header kind to a segment type: `Image…` → image, `Video…` → video, any `…Transcript` → audio, everything else (PDF, Word, Spreadsheet, Unsupported) → document. There is no header list to keep in step with this module.
 - Backend: `EXTRACT_BLOCK_RE` (strip / keep / replace per attachment) and, for pre-marker vaults only, `_ENRICHMENT_BLOCK_RE`. Editor: `extractMarkerExtension.ts` collapses each marker pair to a labelled rule and shows the raw text only on the line being edited.
+
+### 6.4 Large attachment guard
+
+A 400-page PDF graphed in full costs hours of extraction calls, so ingestion asks first. The guard lives in `multimodal_node`:
+
+- **Measure.** After a non-image attachment is extracted, `_resolve(section, key, filename)` counts `llm.ingestion_count_tokens(section)`. At or under `settings.LARGE_ATTACHMENT_TOKENS` (default `20000`, editable in Models → Local runtime as `large_attachment_tokens`, ≥ 1000) the block is written with no mode and graphed as before. **Images are never measured or parked** (`mode = ""` in the image branch).
+- **Decide.** Over the threshold, the user's answer for that attachment is looked up in `notes.attachment_modes` — a JSON column `{attachment key: "graph" | "summary" | "index"}` (`ATTACHMENT_MODES`), read once per run through `IngestionWorkflow._attachment_modes(note_id)`:
+
+| Decision | Block written | What gets graphed |
+|---|---|---|
+| `graph` | no mode, full text | the whole document, like a small attachment |
+| `summary` | `mode="summary"`, body `[Summary (<filename>)]: …` from `await llm.summarize_document(filename, section)` (status `"Summarising <filename>"`) | the summary only |
+| `index` | `mode="index"`, full text | nothing — `_index_documents` stores the text as searchable passages under one `document` node ([10](10-ingestion-pipeline.md) §6.5) |
+| none yet | `mode="pending"`, **full text kept in the block** | nothing from this attachment; the rest of the note is graphed immediately and the note completes normally |
+
+- **Answer.** The note page shows `LargeAttachmentPrompt` for every `pending` block; a click calls `PUT /api/v1/notes/{id}/attachments/mode` `{link, mode}`, which stores the decision under `attachment_key(link)` and re-ingests the note ([07](07-api-reference.md)). On that run, **before the phases**, every parked block whose key now has a decision is rewritten in place with `set_block_mode` through the same `_resolve` — the extracted text is already in the block, so answering never costs a second transcription or PDF read. A parked block without a decision stays parked.
+- **What extraction sees.** `extraction_node`, the `_write_ontology` call in `storage_node` and `_update_neighborhoods` all receive `graph_text(state["content"])`; parked and index-only text never reaches entity extraction, title generation or the entity context sentences.
 
 ## 7. Ordering, concurrency, model residency, configuration
 
@@ -287,6 +320,7 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 | Key | Default | Where read | Effect |
 |---|---|---|---|
 | `MULTIMEDIA_CONCURRENCY` | `1` | `ingestion_agent.py` import | Global semaphore for the multimodal phase. |
+| `LARGE_ATTACHMENT_TOKENS` | `20000` | `multimodal_node._resolve` (call time) | An attachment whose extracted text has more ingestion-model tokens than this waits for the user's graph / summary / index decision (§6.4). Local-runtime key `large_attachment_tokens` (Models → Local runtime, ≥ 1000), persisted in `runtime_config.json`. |
 | `PDF_VISUAL_TEXT_THRESHOLD` | `80` | `_pdf_page_needs_render` | Pages with ≥ this many native chars are never rendered. |
 | `PDF_VISUAL_EXTRACTION_MAX_PAGES` | `0` (unlimited) | `extract_text_from_pdf` | Cap on rendered pages per PDF (pages that produced a description). |
 | `PDF_VISUAL_RENDER_DPI` | `144` (min 72) | `_describe_pdf_page_render` | Render resolution before the image is handed to the model (which then downsizes to `IMAGE_DESCRIBE_MAX_PIXELS`). |
@@ -316,7 +350,10 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 9. **Speaker labels need two extra downloads** (aligner + diarizer) and run on the CPU; without them the transcript is plain and a single line in the log says why.
 10. Remote downloads are limited to 512 MiB and public addresses; a private-network or `localhost` media URL will fail with `Refusing to fetch non-public address`.
 11. Env-var frame-sampling knobs are read at import via `setdefault`; setting them in `settings` has no effect unless exported into the process environment before `multimodal_runtime` is imported.
-12. **Embedded `.docx` images are keyed by position** (`<docx link>#<index>`), not content: if the document's images are reordered or one is inserted, later indices shift and those images are described again once.
+12. **The large attachment guard measures after extraction.** The size is only known once the text exists, so a large image-heavy or scanned PDF still pays its per-page vision cost (gotcha 4) before it is parked; the guard saves the entity-extraction cost, not the reading cost. The text is then kept in the `pending` block, so it is paid once.
+13. **The editor's "process this item" action does not apply the guard.** `POST /notes/{id}/attachments/process` (`api/notes._run_attachment_job`) calls `place_extraction` without a mode, so the block it writes is graphed in full on the next ingest whatever its size; only `multimodal_node` parks.
+14. **A decision is stored per attachment key and is sticky.** `notes.attachment_modes` is never cleared by ingestion, and an answer is only applied to a `pending` block or a fresh extraction — sending a different mode for a block that is already `index` / `summary` / graphed stores the value but changes nothing until that block is removed; if the block for the same link is removed and extracted again, the earlier answer is reused without asking. An `index` block's passages are re-embedded on every re-ingest of the note (the context refresh deletes them first).
+15. **Embedded `.docx` images are keyed by position** (`<docx link>#<index>`), not content: if the document's images are reordered or one is inserted, later indices shift and those images are described again once.
 
 ### 8.2 Extension points
 
@@ -339,3 +376,4 @@ Each `multimodal_runtime` public method holds `self._lock` for the whole inferen
 - `da4a690`, `a6997ca` (Sep 2026): Whisper replaced by **Qwen3-ASR** (MLX on the Apple GPU, transformers elsewhere; `asr_engine.py`), output caps lifted.
 - `09e6521` (2026-09-15): speaker labels on transcripts (pyannote community-1 + Qwen forced aligner, `Speaker N:` paragraphs); ingestion cancellation.
 - 2026-09-19/20: `parse_attachments` returns `link` + `url`, relative `attachments/…` links discovered and resolved via `vault_file_url`; `wrap_legacy_enrichment_blocks` and the v3 vault sweep; `.doc` gets an `[Unsupported …]` block instead of silent skipping.
+- `bc34e16` (2026-09-21): large attachment guard — optional `mode` attribute on the marker, `LARGE_ATTACHMENT_TOKENS`, `notes.attachment_modes`, `PUT /notes/{id}/attachments/mode`, `summarize_document`, `_index_documents`, `LargeAttachmentPrompt`.

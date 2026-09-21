@@ -103,6 +103,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
 | `EXTRACTION_CHUNK_TOKENS` | int \| None / `None` (learned, `4000` ceiling) | `Settings`, edited in Models → Local runtime — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
+| `LARGE_ATTACHMENT_TOKENS` | int / `20000` | `Settings`, edited in Models → Local runtime (`large_attachment_tokens`, ≥ 1000) — `ingestion_agent.multimodal_node` (`_resolve`) | An attachment whose extracted text has more ingestion-model tokens than this is parked as a `mode="pending"` block until the user picks graph / summarize / index for search ([11 §6.4](11-multimedia-enrichment.md)); images are never parked | runtime (`runtime_config.json`, Models → Local runtime) |
 | `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | env |
 | `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | env |
 
@@ -290,7 +291,7 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
 | `model` | `CHAT_MODEL` | `PATCH /api/v1/settings` |
 | `base_url` | `LLM_BASE_URL` | `PATCH /api/v1/settings` |
 
-Only these three keys and the thirteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs, written by `PUT /api/v1/settings/local-runtime`, see [12](12-local-models-and-inference.md)) survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys — including an `ingestion_model` left by an older build — are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
+Only these three keys and the fourteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs and `large_attachment_tokens`, written by `PUT /api/v1/settings/local-runtime`, see [12](12-local-models-and-inference.md)) survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys — including an `ingestion_model` left by an older build — are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
 
 ### 4.3 `MODELS_DIR/models_manifest.json` (pointer)
 

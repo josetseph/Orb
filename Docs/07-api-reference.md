@@ -183,6 +183,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | POST | `/api/v1/notes/batch-delete` | kb | Delete ≤100 notes | [#](#post-apiv1notesbatch-delete) |
 | POST | `/api/v1/notes/{note_id}/move` | kb | Move note into folder | [#](#post-apiv1notesnote_idmove) |
 | POST | `/api/v1/notes/{note_id}/ingest` | kb | Force (re)ingest one note | [#](#post-apiv1notesnote_idingest) |
+| PUT | `/api/v1/notes/{note_id}/attachments/mode` | kb | Answer for a large attachment (graph / summary / index), then re-ingest | [#](#put-apiv1notesnote_idattachmentsmode) |
 | POST | `/api/v1/ingest` | kb | Legacy create+ingest | [#](#post-apiv1ingest) |
 | POST | `/api/v1/notes/reingest-vault` | kb | Re-queue every note in KB | [#](#post-apiv1notesreingest-vault) |
 
@@ -481,7 +482,7 @@ Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default
 
 #### GET / PUT /api/v1/settings/local-runtime
 
-The llama.cpp knobs shown in Models → Local runtime. `GET` returns the thirteen `runtime_config.LOCAL_RUNTIME_KEYS` (`llama_n_ctx`, `llama_max_tokens`, `llama_swa_full`, `llama_flash_attn`, `llama_backend`, `llama_n_gpu_layers`, `llama_n_threads`, `llama_repeat_penalty`, `llama_prompt_reserve`, `embed_n_ctx`, `rerank_n_ctx`, `model_idle_seconds`, `extraction_chunk_tokens`; `null` = automatic). `PUT` takes the full object (`LocalRuntimeSettings`, range-checked → **422**), saves it to `runtime_config.json`, applies it to `settings`, unloads the chat/embed and reranker models so the next request reloads with the new values, and returns the state.
+The llama.cpp knobs shown in Models → Local runtime. `GET` returns the fourteen `runtime_config.LOCAL_RUNTIME_KEYS` (`llama_n_ctx`, `llama_max_tokens`, `llama_swa_full`, `llama_flash_attn`, `llama_backend`, `llama_n_gpu_layers`, `llama_n_threads`, `llama_repeat_penalty`, `llama_prompt_reserve`, `embed_n_ctx`, `rerank_n_ctx`, `model_idle_seconds`, `extraction_chunk_tokens`, `large_attachment_tokens`; `null` = automatic). `PUT` takes the full object (`LocalRuntimeSettings`, range-checked → **422**; `large_attachment_tokens` ≥ 1000 and is the one field with a default, `20000`, so an older client that omits it resets it), saves it to `runtime_config.json`, applies it to `settings`, unloads the chat/embed and reranker models so the next request reloads with the new values, and returns the state.
 
 #### PATCH /api/v1/settings
 
@@ -639,6 +640,16 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 `require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, commits, then `BackgroundTasks.add_task(kb.get_ingestion_workflow().process_note, NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
 
 `process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
+
+#### PUT /api/v1/notes/{note_id}/attachments/mode
+
+The user's answer for an attachment that ingestion parked as too large (over `LARGE_ATTACHMENT_TOKENS`; the block in the body carries `mode="pending"` — [11 §6.4](11-multimedia-enrichment.md)). Body (`AttachmentModeInput`): `link: str` (the attachment link as written in the note / the marker's `src`), `mode: "graph" | "summary" | "index"` — anything else → **422**. **404** unknown/wrong KB.
+
+Stores the decision in the `notes.attachment_modes` JSON column under `attachment_key(link)` (the dict is reassigned, not mutated, so SQLAlchemy sees the change), commits, then calls the same code as [`POST /notes/{id}/ingest`](#post-apiv1notesnote_idingest) and returns its response (so `require_ai()` → **503** applies, after the decision is already saved). On that run `multimodal_node` rewrites the parked block in place from the text it already holds — `graph` → graphed in full, `summary` → a model-written summary is graphed, `index` → searchable passages under one `document` node, nothing extracted. A decision only acts on a `pending` block or a fresh extraction.
+
+```json
+{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}
+```
 
 #### POST /api/v1/ingest
 
@@ -1037,7 +1048,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 | `exportChat` | `GET /chat/conversations/{id}/export` | backend route is broken (500) — see 6 |
 | `upload` | `POST /upload` | direct-to-API origin via bridge; 10 min timeout |
 | `getNotes` / `getNote` / `getNoteStatus` | `GET /notes`, `/notes/{id}`, `/notes/{id}/status` | all send `kb` |
-| `createNote` / `updateNote` / `updateNoteOnUnload` / `deleteNote` / `batchDeleteNotes` / `moveNote` / `ingestNote` | notes routes | |
+| `createNote` / `updateNote` / `updateNoteOnUnload` / `deleteNote` / `batchDeleteNotes` / `moveNote` / `ingestNote` / `setAttachmentMode` | notes routes | `setAttachmentMode` → `PUT /notes/{id}/attachments/mode` `{link, mode}` |
 | `moveVaultFile` / `deleteVaultFile` / `listVaultFolders` / `mkdirVaultFolder` / `resolveVaultLocalPath` | vault routes | |
 | `getGraph3DFull` / `getNodeDetail` | graph 3d routes | TS type for `getGraph3DFull` declares `facts` which the backend omits |
 | `searchEntities` / `scanTextEntities` / `getNoteEntitySubgraph` | graph entity routes | |

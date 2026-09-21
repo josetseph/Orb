@@ -348,6 +348,7 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 | `LOG_LEVEL` | str | `"INFO"` | `log.setup_logging` (`getattr(logging, LEVEL.upper(), INFO)`) |
 | `INGESTION_PIPELINE_CONCURRENCY` | int | `1` | `workflows/ingestion.py` `asyncio.Semaphore` around whole-note processing (FIFO when 1) |
 | `MULTIMEDIA_CONCURRENCY` | int | `1` | `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` around vision / Qwen3-ASR / Marlin work |
+| `LARGE_ATTACHMENT_TOKENS` | int | `20000` | `ingestion_agent.multimodal_node` (`_resolve`, read at call time) — an attachment whose extracted text is larger waits for the user's graph / summary / index choice ([11 §6.4](11-multimedia-enrichment.md)). One of `LOCAL_RUNTIME_KEYS` (`large_attachment_tokens`, ≥ 1000 via `api/settings.LocalRuntimeSettings`), edited in Models → Local runtime |
 
 ### 5.4 Post-construction mutation of `settings`
 
@@ -430,7 +431,7 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 
 Persistent, user-mutable overrides for the provider settings, so the UI can change them. API keys are deliberately never stored here.
 
-- `MUTABLE_KEYS = frozenset(_SETTING_FOR)`: `provider`, `model`, `base_url` plus the thirteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs; each key is its lower-cased `Settings` attribute).
+- `MUTABLE_KEYS = frozenset(_SETTING_FOR)`: `provider`, `model`, `base_url` plus the fourteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs and `large_attachment_tokens`; each key is its lower-cased `Settings` attribute).
 - `_data_path()` → `resolve_data_dir() / "runtime_config.json"`, falling back to `<repo>/data/runtime_config.json` if `paths` import fails.
 - `load() -> dict`: returns only keys in `MUTABLE_KEYS`; any `OSError`/`JSONDecodeError` logs a warning (logger `RuntimeConfig` → `api.log`) and returns `{}`.
 - `save(overrides)`: filters to `MUTABLE_KEYS`, `mkdir -p`, writes `indent=2` JSON under a `threading.Lock`. Overwrites the whole file — callers first `load()` then merge (as `PATCH /settings` does).
@@ -475,7 +476,7 @@ Other code paths open their **own** connections to the same `orb.db`: `kb_regist
 
 1. Imports `app.models.chat`, `note`, `wikilink` so `Base.metadata` is populated (the comment notes finance has no local tables — it lives in Firefly).
 2. `Base.metadata.create_all` inside `engine.begin()`.
-3. On SQLite only, `_sqlite_repairs`: `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)` — because `create_all` never adds new indexes to tables that already exist, and this composite index was introduced (`fbcafe7`) after the `notes` table had shipped — and `UPDATE notes SET rel_path = replace(rel_path, '\', '/') WHERE rel_path LIKE '%\%'`, repairing rows written as `str(Path)` on Windows (`note_files` now stores `rel_path` with `.as_posix()`). Both are idempotent and run on every start.
+3. On SQLite only, `_sqlite_repairs`: `CREATE INDEX IF NOT EXISTS ix_notes_kb_rel_path ON notes (kb_id, rel_path)` — because `create_all` never adds new indexes to tables that already exist, and this composite index was introduced (`fbcafe7`) after the `notes` table had shipped — and `UPDATE notes SET rel_path = replace(rel_path, '\', '/') WHERE rel_path LIKE '%\%'`, repairing rows written as `str(Path)` on Windows (`note_files` now stores `rel_path` with `.as_posix()`). Both are idempotent and run on every start. The same function adds `notes.attachment_modes` (JSON) when `PRAGMA table_info(notes)` does not list it.
 
 There is **no migration framework** (no Alembic). New columns on existing installs are handled ad hoc (`kb_registry._ensure_optional_columns` for `firefly_group_id`/`firefly_group_title` and the `llm_*` override columns); adding a column to `Note`/`ChatMessage` requires a similar manual `ALTER TABLE` path or it will only exist on fresh databases.
 
@@ -495,6 +496,7 @@ All tables share the pattern: `String` UUID4 primary key generated in Python (`d
 | `updated_at` | DateTime(tz) | — | utcnow, `onupdate=utcnow` | Any ORM update |
 | `processed` | Boolean | — | `False` | Ingestion finished successfully |
 | `failed` | Boolean | — | `False` | Ingestion failed |
+| `attachment_modes` | JSON | yes | — | `{attachment key: "graph" \| "summary" \| "index"}` — the user's answer for attachments over `LARGE_ATTACHMENT_TOKENS`; written by `PUT /notes/{id}/attachments/mode`, read by `IngestionWorkflow._attachment_modes`. `_sqlite_repairs` adds the column to pre-existing DBs (`ALTER TABLE notes ADD COLUMN attachment_modes JSON`) |
 | `processing_stage` | String | yes | — | Human-readable stage string (`"Saved"`, `"Queued for ingestion"`, pipeline stages, error text). Surfaced by `GET /notes/{id}/status`. |
 | `processing_model` | String | yes | — | Model id used for the last ingestion attempt |
 | `kb_id` | String | no | `"default"` | KB scope; indexed (`index=True`) |

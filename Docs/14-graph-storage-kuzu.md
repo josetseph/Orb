@@ -209,7 +209,7 @@ CREATE REL TABLE IF NOT EXISTS SEMANTIC_REL(FROM Node TO Node,
 | `id` | STRING PK | all writers | See §6.1. Shared namespace for notes, entities, communities, digests. |
 | `kind` | STRING | `ON CREATE SET` in every MERGE | `note`, `indexable`, `community`, `temporal_digest`. Replaces Neo4j labels (`:Note`, `:Indexable`, `:Community`). Never NULL for rows written by current code, but rows created by `create_or_update_relationship`'s endpoint MERGE get `kind='indexable'` **and nothing else** (no name/type). |
 | `name` | STRING | `_write_ontology` (entities: normalised lowercase; note: title as-is, `"Untitled"` fallback), `create_leiden_community`, `create_temporal_digest_node`, `main._migrate_stores` one-time note-name backfill | Entity names are lowercase; all lookups use `toLower(n.name)` anyway. |
-| `type` | STRING | `_write_ontology` (`node.type.strip().lower()` → `"thing"` if empty → `"unknown"` at the UNWIND site if still falsy), communities (`'community'`), digests (`'temporal_digest'`) | Notes have `type` NULL. `get_full_3d_graph` maps NULL → `"unknown"`. |
+| `type` | STRING | `_write_ontology` (`node.type.strip().lower()` → `"thing"` if empty → `"unknown"` at the UNWIND site if still falsy), communities (`'community'`), digests (`'temporal_digest'`), indexed documents (`'document'`, `_index_documents`) | Notes have `type` NULL. `get_full_3d_graph` maps NULL → `"unknown"`. |
 
 ### 5.3 Relationship tables
 
@@ -254,6 +254,7 @@ From the module docstring plus what the code actually uses:
 |---|---|---|---|
 | `note` | the SQLite `notes.id` (UUID string) | notes API / ingestion | `_write_ontology` MERGEs `Node {id: note_id}`; the same id is used as `REFERENCES.note_id` |
 | `indexable` | `node_<uuid4>` | `_write_ontology` | only after **both** `QdrantService.find_node_ids_by_names` and `GraphService.find_nodes_by_exact_names` fail to find the normalised name |
+| `indexable`, `type='document'` | `node_<uuid5(NAMESPACE_URL, "<kb_id>/<attachment key>")>` | `IngestionWorkflow._index_documents` | a large attachment the user chose to "Index for search" ([10 §6.5](10-ingestion-pipeline.md)); deterministic, so a re-ingest lands on the same node. `name` = lower-cased file name |
 | `community` | `community_l<level>_<uuid4.hex>` | `rebuild_leiden_communities._commit_community` | every rebuild (old ids are deleted first — community ids are **not stable across rebuilds**) |
 | `temporal_digest` | `digest_<period>_<key>` with `-`→`_` and `W`→`w` (e.g. `digest_month_2024_05`, `digest_week_2024_w21`, `digest_year_2024`) | `build_temporal_digests` | deterministic; rebuilt in place |
 
@@ -323,7 +324,7 @@ An edge is identified by the triple `(source.id, target.id, rel_type)` and is **
 
 ### 8.1 Write path
 
-Only `IngestionWorkflow._write_ontology` creates `REFERENCES` edges, in one UNWIND statement (`query_nodes`):
+`IngestionWorkflow._write_ontology` creates the `REFERENCES` edges to entities, in one UNWIND statement (`query_nodes`). The only other writer is `_index_documents`, which MERGEs one `(note)-[:REFERENCES {note_id}]->(document)` edge per index-only attachment — a `kind='indexable'`, `type='document'` node with no `SEMANTIC_REL` edges: its text lives as passages in Qdrant/Meili and none of its concepts become entities, so it takes no part in multi-hop expansion; the edge exists so answers can cite the note.
 
 ```cypher
 MERGE (note:Node {id: $note_id})

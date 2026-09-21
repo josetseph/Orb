@@ -196,6 +196,8 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 | `processAttachment(noteId, url, force=false, kb)` | `POST /notes/{id}/attachments/process?kb=` `{url, force}` | Runs transcription/description/extraction for one attachment now. |
 | `cancelAttachment(noteId, url, kb)` | `POST /notes/{id}/attachments/cancel?kb=` `{url}` | |
 | `getAttachmentJobs(noteId, kb)` | `GET /notes/{id}/attachments/jobs?kb=` | `{jobs: Record<url, AttachmentJob>}`; polled by `useAttachmentJobs`. |
+| `setAttachmentMode(noteId, link, mode, kb)` | `PUT /notes/{id}/attachments/mode?kb=` `{link, mode}` with `mode: "graph" \| "summary" \| "index"` | The answer for an attachment ingestion parked as too large; the server stores it and re-ingests the note. Called by `LargeAttachmentPrompt` via `notes/page.tsx` ([19](19-frontend-notes-editor.md)). |
+| `getLocalRuntime()` / `saveLocalRuntime(data)` | `GET` / `PUT /settings/local-runtime` | The fourteen Models → Local runtime keys (`LocalRuntimeSettings`); `PUT` sends the full object. |
 | `batchDeleteNotes(ids, kb)` | `POST /notes/batch-delete?kb=` `{ids}` | Max 100 ids (server rule). Returns `{deleted, failed, deleted_count, failed_count}`. |
 | `reingestVault(kb)` | `POST /notes/reingest-vault?kb=` | |
 | `moveVaultFile(fromRel, toRel, kb)` | `POST /vault/move?kb=` `{from_rel, to_rel}` | |
@@ -530,6 +532,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 | `NotePreview` | `id, title, content` | client-side (chat note modal) |
 | `NoteStatus` | `id, processed, failed, status, processing_stage?, processing_model?` | `GET /notes/{id}/status` |
 | `AttachmentJob` | `status: "running"\|"done"\|"failed"\|"cancelled", error?` | `GET /notes/{id}/attachments/jobs` |
+| `LocalRuntimeSettings` | `llama_n_ctx, llama_max_tokens?, llama_swa_full, llama_flash_attn, llama_backend, llama_n_gpu_layers?, llama_n_threads?, llama_repeat_penalty, llama_prompt_reserve, embed_n_ctx, rerank_n_ctx, model_idle_seconds, extraction_chunk_tokens?, large_attachment_tokens` (`?` = `null` means automatic) — `large_attachment_tokens` is the "Ask before ingesting attachments over (tokens)" row of `LocalRuntimeCard` | `GET` / `PUT /settings/local-runtime` |
 | `ChatStatus` | `request_id, conversation_id?, stage, model?, done?, result?{answer?, sources?: ChatSource[], thinking?, conversation_id?, assistant_message_id?}, error?` | `GET /chat/status/{id}` |
 | `ChatConversation` | `id, kb_id, title, created_at?, updated_at?` | `GET /chat/conversations` |
 | `ChatSource` | `id, title` — a note the answer drew on | `sources` on chat results and stored messages |
