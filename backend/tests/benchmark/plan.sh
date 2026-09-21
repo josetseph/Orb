@@ -3,7 +3,7 @@
 # exists is skipped, so this is safe to re-run after a stop, a crash or a reboot.
 #
 #   cd backend && nohup tests/benchmark/plan.sh > ../Results/plan.log 2>&1 &     # start
-#   pkill -INT -f tests/benchmark/plan.sh; pkill -INT -f tests/benchmark/experiment.py   # stop
+#   pkill -INT -f tests/benchmark/experiment.py      # stop: the run shuts down cleanly and the plan ends with it
 #
 # PYTHON must be the interpreter of a venv with requirements.txt installed.
 set -u
@@ -14,15 +14,22 @@ DS="${DATASET:-hotpotqa}"
 R=../Results
 BASE=hp$N-e4b                      # the shared index: Gemma 4 E4B ingestion, RAM-tier embed + reranker
 
+trap 'echo "== interrupted, stopping the plan"; pkill -INT -P $$ 2>/dev/null; exit 130' INT TERM
+
 run() {  # run <name> <file that proves it finished> <experiment.py args...>
-  local name=$1 proof=$2; shift 2
+  local name=$1 proof=$2 snap="" prev=""; shift 2
   if [ -e "$proof" ]; then echo "== skip $name (done)"; return; fi
+  for a in "$@"; do [ "$prev" = "--restore" ] && snap=$a; prev=$a; done
+  if [ -n "$snap" ] && [ ! -d "../snapshots/$snap" ]; then echo "== skip $name (needs snapshot $snap)"; return; fi
   echo "== $(date '+%F %T') start $name"
-  "$PY" tests/benchmark/experiment.py "$name" "$@" || echo "== FAILED $name (continuing)"
-  echo "== $(date '+%F %T') end $name"
+  "$PY" tests/benchmark/experiment.py "$name" "$@"
+  local rc=$?
+  echo "== $(date '+%F %T') end $name (exit $rc)"
+  if [ $rc -ge 128 ]; then echo "== $name was interrupted, stopping the plan"; exit $rc; fi
 }
 full()  { run "$1" "$R/$1/$DS.json" --dataset $DS --questions $N "${@:2}"; }
-synth() { run "$1" "$R/$1/synthesis.json" --synthesis-from "$R/base-e4b/$DS.json" "${@:2}"; }
+synth() { [ -e "$R/base-e4b/$DS.json" ] || { echo "== skip $1 (needs base-e4b results)"; return; }
+          run "$1" "$R/$1/synthesis.json" --synthesis-from "$R/base-e4b/$DS.json" "${@:2}"; }
 
 # 1. One index, built once (the slow part). No community summaries: the app's default since main 52041d8.
 run ingest-e4b ../snapshots/$BASE --dataset $DS --questions $N --fresh --ingest --no-eval --snapshot $BASE \

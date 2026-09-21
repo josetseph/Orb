@@ -149,16 +149,23 @@ def main() -> None:
         wait_until("the API", lambda: get_json("/health")["status"] == "healthy", 1800, server)
         # The manifest is branch-local state that outlives a run: re-assert the selection so
         # EMBED_MODEL_ID / RERANK_MODEL_ID (or their absence) decide it, not the previous experiment.
+        # Only the download route records where a model file lives, and it is a no-op for files
+        # already present, so it is the one to call; --download is the permission to fetch new ones.
         selection = get_json("/api/v1/benchmark/config")["selection"]
-        catalogue = {m["id"] for m in get_json("/api/v1/models", 60)["local"]["downloadable"]}
+        catalogue = {m["id"]: m for m in get_json("/api/v1/models", 60)["local"]["downloadable"]}
         chat_id = args.chat_model if args.chat_model in catalogue else selection.get("chat_id")
-        route = "/api/v1/setup/download-models" if args.download else "/api/v1/setup/select-chat-model"
-        req = Request(BASE_URL + route, method="POST", data=json.dumps({"chat_id": chat_id}).encode(),
-                      headers={"content-type": "application/json"})
+        if not args.download:
+            missing = [chat_id] if chat_id in catalogue and not catalogue[chat_id]["downloaded"] else []
+            missing += [f"{k}={v}" for k, v in overrides.items() if k in ("EMBED_MODEL_ID", "RERANK_MODEL_ID")
+                        and v not in (selection.get("embed_id"), selection.get("reranker_id"))]
+            if missing:
+                sys.exit(f"[experiment] not downloaded yet: {', '.join(missing)}. Re-run with --download.")
+        req = Request(BASE_URL + "/api/v1/setup/download-models", method="POST",
+                      data=json.dumps({"chat_id": chat_id}).encode(), headers={"content-type": "application/json"})
         try:
-            urlopen(req, timeout=14400).read()  # noqa: S310 — loopback; a download can take a while
+            urlopen(req, timeout=14400).read()  # noqa: S310 — loopback; a first download can take a while
         except HTTPError as exc:
-            sys.exit(f"[experiment] {route} failed: {exc.read().decode()}")
+            sys.exit(f"[experiment] model setup failed: {exc.read().decode()}")
         if args.provider or args.chat_model or args.ingestion_model:
             # Pinned on the KB, which lives in the data dir: no shared manifest is touched.
             pin = {"provider": args.provider, "model": args.chat_model,
@@ -170,6 +177,8 @@ def main() -> None:
             except HTTPError as exc:
                 sys.exit(f"[experiment] model pin rejected: {exc.read().decode()}")
         record["server"] = get_json("/api/v1/benchmark/config")
+        if not get_json("/api/v1/models", 60)["global"]["configured"]:
+            sys.exit("[experiment] the server reports no usable model (AI not configured); see server.log")
         print(f"[experiment] server up: chat={record['server'].get('chat_model')} ingestion={record['server'].get('ingestion_model')}")
 
         if args.ingest:

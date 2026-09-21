@@ -176,7 +176,8 @@ def main() -> int:
     # and uvicorn re-raises the signal after shutdown, which would skip `finally`.
     def on_signal(signum, _frame):
         stop_sidecars()
-        sys.exit(128 + signum)
+        # Hard exit: a model download in a worker thread would otherwise keep the process alive.
+        os._exit(128 + signum)
 
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, on_signal)
