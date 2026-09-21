@@ -1,0 +1,48 @@
+{
+  "name": "ingest-e4b",
+  "dataset": "hotpotqa",
+  "questions": 20,
+  "restore": null,
+  "ingest": true,
+  "communities": false,
+  "overrides": {},
+  "provider": "local",
+  "chat_model": "gemma4-e4b-q4",
+  "ingestion_model": "gemma4-e4b-q4",
+  "started": "2026-09-21T09:45:51",
+  "commit": "6daf616",
+  "server": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-4b-q4",
+      "reranker_id": "qwen3-rerank-4b-q4",
+      "embedding_dims": 2560,
+      "chat_path": "/Users/josetseph/Projects/Technical/personal/Orb-testing/models/gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "embed_path": "/Users/josetseph/Projects/Technical/personal/Orb-testing/models/gguf/Qwen3-Embedding-4B-Q4_K_M.gguf",
+      "reranker_path": "/Users/josetseph/Projects/Technical/personal/Orb-testing/models/gguf/Qwen3-Reranker-4B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "CHAT_MAX_CONTEXT_DOCS": 6,
+      "EMBED_MODEL_ID": null,
+      "RERANK_MODEL_ID": null,
+      "LLAMA_N_CTX": 16384,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-4b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-4b-q4"
+    }
+  },
+  "ingest_seconds": 27634,
+  "finished": "2026-09-21T17:26:29"
+}
