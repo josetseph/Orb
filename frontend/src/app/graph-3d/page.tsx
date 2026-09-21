@@ -131,8 +131,10 @@ export default function Graph3DPage() {
     if (!focusId || focusedRef.current === focusId) return;
     const n = (filtered.nodes as AnyNode[]).find((x) => String(x.id) === focusId);
     if (!n) return;
-    focusedRef.current = focusId;
+    // Marked done only once it has fired: a re-render inside the delay clears
+    // this timer, and the next run must be allowed to schedule it again.
     const t = setTimeout(() => {
+      focusedRef.current = focusId;
       flyToNode(n);
       handleNodeClick(n);
     }, 300);

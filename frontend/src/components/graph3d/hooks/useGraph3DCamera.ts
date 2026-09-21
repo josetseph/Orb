@@ -65,8 +65,10 @@ export function useGraph3DCamera({
       const nz = node.fz ?? node.z ?? 0;
       const target = new THREE.Vector3(nx, ny, nz);
 
-      // Approach from current direction, stopping ~80 units away
-      const APPROACH_DIST = 80;
+      // Approach from the current direction and stop eight radii out, so a
+      // hub node frames the same way a leaf does (a leaf's radius is 10 → 80).
+      // Radius mirrors Graph3DCanvas: cbrt(nodeVal) × nodeRelSize (10).
+      const APPROACH_DIST = Math.cbrt(Math.max(1, Number(node.val) || 1)) * 10 * 8;
       const from = camera.position.clone();
       const dir = from.clone().sub(target);
       const destination =

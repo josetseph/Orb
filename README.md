@@ -93,21 +93,32 @@ On save, Orb enriches the note before graph indexing:
     <td><img src="Platform%20Images/notes_page_edit_view.png" alt="Notes editor"/></td>
   </tr>
   <tr>
-    <td align="center"><em>Chat</em></td>
+    <td align="center"><em>Ask — answers cite the notes they came from</em></td>
     <td align="center"><em>Notes editor</em></td>
   </tr>
 </table>
 
-![3D Knowledge Graph](Platform%20Images/graph_view.png)
+![3D knowledge graph](Platform%20Images/graph_view.jpg)
 
 <table>
   <tr>
-    <td><img src="Platform%20Images/knowledge_base_selector_view.png" alt="Knowledge base manager"/></td>
-    <td><img src="Platform%20Images/llm_model_settings_view.png" alt="Runtime model settings"/></td>
+    <td><img src="Platform%20Images/graph_node_view.jpg" alt="An entity opened in the graph"/></td>
+    <td><img src="Platform%20Images/notes_page_view.png" alt="Notes organised in folders"/></td>
   </tr>
   <tr>
-    <td align="center"><em>Knowledge bases</em></td>
-    <td align="center"><em>Model settings</em></td>
+    <td align="center"><em>An entity, its description and the contexts it came from</em></td>
+    <td align="center"><em>Notes in folders, with ingestion state</em></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td><img src="Platform%20Images/knowledge_base_selector_view.png" alt="Workspaces"/></td>
+    <td><img src="Platform%20Images/llm_model_settings_view.png" alt="Models"/></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Workspaces</em></td>
+    <td align="center"><em>Models — local by default, cloud per workspace</em></td>
   </tr>
 </table>
 
