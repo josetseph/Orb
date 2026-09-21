@@ -191,3 +191,77 @@ class TestChunking:
     def test_aligner_layout_follows_the_engine(self):
         assert ae.ALIGNER_DIR[ENGINE_MLX] == "qwen3-forced-aligner-0.6b"
         assert ae.ALIGNER_DIR[ENGINE_TRANSFORMERS] == "qwen3-forced-aligner-0.6b-hf"
+
+
+class TestRestorePunctuation:
+    """The aligner drops punctuation; it must come back even when counts differ."""
+
+    def _words(self, *bare):
+        return [ae.Word(w, float(i), float(i) + 0.5) for i, w in enumerate(bare)]
+
+    def test_extra_aligner_word_does_not_cost_the_punctuation(self):
+        # "uh" was heard by the aligner but is not in the text: 7 words, 6 tokens.
+        words = self._words("good", "morning", "uh", "thanks", "professor", "lets", "begin")
+        ae.restore_punctuation(words, "Good morning. Thanks, professor. Let's begin!".split())
+        assert [w.word for w in words] == ["Good", "morning.", "uh", "Thanks,", "professor.", "Let's", "begin!"]
+
+    def test_missing_aligner_word_is_handled_too(self):
+        words = self._words("good", "morning", "professor")
+        ae.restore_punctuation(words, "Good morning, dear professor.".split())
+        assert [w.word for w in words] == ["Good", "morning,", "professor."]
+
+    def test_equal_lengths_still_work_and_timings_are_untouched(self):
+        words = self._words("hello", "world")
+        ae.restore_punctuation(words, "Hello, world.".split())
+        assert [(w.word, w.start) for w in words] == [("Hello,", 0.0), ("world.", 1.0)]
+
+    def test_labels_keep_their_full_stops_after_a_mismatch(self):
+        words = self._words("good", "morning", "uh", "thanks", "professor")
+        ae.restore_punctuation(words, "Good morning. Thanks, professor.".split())
+        turns = [ae.Turn(0.0, 2.6, "A"), ae.Turn(2.9, 5.0, "B")]
+        out = ae.label_speakers(ae.Transcript("Good morning. Thanks, professor.", words), turns)
+        assert out == "Speaker 1: Good morning. uh\n\nSpeaker 2: Thanks, professor."
+
+
+def test_diarizer_uses_the_accelerator_and_frees_it(monkeypatch):
+    import sys
+    import types
+
+    import numpy as np
+
+    seen = {}
+
+    class Pipeline:
+        _segmentation = types.SimpleNamespace(step=0.0)
+
+        @classmethod
+        def from_pretrained(cls, path):
+            return cls()
+
+        def to(self, device):
+            seen["device"] = str(device)
+
+        def __call__(self, inputs, **kw):
+            seg = types.SimpleNamespace(start=0.0, end=1.0)
+            return types.SimpleNamespace(itertracks=lambda yield_label: [(seg, None, "SPEAKER_00")])
+
+    pyannote = types.ModuleType("pyannote")
+    audio = types.ModuleType("pyannote.audio")
+    audio.Pipeline = Pipeline
+    monkeypatch.setitem(sys.modules, "pyannote", pyannote)
+    monkeypatch.setitem(sys.modules, "pyannote.audio", audio)
+    # torch is installed on demand, not in the test venv or CI.
+    torch = types.ModuleType("torch")
+    torch.device = lambda name: name
+    torch.from_numpy = lambda a: types.SimpleNamespace(unsqueeze=lambda dim: a)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+    device_mod = types.ModuleType("app.core.inference_device")
+    device_mod.resolve_torch_device = lambda: "mps"
+    monkeypatch.setitem(sys.modules, "app.core.inference_device", device_mod)
+    from app.services import local_models
+
+    monkeypatch.setattr(local_models, "release_accelerator_memory", lambda: seen.setdefault("freed", True))
+
+    turns = ae.speaker_turns(np.zeros(16000, dtype="float32"), 16000, __import__("pathlib").Path("/x"), step=2.0, max_speakers=None)
+    assert [t.speaker for t in turns] == ["SPEAKER_00"]
+    assert seen == {"device": "mps", "freed": True}  # device comes from the shared resolver

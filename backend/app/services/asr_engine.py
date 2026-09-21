@@ -277,10 +277,7 @@ def transcribe_with_mlx(
             for e in (_as_dict(x) for x in (getattr(result, "segments", None) or []))
             if str(e.get("text") or "").strip()
         ]
-        tokens = text.split()
-        if len(tokens) == len(words):
-            for word, token in zip(words, tokens):
-                word.word = token
+        restore_punctuation(words, text.split())
         return Transcript(text, words)
     finally:
         # The weights are dropped with the call; give Metal its buffers back.
@@ -290,6 +287,30 @@ def transcribe_with_mlx(
             mx.clear_cache()
         except Exception:  # pylint: disable=broad-exception-caught
             pass
+
+
+def _bare(token: str) -> str:
+    return "".join(ch for ch in token.lower() if ch.isalnum())
+
+
+def restore_punctuation(words: list[Word], tokens: list[str]) -> None:
+    """Give each aligned word the punctuated token it came from.
+
+    The aligner strips punctuation; the text keeps it. The two sequences are
+    nearly identical but not always the same length: over an 86-minute lecture
+    the aligner returned 14 more words than the text had tokens, and an
+    all-or-nothing length check then dropped every full stop in the recording
+    — the note, and entity extraction after it, got one unbroken run of words.
+    Matching runs keeps the punctuation everywhere the two agree.
+    """
+    from difflib import SequenceMatcher
+
+    matcher = SequenceMatcher(
+        None, [_bare(w.word) for w in words], [_bare(t) for t in tokens], autojunk=False
+    )
+    for block in matcher.get_matching_blocks():
+        for offset in range(block.size):
+            words[block.a + offset].word = tokens[block.b + offset]
 
 
 def _as_dict(obj) -> dict:
@@ -308,7 +329,10 @@ def speaker_turns(
     step: float,
     max_speakers: int | None,
 ) -> list[Turn]:
-    """Who spoke when, from pyannote community-1 on the CPU.
+    """Who spoke when, from pyannote community-1 on the GPU when there is one.
+
+    Measured on an M3 over a 10-minute lecture slice at step 2.0: 40 s on
+    ``mps`` against 284 s on ``cpu``, with identical turns.
 
     The waveform is handed over decoded (Orb already has it as mono 16 kHz
     float32) so pyannote never needs torchcodec/ffmpeg of its own.
@@ -317,6 +341,8 @@ def speaker_turns(
 
     import torch
     from pyannote.audio import Pipeline
+
+    from app.core.inference_device import resolve_torch_device
 
     # Emitted per chunk from pooling when a speaker is active for a single
     # frame; harmless, and it floods the log on a long lecture.
@@ -327,7 +353,7 @@ def speaker_turns(
     if pipeline is None:
         raise RuntimeError(f"Could not load the speaker pipeline at {diarizer_path}")
     try:
-        pipeline.to(torch.device("cpu"))
+        pipeline.to(torch.device(resolve_torch_device()))
         # Fewer, wider windows are the one lever that speeds this up: ~95% of
         # the time is the per-window speaker-embedding pass.
         if step:
@@ -345,9 +371,9 @@ def speaker_turns(
         return turns
     finally:
         del pipeline
-        import gc
+        from app.services.local_models import release_accelerator_memory
 
-        gc.collect()
+        release_accelerator_memory()  # gc + the mps/cuda cache the pipeline filled
 
 
 def speaker_at(turns: list[Turn], when: float) -> str | None:
@@ -417,8 +443,8 @@ def split_audio_into_chunks(audio, sr: int, max_chunk_sec: float = MAX_CHUNK_SEC
 def align_with_transformers(processor, model, audio, sr: int, text: str, offset: float = 0.0) -> list[Word]:
     """Word timings for ``text`` over ``audio`` from the transformers aligner.
 
-    The processor's word list drops punctuation; when it matches the text
-    token-for-token the original spelling is kept, as on the MLX path.
+    The processor's word list drops punctuation; ``restore_punctuation`` puts
+    the text's spelling back wherever the two agree, as on the MLX path.
     """
     import torch
 
@@ -434,9 +460,9 @@ def align_with_transformers(processor, model, audio, sr: int, text: str, offset:
         word_lists=word_lists,
         timestamp_token_id=model.config.timestamp_token_id,
     )[0]
-    tokens = text.split()
-    spelled = tokens if len(tokens) == len(items) else [i["text"] for i in items]
-    return [
-        Word(word, float(i["start_time"]) + offset, float(i["end_time"]) + offset)
-        for word, i in zip(spelled, items)
+    words = [
+        Word(i["text"], float(i["start_time"]) + offset, float(i["end_time"]) + offset)
+        for i in items
     ]
+    restore_punctuation(words, text.split())
+    return words

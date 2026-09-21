@@ -115,10 +115,12 @@ class Settings(BaseSettings):
     # audio is a known source of invented transcripts.
     ASR_LANGUAGE: str | None = "en"
     # Speaker labels ("Speaker 1: …") on transcripts, via pyannote community-1
-    # on the CPU plus Qwen's forced aligner for word timings. Measured in the
-    # sibling local-transcription-service project: the pipeline's default 1.0 s
-    # segmentation step runs at 1.8x realtime, 2.0 s at 3.4x while agreeing on
-    # 95.7% of speech; 3.0 s merges two speakers into one, so stop at 2.0.
+    # (on mps/cuda when there is one, else the CPU) plus Qwen's forced aligner
+    # for word timings. Measured in the sibling local-transcription-service
+    # project: on the CPU the default 1.0 s segmentation step runs at 1.8x
+    # realtime and 2.0 s at 3.4x, while agreeing on 95.7% of speech; 3.0 s
+    # merges two speakers into one, so stop at 2.0. On mps a 10-minute slice
+    # took 40 s against 284 s on the CPU, with identical turns.
     ASR_SPEAKERS: bool = True
     ASR_DIARIZE_STEP: float = 2.0
     # None lets clustering decide; set when the speaker count is known.

@@ -380,6 +380,12 @@ class MultimodalRuntime:
                     self._aligner_processor, self._aligner_model, chunk, 16000, text, offset
                 )
             transcript = asr_engine.Transcript(" ".join(texts), words)
+            # The diarizer now runs on the accelerator too. Give it the memory
+            # the speech model and aligner hold rather than keep three models
+            # resident; a note's next recording reloads them.
+            # ponytail: unmeasured on CUDA — drop this if a card is shown to fit all three.
+            if self.device != "cpu":
+                self._unload_except("")
             turns = self._speaker_turns(audio)
         return asr_engine.label_speakers(transcript, turns) if turns else transcript.text
 
