@@ -102,6 +102,27 @@ function openHref(
   else window.open(resolved, "_blank", "noopener,noreferrer");
 }
 
+/** GitHub-style heading slug: `## 3. Poisson vs. Binomial` → `3-poisson-vs-binomial`. */
+const slugOf = (text: string) =>
+  text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s+/g, "-");
+
+/** Move to the heading a `#fragment` names (by slug or exact text); false when there is none. */
+export function scrollToHeading(view: EditorView, fragment: string): boolean {
+  const want = decodeSafe(fragment).trim().toLowerCase();
+  let pos = -1;
+  syntaxTree(view.state).iterate({
+    enter: (n) => {
+      if (pos >= 0 || !/^(ATX|Setext)Heading\d$/.test(n.name)) return;
+      const line = view.state.doc.lineAt(n.from);
+      const text = line.text.replace(/^#+\s*/, "").replace(/\s+#+\s*$/, "");
+      if (slugOf(text) === want || text.trim().toLowerCase() === want) pos = line.from;
+    },
+  });
+  if (pos < 0) return false;
+  view.dispatch({ selection: { anchor: pos }, effects: EditorView.scrollIntoView(pos, { y: "start" }) });
+  return true;
+}
+
 function linkMark(href: string): Decoration {
   return Decoration.mark({
     class: "cm-md-link",
@@ -757,15 +778,17 @@ export function createLivePreviewHideMarks(
     blockField(kbId, options),
     pointerTracking,
     EditorView.domEventHandlers({
-      mousedown(event) {
+      mousedown(event, view) {
         // ⌥-click places the cursor instead, so link text stays editable.
         if (event.button !== 0 || event.altKey) return false;
         const target = event.target as Element | null;
         const el = target?.closest?.(".cm-md-link") as HTMLElement | null;
-        const href = el?.dataset.href;
+        const href = el?.dataset.href?.trim();
         if (!href) return false;
         event.preventDefault();
-        openHref(href, kbId, options.onOpenFile);
+        // `[text](#heading)` is a table of contents, not a file.
+        if (href.startsWith("#")) scrollToHeading(view, href.slice(1));
+        else openHref(href, kbId, options.onOpenFile);
         return true;
       },
     }),
