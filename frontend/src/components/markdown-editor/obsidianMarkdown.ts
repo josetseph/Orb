@@ -1,4 +1,6 @@
-import type { MarkdownConfig } from "@lezer/markdown";
+import type { InlineContext, MarkdownConfig } from "@lezer/markdown";
+import type { SyntaxNode } from "@lezer/common";
+import type { Text } from "@codemirror/state";
 import { Tag, tags } from "@lezer/highlight";
 
 /*
@@ -71,6 +73,69 @@ const highlight: MarkdownConfig = {
   ],
 };
 
+// `[[target#heading|alias]]` and `![[…]]`. The `#` and `|` separators sit
+// between the child nodes; the decoration pass slices by child.
+const WIKILINK_RE = /^\[\[([^[\]|#\n]*)(?:#([^[\]|\n]*))?(?:\|([^[\]\n]*))?\]\]/;
+
+function parseWikilink(cx: InlineContext, pos: number, nodeName: string, openLen: number): number {
+  const m = WIKILINK_RE.exec(cx.slice(pos + openLen - 2, cx.end));
+  if (!m || (!m[1] && m[2] === undefined)) return -1;
+  const start = pos + openLen; // after `[[`
+  const children = [cx.elt(WIKILINK_MARK, pos, start)];
+  let at = start;
+  if (m[1]) children.push(cx.elt(WIKILINK_TARGET, at, at + m[1].length));
+  at += m[1].length;
+  if (m[2] !== undefined) {
+    at += 1; // `#`
+    if (m[2]) children.push(cx.elt(WIKILINK_HEADING, at, at + m[2].length));
+    at += m[2].length;
+  }
+  if (m[3] !== undefined) {
+    at += 1; // `|`
+    if (m[3]) children.push(cx.elt(WIKILINK_ALIAS, at, at + m[3].length));
+    at += m[3].length;
+  }
+  children.push(cx.elt(WIKILINK_MARK, at, at + 2));
+  return cx.addElement(cx.elt(nodeName, pos, at + 2, children));
+}
+
+/** The pieces of a `WikiLink` / `Embed` node; `target` is `note#heading` when a heading is set. */
+export function wikilinkParts(doc: Text, node: SyntaxNode) {
+  let name = "", heading = "", alias = "";
+  for (let c = node.firstChild; c; c = c.nextSibling) {
+    const text = doc.sliceString(c.from, c.to).trim();
+    if (c.name === WIKILINK_TARGET) name = text;
+    else if (c.name === WIKILINK_HEADING) heading = text;
+    else if (c.name === WIKILINK_ALIAS) alias = text;
+  }
+  return { name, heading, alias, target: heading ? `${name}#${heading}` : name };
+}
+
+const wikilink: MarkdownConfig = {
+  defineNodes: [
+    { name: WIKILINK, style: { [`${WIKILINK}/...`]: tags.link } },
+    { name: EMBED, style: { [`${EMBED}/...`]: tags.link } },
+    { name: WIKILINK_MARK, style: tags.processingInstruction },
+    { name: WIKILINK_TARGET, style: tags.link },
+    { name: WIKILINK_HEADING, style: tags.labelName },
+    { name: WIKILINK_ALIAS, style: tags.string },
+  ],
+  parseInline: [
+    {
+      name: WIKILINK,
+      before: "Link",
+      parse(cx, next, pos) {
+        if (next === 91 /* [ */ && cx.char(pos + 1) === 91) return parseWikilink(cx, pos, WIKILINK, 2);
+        if (next === 33 /* ! */ && cx.char(pos + 1) === 91 && cx.char(pos + 2) === 91) {
+          return parseWikilink(cx, pos, EMBED, 3);
+        }
+        return -1;
+      },
+    },
+  ],
+};
+
 export const obsidianMarkdown: MarkdownConfig[] = [
   highlight,
+  wikilink,
 ];

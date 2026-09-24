@@ -50,6 +50,7 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.atom, color: ACCENT300 },
   { tag: tags.bool, color: ACCENT300 },
   { tag: tags.labelName, color: ACCENT300 },
+  { tag: tags.string, color: N300 },
   /* Obsidian syntax (obsidianMarkdown.ts) — styled here so Source mode has it too */
   { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
 ]);

@@ -6,7 +6,7 @@ import {
   type ViewUpdate,
   EditorView,
 } from "@codemirror/view";
-import { StateEffect, StateField, type EditorState } from "@codemirror/state";
+import { StateEffect, StateField, type EditorState, type Text } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
 import { resolveFileUrl } from "@/lib/utils";
@@ -160,6 +160,14 @@ class TextWidget extends WidgetType {
   }
 }
 
+/** `{from, to}` covering whole lines when nothing else shares them, else null. */
+export function soleLines(doc: Text, from: number, to: number): { from: number; to: number } | null {
+  const first = doc.lineAt(from);
+  const last = doc.lineAt(to);
+  if (doc.sliceString(first.from, from).trim() || doc.sliceString(to, last.to).trim()) return null;
+  return { from: first.from, to: last.to };
+}
+
 // ── Reveal policy ──────────────────────────────────────────────────────────
 //
 // Syntax is revealed per element, not per line: with the cursor inside a bold
@@ -182,7 +190,7 @@ const pointerHeld = StateField.define<boolean>({
 });
 
 /** Selection ranges the reveal is computed from: frozen while the pointer is held. */
-const revealSelection = StateField.define<readonly { from: number; to: number }[]>({
+export const revealSelection = StateField.define<readonly { from: number; to: number }[]>({
   create: (state) => state.selection.ranges.map((r) => ({ from: r.from, to: r.to })),
   update(value, tr) {
     const held = tr.state.field(pointerHeld);
@@ -192,9 +200,11 @@ const revealSelection = StateField.define<readonly { from: number; to: number }[
   },
 });
 
-function touchesActive(state: EditorState, from: number, to: number): boolean {
+export function touchesActive(state: EditorState, from: number, to: number): boolean {
   // Inclusive on both ends: a cursor at the edge of `**bold**` is editing it.
-  return state.field(revealSelection).some((r) => r.to >= from && r.from <= to);
+  // Source mode has no reveal field; the live selection stands in.
+  const ranges = state.field(revealSelection, false) ?? state.selection.ranges;
+  return ranges.some((r) => r.to >= from && r.from <= to);
 }
 
 /** Block elements reveal whole; the cursor anywhere on their lines counts. */
