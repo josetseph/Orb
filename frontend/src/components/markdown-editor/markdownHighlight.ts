@@ -65,6 +65,7 @@ const markdownHighlightStyle = HighlightStyle.define([
     fontSize: "0.85em",
   },
   { tag: obsidianTags.blockId, color: N700 },
+  { tag: obsidianTags.frontmatter, color: MUTED, fontFamily: MONO, fontSize: "0.88em" },
 ]);
 
 /* Callout accents: the palette has no warning/success, so those are oklch in the danger idiom. */
@@ -240,6 +241,12 @@ const editorTheme = EditorView.theme(
       fontStyle: "normal",
     },
     ...calloutTheme,
+    /* YAML front matter: data, kept raw */
+    ".cm-md-frontmatter": {
+      background: N900,
+      paddingLeft: "12px",
+      paddingRight: "12px",
+    },
     /* KaTeX output; the widget replaces `$…$` off the active element */
     ".cm-md-math": { cursor: "text" },
     ".cm-md-math-block": { padding: "6px 12px", overflowX: "auto", cursor: "text" },

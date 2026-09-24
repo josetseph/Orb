@@ -67,4 +67,14 @@ describe("obsidianMarkdown", () => {
     expect(nodes("some text ^abc-1")).toEqual(["BlockId(10,16)"]);
     expect(nodes("some ^abc text", /BlockId/)).toEqual([]);
   });
+
+  it("parses front matter only at the top", () => {
+    expect(nodes("---\ntitle: x\n---\n\n# H", /Front|Heading/)).toEqual([
+      "Frontmatter(0,16)",
+      "FrontmatterMark(0,3)",
+      "FrontmatterMark(13,16)",
+      "ATXHeading1(18,21)",
+    ]);
+    expect(nodes("# H\n\n---\n", /Front/)).toEqual([]);
+  });
 });

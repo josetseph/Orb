@@ -408,6 +408,15 @@ function buildInline(view: EditorView): DecorationSet {
       enter: (node: SyntaxNodeRef) => {
         const name = node.name;
 
+        // Front matter is data, not prose: muted lines, nothing hidden.
+        if (name === "Frontmatter") {
+          const last = doc.lineAt(node.to).number;
+          for (let n = 1; n <= last; n++) {
+            lineMarks.push(Decoration.line({ class: "cm-md-frontmatter" }).range(doc.line(n).from));
+          }
+          return false;
+        }
+
         // Block framing applies whether or not the cursor is inside: the
         // frame is what tells you where the block starts and ends.
         if (name === "Blockquote" || name === "FencedCode") {

@@ -1,4 +1,4 @@
-import type { InlineContext, MarkdownConfig } from "@lezer/markdown";
+import type { BlockContext, InlineContext, Line, MarkdownConfig } from "@lezer/markdown";
 import type { SyntaxNode } from "@lezer/common";
 import type { Text } from "@codemirror/state";
 import { Tag, tags } from "@lezer/highlight";
@@ -203,9 +203,42 @@ const tagsAndIds: MarkdownConfig = {
   ],
 };
 
+// `---` on line 1 … `---`. Block parsers cannot rewind, so an unclosed fence
+// makes the rest of the note front matter — visible, and fixed by closing it.
+const FENCE_RE = /^---\s*$/;
+
+const frontmatter: MarkdownConfig = {
+  defineNodes: [
+    { name: FRONTMATTER, block: true, style: { [`${FRONTMATTER}/...`]: obsidianTags.frontmatter } },
+    { name: FRONTMATTER_MARK, style: tags.processingInstruction },
+  ],
+  parseBlock: [
+    {
+      name: FRONTMATTER,
+      before: "HorizontalRule",
+      parse(cx: BlockContext, line: Line) {
+        if (cx.lineStart !== 0 || !FENCE_RE.test(line.text)) return false;
+        const marks = [cx.elt(FRONTMATTER_MARK, 0, 3)];
+        let end = 0;
+        while (cx.nextLine()) {
+          if (FENCE_RE.test(line.text)) {
+            marks.push(cx.elt(FRONTMATTER_MARK, cx.lineStart, cx.lineStart + 3));
+            end = cx.lineStart + line.text.length;
+            cx.nextLine();
+            break;
+          }
+        }
+        cx.addElement(cx.elt(FRONTMATTER, 0, end || cx.prevLineEnd(), marks));
+        return true;
+      },
+    },
+  ],
+};
+
 export const obsidianMarkdown: MarkdownConfig[] = [
   highlight,
   wikilink,
   math,
   tagsAndIds,
+  frontmatter,
 ];
