@@ -29,7 +29,9 @@
     "react-markdown": "^10.1.0",
     "react-router-dom": "^7.18.4",
     "remark-gfm": "^4.0.1",
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "turndown": "^7.2.4",
+    "turndown-plugin-gfm": "^1.0.2"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
@@ -39,6 +41,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.185.4",
+    "@types/turndown": "^5.0.6",
     "@vitejs/plugin-react": "^6.1.1",
     "eslint": "^9",
     "eslint-plugin-react-hooks": "^7.1.1",

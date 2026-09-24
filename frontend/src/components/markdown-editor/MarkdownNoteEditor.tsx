@@ -21,6 +21,7 @@ import { EditorState, Compartment, Prec } from "@codemirror/state";
 import {
   defaultKeymap,
   history,
+  historyField,
   historyKeymap,
   indentWithTab,
 } from "@codemirror/commands";
@@ -46,6 +47,7 @@ import {
   wikilinkHoverHandler,
 } from "./wikilinkExtension";
 import { createMediaEmbedDecorations } from "./mediaEmbedExtension";
+import { htmlToMarkdown } from "./htmlToMarkdown";
 import type { AttachmentJob, Note } from "@/lib/types";
 import {
   autocompletion,
@@ -84,16 +86,21 @@ export interface MarkdownNoteEditorProps {
   onOpenFile?: (url: string, filename: string) => void;
 }
 
-// Where each note was left: scroll offset and cursor. Kept across remounts
-// (the editor is keyed by note id) so coming back to a note lands where you
-// were, not at the top. Bounded; the oldest entry goes first.
-const noteViewMemory = new Map<string, { scrollTop: number; anchor: number; head: number }>();
-const NOTE_VIEW_MEMORY_LIMIT = 200;
+// Where each note was left: scroll offset, and the editor state with its
+// undo history, serialised. Kept across remounts (the editor is keyed by
+// note id) so coming back to a note lands where you were with ⌘Z still
+// working. Bounded to the last twenty notes; the oldest entry goes first.
+const HISTORY_FIELDS = { history: historyField };
+const noteViewMemory = new Map<string, { scrollTop: number; json: unknown; doc: string }>();
+const NOTE_VIEW_MEMORY_LIMIT = 20;
 
 function rememberNoteView(noteId: string, view: EditorView) {
-  const { anchor, head } = view.state.selection.main;
   noteViewMemory.delete(noteId);
-  noteViewMemory.set(noteId, { scrollTop: view.scrollDOM.scrollTop, anchor, head });
+  noteViewMemory.set(noteId, {
+    scrollTop: view.scrollDOM.scrollTop,
+    json: view.state.toJSON(HISTORY_FIELDS),
+    doc: view.state.doc.toString(),
+  });
   if (noteViewMemory.size > NOTE_VIEW_MEMORY_LIMIT) {
     noteViewMemory.delete(noteViewMemory.keys().next().value as string);
   }
@@ -257,21 +264,19 @@ const MarkdownNoteEditor = forwardRef<
     (url: string, filename: string) => onOpenFileRef.current?.(url, filename),
     [],
   );
+  // Source shows the markup; it is not "strip everything". Media players and
+  // the collapsed extraction blocks stay in both modes — only the syntax
+  // hiding is what Source turns off.
   const liveExtensions = useCallback(
-    (mode: "live" | "source") =>
-      mode === "live"
-        ? [
-            createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler }),
-            createExtractMarkerDecorations(),
-          ]
-        : [],
+    (mode: "live" | "source") => [
+      ...(mode === "live" ? [createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler })] : []),
+      createExtractMarkerDecorations(),
+    ],
     [kb, openFileHandler],
   );
   const mediaExtension = useCallback(
-    (mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
-      mode === "live"
-        ? createMediaEmbedDecorations(kb, { jobs, onProcess: processHandler, onCancel: cancelHandler })
-        : [],
+    (_mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
+      createMediaEmbedDecorations(kb, { jobs, onProcess: processHandler, onCancel: cancelHandler }),
     [kb, processHandler, cancelHandler],
   );
   const [scannedEntities, setScannedEntities] = useState<EntitySuggestion[]>(
@@ -318,25 +323,41 @@ const MarkdownNoteEditor = forwardRef<
     },
   }));
 
-  // On mount: restore where this note was left (or start at the top), and
-  // focus the body when asked. On unmount: remember where it was left.
-  useEffect(() => {
-    const v = cmRef.current?.view;
-    if (!v) return;
-    const remembered = noteId ? noteViewMemory.get(noteId) : undefined;
-    if (remembered) {
-      const len = v.state.doc.length;
-      const anchor = Math.min(remembered.anchor, len);
-      const head = Math.min(remembered.head, len);
-      v.dispatch({ selection: { anchor, head }, scrollIntoView: false });
-      v.scrollDOM.scrollTop = remembered.scrollTop;
-    }
-    if (autoFocus) v.focus();
-    return () => {
-      if (noteId) rememberNoteView(noteId, v);
-    };
-    // Runs once per mounted note; the editor is remounted per note id.
+  // The remembered state (selection + undo history) is handed to CodeMirror
+  // at creation; it is only used when the note's text is what it was when
+  // we left, since a history over different text would corrupt on undo.
+  const remembered = noteId ? noteViewMemory.get(noteId) : undefined;
+  const initialState = useMemo(() => {
+    if (!remembered) return undefined;
+    // The saved state carries the text as it stood when we left. If the note
+    // has since changed underneath (another device, a re-ingest), a history
+    // over the old text would corrupt on undo, so it is dropped.
+    return remembered.doc === value ? { json: remembered.json, fields: HISTORY_FIELDS } : undefined;
+    // Only at mount: the editor is remounted per note id.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId]);
+
+  // The wrapper creates the view in its own effect, after ours would run,
+  // so mount-time work hangs off its creation callback: put the scroll back
+  // and focus the body when asked. On unmount, remember where the note was.
+  // The wrapper's own cleanup destroys the view before ours runs and nulls
+  // its ref, so the view is captured at creation for the unmount snapshot.
+  const liveViewRef = useRef<EditorView | null>(null);
+  const handleCreateEditor = useCallback(
+    (v: EditorView) => {
+      liveViewRef.current = v;
+      if (remembered) v.scrollDOM.scrollTop = remembered.scrollTop;
+      if (autoFocus) v.focus();
+    },
+    // Once per mounted note: the editor is remounted per note id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [noteId],
+  );
+  useEffect(() => {
+    return () => {
+      const v = liveViewRef.current;
+      if (noteId && v) rememberNoteView(noteId, v);
+    };
   }, [noteId]);
 
   // Scan note text for entity mentions. This is a backend round trip over the
@@ -435,15 +456,25 @@ const MarkdownNoteEditor = forwardRef<
           }
           return true;
         },
-        // Pasted files (a screenshot, a copied file) upload the same way;
-        // pasted text is left to the editor.
-        paste(event) {
+        // Pasted files (a screenshot, a copied file) upload the same way.
+        // Rich text from a browser or a document becomes Markdown; a paste
+        // that is already plain text (or is text from another editor, which
+        // carries no HTML) is left to the editor.
+        paste(event, view) {
           const files = Array.from(event.clipboardData?.files ?? []);
-          if (files.length === 0) return false;
-          event.preventDefault();
-          if (!attachDisabledRef.current) {
-            void onDropFilesRef.current?.(files);
+          if (files.length > 0) {
+            event.preventDefault();
+            if (!attachDisabledRef.current) {
+              void onDropFilesRef.current?.(files);
+            }
+            return true;
           }
+          const html = event.clipboardData?.getData("text/html");
+          if (!html) return false;
+          const markdown = htmlToMarkdown(html);
+          if (!markdown) return false;
+          event.preventDefault();
+          view.dispatch(view.state.replaceSelection(markdown));
           return true;
         },
       }),
@@ -515,6 +546,8 @@ const MarkdownNoteEditor = forwardRef<
           height="100%"
           theme="none"
           basicSetup={false}
+          onCreateEditor={handleCreateEditor}
+          initialState={initialState}
           extensions={extensions}
           onChange={handleChange}
           className="h-full [&_.cm-editor]:h-full"
