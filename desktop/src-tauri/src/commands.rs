@@ -76,6 +76,13 @@ pub fn save_setup(app: AppHandle, webview: Webview, payload: SetupPayload) -> Re
     Ok(())
 }
 
+/// The OS print dialog for the page as it is now (its PDF option is the note
+/// export); the UI swaps in a print-only rendering first.
+#[tauri::command]
+pub fn print_page(webview: Webview) -> Result<(), String> {
+    webview.print().map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn restart_backend(app: AppHandle) -> Result<(), String> {
     if runtime::first_run(&app) {

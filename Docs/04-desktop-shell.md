@@ -30,7 +30,7 @@ desktop/
     capabilities/remote-ui.json  http://127.0.0.1:17401 (the UI): dialog open, opener, notifications
     src/main.rs            builder, plugins, run-event handling (Exit → stop; macOS Reopen)
     src/runtime.rs         paths, layout (packaged vs repo), spawn/watch/kill, window, health poll
-    src/commands.rs        app_state, save_setup, restart_backend
+    src/commands.rs        app_state, save_setup, print_page, restart_backend
     src/init.js            injected into every page: orbDesktop bridge + single-window guard
 backend/app/desktop_runtime.py   the process the shell spawns
 ```

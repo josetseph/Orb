@@ -7,6 +7,7 @@ import {
   FolderOpen,
   Loader2,
   Mic,
+  FileDown,
   MoreHorizontal,
   X,
   PanelRight,
@@ -40,6 +41,7 @@ type NoteEditorHeaderProps = {
   onToggleRecording: () => void;
   onToggleConnectedPanel: () => void;
   onDelete: () => void;
+  onExportPdf: () => void;
 };
 
 function folderOf(relPath?: string | null): string {
@@ -64,6 +66,7 @@ export function NoteEditorHeader({
   onToggleRecording,
   onToggleConnectedPanel,
   onDelete,
+  onExportPdf,
 }: NoteEditorHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -226,6 +229,16 @@ export function NoteEditorHeader({
               }}
             >
               <Calendar className="h-3.5 w-3.5" /> Change date…
+            </button>
+            <button
+              type="button"
+              className="menu-item"
+              onClick={() => {
+                setMenuOpen(false);
+                onExportPdf();
+              }}
+            >
+              <FileDown className="h-3.5 w-3.5" /> Export as PDF…
             </button>
             <button type="button" className="menu-item" onClick={() => void reveal()}>
               <FolderOpen className="h-3.5 w-3.5" /> {revealInFolderLabel()}

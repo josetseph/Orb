@@ -18,6 +18,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             commands::app_state,
             commands::save_setup,
+            commands::print_page,
             commands::restart_backend
         ])
         .setup(|app| {

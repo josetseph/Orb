@@ -19,6 +19,8 @@ export type OrbDesktopBridge = {
     defaultPath?: string;
     filters?: Array<{ name: string; extensions: string[] }>;
   }) => Promise<string | null>;
+  /** OS print dialog for the current page. */
+  printPage?: () => Promise<void>;
   /** Kill and relaunch the Python runtime. */
   restartBackend?: () => Promise<{ ok: boolean; error?: string }>;
   /** OS notification; resolves false when unavailable or denied. */
@@ -52,6 +54,13 @@ export async function pickDesktopFile(opts?: {
   const bridge = getDesktopBridge();
   if (!bridge?.pickFile) return null;
   return bridge.pickFile(opts);
+}
+
+/** Print the page: the shell's native dialog in the app, the browser's otherwise. */
+export async function printPage(): Promise<void> {
+  const bridge = getDesktopBridge();
+  if (bridge?.printPage) await bridge.printPage();
+  else window.print();
 }
 
 /** Notify through the OS when the window is not focused (the UI itself shows the change otherwise). */

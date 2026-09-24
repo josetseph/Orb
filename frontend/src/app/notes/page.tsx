@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AudioLines,
@@ -16,6 +16,7 @@ import { api } from "@/lib/api";
 import type { Note } from "@/lib/types";
 import { cn, isAudioUrl, isImageUrl, isVideoUrl } from "@/lib/utils";
 import MarkdownNoteEditor from "@/components/markdown-editor/MarkdownNoteEditor";
+import { NotePrintView, type PrintJob } from "@/components/note-print-view";
 import { EntityDetailPanel } from "@/components/entity-detail-panel";
 import { ConnectedNotesPanel } from "@/components/connected-notes-panel";
 import { useNotesPageController } from "./_hooks/useNotesPageController";
@@ -71,6 +72,10 @@ export default function NotesPage() {
     | { kind: "note"; note: Note; x: number; y: number }
     | { kind: "folder"; path: string; x: number; y: number };
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  // The note as it was when Export was chosen; cleared once printed.
+  const [printJob, setPrintJob] = useState<PrintJob | null>(null);
+  // Stable: the print view prints once per job and must not re-run on re-render.
+  const clearPrintJob = useCallback(() => setPrintJob(null), []);
 
   const selectedNote = selection.selectedNote;
   const selectedNoteId = selectedNote?.id ?? null;
@@ -246,7 +251,11 @@ export default function NotesPage() {
               onToggleRecording={media.isRecording ? media.stopRecording : media.startRecording}
               onToggleConnectedPanel={() => setShowConnectedPanel((v) => !v)}
               onDelete={handleDeleteNote}
+              onExportPdf={() =>
+                setPrintJob({ title: selectedNote.title ?? "", content: noteContent, createdAt: selectedNote.created_at })
+              }
             />
+            {printJob && <NotePrintView job={printJob} kb={currentKB} onDone={clearPrintJob} />}
 
             {busy && (
               <div className="h-0.5 bg-n-900">

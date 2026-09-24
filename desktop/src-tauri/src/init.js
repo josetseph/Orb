@@ -46,6 +46,8 @@
         defaultPath: o.defaultPath,
         filters: o.filters,
       }),
+    /** OS print dialog (Save as PDF); resolves when the dialog is up. */
+    printPage: () => t.core.invoke("print_page"),
     restartBackend: () =>
       t.core.invoke("restart_backend").then(
         () => ({ ok: true }),
