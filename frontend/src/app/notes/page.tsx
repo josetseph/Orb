@@ -285,6 +285,13 @@ export default function NotesPage() {
                     type="text"
                     value={selectedNote.title || ""}
                     onChange={(e) => selection.handleTitleChange(e.target.value)}
+                    onKeyDown={(e) => {
+                      // Title → body in one keystroke, like Obsidian.
+                      if (e.key === "Enter" || e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
+                        e.preventDefault();
+                        editorRef.current?.focus();
+                      }
+                    }}
                     placeholder="Untitled"
                     className="mb-1.5 w-full bg-transparent text-[28px] font-medium leading-tight tracking-[-0.015em] outline-none placeholder:text-n-700"
                   />
@@ -346,7 +353,6 @@ export default function NotesPage() {
                     onWikilinkClick={wikilink.handleWikilinkClick}
                     onWikilinkHover={wikilink.handleWikilinkHover}
                     onWikilinkLeave={wikilink.handleWikilinkLeave}
-                    onAttachFile={media.handleFileAttach}
                     onDropFiles={media.attachFiles}
                     attachDisabled={media.isUploading}
                     kb={currentKB}

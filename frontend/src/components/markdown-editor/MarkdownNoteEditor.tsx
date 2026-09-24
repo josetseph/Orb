@@ -46,7 +46,6 @@ import {
   wikilinkHoverHandler,
 } from "./wikilinkExtension";
 import { createMediaEmbedDecorations } from "./mediaEmbedExtension";
-import { MarkdownToolbar } from "./MarkdownToolbar";
 import type { AttachmentJob, Note } from "@/lib/types";
 import {
   autocompletion,
@@ -60,7 +59,6 @@ export interface MarkdownNoteEditorProps {
   onWikilinkClick?: (target: string, alias?: string) => void;
   onWikilinkHover?: (target: string, rect: DOMRect, alias?: string) => void;
   onWikilinkLeave?: () => void;
-  onAttachFile?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   /** Upload files dropped onto the editor (OS drag-and-drop). */
   onDropFiles?: (files: FileList | File[]) => void | Promise<void>;
   attachDisabled?: boolean;
@@ -70,7 +68,6 @@ export interface MarkdownNoteEditorProps {
   placeholder?: string;
   className?: string;
   /** Show formatting toolbar above the editor (default true). */
-  showToolbar?: boolean;
   /** "live" renders markdown as you type; "source" shows plain markdown. */
   viewMode?: "live" | "source";
   /** Per-attachment jobs keyed by raw markdown url (drives embed footers). */
@@ -205,14 +202,12 @@ const MarkdownNoteEditor = forwardRef<
     onWikilinkClick,
     onWikilinkHover,
     onWikilinkLeave,
-    onAttachFile,
     onDropFiles,
     attachDisabled,
     kb = "default",
     notes = [],
     placeholder = "Start writing...",
     className,
-    showToolbar = true,
     viewMode = "live",
     attachmentJobs,
     onProcessAttachment,
@@ -258,7 +253,6 @@ const MarkdownNoteEditor = forwardRef<
         : [],
     [kb, processHandler, cancelHandler],
   );
-  const [view, setView] = useState<EditorView | null>(null);
   const [scannedEntities, setScannedEntities] = useState<EntitySuggestion[]>(
     [],
   );
@@ -434,9 +428,6 @@ const MarkdownNoteEditor = forwardRef<
     ],
   );
 
-  const handleCreateEditor = useCallback((v: EditorView) => {
-    setView(v);
-  }, []);
 
   const handleChange = useCallback(
     (doc: string) => {
@@ -473,13 +464,6 @@ const MarkdownNoteEditor = forwardRef<
         handleOsFileDrop(e.dataTransfer.files);
       }}
     >
-      {showToolbar && (
-        <MarkdownToolbar
-          view={view}
-          onAttachFile={onAttachFile}
-          attachDisabled={attachDisabled}
-        />
-      )}
       <div className="relative min-h-0 flex-1 overflow-hidden px-4 py-3">
         <CodeMirror
           ref={cmRef}
@@ -489,7 +473,6 @@ const MarkdownNoteEditor = forwardRef<
           basicSetup={false}
           extensions={extensions}
           onChange={handleChange}
-          onCreateEditor={handleCreateEditor}
           className="h-full [&_.cm-editor]:h-full"
         />
         {isDraggingFiles && (

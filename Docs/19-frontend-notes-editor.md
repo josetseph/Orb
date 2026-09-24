@@ -56,8 +56,7 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/app/notes/_components/FolderDialog.tsx` | New-folder prompt. | `FolderDialog` |
 | `frontend/src/app/notes/_components/RenameDialog.tsx` | Rename vault file prompt. | `RenameDialog` |
 | `frontend/src/app/notes/_components/WikilinkHoverCard.tsx` | Fixed-position preview card for `[[links]]`. | `WikilinkHoverCard` |
-| `frontend/src/components/markdown-editor/MarkdownNoteEditor.tsx` | CodeMirror host component (controlled value, drop/paste upload, toolbar, imperative handle). No barrel — import this file directly (default export). | `MarkdownNoteEditor` (default), `MarkdownNoteEditorHandle`, `MarkdownNoteEditorProps` |
-| `frontend/src/components/markdown-editor/MarkdownToolbar.tsx` | Formatting toolbar. | `MarkdownToolbar` |
+| `frontend/src/components/markdown-editor/MarkdownNoteEditor.tsx` | CodeMirror host component (no formatting toolbar — every action is a shortcut, see §Keymap; controlled value, drop/paste upload, toolbar, imperative handle). No barrel — import this file directly (default export). | `MarkdownNoteEditor` (default), `MarkdownNoteEditorHandle`, `MarkdownNoteEditorProps` |
 | `frontend/src/components/markdown-editor/markdownCommands.ts` | Toolbar/keybinding commands (wrap, heading, list, link, code block…). | command functions + `markdownKeymap` |
 | `frontend/src/components/markdown-editor/markdownHighlight.ts` | Highlight style + editor theme. | `markdownHighlightStyle`, `markdownEditorTheme` |
 | `frontend/src/components/markdown-editor/livePreviewHideMarks.ts` | Hides markdown syntax marks on non-active lines. | `livePreviewHideMarks` |
@@ -584,13 +583,12 @@ The alias part of a link (`[[path|alias]]`) is stripped by the editor extension 
 | `onEntityClick?` | `(nodeId, name) => void` | Click on `.cm-entity-mention`. |
 | `onWikilinkClick?` | `(target, alias?) => void` | Click on `[data-wikilink-target]`. |
 | `onWikilinkHover?` / `onWikilinkLeave?` | `(target, rect, alias?) => void` / `() => void` | Hover card. |
-| `onAttachFile?` | `(e: ChangeEvent<HTMLInputElement>) => void` | Toolbar paperclip `<input type=file>`; toolbar shows the button only when provided. |
 | `onDropFiles?` | `(files) => void` | OS drag-and-drop onto the editor (both the wrapper div and the CM DOM handler call it). | Also fired for files on the clipboard: a CM `paste` handler uploads `clipboardData.files` (a screenshot, a copied file) and leaves text pastes to the editor. The Tauri window is built with `disable_drag_drop_handler()` (`desktop/src-tauri/src/runtime.rs`): without it the shell swallows OS file drops before the page sees them, which is why drops stopped working after the Electron → Tauri move.
 | `attachDisabled?` | `boolean` | Disables the paperclip and ignores drops (read through a ref so the extension set need not rebuild). |
 | `kb?` | `string` (default `"default"`) | Passed to scan-text, entity search and media URL resolution. |
 | `notes?` | `Note[]` | Source for `[[` autocomplete; held in `notesRef` so updates never rebuild extensions. |
 | `placeholder?` | `string` | CM placeholder (default "Start writing..."). |
-| `className?`, `showToolbar?` (default `true`) | — | — |
+| `className?` | — | — |
 
 **Imperative handle (`MarkdownNoteEditorHandle`)**: `insertAtCursor(text)` (replaces the main selection with `text` and puts the cursor after it, then focuses), `focus()`, `getView()`, and a compatibility getter `textarea` that always returns `null` (kept from the pre-CM6 textarea editor).
 
