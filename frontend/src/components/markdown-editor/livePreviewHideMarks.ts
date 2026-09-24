@@ -9,8 +9,12 @@ import {
 import { StateEffect, StateField, type EditorState, type Text } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
+import { api } from "@/lib/api";
+import type { Note } from "@/lib/types";
 import { resolveFileUrl } from "@/lib/utils";
+import { WikilinkResolver } from "@/app/notes/_lib/wikilinks";
 import { mediaEmbedClaimsLink } from "./mediaEmbedExtension";
+import { wikilinkParts } from "./obsidianMarkdown";
 
 /*
  * Obsidian-style live preview. Every construct the markdown parser emits is
@@ -27,6 +31,10 @@ type Range = ReturnType<Decoration["range"]>;
 export type LivePreviewOptions = {
   /** Open a vault attachment in the app (preview modal) instead of a new tab. */
   onOpenFile?: (url: string, filename: string) => void;
+  /** Vault notes, for resolving `![[embeds]]`. */
+  getNotes?: () => Note[];
+  /** The note being edited; folder proximity when resolving embeds. */
+  noteId?: string;
 };
 
 // Marks that simply vanish: `#`, `**`, `~~`, `==`, backticks, `>`.
@@ -166,6 +174,98 @@ export function soleLines(doc: Text, from: number, to: number): { from: number; 
   const last = doc.lineAt(to);
   if (doc.sliceString(first.from, from).trim() || doc.sliceString(to, last.to).trim()) return null;
   return { from: first.from, to: last.to };
+}
+
+/** Lines from `## heading` to the next heading of the same or a higher level. */
+function headingSection(content: string, heading: string): string {
+  if (!heading) return content;
+  const lines = content.split("\n");
+  const want = heading.toLowerCase();
+  let start = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(lines[i]);
+    if (!m) continue;
+    if (start < 0) {
+      if (m[2].toLowerCase() === want) {
+        start = i;
+        level = m[1].length;
+      }
+    } else if (m[1].length <= level) {
+      return lines.slice(start, i).join("\n");
+    }
+  }
+  return start < 0 ? `Heading "${heading}" not found.` : lines.slice(start).join("\n");
+}
+
+// Embedded note bodies by id: rendered at once on the next visit, refreshed
+// in the background whenever the widget is rebuilt.
+const embedBodies = new Map<string, string>();
+
+/** `![[note#heading]]` as a read-only box: title caption, body as plain paragraphs. */
+class EmbedWidget extends WidgetType {
+  constructor(
+    readonly target: string,
+    readonly heading: string,
+    readonly kb: string,
+    readonly getNotes: () => Note[],
+    readonly noteId?: string,
+  ) {
+    super();
+  }
+  get estimatedHeight() {
+    return 120;
+  }
+  eq(other: EmbedWidget) {
+    return other.target === this.target && other.heading === this.heading;
+  }
+  toDOM() {
+    const box = document.createElement("div");
+    box.className = "cm-md-embed";
+    box.title = "Click to edit";
+    const caption = document.createElement("div");
+    caption.className = "cm-md-embed-title";
+    const body = document.createElement("div");
+    body.className = "cm-md-embed-body";
+    box.append(caption, body);
+
+    const notes = this.getNotes();
+    const source = notes.find((n) => n.id === this.noteId);
+    const note = this.target
+      ? new WikilinkResolver(notes).resolve(this.target, source)
+      : source;
+    if (!note) {
+      caption.textContent = this.target;
+      body.textContent = "Note not found.";
+      return box;
+    }
+    caption.textContent = (note.title || this.target) + (this.heading ? ` › ${this.heading}` : "");
+    const render = (content: string) => {
+      body.replaceChildren(
+        ...headingSection(content, this.heading)
+          .split(/\n\s*\n/)
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .map((t) => {
+            const p = document.createElement("p");
+            p.textContent = t;
+            return p;
+          }),
+      );
+    };
+    render(embedBodies.get(note.id) ?? note.content ?? "");
+    void api
+      .getNote(note.id, this.kb)
+      .then((fresh: Note) => {
+        embedBodies.set(note.id, fresh.content);
+        if (box.isConnected) render(fresh.content);
+      })
+      .catch(() => {});
+    return box;
+  }
+  ignoreEvent() {
+    return false;
+  }
 }
 
 // ── Reveal policy ──────────────────────────────────────────────────────────
@@ -456,13 +556,29 @@ function cellsOf(state: EditorState, row: SyntaxNode): string[] {
 
 // ponytail: cell text is shown raw (no bold/links inside cells); render
 // cells through the inline pass if tables ever carry more than plain values.
-function buildTables(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+function buildBlocks(
+  state: EditorState,
+  ranges: readonly { from: number; to: number }[],
+  kb: string,
+  options: LivePreviewOptions,
+): DecorationSet {
   const marks: Range[] = [];
+  const doc = state.doc;
   for (const { from, to } of ranges) syntaxTree(state).iterate({
     from,
     to,
     enter: (node) => {
-      if (node.name !== "Table") return;
+      const name = node.name;
+      // `![[note]]` alone on its line replaces that line.
+      if (name === "Embed") {
+        const lines = soleLines(doc, node.from, node.to);
+        if (!lines || touchesActiveLines(state, node.from, node.to)) return false;
+        const { name: target, heading } = wikilinkParts(doc, node.node);
+        const widget = new EmbedWidget(target, heading, kb, options.getNotes ?? (() => []), options.noteId);
+        marks.push(Decoration.replace({ widget, block: true }).range(lines.from, lines.to));
+        return false;
+      }
+      if (name !== "Table") return;
       if (touchesActiveLines(state, node.from, node.to)) return false;
       let head: string[] = [];
       const rows: string[][] = [];
@@ -496,20 +612,21 @@ const tableRanges = StateField.define<readonly { from: number; to: number }[]>({
   },
 });
 
-const tableField = StateField.define<DecorationSet>({
-  create: (state) => buildTables(state, state.field(tableRanges)),
-  update(value, tr) {
-    // The parser runs async, so the Table node may not exist yet when the
-    // field is created; rebuild once the tree advances.
-    const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-    const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
-    const rangesChanged = tr.state.field(tableRanges) !== tr.startState.field(tableRanges);
-    return tr.docChanged || revealChanged || treeChanged || rangesChanged
-      ? buildTables(tr.state, tr.state.field(tableRanges))
-      : value;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
+const blockField = (kb: string, options: LivePreviewOptions) =>
+  StateField.define<DecorationSet>({
+    create: (state) => buildBlocks(state, state.field(tableRanges), kb, options),
+    update(value, tr) {
+      // The parser runs async, so the Table node may not exist yet when the
+      // field is created; rebuild once the tree advances.
+      const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
+      const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
+      const rangesChanged = tr.state.field(tableRanges) !== tr.startState.field(tableRanges);
+      return tr.docChanged || revealChanged || treeChanged || rangesChanged
+        ? buildBlocks(tr.state, tr.state.field(tableRanges), kb, options)
+        : value;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
 
 const tableViewport = ViewPlugin.fromClass(
   class {
@@ -547,7 +664,7 @@ export function createLivePreviewHideMarks(
     tableRanges,
     tableViewport,
     inlinePlugin,
-    tableField,
+    blockField(kbId, options),
     pointerTracking,
     EditorView.domEventHandlers({
       mousedown(event) {

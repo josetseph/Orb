@@ -198,6 +198,25 @@ const editorTheme = EditorView.theme(
       paddingLeft: "12px",
       paddingRight: "12px",
     },
+    /* `![[note]]` embed: bordered box, note title as caption, body as plain paragraphs */
+    ".cm-md-embed": {
+      margin: "6px 0",
+      padding: "8px 14px 4px",
+      borderRadius: "8px",
+      boxShadow: `0 0 0 1px ${N800}`,
+      borderLeft: `2px solid ${ACCENT700}`,
+      cursor: "text",
+    },
+    ".cm-md-embed-title": {
+      fontSize: "11px",
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      fontWeight: "500",
+      color: MUTED,
+      marginBottom: "4px",
+    },
+    ".cm-md-embed-body": { fontSize: "14px", color: N300, maxHeight: "320px", overflow: "auto" },
+    ".cm-md-embed-body p": { margin: "0 0 8px", whiteSpace: "pre-wrap" },
     /* Table: the design's .table — quiet uppercase headers, fading row rules */
     ".cm-md-table": {
       margin: "6px 0",

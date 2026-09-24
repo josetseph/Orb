@@ -258,15 +258,22 @@ const MarkdownNoteEditor = forwardRef<
     (url: string, filename: string) => onOpenFileRef.current?.(url, filename),
     [],
   );
+  // Keep autocomplete and embeds in sync without rebuilding the extension set.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
   const liveExtensions = useCallback(
     (mode: "live" | "source") =>
       mode === "live"
         ? [
-            createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler }),
+            createLivePreviewHideMarks(kb, {
+              onOpenFile: openFileHandler,
+              getNotes: () => notesRef.current,
+              noteId,
+            }),
             createExtractMarkerDecorations(),
           ]
         : [],
-    [kb, openFileHandler],
+    [kb, openFileHandler, noteId],
   );
   const mediaExtension = useCallback(
     (mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
@@ -284,9 +291,6 @@ const MarkdownNoteEditor = forwardRef<
   const attachDisabledRef = useRef(attachDisabled);
   attachDisabledRef.current = attachDisabled;
   const dragDepthRef = useRef(0);
-  // Keep autocomplete in sync without rebuilding the whole extension set.
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
 
   const hasOsFileDrag = useCallback((e: DragEvent | React.DragEvent) => {
     const types = e.dataTransfer?.types;
