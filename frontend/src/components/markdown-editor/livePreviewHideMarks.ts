@@ -58,6 +58,11 @@ const MARK_PARENT = new Set([
   "FencedCode", "Blockquote", "Link", "Autolink", "Image", "Highlight",
 ]);
 
+const CALLOUT_TYPES = new Set([
+  "note", "tip", "info", "warning", "danger", "question", "quote", "example", "abstract",
+]);
+const CALLOUT_RE = /^\[!(\w+)\][-+]?[ \t]*/;
+
 /** The element a node belongs to for reveal purposes. */
 function elementOf(node: SyntaxNode): SyntaxNode | null {
   if (ELEMENT_NODE_TYPES.has(node.name)) return node;
@@ -153,17 +158,21 @@ class RuleWidget extends WidgetType {
 }
 
 class TextWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(
+    readonly text: string,
+    readonly cls = "",
+  ) {
     super();
   }
   eq(other: TextWidget) {
-    return other.text === this.text;
+    return other.text === this.text && other.cls === this.cls;
   }
   toDOM() {
     // CodeMirror expects an element it can mark non-editable; a bare text
     // node has no attributes to set.
     const el = document.createElement("span");
     el.textContent = this.text;
+    if (this.cls) el.className = this.cls;
     return el;
   }
 }
@@ -374,11 +383,30 @@ function buildInline(view: EditorView): DecorationSet {
         // Block framing applies whether or not the cursor is inside: the
         // frame is what tells you where the block starts and ends.
         if (name === "Blockquote" || name === "FencedCode") {
-          const cls = name === "Blockquote" ? "cm-md-quote-line" : "cm-md-code-line";
+          let cls = name === "Blockquote" ? "cm-md-quote-line" : "cm-md-code-line";
           const first = doc.lineAt(node.from).number;
           const last = doc.lineAt(node.to).number;
+          // `> [!type] Title` makes the quote a callout: typed frame, label
+          // in place of the marker, first line as its title.
+          let callout: RegExpExecArray | null = null;
+          if (name === "Blockquote") {
+            const afterMark = doc.sliceString(node.from + 1, doc.line(first).to);
+            callout = CALLOUT_RE.exec(afterMark.trimStart());
+            if (callout) {
+              const type = callout[1].toLowerCase();
+              cls += ` cm-md-callout cm-md-callout-${CALLOUT_TYPES.has(type) ? type : "note"}`;
+              if (!touchesActiveLines(state, node.from, node.to)) {
+                const from = node.from + 1 + (afterMark.length - afterMark.trimStart().length);
+                marks.push(
+                  Decoration.replace({ widget: new TextWidget(type, "cm-md-callout-label") })
+                    .range(from, from + callout[0].length),
+                );
+              }
+            }
+          }
           for (let n = first; n <= last; n++) {
-            lineMarks.push(Decoration.line({ class: cls }).range(doc.line(n).from));
+            const lineCls = callout && n === first ? `${cls} cm-md-callout-title` : cls;
+            lineMarks.push(Decoration.line({ class: lineCls }).range(doc.line(n).from));
           }
           return;
         }

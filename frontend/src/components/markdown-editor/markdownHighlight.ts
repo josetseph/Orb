@@ -55,6 +55,25 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
 ]);
 
+/* Callout accents: the palette has no warning/success, so those are oklch in the danger idiom. */
+const CALLOUT_COLORS: Record<string, string> = {
+  note: "var(--color-accent)",
+  abstract: "var(--color-accent-300)",
+  info: "var(--color-accent-400)",
+  example: "var(--color-accent-600)",
+  quote: "var(--color-n-500)",
+  tip: "oklch(0.78 0.14 160)",
+  question: "oklch(0.8 0.13 80)",
+  warning: "oklch(0.78 0.15 60)",
+  danger: "var(--color-danger)",
+};
+const calloutTheme = Object.fromEntries(
+  Object.entries(CALLOUT_COLORS).flatMap(([type, c]) => [
+    [`.cm-md-callout-${type}`, { borderLeftColor: c, background: `color-mix(in srgb, ${c} 7%, transparent)` }],
+    [`.cm-md-callout-${type} .cm-md-callout-label`, { color: c }],
+  ]),
+);
+
 const pill = {
   height: "24px",
   padding: "0 8px",
@@ -198,6 +217,17 @@ const editorTheme = EditorView.theme(
       paddingLeft: "12px",
       paddingRight: "12px",
     },
+    /* Callout: a typed quote — `> [!warning] Title` */
+    ".cm-md-callout": { borderLeftWidth: "3px", borderRadius: "0 6px 6px 0" },
+    ".cm-md-callout-title": { fontWeight: "500", paddingTop: "4px" },
+    ".cm-md-callout-label": {
+      marginRight: "8px",
+      fontSize: "11px",
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      fontStyle: "normal",
+    },
+    ...calloutTheme,
     /* `![[note]]` embed: bordered box, note title as caption, body as plain paragraphs */
     ".cm-md-embed": {
       margin: "6px 0",
