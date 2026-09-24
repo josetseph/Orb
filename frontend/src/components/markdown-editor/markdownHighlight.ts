@@ -20,6 +20,7 @@ const ACCENT700 = "#5d5294";
 const DIVIDER = "rgba(233,233,237,0.16)";
 const DANGER = "oklch(0.72 0.14 25)";
 const HIGHLIGHT_BG = "color-mix(in srgb, oklch(0.85 0.16 90) 30%, transparent)";
+const MONO = "ui-monospace, Menlo, monospace";
 
 /** Live-markdown highlighting: the note reads as a document, syntax stays quiet. */
 const markdownHighlightStyle = HighlightStyle.define([
@@ -53,6 +54,7 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.string, color: N300 },
   /* Obsidian syntax (obsidianMarkdown.ts) — styled here so Source mode has it too */
   { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
+  { tag: obsidianTags.math, color: ACCENT200, fontFamily: MONO, fontSize: "0.9em" },
 ]);
 
 /* Callout accents: the palette has no warning/success, so those are oklch in the danger idiom. */
@@ -228,6 +230,9 @@ const editorTheme = EditorView.theme(
       fontStyle: "normal",
     },
     ...calloutTheme,
+    /* KaTeX output; the widget replaces `$…$` off the active element */
+    ".cm-md-math": { cursor: "text" },
+    ".cm-md-math-block": { padding: "6px 12px", overflowX: "auto", cursor: "text" },
     /* `![[note]]` embed: bordered box, note title as caption, body as plain paragraphs */
     ".cm-md-embed": {
       margin: "6px 0",

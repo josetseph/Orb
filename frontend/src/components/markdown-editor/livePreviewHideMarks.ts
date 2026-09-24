@@ -9,6 +9,8 @@ import {
 import { StateEffect, StateField, type EditorState, type Text } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
+import katex from "katex";
+import "katex/dist/katex.min.css";
 import { api } from "@/lib/api";
 import type { Note } from "@/lib/types";
 import { resolveFileUrl } from "@/lib/utils";
@@ -50,6 +52,7 @@ const HIDE_NODE_TYPES = new Set([
 // Nodes handled as a whole element rather than by their marks.
 const ELEMENT_NODE_TYPES = new Set([
   "Link", "Autolink", "URL", "ListMark", "TaskMarker", "HorizontalRule", "Escape", "HardBreak",
+  "InlineMath", "BlockMath",
 ]);
 // Marks whose "element" is the enclosing inline/heading node, not the line.
 const MARK_PARENT = new Set([
@@ -174,6 +177,31 @@ class TextWidget extends WidgetType {
     el.textContent = this.text;
     if (this.cls) el.className = this.cls;
     return el;
+  }
+}
+
+/** `$x$` / `$$x$$` rendered by KaTeX; clicking places the cursor and reveals the source. */
+class MathWidget extends WidgetType {
+  constructor(
+    readonly tex: string,
+    readonly display: boolean,
+  ) {
+    super();
+  }
+  get estimatedHeight() {
+    return this.display ? 48 : -1;
+  }
+  eq(other: MathWidget) {
+    return other.tex === this.tex && other.display === this.display;
+  }
+  toDOM() {
+    const el = document.createElement(this.display ? "div" : "span");
+    el.className = this.display ? "cm-md-math-block" : "cm-md-math";
+    el.innerHTML = katex.renderToString(this.tex, { throwOnError: false, displayMode: this.display });
+    return el;
+  }
+  ignoreEvent() {
+    return false;
   }
 }
 
@@ -464,6 +492,17 @@ function buildInline(view: EditorView): DecorationSet {
           marks.push(Decoration.replace({ widget: new RuleWidget() }).range(node.from, node.to));
           return;
         }
+        if (name === "InlineMath" || name === "BlockMath") {
+          const display = name === "BlockMath";
+          // `$$` alone on its lines is a block widget (state field below).
+          if (display && soleLines(doc, node.from, node.to)) return false;
+          const n = display ? 2 : 1;
+          marks.push(
+            Decoration.replace({ widget: new MathWidget(doc.sliceString(node.from + n, node.to - n), display) })
+              .range(node.from, node.to),
+          );
+          return false;
+        }
         if (name === "Escape") {
           // `\*` shows as `*`.
           marks.push(
@@ -597,12 +636,17 @@ function buildBlocks(
     to,
     enter: (node) => {
       const name = node.name;
-      // `![[note]]` alone on its line replaces that line.
-      if (name === "Embed") {
+      // `![[note]]` and `$$…$$` alone on their lines replace those lines.
+      if (name === "Embed" || name === "BlockMath") {
         const lines = soleLines(doc, node.from, node.to);
         if (!lines || touchesActiveLines(state, node.from, node.to)) return false;
-        const { name: target, heading } = wikilinkParts(doc, node.node);
-        const widget = new EmbedWidget(target, heading, kb, options.getNotes ?? (() => []), options.noteId);
+        let widget: WidgetType;
+        if (name === "Embed") {
+          const { name: target, heading } = wikilinkParts(doc, node.node);
+          widget = new EmbedWidget(target, heading, kb, options.getNotes ?? (() => []), options.noteId);
+        } else {
+          widget = new MathWidget(doc.sliceString(node.from + 2, node.to - 2), true);
+        }
         marks.push(Decoration.replace({ widget, block: true }).range(lines.from, lines.to));
         return false;
       }

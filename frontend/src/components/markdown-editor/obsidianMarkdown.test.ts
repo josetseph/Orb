@@ -49,4 +49,10 @@ describe("obsidianMarkdown", () => {
       "WikiLinkMark(11,13)",
     ]);
   });
+
+  it("parses inline and block math", () => {
+    expect(nodes("cost $x^2$ here")).toEqual(["InlineMath(5,10)", "MathMark(5,6)", "MathMark(9,10)"]);
+    expect(nodes("$5 and $6")).toEqual([]);
+    expect(nodes("$$\nE=mc^2\n$$")).toEqual(["BlockMath(0,12)", "MathMark(0,2)", "MathMark(10,12)"]);
+  });
 });

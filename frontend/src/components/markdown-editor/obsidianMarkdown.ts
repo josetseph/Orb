@@ -135,7 +135,43 @@ const wikilink: MarkdownConfig = {
   ],
 };
 
+// `$x$` (no space just inside, closing `$` not followed by a digit — `$5 and
+// $6` is money) and `$$…$$`, which may span lines within a paragraph.
+const INLINE_MATH_RE = /^\$(?!\s)([^$\n]*[^$\s\\])\$(?!\d)/;
+
+const math: MarkdownConfig = {
+  defineNodes: [
+    { name: INLINE_MATH, style: { [`${INLINE_MATH}/...`]: obsidianTags.math } },
+    { name: BLOCK_MATH, style: { [`${BLOCK_MATH}/...`]: obsidianTags.math } },
+    { name: MATH_MARK, style: tags.processingInstruction },
+  ],
+  parseInline: [
+    {
+      name: "Math",
+      before: "Emphasis",
+      parse(cx, next, pos) {
+        if (next !== 36 /* $ */) return -1;
+        if (cx.char(pos + 1) === 36) {
+          const close = cx.slice(pos + 2, cx.end).indexOf("$$");
+          if (close < 1) return -1;
+          const end = pos + 2 + close + 2;
+          return cx.addElement(
+            cx.elt(BLOCK_MATH, pos, end, [cx.elt(MATH_MARK, pos, pos + 2), cx.elt(MATH_MARK, end - 2, end)]),
+          );
+        }
+        const m = INLINE_MATH_RE.exec(cx.slice(pos, cx.end));
+        if (!m) return -1;
+        const end = pos + m[0].length;
+        return cx.addElement(
+          cx.elt(INLINE_MATH, pos, end, [cx.elt(MATH_MARK, pos, pos + 1), cx.elt(MATH_MARK, end - 1, end)]),
+        );
+      },
+    },
+  ],
+};
+
 export const obsidianMarkdown: MarkdownConfig[] = [
   highlight,
   wikilink,
+  math,
 ];
