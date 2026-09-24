@@ -27,7 +27,10 @@ export function NotePrintView({ job, kb, onDone }: { job: PrintJob; kb: string; 
       await Promise.all(images.map((img) => (img.complete ? null : img.decode().catch(() => null))));
       if (!cancelled) await printPage();
     };
-    void run();
+    run().catch((e) => {
+      alert(`Could not open the print dialog: ${e instanceof Error ? e.message : String(e)}`);
+      onDone();
+    });
     window.addEventListener("afterprint", onDone);
     return () => {
       cancelled = true;

@@ -2,6 +2,15 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "shell",
   "description": "The bundled first-run page: full access to the shell's own commands and native dialogs.",
-  "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "opener:default"]
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "opener:default",
+    "allow-app-state",
+    "allow-save-setup",
+    "allow-restart-backend"
+  ]
 }
