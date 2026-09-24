@@ -66,6 +66,8 @@ const markdownHighlightStyle = HighlightStyle.define([
   },
   { tag: obsidianTags.blockId, color: N700 },
   { tag: obsidianTags.frontmatter, color: MUTED, fontFamily: MONO, fontSize: "0.88em" },
+  { tag: obsidianTags.footnoteRef, color: ACCENT300, verticalAlign: "super", fontSize: "0.72em" },
+  { tag: obsidianTags.footnoteDef, color: MUTED, fontSize: "0.92em" },
 ]);
 
 /* Callout accents: the palette has no warning/success, so those are oklch in the danger idiom. */

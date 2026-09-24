@@ -77,4 +77,20 @@ describe("obsidianMarkdown", () => {
     ]);
     expect(nodes("# H\n\n---\n", /Front/)).toEqual([]);
   });
+
+  it("parses footnote refs and definitions", () => {
+    expect(nodes("text[^1].\n\n[^1]: The *note*.")).toEqual([
+      "FootnoteRef(4,8)",
+      "FootnoteMark(4,6)",
+      "FootnoteLabel(6,7)",
+      "FootnoteMark(7,8)",
+      "FootnoteDef(11,28)",
+      "FootnoteMark(11,13)",
+      "FootnoteLabel(13,14)",
+      "FootnoteMark(14,16)",
+      "Emphasis(21,27)",
+      "EmphasisMark(21,22)",
+      "EmphasisMark(26,27)",
+    ]);
+  });
 });

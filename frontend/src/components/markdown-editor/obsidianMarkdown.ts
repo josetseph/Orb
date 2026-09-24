@@ -235,10 +235,67 @@ const frontmatter: MarkdownConfig = {
   ],
 };
 
+// `[^label]` references and `[^label]: text` definitions (one line each).
+const FOOTNOTE_REF_RE = /^\[\^([^\]\s]+)\]/;
+const FOOTNOTE_DEF_RE = /^\[\^([^\]\s]+)\]:[ \t]*/;
+
+const footnotes: MarkdownConfig = {
+  defineNodes: [
+    { name: FOOTNOTE_REF, style: { [`${FOOTNOTE_REF}/...`]: obsidianTags.footnoteRef } },
+    { name: FOOTNOTE_DEF, block: true, style: { [`${FOOTNOTE_DEF}/...`]: obsidianTags.footnoteDef } },
+    { name: FOOTNOTE_LABEL, style: tags.labelName },
+    { name: FOOTNOTE_MARK, style: tags.processingInstruction },
+  ],
+  parseInline: [
+    {
+      name: FOOTNOTE_REF,
+      before: "Link",
+      parse(cx, next, pos) {
+        if (next !== 91 /* [ */ || cx.char(pos + 1) !== 94) return -1;
+        const m = FOOTNOTE_REF_RE.exec(cx.slice(pos, cx.end));
+        if (!m) return -1;
+        const end = pos + m[0].length;
+        return cx.addElement(
+          cx.elt(FOOTNOTE_REF, pos, end, [
+            cx.elt(FOOTNOTE_MARK, pos, pos + 2),
+            cx.elt(FOOTNOTE_LABEL, pos + 2, end - 1),
+            cx.elt(FOOTNOTE_MARK, end - 1, end),
+          ]),
+        );
+      },
+    },
+  ],
+  parseBlock: [
+    {
+      name: FOOTNOTE_DEF,
+      before: "LinkReference",
+      parse(cx: BlockContext, line: Line) {
+        const m = FOOTNOTE_DEF_RE.exec(line.text.slice(line.pos));
+        if (!m) return false;
+        const from = cx.lineStart + line.pos;
+        const labelTo = from + 2 + m[1].length;
+        const bodyFrom = from + m[0].length;
+        const to = cx.lineStart + line.text.length;
+        cx.addElement(
+          cx.elt(FOOTNOTE_DEF, from, to, [
+            cx.elt(FOOTNOTE_MARK, from, from + 2),
+            cx.elt(FOOTNOTE_LABEL, from + 2, labelTo),
+            cx.elt(FOOTNOTE_MARK, labelTo, labelTo + 2),
+            ...cx.parser.parseInline(line.text.slice(bodyFrom - cx.lineStart), bodyFrom),
+          ]),
+        );
+        cx.nextLine();
+        return true;
+      },
+    },
+  ],
+};
+
 export const obsidianMarkdown: MarkdownConfig[] = [
   highlight,
   wikilink,
   math,
   tagsAndIds,
   frontmatter,
+  footnotes,
 ];

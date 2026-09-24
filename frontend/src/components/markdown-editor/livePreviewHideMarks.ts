@@ -39,7 +39,7 @@ export type LivePreviewOptions = {
   noteId?: string;
 };
 
-// Marks that simply vanish: `#`, `**`, `~~`, `==`, backticks, `>`.
+// Marks that simply vanish: `#`, `**`, `~~`, `==`, backticks, `>`, `[^`.
 const HIDE_NODE_TYPES = new Set([
   "HeaderMark",
   "EmphasisMark",
@@ -48,6 +48,7 @@ const HIDE_NODE_TYPES = new Set([
   "CodeInfo",
   "QuoteMark",
   "HighlightMark",
+  "FootnoteMark",
 ]);
 // Nodes handled as a whole element rather than by their marks.
 const ELEMENT_NODE_TYPES = new Set([
@@ -58,7 +59,7 @@ const ELEMENT_NODE_TYPES = new Set([
 const MARK_PARENT = new Set([
   "Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode", "ATXHeading1", "ATXHeading2",
   "ATXHeading3", "ATXHeading4", "ATXHeading5", "ATXHeading6", "SetextHeading1", "SetextHeading2",
-  "FencedCode", "Blockquote", "Link", "Autolink", "Image", "Highlight",
+  "FencedCode", "Blockquote", "Link", "Autolink", "Image", "Highlight", "FootnoteRef",
 ]);
 
 const CALLOUT_TYPES = new Set([
