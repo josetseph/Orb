@@ -477,9 +477,8 @@ export function createMediaEmbedDecorations(
                   options.onProcess,
                   options.onCancel,
                 ),
-                // The embed is block-level DOM; saying so lets the layout
-                // reserve its height instead of treating it as inline text.
-                block: true,
+                // Not `block: true`: view plugins may not emit block
+                // decorations (CodeMirror throws and the edit is lost).
               }).range(from, to),
             );
           }
