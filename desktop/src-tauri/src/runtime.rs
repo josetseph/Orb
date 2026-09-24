@@ -375,6 +375,10 @@ pub fn ensure_window(app: &AppHandle) -> WebviewWindow {
         .inner_size(1400.0, 900.0)
         .min_inner_size(900.0, 600.0)
         .visible(false)
+        // Tauri's own drag-drop handler would swallow file drops before the
+        // page sees them; the editor handles OS drops itself (upload into the
+        // note), so the native handler stays off.
+        .disable_drag_drop_handler()
         .initialization_script(INIT_JS)
         // Note content renders in this window: only the app may load in it,
         // everything else goes to the system browser.

@@ -397,6 +397,17 @@ const MarkdownNoteEditor = forwardRef<
           }
           return true;
         },
+        // Pasted files (a screenshot, a copied file) upload the same way;
+        // pasted text is left to the editor.
+        paste(event) {
+          const files = Array.from(event.clipboardData?.files ?? []);
+          if (files.length === 0) return false;
+          event.preventDefault();
+          if (!attachDisabledRef.current) {
+            void onDropFilesRef.current?.(files);
+          }
+          return true;
+        },
       }),
       Prec.high(formattingKeymap()),
       keymap.of([

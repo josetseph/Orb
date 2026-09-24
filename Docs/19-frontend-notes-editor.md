@@ -585,7 +585,7 @@ The alias part of a link (`[[path|alias]]`) is stripped by the editor extension 
 | `onWikilinkClick?` | `(target, alias?) => void` | Click on `[data-wikilink-target]`. |
 | `onWikilinkHover?` / `onWikilinkLeave?` | `(target, rect, alias?) => void` / `() => void` | Hover card. |
 | `onAttachFile?` | `(e: ChangeEvent<HTMLInputElement>) => void` | Toolbar paperclip `<input type=file>`; toolbar shows the button only when provided. |
-| `onDropFiles?` | `(files) => void` | OS drag-and-drop onto the editor (both the wrapper div and the CM DOM handler call it). |
+| `onDropFiles?` | `(files) => void` | OS drag-and-drop onto the editor (both the wrapper div and the CM DOM handler call it). | Also fired for files on the clipboard: a CM `paste` handler uploads `clipboardData.files` (a screenshot, a copied file) and leaves text pastes to the editor. The Tauri window is built with `disable_drag_drop_handler()` (`desktop/src-tauri/src/runtime.rs`): without it the shell swallows OS file drops before the page sees them, which is why drops stopped working after the Electron → Tauri move.
 | `attachDisabled?` | `boolean` | Disables the paperclip and ignores drops (read through a ref so the extension set need not rebuild). |
 | `kb?` | `string` (default `"default"`) | Passed to scan-text, entity search and media URL resolution. |
 | `notes?` | `Note[]` | Source for `[[` autocomplete; held in `notesRef` so updates never rebuild extensions. |
