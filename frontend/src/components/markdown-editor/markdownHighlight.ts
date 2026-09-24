@@ -233,7 +233,9 @@ const editorTheme = EditorView.theme(
       paddingRight: "12px",
     },
     /* Callout: a typed quote — `> [!warning] Title` */
+    // A callout is a box, not a quotation: upright text, normal colour.
     ".cm-md-callout": { borderLeftWidth: "3px", borderRadius: "0 6px 6px 0" },
+    ".cm-md-callout .cm-md-quote-text, .cm-md-callout .tok-quote, .cm-md-callout span": { fontStyle: "normal", color: TEXT },
     ".cm-md-callout-title": { fontWeight: "500", paddingTop: "4px" },
     ".cm-md-callout-label": {
       marginRight: "8px",

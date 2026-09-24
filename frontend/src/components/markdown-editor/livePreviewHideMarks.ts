@@ -285,9 +285,11 @@ class EmbedWidget extends WidgetType {
           .map((t) => t.trim())
           .filter(Boolean)
           .map((t) => {
-            const p = document.createElement("p");
-            p.textContent = t;
-            return p;
+            // Headings read as headings; the rest is plain paragraphs.
+            const m = /^(#{1,6})\s+(.*)$/.exec(t);
+            const el = document.createElement(m ? `h${Math.min(6, m[1].length + 2)}` : "p");
+            el.textContent = m ? m[2] : t;
+            return el;
           }),
       );
     };
