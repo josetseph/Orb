@@ -715,14 +715,20 @@ const blockField = (kb: string, options: LivePreviewOptions) =>
 const tableViewport = ViewPlugin.fromClass(
   class {
     constructor(readonly view: EditorView) {
-      queueMicrotask(() => this.report());
+      this.report();
     }
     update(u: ViewUpdate) {
       if (u.viewportChanged) this.report();
     }
+    // Dispatching inside an update (including the measure cycle) is forbidden
+    // and crashes the plugin, so the report is deferred past it.
     report() {
-      const ranges = this.view.visibleRanges.map((r) => ({ from: r.from, to: r.to }));
-      this.view.dispatch({ effects: setTableRanges.of(ranges) });
+      queueMicrotask(() => {
+        const ranges = this.view.visibleRanges.map((r) => ({ from: r.from, to: r.to }));
+        const cur = this.view.state.field(tableRanges);
+        if (cur.length === ranges.length && cur.every((r, i) => r.from === ranges[i].from && r.to === ranges[i].to)) return;
+        this.view.dispatch({ effects: setTableRanges.of(ranges) });
+      });
     }
   },
 );
