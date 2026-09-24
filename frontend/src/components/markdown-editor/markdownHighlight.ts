@@ -55,6 +55,16 @@ const markdownHighlightStyle = HighlightStyle.define([
   /* Obsidian syntax (obsidianMarkdown.ts) — styled here so Source mode has it too */
   { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
   { tag: obsidianTags.math, color: ACCENT200, fontFamily: MONO, fontSize: "0.9em" },
+  // TODO: clicking a tag does nothing yet (search by tag when that exists).
+  {
+    tag: obsidianTags.tag,
+    color: ACCENT300,
+    backgroundColor: "color-mix(in srgb, " + ACCENT + " 14%, transparent)",
+    borderRadius: "999px",
+    padding: "1px 7px",
+    fontSize: "0.85em",
+  },
+  { tag: obsidianTags.blockId, color: N700 },
 ]);
 
 /* Callout accents: the palette has no warning/success, so those are oklch in the danger idiom. */

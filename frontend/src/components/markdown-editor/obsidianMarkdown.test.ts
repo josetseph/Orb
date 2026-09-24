@@ -55,4 +55,16 @@ describe("obsidianMarkdown", () => {
     expect(nodes("$5 and $6")).toEqual([]);
     expect(nodes("$$\nE=mc^2\n$$")).toEqual(["BlockMath(0,12)", "MathMark(0,2)", "MathMark(10,12)"]);
   });
+
+  it("parses tags but not headings", () => {
+    expect(nodes("# Heading", /Tag/)).toEqual([]);
+    expect(nodes("#tag", /Tag/)).toEqual(["Tag(0,4)"]);
+    expect(nodes("see #a/b-c and #123", /Tag/)).toEqual(["Tag(4,10)"]);
+    expect(nodes("not#tag", /Tag/)).toEqual([]);
+  });
+
+  it("parses block ids at line end", () => {
+    expect(nodes("some text ^abc-1")).toEqual(["BlockId(10,16)"]);
+    expect(nodes("some ^abc text", /BlockId/)).toEqual([]);
+  });
 });

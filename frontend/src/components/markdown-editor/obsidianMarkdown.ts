@@ -170,8 +170,42 @@ const math: MarkdownConfig = {
   ],
 };
 
+// `#tag` after whitespace (a heading's `#` is consumed at block level, so
+// only mid-line and space-less `#word` reach the inline parsers).
+const TAG_RE = /^#[\p{L}\p{N}_/-]+/u;
+// `^id` as the last thing on a line.
+const BLOCK_ID_RE = /^\^[\p{L}\p{N}-]+(?=\n|$)/u;
+
+const tagsAndIds: MarkdownConfig = {
+  defineNodes: [
+    { name: TAG, style: obsidianTags.tag },
+    { name: BLOCK_ID, style: obsidianTags.blockId },
+  ],
+  parseInline: [
+    {
+      name: TAG,
+      parse(cx, next, pos) {
+        if (next !== 35 /* # */ || !/\s|^$/.test(cx.slice(pos - 1, pos))) return -1;
+        const m = TAG_RE.exec(cx.slice(pos, cx.end));
+        if (!m || /^#\d+$/.test(m[0])) return -1;
+        return cx.addElement(cx.elt(TAG, pos, pos + m[0].length));
+      },
+    },
+    {
+      name: BLOCK_ID,
+      parse(cx, next, pos) {
+        if (next !== 94 /* ^ */ || !/\s/.test(cx.slice(pos - 1, pos))) return -1;
+        const m = BLOCK_ID_RE.exec(cx.slice(pos, cx.end));
+        if (!m) return -1;
+        return cx.addElement(cx.elt(BLOCK_ID, pos, pos + m[0].length));
+      },
+    },
+  ],
+};
+
 export const obsidianMarkdown: MarkdownConfig[] = [
   highlight,
   wikilink,
   math,
+  tagsAndIds,
 ];
