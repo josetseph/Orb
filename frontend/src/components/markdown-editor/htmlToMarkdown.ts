@@ -16,8 +16,15 @@ turndown.use(gfm);
 turndown.keep([]);
 turndown.remove(["style", "script", "meta", "title"]);
 
+// Tags that carry structure Markdown can express. HTML without any of them
+// (VS Code, terminals: coloured `div`/`span`/`br` around the same text as
+// `text/plain`) has nothing to convert, and converting it would escape the
+// Markdown punctuation the text already contains.
+const SEMANTIC_TAG = /<(h[1-6]|p|ul|ol|li|a|b|strong|i|em|table|blockquote|pre|code|img|hr|del|s|u|sup|sub)\b/i;
+
 /** Markdown for pasted HTML, or "" when the HTML has nothing worth keeping. */
 export function htmlToMarkdown(html: string): string {
+  if (!SEMANTIC_TAG.test(html)) return "";
   const out = turndown
     .turndown(html)
     .replace(/\u00a0/g, " ")

@@ -19,6 +19,15 @@ describe("htmlToMarkdown", () => {
     expect(md).not.toContain("style");
   });
 
+  it("leaves a code editor's coloured copy of Markdown to the plain-text path", () => {
+    // VS Code: styled div/span/br around the raw text; converting would give `\#`.
+    expect(
+      htmlToMarkdown(
+        '<meta charset="utf-8"><div style="color:#ccc;font-family:Menlo"><div><span style="color:#569cd6"># Title</span></div><br><div><span>**bold** and _em_</span></div></div>',
+      ),
+    ).toBe("");
+  });
+
   it("returns nothing for HTML with no content", () => {
     expect(htmlToMarkdown("<div><br></div>")).toBe("");
   });
