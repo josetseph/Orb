@@ -195,6 +195,16 @@ class MediaWidget extends WidgetType {
     );
   }
 
+  // Typical rendered heights (markdownHighlight.ts) plus the footer row.
+  // Without an estimate CodeMirror measures a replaced range as one text
+  // line until the DOM exists, so scrolling past media jumped.
+  get estimatedHeight() {
+    const body: Record<MediaKind, number> = {
+      image: 300, video: 320, youtube: 320, vimeo: 320, pdf: 480, audio: 54, table: 240, text: 240,
+    };
+    return body[this.kind] + 32;
+  }
+
   /** Filename · status · [Transcript ▾] [Transcribe] — below every readable attachment. */
   private footer(view: EditorView): HTMLElement | null {
     const verb = processVerb(this.kind);
@@ -467,7 +477,9 @@ export function createMediaEmbedDecorations(
                   options.onProcess,
                   options.onCancel,
                 ),
-                block: false,
+                // The embed is block-level DOM; saying so lets the layout
+                // reserve its height instead of treating it as inline text.
+                block: true,
               }).range(from, to),
             );
           }

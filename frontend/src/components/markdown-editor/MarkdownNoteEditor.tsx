@@ -61,6 +61,10 @@ export interface MarkdownNoteEditorProps {
   onWikilinkLeave?: () => void;
   /** Upload files dropped onto the editor (OS drag-and-drop). */
   onDropFiles?: (files: FileList | File[]) => void | Promise<void>;
+  /** Identifies the note so its scroll position and cursor come back on return. */
+  noteId?: string;
+  /** Put the cursor in the body as soon as the editor mounts. */
+  autoFocus?: boolean;
   attachDisabled?: boolean;
   kb?: string;
   /** Vault notes for `[[` wikilink autocomplete. */
@@ -78,6 +82,21 @@ export interface MarkdownNoteEditorProps {
   onCancelAttachment?: (rawUrl: string) => void;
   /** Open a vault file linked from the note (preview modal). */
   onOpenFile?: (url: string, filename: string) => void;
+}
+
+// Where each note was left: scroll offset and cursor. Kept across remounts
+// (the editor is keyed by note id) so coming back to a note lands where you
+// were, not at the top. Bounded; the oldest entry goes first.
+const noteViewMemory = new Map<string, { scrollTop: number; anchor: number; head: number }>();
+const NOTE_VIEW_MEMORY_LIMIT = 200;
+
+function rememberNoteView(noteId: string, view: EditorView) {
+  const { anchor, head } = view.state.selection.main;
+  noteViewMemory.delete(noteId);
+  noteViewMemory.set(noteId, { scrollTop: view.scrollDOM.scrollTop, anchor, head });
+  if (noteViewMemory.size > NOTE_VIEW_MEMORY_LIMIT) {
+    noteViewMemory.delete(noteViewMemory.keys().next().value as string);
+  }
 }
 
 export interface MarkdownNoteEditorHandle {
@@ -203,6 +222,8 @@ const MarkdownNoteEditor = forwardRef<
     onWikilinkHover,
     onWikilinkLeave,
     onDropFiles,
+    noteId,
+    autoFocus = false,
     attachDisabled,
     kb = "default",
     notes = [],
@@ -297,8 +318,31 @@ const MarkdownNoteEditor = forwardRef<
     },
   }));
 
-  // Scan note text for entity mentions (debounced while typing; remounts per note via key=)
-  const scanValue = useDebounced(value, 600);
+  // On mount: restore where this note was left (or start at the top), and
+  // focus the body when asked. On unmount: remember where it was left.
+  useEffect(() => {
+    const v = cmRef.current?.view;
+    if (!v) return;
+    const remembered = noteId ? noteViewMemory.get(noteId) : undefined;
+    if (remembered) {
+      const len = v.state.doc.length;
+      const anchor = Math.min(remembered.anchor, len);
+      const head = Math.min(remembered.head, len);
+      v.dispatch({ selection: { anchor, head }, scrollIntoView: false });
+      v.scrollDOM.scrollTop = remembered.scrollTop;
+    }
+    if (autoFocus) v.focus();
+    return () => {
+      if (noteId) rememberNoteView(noteId, v);
+    };
+    // Runs once per mounted note; the editor is remounted per note id.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [noteId]);
+
+  // Scan note text for entity mentions. This is a backend round trip over the
+  // whole note, so it waits for a real pause (2 s) rather than every gap
+  // between words; the underlines catch up once you stop typing.
+  const scanValue = useDebounced(value, 2000);
   useEffect(() => {
     if (!scanValue || scanValue.length < 10) {
       setScannedEntities([]);

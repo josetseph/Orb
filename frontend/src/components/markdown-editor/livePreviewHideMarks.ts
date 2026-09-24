@@ -6,7 +6,7 @@ import {
   type ViewUpdate,
   EditorView,
 } from "@codemirror/view";
-import { StateField, type EditorState } from "@codemirror/state";
+import { StateEffect, StateField, type EditorState } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
 import { resolveFileUrl } from "@/lib/utils";
@@ -38,6 +38,23 @@ const HIDE_NODE_TYPES = new Set([
   "CodeInfo",
   "QuoteMark",
 ]);
+// Nodes handled as a whole element rather than by their marks.
+const ELEMENT_NODE_TYPES = new Set([
+  "Link", "Autolink", "URL", "ListMark", "TaskMarker", "HorizontalRule", "Escape", "HardBreak",
+]);
+// Marks whose "element" is the enclosing inline/heading node, not the line.
+const MARK_PARENT = new Set([
+  "Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode", "ATXHeading1", "ATXHeading2",
+  "ATXHeading3", "ATXHeading4", "ATXHeading5", "ATXHeading6", "SetextHeading1", "SetextHeading2",
+  "FencedCode", "Blockquote", "Link", "Autolink", "Image",
+]);
+
+/** The element a node belongs to for reveal purposes. */
+function elementOf(node: SyntaxNode): SyntaxNode | null {
+  if (ELEMENT_NODE_TYPES.has(node.name)) return node;
+  for (let p = node.parent; p; p = p.parent) if (MARK_PARENT.has(p.name)) return p;
+  return node;
+}
 
 function decodeSafe(value: string): string {
   try {
@@ -142,18 +159,48 @@ class TextWidget extends WidgetType {
   }
 }
 
-/** Lines the cursor (or a selection) touches keep their raw markdown. */
-function activeLines(state: EditorState): { from: number; to: number }[] {
-  return state.selection.ranges.map((r) => ({
-    from: state.doc.lineAt(r.from).number,
-    to: state.doc.lineAt(r.to).number,
-  }));
-}
+// ── Reveal policy ──────────────────────────────────────────────────────────
+//
+// Syntax is revealed per element, not per line: with the cursor inside a bold
+// run only that run's `**` come back, while the link and code span next to it
+// stay rendered. A block element (table, fenced code, quote) reveals whole.
+//
+// The reveal follows the selection as it stood at the last mouse-up. While a
+// button is held the previous reveal set stays frozen, so text does not shift
+// under the pointer between press and release and a click or drag lands where
+// it was aimed — the detail Obsidian gets right and most clones miss.
+
+const setPointerDown = StateEffect.define<boolean>();
+
+const pointerHeld = StateField.define<boolean>({
+  create: () => false,
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setPointerDown)) return e.value;
+    return value;
+  },
+});
+
+/** Selection ranges the reveal is computed from: frozen while the pointer is held. */
+const revealSelection = StateField.define<readonly { from: number; to: number }[]>({
+  create: (state) => state.selection.ranges.map((r) => ({ from: r.from, to: r.to })),
+  update(value, tr) {
+    const held = tr.state.field(pointerHeld);
+    // Typing moves the cursor, so a doc change always follows the live selection.
+    if (held && !tr.docChanged) return value.map((r) => ({ from: tr.changes.mapPos(r.from), to: tr.changes.mapPos(r.to) }));
+    return tr.state.selection.ranges.map((r) => ({ from: r.from, to: r.to }));
+  },
+});
 
 function touchesActive(state: EditorState, from: number, to: number): boolean {
-  const first = state.doc.lineAt(from).number;
-  const last = state.doc.lineAt(to).number;
-  return activeLines(state).some((a) => a.to >= first && a.from <= last);
+  // Inclusive on both ends: a cursor at the edge of `**bold**` is editing it.
+  return state.field(revealSelection).some((r) => r.to >= from && r.from <= to);
+}
+
+/** Block elements reveal whole; the cursor anywhere on their lines counts. */
+function touchesActiveLines(state: EditorState, from: number, to: number): boolean {
+  const first = state.doc.lineAt(from).from;
+  const last = state.doc.lineAt(to).to;
+  return touchesActive(state, first, last);
 }
 
 /**
@@ -225,8 +272,14 @@ function buildInline(view: EditorView): DecorationSet {
           return;
         }
 
-        if (touchesActive(state, node.from, node.to)) {
-          // Raw for editing; descend so nested block framing still applies.
+        // Container nodes (paragraphs, list items, headings) are never hidden
+        // themselves; deciding at the mark level is what makes the reveal
+        // per element. Descend.
+        if (!HIDE_NODE_TYPES.has(name) && !ELEMENT_NODE_TYPES.has(name)) return;
+        const element = elementOf(node.node);
+        if (element && touchesActive(state, element.from, element.to)) {
+          // The element being edited shows its syntax; descend so a nested
+          // element inside it (a link in a heading) still decides for itself.
           return;
         }
 
@@ -244,6 +297,7 @@ function buildInline(view: EditorView): DecorationSet {
           return;
         }
         if (name === "ListMark") {
+          if (touchesActiveLines(state, node.from, node.to)) return;
           const mark = doc.sliceString(node.from, node.to);
           // Ordered numbers stay (they carry meaning); bullets become dots.
           // The space after the mark is swallowed so text sits at the margin.
@@ -256,6 +310,7 @@ function buildInline(view: EditorView): DecorationSet {
           return;
         }
         if (name === "TaskMarker") {
+          if (touchesActiveLines(state, node.from, node.to)) return;
           const checked = /x/i.test(doc.sliceString(node.from, node.to));
           const to = doc.sliceString(node.to, node.to + 1) === " " ? node.to + 1 : node.to;
           marks.push(
@@ -286,6 +341,8 @@ function buildInline(view: EditorView): DecorationSet {
           return;
         }
         if (!HIDE_NODE_TYPES.has(name) || node.to <= node.from) return;
+        // `>` frames a quote; it reveals with the quoted lines, not by itself.
+        if (name === "QuoteMark" && touchesActiveLines(state, node.from, node.to)) return;
         let to = node.to;
         // `#`/`>` are followed by one space that would otherwise indent the text.
         if ((name === "HeaderMark" || name === "QuoteMark") && doc.sliceString(to, to + 1) === " ") {
@@ -307,8 +364,8 @@ const inlinePlugin = ViewPlugin.fromClass(
     update(update: ViewUpdate) {
       if (
         update.docChanged ||
-        update.selectionSet ||
         update.viewportChanged ||
+        update.state.field(revealSelection) !== update.startState.field(revealSelection) ||
         syntaxTree(update.state) !== syntaxTree(update.startState)
       ) {
         this.decorations = buildInline(update.view);
@@ -327,6 +384,10 @@ class TableWidget extends WidgetType {
     readonly from: number,
   ) {
     super();
+  }
+
+  get estimatedHeight() {
+    return 34 * (this.rows.length + 1) + 12;
   }
   eq(other: TableWidget) {
     return (
@@ -384,12 +445,14 @@ function cellsOf(state: EditorState, row: SyntaxNode): string[] {
 
 // ponytail: cell text is shown raw (no bold/links inside cells); render
 // cells through the inline pass if tables ever carry more than plain values.
-function buildTables(state: EditorState): DecorationSet {
+function buildTables(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
   const marks: Range[] = [];
-  syntaxTree(state).iterate({
+  for (const { from, to } of ranges) syntaxTree(state).iterate({
+    from,
+    to,
     enter: (node) => {
       if (node.name !== "Table") return;
-      if (touchesActive(state, node.from, node.to)) return false;
+      if (touchesActiveLines(state, node.from, node.to)) return false;
       let head: string[] = [];
       const rows: string[][] = [];
       for (let c = node.node.firstChild; c; c = c.nextSibling) {
@@ -409,15 +472,58 @@ function buildTables(state: EditorState): DecorationSet {
   return Decoration.set(marks, true);
 }
 
+// Block widgets must come from a state field, which cannot see the viewport.
+// The view plugin below reports the visible ranges into it instead, so a table
+// far off screen in a long note is never rendered.
+const setTableRanges = StateEffect.define<readonly { from: number; to: number }[]>();
+
+const tableRanges = StateField.define<readonly { from: number; to: number }[]>({
+  create: (state) => [{ from: 0, to: state.doc.length }],
+  update(value, tr) {
+    for (const e of tr.effects) if (e.is(setTableRanges)) return e.value;
+    return tr.docChanged ? value.map((r) => ({ from: tr.changes.mapPos(r.from), to: tr.changes.mapPos(r.to, 1) })) : value;
+  },
+});
+
 const tableField = StateField.define<DecorationSet>({
-  create: buildTables,
+  create: (state) => buildTables(state, state.field(tableRanges)),
   update(value, tr) {
     // The parser runs async, so the Table node may not exist yet when the
     // field is created; rebuild once the tree advances.
     const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-    return tr.docChanged || tr.selection || treeChanged ? buildTables(tr.state) : value;
+    const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
+    const rangesChanged = tr.state.field(tableRanges) !== tr.startState.field(tableRanges);
+    return tr.docChanged || revealChanged || treeChanged || rangesChanged
+      ? buildTables(tr.state, tr.state.field(tableRanges))
+      : value;
   },
   provide: (f) => EditorView.decorations.from(f),
+});
+
+const tableViewport = ViewPlugin.fromClass(
+  class {
+    constructor(readonly view: EditorView) {
+      queueMicrotask(() => this.report());
+    }
+    update(u: ViewUpdate) {
+      if (u.viewportChanged) this.report();
+    }
+    report() {
+      const ranges = this.view.visibleRanges.map((r) => ({ from: r.from, to: r.to }));
+      this.view.dispatch({ effects: setTableRanges.of(ranges) });
+    }
+  },
+);
+
+const pointerTracking = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    if (event.button === 0) view.dispatch({ effects: setPointerDown.of(true) });
+    return false;
+  },
+  mouseup(_event, view) {
+    if (view.state.field(pointerHeld)) view.dispatch({ effects: setPointerDown.of(false) });
+    return false;
+  },
 });
 
 export function createLivePreviewHideMarks(
@@ -425,8 +531,13 @@ export function createLivePreviewHideMarks(
   options: LivePreviewOptions = {},
 ) {
   return [
+    pointerHeld,
+    revealSelection,
+    tableRanges,
+    tableViewport,
     inlinePlugin,
     tableField,
+    pointerTracking,
     EditorView.domEventHandlers({
       mousedown(event) {
         // ⌥-click places the cursor instead, so link text stays editable.

@@ -158,22 +158,18 @@ export function useNoteSelection({ currentKB, setNotes }: UseNoteSelectionArgs) 
     titleBeforeEditRef.current = "";
   }, []);
 
-  // Note: setNotes must NOT be called inside the setSelectedNote updater —
-  // impure updaters double-fire under StrictMode. Use the ref (kept current
-  // synchronously below) so rapid keystrokes never read stale state.
-  const handleContentChange = useCallback(
-    (content: string) => {
-      const prev = selectedNoteRef.current;
-      if (!prev) return;
-      const updatedNote = { ...prev, content };
-      selectedNoteRef.current = updatedNote;
-      setSelectedNote(updatedNote);
-      setNotes((notes) =>
-        notes.map((note) => (note.id === updatedNote.id ? updatedNote : note)),
-      );
-    },
-    [setNotes],
-  );
+  // Typing updates the selected note only. The list copy is refreshed when
+  // the save lands (patchLocalNote); pushing every keystroke into it re-ran
+  // the sidebar and rebuilt the wikilink index for the whole vault per key.
+  // Use the ref (kept current synchronously) so rapid keystrokes never read
+  // stale state.
+  const handleContentChange = useCallback((content: string) => {
+    const prev = selectedNoteRef.current;
+    if (!prev) return;
+    const updatedNote = { ...prev, content };
+    selectedNoteRef.current = updatedNote;
+    setSelectedNote(updatedNote);
+  }, []);
 
   const handleTitleChange = useCallback(
     (title: string) => {

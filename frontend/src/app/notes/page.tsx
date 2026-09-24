@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   AudioLines,
@@ -76,8 +76,9 @@ export default function NotesPage() {
   const selectedNoteId = selectedNote?.id ?? null;
   const selectedNoteEmpty = Boolean(selectedNote && !selectedNote.title && !selectedNote.content);
 
-  // A fresh note lands in the title. (Remounting the input with key={id}
-  // leaked one input per note switch, so focus is driven by an effect.)
+  // A fresh note lands in the title; an existing one lands in the body (the
+  // editor's autoFocus). (Remounting the input with key={id} leaked one input
+  // per note switch, so focus is driven by an effect.)
   const titleRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (selectedNoteId && selectedNoteEmpty) titleRef.current?.focus();
@@ -173,7 +174,8 @@ export default function NotesPage() {
 
   const status = selectedNote ? noteStatus(selectedNote) : null;
   const busy = selectedNote ? isActiveProcessingNote(selectedNote) : false;
-  const noteAttachments = selectedNote ? parseNoteAttachments(selectedNote.content) : [];
+  const noteContent = selectedNote?.content ?? "";
+  const noteAttachments = useMemo(() => parseNoteAttachments(noteContent), [noteContent]);
   const panelOpen = Boolean(selectedNote && (showConnectedPanel || entityPanelNodeId));
 
   return (
@@ -347,6 +349,8 @@ export default function NotesPage() {
                   <MarkdownNoteEditor
                     key={selectedNote.id}
                     ref={editorRef}
+                    noteId={selectedNote.id}
+                    autoFocus={!selectedNoteEmpty}
                     value={selectedNote.content}
                     onChange={selection.handleContentChange}
                     onEntityClick={handleEntityClick}

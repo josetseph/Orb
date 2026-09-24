@@ -71,6 +71,10 @@ export function toggleExtractBlock(view: EditorView, rawSrc: string) {
 }
 
 class CollapsedWidget extends WidgetType {
+  get estimatedHeight() {
+    return 36;
+  }
+
   constructor(
     readonly key: string,
     readonly label: string,
