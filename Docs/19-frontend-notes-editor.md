@@ -59,10 +59,11 @@ Related docs: [Frontend architecture](18-frontend-architecture.md) · [Chat, gra
 | `frontend/src/components/markdown-editor/MarkdownNoteEditor.tsx` | CodeMirror host component (no formatting toolbar — every action is a shortcut, see §Keymap; controlled value, drop/paste upload, toolbar, imperative handle). No barrel — import this file directly (default export). | `MarkdownNoteEditor` (default), `MarkdownNoteEditorHandle`, `MarkdownNoteEditorProps` |
 | `frontend/src/components/markdown-editor/markdownCommands.ts` | Toolbar/keybinding commands (wrap, heading, list, link, code block…). | command functions + `markdownKeymap` |
 | `frontend/src/components/markdown-editor/markdownHighlight.ts` | Highlight style + editor theme. | `markdownHighlightStyle`, `markdownEditorTheme` |
-| `frontend/src/components/markdown-editor/livePreviewHideMarks.ts` | Hides markdown syntax marks on non-active lines. | `livePreviewHideMarks` |
+| `frontend/src/components/markdown-editor/obsidianMarkdown.ts` | Obsidian-flavoured syntax as `@lezer/markdown` parser extensions (`==highlight==`, `[[wikilinks]]`, `![[embeds]]`, `$math$`, `#tags`, `^block-ids`, YAML front matter, footnotes), registered in one place via `markdown({ base: markdownLanguage, extensions: obsidianMarkdown })`. Each node has a highlight tag so Source mode colours it too. `wikilinkParts(doc, node)` reads a `WikiLink`/`Embed` node into `{name, heading, alias, target}`. Tests: `obsidianMarkdown.test.ts` (parser-level, node names + ranges). | `obsidianMarkdown`, `obsidianTags`, node-name constants, `wikilinkParts` |
+| `frontend/src/components/markdown-editor/livePreviewHideMarks.ts` | Live preview: hides syntax per element off the reveal selection, renders block widgets (tables, embeds, block math), callouts, front matter. | `createLivePreviewHideMarks`, `revealSelection`, `touchesActive`, `soleLines` |
 | `frontend/src/components/markdown-editor/visibleLineChunks.ts` | Helper to iterate visible ranges line-by-line for decorations. | `forEachVisibleLine` (name verified below) |
 | `frontend/src/components/markdown-editor/entityExtension.ts` | Entity-name decorations + click/hover → detail panel. | `entityExtension` |
-| `frontend/src/components/markdown-editor/wikilinkExtension.ts` | `[[` autocomplete, decorations, click/hover callbacks. | `wikilinkExtension` |
+| `frontend/src/components/markdown-editor/wikilinkExtension.ts` | `[[` autocomplete, tree-driven decorations (from `WikiLink`/`Embed` nodes), click/hover callbacks. | `wikilinkQueryAt`, `wikilinkCompletionSource`, `createWikilinkDecorations`, `wikilinkClickHandler`, `wikilinkHoverHandler` |
 | `frontend/src/components/markdown-editor/mediaEmbedExtension.ts` | Inline image/audio/video widgets for vault links. | `mediaEmbedExtension` |
 | `frontend/src/components/markdown-editor/extractMarkerExtension.ts` | Collapses `<!-- orb:extract src="…" -->…<!-- /orb:extract -->` blocks written by ingestion into one chip ("Transcript / Description / Extracted text from x · N words"); keys blocks by `extractKey` = `vaultRelPath(src)` lower-cased so absolute and relative link forms match. `OPEN_RE` / `MARKER_RE` accept the optional `mode="notes"` attribute ingestion adds for recordings and long documents. | `extractKey`, `extractedKeys`, `extractNoun`, `expandedExtracts`, `toggleExtractEffect` |
 | `frontend/src/components/segmented-note-content.tsx` | Read-only note body renderer with entity highlights / enrichment blocks. | `SegmentedNoteContent` |
@@ -598,7 +599,7 @@ The alias part of a link (`[[path|alias]]`) is stripped by the editor extension 
 
 ```mermaid
 flowchart TD
-    A[lineNumbers, highlightActiveLine(+Gutter), drawSelection, history, lineWrapping, allowMultipleSelections] --> B[markdown({ base: markdownLanguage })]
+    A[lineNumbers, highlightActiveLine(+Gutter), drawSelection, history, lineWrapping, allowMultipleSelections] --> B[markdown({ base: markdownLanguage, extensions: obsidianMarkdown })]
     B --> C[liveMarkdownExtensions = editorTheme + syntaxHighlighting(markdownHighlightStyle)]
     C --> D[createLivePreviewHideMarks — replace-decorations hiding syntax marks off the active line]
     D --> E[placeholder]
@@ -622,15 +623,40 @@ Decoration plugins all use `Decoration.set(marks, true)` (sorted) and rebuild on
 
 - `markdownHighlightStyle` — Lezer tag → colour map: headings 1–6 (`#60a5fa`, `#a78bfa`, `#2dd4bf`, `#f472b6`, `#c4b5fd`, `#94a3b8`; sizes 1.5em→1.05em), `strong` orange, `emphasis` pink italic, `strikethrough` green line-through, `link` blue underline, `url` sky, `monospace` pink on translucent white, `quote` slate italic, `list`, `meta`/`processingInstruction` indigo, `contentSeparator`, `atom`/`bool`, `labelName`. Comment: *"Syntax markers stay visible; content is color-styled (Alexandrie-style)."*
 - `editorTheme` — `EditorView.theme({...}, { dark: true })`: transparent background, system sans font, `lineHeight 1.7`, `fontSize 0.875rem`, purple selection, gutter styling, autocomplete tooltip styling (`.cm-tooltip`, `.cm-completionLabel`, `.cm-completionDetail` uppercase 0.7em), and the classes used by the extensions: `.cm-entity-mention` (purple background, inset underline shadow), `.cm-wikilink` (teal underline, transparent background), `.cm-media-embed*` (`-img` max 520×360, `-video` 16:9 up to 520 px, `-iframe`, `-pdf` 640×480, `-audio` 420 px, `-caption`, `-error`).
+- Obsidian nodes are styled through `obsidianTags` (from `obsidianMarkdown.ts`): highlight background, tag pill, dimmed block id, mono math and front matter, superscript footnote reference, muted footnote definition. Theme classes added for them: `.cm-md-callout*` (per-type border/tint colours from `CALLOUT_COLORS`, using `--color-accent*` / `--color-danger` tokens plus oklch for tip/question/warning, which the palette lacks), `.cm-md-frontmatter`, `.cm-md-math`, `.cm-md-math-block`, `.cm-md-embed*`.
 - Export: `liveMarkdownExtensions = [editorTheme, syntaxHighlighting(markdownHighlightStyle)]`.
 
 ### 14.3 `livePreviewHideMarks.ts`
 
-`createLivePreviewHideMarks()` — a `ViewPlugin` that iterates the syntax tree over `view.visibleRanges` and adds `Decoration.replace({})` over nodes named `HeaderMark`, `EmphasisMark`, `StrikethroughMark`, `CodeMark`, `QuoteMark` **unless** the node's line is the cursor's line. `LinkMark` is intentionally excluded (*"hiding it glues label+URL together"*); images/attachments are left to the media extension. Result: Obsidian-style live preview where the active line shows raw markdown.
+`createLivePreviewHideMarks(kb, { onOpenFile, getNotes, noteId })` — the live-preview layer. Syntax is revealed **per element**, not per line: `revealSelection` (a `StateField` holding the selection as it stood at the last mouse-up, frozen while a button is held) is the source of truth; `touchesActive(state, from, to)` says whether an element is being edited (it falls back to the live selection when the field is absent, i.e. in Source mode) and `touchesActiveLines` does the same for whole-line blocks. Three passes:
+
+- **Inline (`buildInline`, a `ViewPlugin`)** — iterates the tree over `view.visibleRanges`. Marks in `HIDE_NODE_TYPES` (`HeaderMark`, `EmphasisMark`, `StrikethroughMark`, `CodeMark`, `CodeInfo`, `QuoteMark`, `HighlightMark`, `FootnoteMark`) vanish unless their element (`elementOf`, via `MARK_PARENT`) is active; `ELEMENT_NODE_TYPES` (`Link`, `Autolink`, `URL`, `ListMark`, `TaskMarker`, `HorizontalRule`, `Escape`, `HardBreak`, `InlineMath`, `BlockMath`) are replaced whole (label-only links, bullet dots, checkboxes, rule, KaTeX). Blockquotes and fenced code get per-line frame classes (`cm-md-quote-line`, `cm-md-code-line`); a **callout** (`> [!type] Title`) adds `cm-md-callout cm-md-callout-<type>` (+ `cm-md-callout-title` on the first line) and, off the active block, replaces the `[!type]` marker with a `cm-md-callout-label` widget. **Front matter** lines get `cm-md-frontmatter` and nothing inside is hidden.
+- **Block widgets (`buildBlocks`, a `StateField` — block decorations cannot come from plugins)** — `Table` → `TableWidget`; `Embed` alone on its line → `EmbedWidget`; `BlockMath` alone on its lines → `MathWidget(display)`. `soleLines(doc, from, to)` decides "alone on its line". The field only sees the viewport through `tableRanges`, reported by `tableViewport`. All have `estimatedHeight`; `EmbedWidget`/`MathWidget` return `ignoreEvent → false` so a click places the cursor and reveals the source.
+- **Pointer tracking** — `mousedown`/`mouseup` handlers drive `pointerHeld`, which freezes `revealSelection`.
+
+`EmbedWidget(target, heading, kb, getNotes, noteId)` resolves the target with `WikilinkResolver` over `getNotes()` (the editor's `notes` prop through `notesRef`; the source note by `noteId` gives folder proximity), renders a `.cm-md-embed` box captioned with the note title (`› heading` when set), body as plain `<p>` per blank-line-separated paragraph from `api.getNote(id, kb)` — cached per id in a module `Map`, the list's `content` shown until the fetch lands. `#heading` shows only that section (heading line to the next heading of the same or higher level). `MathWidget` uses `katex.renderToString(tex, { throwOnError: false, displayMode })`; KaTeX's CSS is imported once here.
+
+### 14.3a Obsidian syntax (`obsidianMarkdown.ts`)
+
+One `MarkdownConfig[]` registered through `markdown({ base: markdownLanguage, extensions: obsidianMarkdown })`. Node names, where they render, and what live preview does with them:
+
+| Syntax | Nodes | Source-mode style (tag) | Live preview |
+|---|---|---|---|
+| `==text==` | `Highlight` / `HighlightMark` | `obsidianTags.highlight` — yellow background | `==` hidden off the active element |
+| `[[note#heading\|alias]]` | `WikiLink` / `WikiLinkMark` (`[[`, `]]`), `WikiLinkTarget`, `WikiLinkHeading` (after `#`), `WikiLinkAlias` (after `\|`) | `tags.link` / `labelName` / `string` | `wikilinkExtension` (§14.6) |
+| `![[note#heading]]` | `Embed` (same children; mark covers `![[`) | `tags.link` | block `EmbedWidget` when alone on its line, else like a wikilink |
+| `$x$`, `$$…$$` | `InlineMath`, `BlockMath` / `MathMark` | `obsidianTags.math` — mono | KaTeX widget (inline / block); `$5 and $6` is not math (closing `$` must not be followed by a digit, no space just inside) |
+| `#tag` (after whitespace, not all digits; `# heading` is consumed at block level) | `Tag` | `obsidianTags.tag` — pill | pill only; clicking does nothing yet |
+| `^id` at line end | `BlockId` | `obsidianTags.blockId` — dimmed | dimmed; no linking |
+| `---` on line 1 … `---` | `Frontmatter` (block) / `FrontmatterMark` | `obsidianTags.frontmatter` — muted mono | `cm-md-frontmatter` lines, nothing hidden. An unclosed fence runs to the end of the note (block parsers cannot rewind). |
+| `[^1]`, `[^1]: text` | `FootnoteRef` (`FootnoteMark`, `FootnoteLabel`), `FootnoteDef` (block, one line, body inline-parsed) | `footnoteRef` superscript, `footnoteDef` muted | `[^`/`]` hidden off the active element; no hopping |
+| `> [!type] Title` | no node — detected on the `Blockquote`'s first line | — | callout frame (types: note, tip, info, warning, danger, question, quote, example, abstract; else note) |
+
+Parser tests live in `obsidianMarkdown.test.ts` (`markdownLanguage.parser.configure(obsidianMarkdown).parse(text)`, node names and ranges; no DOM).
 
 ### 14.4 `visibleLineChunks.ts`
 
-`visibleLineChunks(view) → {text, offset}[]` — extends each visible range to whole-line boundaries, merges touching ranges, and returns the sliced text with its document offset. Used by the wikilink, media and entity plugins so regex scans cover only the viewport instead of `doc.toString()` (commit `b84ca73`). The docstring notes the invariant that makes this safe: *all our inline patterns … are single-line, so line-extension never cuts a match.* Any new decoration pattern that can span lines must not use this helper.
+`visibleLineChunks(view) → {text, offset}[]` — extends each visible range to whole-line boundaries, merges touching ranges, and returns the sliced text with its document offset. Used by the media and entity plugins (wikilinks now read the syntax tree) so regex scans cover only the viewport instead of `doc.toString()` (commit `b84ca73`). The docstring notes the invariant that makes this safe: *all our inline patterns … are single-line, so line-extension never cuts a match.* Any new decoration pattern that can span lines must not use this helper.
 
 ### 14.5 `entityExtension.ts`
 
@@ -646,11 +672,11 @@ Entity names come from two backend endpoints: **scan-text** (bulk, for highlight
 
 ### 14.6 `wikilinkExtension.ts`
 
-- `WIKILINK_RE = /\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g` — target excludes `]`, `|`, `#` (so heading anchors `[[note#h]]` are not matched at all); optional alias after `|`.
+- Wikilinks are parser nodes (`WikiLink` / `Embed` from `obsidianMarkdown.ts`, §14.3a); there is no regex pass any more, so `[[x]]` inside inline or fenced code is never decorated. `[[note#heading]]` is parsed too: the click/hover callbacks receive `target = "note#heading"` and `useWikilinkPreview` splits on `#` (`[[#heading]]` means the current note); scrolling to the heading is a TODO there.
 - `wikilinkQueryAt(lineText, posInLine)` → `{fromInLine, query}` when the text before the cursor has an unclosed `[[` with no `]]` or `|` after it (typing an alias disables completion).
 - `wikilinkCompletionSource(getNotes)` (sync): `suggestWikilinkNotes(notes, query, 12)` → completions `{label, detail: folder|"vault root"|undefined, type:"text", boost: detail ? -1 : 0, apply: applyWikilinkInsert(insert)}`; if the trimmed query matches no suggestion's `insert`/`label` exactly, a trailing **"Create note"** option (`boost -10`) inserts the raw query. Activates as soon as `[[` is typed (empty query lists notes). `filter: false` — the ranking is entirely `suggestWikilinkNotes`.
 - `applyWikilinkInsert(insert)` replaces `[[`…cursor with `insert`, appends `]]` unless the next two chars already are `]]`, and places the cursor after the closing brackets. Because `insert` may be `path|alias` (from `wikilinkInsertTarget`), alias insertion is automatic for colliding names.
-- `createWikilinkDecorations()` — on the active line a `Decoration.mark` with class `cm-wikilink` and attributes `data-wikilink-target`, `data-wikilink-alias`, `title`; on other lines a `Decoration.replace` with `WikilinkWidget(target, label)` rendering `<span class="cm-wikilink" data-wikilink-target data-wikilink-alias title=target>label</span>` (`ignoreEvent → false` so clicks reach CM handlers).
+- `createWikilinkDecorations()` — iterates `WikiLink`/`Embed` nodes over `view.visibleRanges` (`wikilinkParts` gives target/alias). When the element is active (`touchesActive`, per element like the rest of live preview) a `Decoration.mark` with class `cm-wikilink` and attributes `data-wikilink-target`, `data-wikilink-alias`, `title`; otherwise a `Decoration.replace` with `WikilinkWidget(target, label)` rendering `<span class="cm-wikilink" data-wikilink-target data-wikilink-alias title=target>label</span>` (`ignoreEvent → false` so clicks reach CM handlers). An inactive `Embed` alone on its line is skipped here — the block field renders it. Rebuilds on doc, viewport, selection, `revealSelection` or tree change; also active in Source mode (as before).
 - `wikilinkClickHandler(cb)` — `click` → `closest("[data-wikilink-target]")` → `preventDefault` → `cb(target, alias?)`.
 - `wikilinkHoverHandler(onHover, onLeave)` — `mouseover` → `onHover(target, el.getBoundingClientRect(), alias?)`; `mouseout` → `onLeave()` unless the `relatedTarget` is still inside a wikilink element. Both return `false` so CM's own handling continues.
 
