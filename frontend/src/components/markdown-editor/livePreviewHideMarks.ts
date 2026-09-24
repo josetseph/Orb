@@ -6,11 +6,17 @@ import {
   type ViewUpdate,
   EditorView,
 } from "@codemirror/view";
-import { StateEffect, StateField, type EditorState } from "@codemirror/state";
+import { StateEffect, StateField, type EditorState, type Text } from "@codemirror/state";
 import { syntaxTree } from "@codemirror/language";
 import type { SyntaxNode, SyntaxNodeRef } from "@lezer/common";
+import katex from "katex";
+import "katex/dist/katex.min.css";
+import { api } from "@/lib/api";
+import type { Note } from "@/lib/types";
 import { resolveFileUrl } from "@/lib/utils";
+import { WikilinkResolver } from "@/app/notes/_lib/wikilinks";
 import { mediaEmbedClaimsLink } from "./mediaEmbedExtension";
+import { wikilinkParts } from "./obsidianMarkdown";
 
 /*
  * Obsidian-style live preview. Every construct the markdown parser emits is
@@ -27,9 +33,13 @@ type Range = ReturnType<Decoration["range"]>;
 export type LivePreviewOptions = {
   /** Open a vault attachment in the app (preview modal) instead of a new tab. */
   onOpenFile?: (url: string, filename: string) => void;
+  /** Vault notes, for resolving `![[embeds]]`. */
+  getNotes?: () => Note[];
+  /** The note being edited; folder proximity when resolving embeds. */
+  noteId?: string;
 };
 
-// Marks that simply vanish: `#`, `**`, `~~`, backticks, `>`, setext underlines.
+// Marks that simply vanish: `#`, `**`, `~~`, `==`, backticks, `>`, `[^`.
 const HIDE_NODE_TYPES = new Set([
   "HeaderMark",
   "EmphasisMark",
@@ -37,17 +47,25 @@ const HIDE_NODE_TYPES = new Set([
   "CodeMark",
   "CodeInfo",
   "QuoteMark",
+  "HighlightMark",
+  "FootnoteMark",
 ]);
 // Nodes handled as a whole element rather than by their marks.
 const ELEMENT_NODE_TYPES = new Set([
   "Link", "Autolink", "URL", "ListMark", "TaskMarker", "HorizontalRule", "Escape", "HardBreak",
+  "InlineMath", "BlockMath",
 ]);
 // Marks whose "element" is the enclosing inline/heading node, not the line.
 const MARK_PARENT = new Set([
   "Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode", "ATXHeading1", "ATXHeading2",
   "ATXHeading3", "ATXHeading4", "ATXHeading5", "ATXHeading6", "SetextHeading1", "SetextHeading2",
-  "FencedCode", "Blockquote", "Link", "Autolink", "Image",
+  "FencedCode", "Blockquote", "Link", "Autolink", "Image", "Highlight", "FootnoteRef",
 ]);
+
+const CALLOUT_TYPES = new Set([
+  "note", "tip", "info", "warning", "danger", "question", "quote", "example", "abstract",
+]);
+const CALLOUT_RE = /^\[!(\w+)\][-+]?[ \t]*/;
 
 /** The element a node belongs to for reveal purposes. */
 function elementOf(node: SyntaxNode): SyntaxNode | null {
@@ -144,18 +162,147 @@ class RuleWidget extends WidgetType {
 }
 
 class TextWidget extends WidgetType {
-  constructor(readonly text: string) {
+  constructor(
+    readonly text: string,
+    readonly cls = "",
+  ) {
     super();
   }
   eq(other: TextWidget) {
-    return other.text === this.text;
+    return other.text === this.text && other.cls === this.cls;
   }
   toDOM() {
     // CodeMirror expects an element it can mark non-editable; a bare text
     // node has no attributes to set.
     const el = document.createElement("span");
     el.textContent = this.text;
+    if (this.cls) el.className = this.cls;
     return el;
+  }
+}
+
+/** `$x$` / `$$x$$` rendered by KaTeX; clicking places the cursor and reveals the source. */
+class MathWidget extends WidgetType {
+  constructor(
+    readonly tex: string,
+    readonly display: boolean,
+  ) {
+    super();
+  }
+  get estimatedHeight() {
+    return this.display ? 48 : -1;
+  }
+  eq(other: MathWidget) {
+    return other.tex === this.tex && other.display === this.display;
+  }
+  toDOM() {
+    const el = document.createElement(this.display ? "div" : "span");
+    el.className = this.display ? "cm-md-math-block" : "cm-md-math";
+    el.innerHTML = katex.renderToString(this.tex, { throwOnError: false, displayMode: this.display });
+    return el;
+  }
+  ignoreEvent() {
+    return false;
+  }
+}
+
+/** `{from, to}` covering whole lines when nothing else shares them, else null. */
+export function soleLines(doc: Text, from: number, to: number): { from: number; to: number } | null {
+  const first = doc.lineAt(from);
+  const last = doc.lineAt(to);
+  if (doc.sliceString(first.from, from).trim() || doc.sliceString(to, last.to).trim()) return null;
+  return { from: first.from, to: last.to };
+}
+
+/** Lines from `## heading` to the next heading of the same or a higher level. */
+function headingSection(content: string, heading: string): string {
+  if (!heading) return content;
+  const lines = content.split("\n");
+  const want = heading.toLowerCase();
+  let start = -1;
+  let level = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^(#{1,6})\s+(.*?)\s*#*\s*$/.exec(lines[i]);
+    if (!m) continue;
+    if (start < 0) {
+      if (m[2].toLowerCase() === want) {
+        start = i;
+        level = m[1].length;
+      }
+    } else if (m[1].length <= level) {
+      return lines.slice(start, i).join("\n");
+    }
+  }
+  return start < 0 ? `Heading "${heading}" not found.` : lines.slice(start).join("\n");
+}
+
+// Embedded note bodies by id: rendered at once on the next visit, refreshed
+// in the background whenever the widget is rebuilt.
+const embedBodies = new Map<string, string>();
+
+/** `![[note#heading]]` as a read-only box: title caption, body as plain paragraphs. */
+class EmbedWidget extends WidgetType {
+  constructor(
+    readonly target: string,
+    readonly heading: string,
+    readonly kb: string,
+    readonly getNotes: () => Note[],
+    readonly noteId?: string,
+  ) {
+    super();
+  }
+  get estimatedHeight() {
+    return 120;
+  }
+  eq(other: EmbedWidget) {
+    return other.target === this.target && other.heading === this.heading;
+  }
+  toDOM() {
+    const box = document.createElement("div");
+    box.className = "cm-md-embed";
+    box.title = "Click to edit";
+    const caption = document.createElement("div");
+    caption.className = "cm-md-embed-title";
+    const body = document.createElement("div");
+    body.className = "cm-md-embed-body";
+    box.append(caption, body);
+
+    const notes = this.getNotes();
+    const source = notes.find((n) => n.id === this.noteId);
+    const note = this.target
+      ? new WikilinkResolver(notes).resolve(this.target, source)
+      : source;
+    if (!note) {
+      caption.textContent = this.target;
+      body.textContent = "Note not found.";
+      return box;
+    }
+    caption.textContent = (note.title || this.target) + (this.heading ? ` › ${this.heading}` : "");
+    const render = (content: string) => {
+      body.replaceChildren(
+        ...headingSection(content, this.heading)
+          .split(/\n\s*\n/)
+          .map((t) => t.trim())
+          .filter(Boolean)
+          .map((t) => {
+            const p = document.createElement("p");
+            p.textContent = t;
+            return p;
+          }),
+      );
+    };
+    render(embedBodies.get(note.id) ?? note.content ?? "");
+    void api
+      .getNote(note.id, this.kb)
+      .then((fresh: Note) => {
+        embedBodies.set(note.id, fresh.content);
+        if (box.isConnected) render(fresh.content);
+      })
+      .catch(() => {});
+    return box;
+  }
+  ignoreEvent() {
+    return false;
   }
 }
 
@@ -181,7 +328,7 @@ const pointerHeld = StateField.define<boolean>({
 });
 
 /** Selection ranges the reveal is computed from: frozen while the pointer is held. */
-const revealSelection = StateField.define<readonly { from: number; to: number }[]>({
+export const revealSelection = StateField.define<readonly { from: number; to: number }[]>({
   create: (state) => state.selection.ranges.map((r) => ({ from: r.from, to: r.to })),
   update(value, tr) {
     const held = tr.state.field(pointerHeld);
@@ -191,9 +338,11 @@ const revealSelection = StateField.define<readonly { from: number; to: number }[
   },
 });
 
-function touchesActive(state: EditorState, from: number, to: number): boolean {
+export function touchesActive(state: EditorState, from: number, to: number): boolean {
   // Inclusive on both ends: a cursor at the edge of `**bold**` is editing it.
-  return state.field(revealSelection).some((r) => r.to >= from && r.from <= to);
+  // Source mode has no reveal field; the live selection stands in.
+  const ranges = state.field(revealSelection, false) ?? state.selection.ranges;
+  return ranges.some((r) => r.to >= from && r.from <= to);
 }
 
 /** Block elements reveal whole; the cursor anywhere on their lines counts. */
@@ -260,14 +409,42 @@ function buildInline(view: EditorView): DecorationSet {
       enter: (node: SyntaxNodeRef) => {
         const name = node.name;
 
+        // Front matter is data, not prose: muted lines, nothing hidden.
+        if (name === "Frontmatter") {
+          const last = doc.lineAt(node.to).number;
+          for (let n = 1; n <= last; n++) {
+            lineMarks.push(Decoration.line({ class: "cm-md-frontmatter" }).range(doc.line(n).from));
+          }
+          return false;
+        }
+
         // Block framing applies whether or not the cursor is inside: the
         // frame is what tells you where the block starts and ends.
         if (name === "Blockquote" || name === "FencedCode") {
-          const cls = name === "Blockquote" ? "cm-md-quote-line" : "cm-md-code-line";
+          let cls = name === "Blockquote" ? "cm-md-quote-line" : "cm-md-code-line";
           const first = doc.lineAt(node.from).number;
           const last = doc.lineAt(node.to).number;
+          // `> [!type] Title` makes the quote a callout: typed frame, label
+          // in place of the marker, first line as its title.
+          let callout: RegExpExecArray | null = null;
+          if (name === "Blockquote") {
+            const afterMark = doc.sliceString(node.from + 1, doc.line(first).to);
+            callout = CALLOUT_RE.exec(afterMark.trimStart());
+            if (callout) {
+              const type = callout[1].toLowerCase();
+              cls += ` cm-md-callout cm-md-callout-${CALLOUT_TYPES.has(type) ? type : "note"}`;
+              if (!touchesActiveLines(state, node.from, node.to)) {
+                const from = node.from + 1 + (afterMark.length - afterMark.trimStart().length);
+                marks.push(
+                  Decoration.replace({ widget: new TextWidget(type, "cm-md-callout-label") })
+                    .range(from, from + callout[0].length),
+                );
+              }
+            }
+          }
           for (let n = first; n <= last; n++) {
-            lineMarks.push(Decoration.line({ class: cls }).range(doc.line(n).from));
+            const lineCls = callout && n === first ? `${cls} cm-md-callout-title` : cls;
+            lineMarks.push(Decoration.line({ class: lineCls }).range(doc.line(n).from));
           }
           return;
         }
@@ -324,6 +501,17 @@ function buildInline(view: EditorView): DecorationSet {
         if (name === "HorizontalRule") {
           marks.push(Decoration.replace({ widget: new RuleWidget() }).range(node.from, node.to));
           return;
+        }
+        if (name === "InlineMath" || name === "BlockMath") {
+          const display = name === "BlockMath";
+          // `$$` alone on its lines is a block widget (state field below).
+          if (display && soleLines(doc, node.from, node.to)) return false;
+          const n = display ? 2 : 1;
+          marks.push(
+            Decoration.replace({ widget: new MathWidget(doc.sliceString(node.from + n, node.to - n), display) })
+              .range(node.from, node.to),
+          );
+          return false;
         }
         if (name === "Escape") {
           // `\*` shows as `*`.
@@ -445,13 +633,34 @@ function cellsOf(state: EditorState, row: SyntaxNode): string[] {
 
 // ponytail: cell text is shown raw (no bold/links inside cells); render
 // cells through the inline pass if tables ever carry more than plain values.
-function buildTables(state: EditorState, ranges: readonly { from: number; to: number }[]): DecorationSet {
+function buildBlocks(
+  state: EditorState,
+  ranges: readonly { from: number; to: number }[],
+  kb: string,
+  options: LivePreviewOptions,
+): DecorationSet {
   const marks: Range[] = [];
+  const doc = state.doc;
   for (const { from, to } of ranges) syntaxTree(state).iterate({
     from,
     to,
     enter: (node) => {
-      if (node.name !== "Table") return;
+      const name = node.name;
+      // `![[note]]` and `$$…$$` alone on their lines replace those lines.
+      if (name === "Embed" || name === "BlockMath") {
+        const lines = soleLines(doc, node.from, node.to);
+        if (!lines || touchesActiveLines(state, node.from, node.to)) return false;
+        let widget: WidgetType;
+        if (name === "Embed") {
+          const { name: target, heading } = wikilinkParts(doc, node.node);
+          widget = new EmbedWidget(target, heading, kb, options.getNotes ?? (() => []), options.noteId);
+        } else {
+          widget = new MathWidget(doc.sliceString(node.from + 2, node.to - 2), true);
+        }
+        marks.push(Decoration.replace({ widget, block: true }).range(lines.from, lines.to));
+        return false;
+      }
+      if (name !== "Table") return;
       if (touchesActiveLines(state, node.from, node.to)) return false;
       let head: string[] = [];
       const rows: string[][] = [];
@@ -485,20 +694,21 @@ const tableRanges = StateField.define<readonly { from: number; to: number }[]>({
   },
 });
 
-const tableField = StateField.define<DecorationSet>({
-  create: (state) => buildTables(state, state.field(tableRanges)),
-  update(value, tr) {
-    // The parser runs async, so the Table node may not exist yet when the
-    // field is created; rebuild once the tree advances.
-    const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-    const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
-    const rangesChanged = tr.state.field(tableRanges) !== tr.startState.field(tableRanges);
-    return tr.docChanged || revealChanged || treeChanged || rangesChanged
-      ? buildTables(tr.state, tr.state.field(tableRanges))
-      : value;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
+const blockField = (kb: string, options: LivePreviewOptions) =>
+  StateField.define<DecorationSet>({
+    create: (state) => buildBlocks(state, state.field(tableRanges), kb, options),
+    update(value, tr) {
+      // The parser runs async, so the Table node may not exist yet when the
+      // field is created; rebuild once the tree advances.
+      const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
+      const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
+      const rangesChanged = tr.state.field(tableRanges) !== tr.startState.field(tableRanges);
+      return tr.docChanged || revealChanged || treeChanged || rangesChanged
+        ? buildBlocks(tr.state, tr.state.field(tableRanges), kb, options)
+        : value;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
 
 const tableViewport = ViewPlugin.fromClass(
   class {
@@ -536,7 +746,7 @@ export function createLivePreviewHideMarks(
     tableRanges,
     tableViewport,
     inlinePlugin,
-    tableField,
+    blockField(kbId, options),
     pointerTracking,
     EditorView.domEventHandlers({
       mousedown(event) {

@@ -1,6 +1,7 @@
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { obsidianTags } from "./obsidianMarkdown";
 
 // Nocturne palette — the same tokens globals.css exposes to Tailwind. CodeMirror
 // themes are plain objects, so the values are repeated here rather than read
@@ -18,6 +19,8 @@ const ACCENT300 = "#d2cefd";
 const ACCENT700 = "#5d5294";
 const DIVIDER = "rgba(233,233,237,0.16)";
 const DANGER = "oklch(0.72 0.14 25)";
+const HIGHLIGHT_BG = "color-mix(in srgb, oklch(0.85 0.16 90) 30%, transparent)";
+const MONO = "ui-monospace, Menlo, monospace";
 
 /** Live-markdown highlighting: the note reads as a document, syntax stays quiet. */
 const markdownHighlightStyle = HighlightStyle.define([
@@ -48,7 +51,43 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.atom, color: ACCENT300 },
   { tag: tags.bool, color: ACCENT300 },
   { tag: tags.labelName, color: ACCENT300 },
+  { tag: tags.string, color: N300 },
+  /* Obsidian syntax (obsidianMarkdown.ts) — styled here so Source mode has it too */
+  { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
+  { tag: obsidianTags.math, color: ACCENT200, fontFamily: MONO, fontSize: "0.9em" },
+  // TODO: clicking a tag does nothing yet (search by tag when that exists).
+  {
+    tag: obsidianTags.tag,
+    color: ACCENT300,
+    backgroundColor: "color-mix(in srgb, " + ACCENT + " 14%, transparent)",
+    borderRadius: "999px",
+    padding: "1px 7px",
+    fontSize: "0.85em",
+  },
+  { tag: obsidianTags.blockId, color: N700 },
+  { tag: obsidianTags.frontmatter, color: MUTED, fontFamily: MONO, fontSize: "0.88em" },
+  { tag: obsidianTags.footnoteRef, color: ACCENT300, verticalAlign: "super", fontSize: "0.72em" },
+  { tag: obsidianTags.footnoteDef, color: MUTED, fontSize: "0.92em" },
 ]);
+
+/* Callout accents: the palette has no warning/success, so those are oklch in the danger idiom. */
+const CALLOUT_COLORS: Record<string, string> = {
+  note: "var(--color-accent)",
+  abstract: "var(--color-accent-300)",
+  info: "var(--color-accent-400)",
+  example: "var(--color-accent-600)",
+  quote: "var(--color-n-500)",
+  tip: "oklch(0.78 0.14 160)",
+  question: "oklch(0.8 0.13 80)",
+  warning: "oklch(0.78 0.15 60)",
+  danger: "var(--color-danger)",
+};
+const calloutTheme = Object.fromEntries(
+  Object.entries(CALLOUT_COLORS).flatMap(([type, c]) => [
+    [`.cm-md-callout-${type}`, { borderLeftColor: c, background: `color-mix(in srgb, ${c} 7%, transparent)` }],
+    [`.cm-md-callout-${type} .cm-md-callout-label`, { color: c }],
+  ]),
+);
 
 const pill = {
   height: "24px",
@@ -193,6 +232,45 @@ const editorTheme = EditorView.theme(
       paddingLeft: "12px",
       paddingRight: "12px",
     },
+    /* Callout: a typed quote — `> [!warning] Title` */
+    ".cm-md-callout": { borderLeftWidth: "3px", borderRadius: "0 6px 6px 0" },
+    ".cm-md-callout-title": { fontWeight: "500", paddingTop: "4px" },
+    ".cm-md-callout-label": {
+      marginRight: "8px",
+      fontSize: "11px",
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      fontStyle: "normal",
+    },
+    ...calloutTheme,
+    /* YAML front matter: data, kept raw */
+    ".cm-md-frontmatter": {
+      background: N900,
+      paddingLeft: "12px",
+      paddingRight: "12px",
+    },
+    /* KaTeX output; the widget replaces `$…$` off the active element */
+    ".cm-md-math": { cursor: "text" },
+    ".cm-md-math-block": { padding: "6px 12px", overflowX: "auto", cursor: "text" },
+    /* `![[note]]` embed: bordered box, note title as caption, body as plain paragraphs */
+    ".cm-md-embed": {
+      margin: "6px 0",
+      padding: "8px 14px 4px",
+      borderRadius: "8px",
+      boxShadow: `0 0 0 1px ${N800}`,
+      borderLeft: `2px solid ${ACCENT700}`,
+      cursor: "text",
+    },
+    ".cm-md-embed-title": {
+      fontSize: "11px",
+      letterSpacing: "0.08em",
+      textTransform: "uppercase",
+      fontWeight: "500",
+      color: MUTED,
+      marginBottom: "4px",
+    },
+    ".cm-md-embed-body": { fontSize: "14px", color: N300, maxHeight: "320px", overflow: "auto" },
+    ".cm-md-embed-body p": { margin: "0 0 8px", whiteSpace: "pre-wrap" },
     /* Table: the design's .table — quiet uppercase headers, fading row rules */
     ".cm-md-table": {
       margin: "6px 0",

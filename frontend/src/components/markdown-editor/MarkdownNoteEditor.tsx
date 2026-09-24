@@ -48,6 +48,7 @@ import {
 } from "./wikilinkExtension";
 import { createMediaEmbedDecorations } from "./mediaEmbedExtension";
 import { htmlToMarkdown } from "./htmlToMarkdown";
+import { obsidianMarkdown } from "./obsidianMarkdown";
 import type { AttachmentJob, Note } from "@/lib/types";
 import {
   autocompletion,
@@ -264,15 +265,20 @@ const MarkdownNoteEditor = forwardRef<
     (url: string, filename: string) => onOpenFileRef.current?.(url, filename),
     [],
   );
+  // Keep autocomplete and embeds in sync without rebuilding the extension set.
+  const notesRef = useRef(notes);
+  notesRef.current = notes;
   // Source shows the markup; it is not "strip everything". Media players and
   // the collapsed extraction blocks stay in both modes — only the syntax
   // hiding is what Source turns off.
   const liveExtensions = useCallback(
     (mode: "live" | "source") => [
-      ...(mode === "live" ? [createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler })] : []),
+      ...(mode === "live"
+        ? [createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler, getNotes: () => notesRef.current, noteId })]
+        : []),
       createExtractMarkerDecorations(),
     ],
-    [kb, openFileHandler],
+    [kb, openFileHandler, noteId],
   );
   const mediaExtension = useCallback(
     (_mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
@@ -288,9 +294,6 @@ const MarkdownNoteEditor = forwardRef<
   const attachDisabledRef = useRef(attachDisabled);
   attachDisabledRef.current = attachDisabled;
   const dragDepthRef = useRef(0);
-  // Keep autocomplete in sync without rebuilding the whole extension set.
-  const notesRef = useRef(notes);
-  notesRef.current = notes;
 
   const hasOsFileDrag = useCallback((e: DragEvent | React.DragEvent) => {
     const types = e.dataTransfer?.types;
@@ -414,7 +417,7 @@ const MarkdownNoteEditor = forwardRef<
       history(),
       EditorView.lineWrapping,
       EditorState.allowMultipleSelections.of(true),
-      markdown({ base: markdownLanguage }),
+      markdown({ base: markdownLanguage, extensions: obsidianMarkdown }),
       ...liveMarkdownExtensions,
       liveCompartment.of(liveExtensions(viewMode)),
       cmPlaceholder(placeholder),

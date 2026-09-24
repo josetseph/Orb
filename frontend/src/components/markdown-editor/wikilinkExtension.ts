@@ -11,14 +11,14 @@ import {
   type CompletionContext,
   type CompletionResult,
 } from "@codemirror/autocomplete";
+import { syntaxTree } from "@codemirror/language";
 import type { Note } from "@/lib/types";
 import {
   suggestWikilinkNotes,
   type WikilinkSuggestion,
 } from "@/app/notes/_lib/wikilinks";
-import { visibleLineChunks } from "./visibleLineChunks";
-
-const WIKILINK_RE = /\[\[([^\]|#]+)(?:\|([^\]]+))?\]\]/g;
+import { EMBED, WIKILINK, wikilinkParts } from "./obsidianMarkdown";
+import { revealSelection, soleLines, touchesActive } from "./livePreviewHideMarks";
 
 /** True when the cursor is inside an unclosed `[[wikilink` (not the alias). */
 export function wikilinkQueryAt(
@@ -129,9 +129,12 @@ class WikilinkWidget extends WidgetType {
 }
 
 /**
- * Highlight Obsidian-style [[wikilinks]].
- * On inactive lines: hide brackets and show only the display text (colored + underlined).
- * On the active (editing) line: show full [[syntax]] with mark styling.
+ * Obsidian-style [[wikilinks]] from the parser's `WikiLink` nodes (so one
+ * inside code is left alone). The element being edited shows its full
+ * `[[syntax]]` with mark styling; elsewhere the brackets go and only the
+ * display text remains (colored + underlined). `![[embeds]]` that share a
+ * line with other text render the same way; whole-line ones are the block
+ * widget in livePreviewHideMarks.
  */
 export function createWikilinkDecorations() {
   return ViewPlugin.fromClass(
@@ -146,7 +149,9 @@ export function createWikilinkDecorations() {
         if (
           update.docChanged ||
           update.viewportChanged ||
-          update.selectionSet
+          update.selectionSet ||
+          update.state.field(revealSelection, false) !== update.startState.field(revealSelection, false) ||
+          syntaxTree(update.state) !== syntaxTree(update.startState)
         ) {
           this.decorations = this.build(update.view);
         }
@@ -154,41 +159,40 @@ export function createWikilinkDecorations() {
 
       build(view: EditorView): DecorationSet {
         const marks: ReturnType<Decoration["range"]>[] = [];
-        const activeLine = view.state.doc.lineAt(
-          view.state.selection.main.head,
-        ).number;
+        const { state } = view;
+        const doc = state.doc;
 
-        // Only scan the visible viewport — wikilinks are single-line.
-        for (const chunk of visibleLineChunks(view)) {
-          WIKILINK_RE.lastIndex = 0;
-          let m: RegExpExecArray | null;
-          while ((m = WIKILINK_RE.exec(chunk.text)) !== null) {
-            const from = chunk.offset + m.index;
-            const to = from + m[0].length;
-            const target = m[1].trim();
-            const alias = m[2]?.trim() || "";
-            const label = alias || target;
-            const line = view.state.doc.lineAt(from).number;
-
-            if (line === activeLine) {
-              marks.push(
-                Decoration.mark({
-                  class: "cm-wikilink",
-                  attributes: {
-                    "data-wikilink-target": target,
-                    "data-wikilink-alias": alias,
-                    title: label,
-                  },
-                }).range(from, to),
-              );
-            } else {
-              marks.push(
-                Decoration.replace({
-                  widget: new WikilinkWidget(target, label),
-                }).range(from, to),
-              );
-            }
-          }
+        for (const { from, to } of view.visibleRanges) {
+          syntaxTree(state).iterate({
+            from,
+            to,
+            enter: (node) => {
+              if (node.name !== WIKILINK && node.name !== EMBED) return;
+              const active = touchesActive(state, node.from, node.to);
+              if (node.name === EMBED && !active && soleLines(doc, node.from, node.to)) return false;
+              const { target, alias } = wikilinkParts(doc, node.node);
+              const label = alias || target;
+              if (active) {
+                marks.push(
+                  Decoration.mark({
+                    class: "cm-wikilink",
+                    attributes: {
+                      "data-wikilink-target": target,
+                      "data-wikilink-alias": alias,
+                      title: label,
+                    },
+                  }).range(node.from, node.to),
+                );
+              } else {
+                marks.push(
+                  Decoration.replace({
+                    widget: new WikilinkWidget(target, label),
+                  }).range(node.from, node.to),
+                );
+              }
+              return false;
+            },
+          });
         }
         return Decoration.set(marks, true);
       }

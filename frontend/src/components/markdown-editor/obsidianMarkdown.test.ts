@@ -1,0 +1,96 @@
+import { describe, expect, it } from "vitest";
+import { markdownLanguage } from "@codemirror/lang-markdown";
+import type { MarkdownParser } from "@lezer/markdown";
+import { obsidianMarkdown } from "./obsidianMarkdown";
+
+const parser = (markdownLanguage.parser as MarkdownParser).configure(obsidianMarkdown);
+
+/** `Name(from,to)` for every node except the containers we do not care about. */
+function nodes(text: string, keep?: RegExp): string[] {
+  const out: string[] = [];
+  parser.parse(text).iterate({
+    enter: (n) => {
+      if (n.name === "Document" || n.name === "Paragraph") return;
+      if (!keep || keep.test(n.name)) out.push(`${n.name}(${n.from},${n.to})`);
+    },
+  });
+  return out;
+}
+
+describe("obsidianMarkdown", () => {
+  it("parses ==highlight==", () => {
+    expect(nodes("a ==hi== b")).toEqual(["Highlight(2,8)", "HighlightMark(2,4)", "HighlightMark(6,8)"]);
+  });
+
+  it("parses wikilinks with heading and alias", () => {
+    expect(nodes("[[Note#Sec|Alias]]")).toEqual([
+      "WikiLink(0,18)",
+      "WikiLinkMark(0,2)",
+      "WikiLinkTarget(2,6)",
+      "WikiLinkHeading(7,10)",
+      "WikiLinkAlias(11,16)",
+      "WikiLinkMark(16,18)",
+    ]);
+    expect(nodes("[[Note]]")).toEqual(["WikiLink(0,8)", "WikiLinkMark(0,2)", "WikiLinkTarget(2,6)", "WikiLinkMark(6,8)"]);
+    expect(nodes("[[#Heading]]", /WikiLink/)).toEqual(["WikiLink(0,12)", "WikiLinkMark(0,2)", "WikiLinkHeading(3,10)", "WikiLinkMark(10,12)"]);
+  });
+
+  it("does not parse wikilinks inside code", () => {
+    expect(nodes("`[[x]]`", /WikiLink/)).toEqual([]);
+    expect(nodes("```\n[[x]]\n```", /WikiLink/)).toEqual([]);
+  });
+
+  it("parses embeds", () => {
+    expect(nodes("![[Note#Sec]]")).toEqual([
+      "Embed(0,13)",
+      "WikiLinkMark(0,3)",
+      "WikiLinkTarget(3,7)",
+      "WikiLinkHeading(8,11)",
+      "WikiLinkMark(11,13)",
+    ]);
+  });
+
+  it("parses inline and block math", () => {
+    expect(nodes("cost $x^2$ here")).toEqual(["InlineMath(5,10)", "MathMark(5,6)", "MathMark(9,10)"]);
+    expect(nodes("$5 and $6")).toEqual([]);
+    expect(nodes("$$\nE=mc^2\n$$")).toEqual(["BlockMath(0,12)", "MathMark(0,2)", "MathMark(10,12)"]);
+  });
+
+  it("parses tags but not headings", () => {
+    expect(nodes("# Heading", /Tag/)).toEqual([]);
+    expect(nodes("#tag", /Tag/)).toEqual(["Tag(0,4)"]);
+    expect(nodes("see #a/b-c and #123", /Tag/)).toEqual(["Tag(4,10)"]);
+    expect(nodes("not#tag", /Tag/)).toEqual([]);
+  });
+
+  it("parses block ids at line end", () => {
+    expect(nodes("some text ^abc-1")).toEqual(["BlockId(10,16)"]);
+    expect(nodes("some ^abc text", /BlockId/)).toEqual([]);
+  });
+
+  it("parses front matter only at the top", () => {
+    expect(nodes("---\ntitle: x\n---\n\n# H", /Front|Heading/)).toEqual([
+      "Frontmatter(0,16)",
+      "FrontmatterMark(0,3)",
+      "FrontmatterMark(13,16)",
+      "ATXHeading1(18,21)",
+    ]);
+    expect(nodes("# H\n\n---\n", /Front/)).toEqual([]);
+  });
+
+  it("parses footnote refs and definitions", () => {
+    expect(nodes("text[^1].\n\n[^1]: The *note*.")).toEqual([
+      "FootnoteRef(4,8)",
+      "FootnoteMark(4,6)",
+      "FootnoteLabel(6,7)",
+      "FootnoteMark(7,8)",
+      "FootnoteDef(11,28)",
+      "FootnoteMark(11,13)",
+      "FootnoteLabel(13,14)",
+      "FootnoteMark(14,16)",
+      "Emphasis(21,27)",
+      "EmphasisMark(21,22)",
+      "EmphasisMark(26,27)",
+    ]);
+  });
+});
