@@ -29,7 +29,7 @@ export type LivePreviewOptions = {
   onOpenFile?: (url: string, filename: string) => void;
 };
 
-// Marks that simply vanish: `#`, `**`, `~~`, backticks, `>`, setext underlines.
+// Marks that simply vanish: `#`, `**`, `~~`, `==`, backticks, `>`.
 const HIDE_NODE_TYPES = new Set([
   "HeaderMark",
   "EmphasisMark",
@@ -37,6 +37,7 @@ const HIDE_NODE_TYPES = new Set([
   "CodeMark",
   "CodeInfo",
   "QuoteMark",
+  "HighlightMark",
 ]);
 // Nodes handled as a whole element rather than by their marks.
 const ELEMENT_NODE_TYPES = new Set([
@@ -46,7 +47,7 @@ const ELEMENT_NODE_TYPES = new Set([
 const MARK_PARENT = new Set([
   "Emphasis", "StrongEmphasis", "Strikethrough", "InlineCode", "ATXHeading1", "ATXHeading2",
   "ATXHeading3", "ATXHeading4", "ATXHeading5", "ATXHeading6", "SetextHeading1", "SetextHeading2",
-  "FencedCode", "Blockquote", "Link", "Autolink", "Image",
+  "FencedCode", "Blockquote", "Link", "Autolink", "Image", "Highlight",
 ]);
 
 /** The element a node belongs to for reveal purposes. */

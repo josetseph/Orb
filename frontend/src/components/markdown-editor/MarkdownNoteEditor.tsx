@@ -46,6 +46,7 @@ import {
   wikilinkHoverHandler,
 } from "./wikilinkExtension";
 import { createMediaEmbedDecorations } from "./mediaEmbedExtension";
+import { obsidianMarkdown } from "./obsidianMarkdown";
 import type { AttachmentJob, Note } from "@/lib/types";
 import {
   autocompletion,
@@ -393,7 +394,7 @@ const MarkdownNoteEditor = forwardRef<
       history(),
       EditorView.lineWrapping,
       EditorState.allowMultipleSelections.of(true),
-      markdown({ base: markdownLanguage }),
+      markdown({ base: markdownLanguage, extensions: obsidianMarkdown }),
       ...liveMarkdownExtensions,
       liveCompartment.of(liveExtensions(viewMode)),
       cmPlaceholder(placeholder),

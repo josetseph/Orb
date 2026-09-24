@@ -1,6 +1,7 @@
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { EditorView } from "@codemirror/view";
 import { tags } from "@lezer/highlight";
+import { obsidianTags } from "./obsidianMarkdown";
 
 // Nocturne palette — the same tokens globals.css exposes to Tailwind. CodeMirror
 // themes are plain objects, so the values are repeated here rather than read
@@ -18,6 +19,7 @@ const ACCENT300 = "#d2cefd";
 const ACCENT700 = "#5d5294";
 const DIVIDER = "rgba(233,233,237,0.16)";
 const DANGER = "oklch(0.72 0.14 25)";
+const HIGHLIGHT_BG = "color-mix(in srgb, oklch(0.85 0.16 90) 30%, transparent)";
 
 /** Live-markdown highlighting: the note reads as a document, syntax stays quiet. */
 const markdownHighlightStyle = HighlightStyle.define([
@@ -48,6 +50,8 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.atom, color: ACCENT300 },
   { tag: tags.bool, color: ACCENT300 },
   { tag: tags.labelName, color: ACCENT300 },
+  /* Obsidian syntax (obsidianMarkdown.ts) — styled here so Source mode has it too */
+  { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
 ]);
 
 const pill = {
