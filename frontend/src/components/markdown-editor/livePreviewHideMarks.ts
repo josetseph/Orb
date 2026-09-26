@@ -656,17 +656,10 @@ function cellsOf(state: EditorState, row: SyntaxNode): string[] {
 
 // ponytail: cell text is shown raw (no bold/links inside cells); render
 // cells through the inline pass if tables ever carry more than plain values.
-function buildBlocks(
-  state: EditorState,
-  ranges: readonly { from: number; to: number }[],
-  kb: string,
-  options: LivePreviewOptions,
-): DecorationSet {
+function buildBlocks(state: EditorState, kb: string, options: LivePreviewOptions): DecorationSet {
   const marks: Range[] = [];
   const doc = state.doc;
-  for (const { from, to } of ranges) syntaxTree(state).iterate({
-    from,
-    to,
+  syntaxTree(state).iterate({
     enter: (node) => {
       const name = node.name;
       // `![[note]]` and `$$…$$` alone on their lines replace those lines.
@@ -704,55 +697,25 @@ function buildBlocks(
   return Decoration.set(marks, true);
 }
 
-// Block widgets must come from a state field, which cannot see the viewport.
-// The view plugin below reports the visible ranges into it instead, so a table
-// far off screen in a long note is never rendered.
-const setTableRanges = StateEffect.define<readonly { from: number; to: number }[]>();
-
-const tableRanges = StateField.define<readonly { from: number; to: number }[]>({
-  create: (state) => [{ from: 0, to: state.doc.length }],
-  update(value, tr) {
-    for (const e of tr.effects) if (e.is(setTableRanges)) return e.value;
-    return tr.docChanged ? value.map((r) => ({ from: tr.changes.mapPos(r.from), to: tr.changes.mapPos(r.to, 1) })) : value;
-  },
-});
-
+// Block widgets must come from a state field, which cannot see the viewport,
+// so the whole document is decorated. That is only a tree walk: CodeMirror
+// creates a widget's DOM when it scrolls into view. (Feeding the viewport back
+// in looped forever: new widget heights moved the viewport, which rebuilt the
+// widgets, which moved it again — the page froze.)
 const blockField = (kb: string, options: LivePreviewOptions) =>
   StateField.define<DecorationSet>({
-    create: (state) => buildBlocks(state, state.field(tableRanges), kb, options),
+    create: (state) => buildBlocks(state, kb, options),
     update(value, tr) {
       // The parser runs async, so the Table node may not exist yet when the
       // field is created; rebuild once the tree advances.
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
       const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
-      const rangesChanged = tr.state.field(tableRanges) !== tr.startState.field(tableRanges);
-      return tr.docChanged || revealChanged || treeChanged || rangesChanged
-        ? buildBlocks(tr.state, tr.state.field(tableRanges), kb, options)
+      return tr.docChanged || revealChanged || treeChanged
+        ? buildBlocks(tr.state, kb, options)
         : value;
     },
     provide: (f) => EditorView.decorations.from(f),
   });
-
-const tableViewport = ViewPlugin.fromClass(
-  class {
-    constructor(readonly view: EditorView) {
-      this.report();
-    }
-    update(u: ViewUpdate) {
-      if (u.viewportChanged) this.report();
-    }
-    // Dispatching inside an update (including the measure cycle) is forbidden
-    // and crashes the plugin, so the report is deferred past it.
-    report() {
-      queueMicrotask(() => {
-        const ranges = this.view.visibleRanges.map((r) => ({ from: r.from, to: r.to }));
-        const cur = this.view.state.field(tableRanges);
-        if (cur.length === ranges.length && cur.every((r, i) => r.from === ranges[i].from && r.to === ranges[i].to)) return;
-        this.view.dispatch({ effects: setTableRanges.of(ranges) });
-      });
-    }
-  },
-);
 
 const pointerTracking = EditorView.domEventHandlers({
   mousedown(event, view) {
@@ -772,8 +735,6 @@ export function createLivePreviewHideMarks(
   return [
     pointerHeld,
     revealSelection,
-    tableRanges,
-    tableViewport,
     inlinePlugin,
     blockField(kbId, options),
     pointerTracking,
