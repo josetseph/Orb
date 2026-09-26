@@ -121,6 +121,7 @@ const editorTheme = EditorView.theme(
       padding: "0",
       minHeight: "100%",
       maxWidth: "720px",
+      margin: "0 auto",
     },
     ".cm-line": {
       padding: "0 12px",
@@ -213,10 +214,13 @@ const editorTheme = EditorView.theme(
       boxShadow: `inset 0 0 0 3px ${SURFACE}`,
     },
     /* Horizontal rule: the Nocturne fading line */
+    // Inline, not block: a block box between CodeMirror's widget buffers
+    // breaks the line into three and the rule takes ~3 lines of height.
     ".cm-md-hr": {
-      display: "block",
+      display: "inline-block",
+      width: "100%",
       height: "1px",
-      margin: "10px 0",
+      verticalAlign: "middle",
       background: `linear-gradient(90deg, transparent, ${N700} 48px, ${N700} calc(100% - 48px), transparent)`,
     },
     /* Blockquote and fenced code: framed per line so the block reads as one */

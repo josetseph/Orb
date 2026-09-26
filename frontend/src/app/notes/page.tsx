@@ -289,71 +289,75 @@ export default function NotesPage() {
             )}
 
             <div className="flex min-h-0 flex-1 overflow-hidden">
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto px-12 pb-20 pt-7">
-                <div className="flex min-h-0 w-full max-w-[760px] flex-1 flex-col">
-                  <input
-                    ref={titleRef}
-                    type="text"
-                    value={selectedNote.title || ""}
-                    onChange={(e) => selection.handleTitleChange(e.target.value)}
-                    onKeyDown={(e) => {
-                      // Title → body in one keystroke, like Obsidian.
-                      if (e.key === "Enter" || e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
-                        e.preventDefault();
-                        editorRef.current?.focus();
-                      }
-                    }}
-                    placeholder="Untitled"
-                    className="mb-1.5 w-full bg-transparent text-[28px] font-medium leading-tight tracking-[-0.015em] outline-none placeholder:text-n-700"
-                  />
-                  <div className="mb-5 flex flex-wrap items-center gap-3.5 text-[12px] text-n-500">
-                    <span className="inline-flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {new Date(selectedNote.created_at).toLocaleDateString("en-US", {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                    <span className={cn("inline-flex items-center gap-1.5", status.text)}>
-                      {status.key === "ingesting" ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : (
-                        <span className={cn("dot h-1.5 w-1.5", status.dot)} />
-                      )}
-                      {status.label}
-                    </span>
-                  </div>
-
-                  {noteAttachments.length > 0 && (
-                    <div className="mb-5 flex flex-wrap gap-2">
-                      {noteAttachments.map((att) => (
-                        <span
-                          key={att.url}
-                          className="group/chip inline-flex items-center gap-2 rounded-md bg-surface py-1.5 pl-2 pr-1.5 text-[12px] shadow-sm hover:shadow-md"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => media.handleFileClick(att.url, att.label)}
-                            className="inline-flex items-center gap-2"
-                          >
-                            <AttachmentIcon url={att.url} />
-                            <span className="max-w-[220px] truncate">{att.label}</span>
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => media.handleDeleteFile(att.url, att.raw)}
-                            title="Delete file"
-                            className="grid h-4 w-4 place-items-center rounded text-n-600 hover:text-danger-text"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto pb-20 pt-7">
+                <div className="flex min-h-0 w-full flex-1 flex-col">
+                  {/* The editor spans the pane so its scrollbar sits at the edge;
+                      the title block and the text share one centred reading column. */}
+                  <div className="mx-auto w-full max-w-[720px] px-3">
+                    <input
+                      ref={titleRef}
+                      type="text"
+                      value={selectedNote.title || ""}
+                      onChange={(e) => selection.handleTitleChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Title → body in one keystroke, like Obsidian.
+                        if (e.key === "Enter" || e.key === "ArrowDown" || (e.key === "Tab" && !e.shiftKey)) {
+                          e.preventDefault();
+                          editorRef.current?.focus();
+                        }
+                      }}
+                      placeholder="Untitled"
+                      className="mb-1.5 w-full bg-transparent text-[28px] font-medium leading-tight tracking-[-0.015em] outline-none placeholder:text-n-700"
+                    />
+                    <div className="mb-5 flex flex-wrap items-center gap-3.5 text-[12px] text-n-500">
+                      <span className="inline-flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {new Date(selectedNote.created_at).toLocaleDateString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      <span className={cn("inline-flex items-center gap-1.5", status.text)}>
+                        {status.key === "ingesting" ? (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        ) : (
+                          <span className={cn("dot h-1.5 w-1.5", status.dot)} />
+                        )}
+                        {status.label}
+                      </span>
                     </div>
-                  )}
+
+                    {noteAttachments.length > 0 && (
+                      <div className="mb-5 flex flex-wrap gap-2">
+                        {noteAttachments.map((att) => (
+                          <span
+                            key={att.url}
+                            className="group/chip inline-flex items-center gap-2 rounded-md bg-surface py-1.5 pl-2 pr-1.5 text-[12px] shadow-sm hover:shadow-md"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => media.handleFileClick(att.url, att.label)}
+                              className="inline-flex items-center gap-2"
+                            >
+                              <AttachmentIcon url={att.url} />
+                              <span className="max-w-[220px] truncate">{att.label}</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => media.handleDeleteFile(att.url, att.raw)}
+                              title="Delete file"
+                              className="grid h-4 w-4 place-items-center rounded text-n-600 hover:text-danger-text"
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
                   <MarkdownNoteEditor
                     key={selectedNote.id}
