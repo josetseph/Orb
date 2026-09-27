@@ -365,6 +365,19 @@ fn trusted(url: &Url) -> bool {
         || Url::parse(&app_url()).is_ok_and(|app| app.origin() == url.origin())
 }
 
+/// The video players the note editor embeds (utils.ts youtubeEmbedUrl /
+/// vimeoEmbedUrl). WebKit asks the navigation handler about iframe loads too,
+/// and the handler only sees the URL, so without this the player frame was
+/// cancelled (a black box) and its URL opened in the system browser.
+fn embed_player(url: &Url) -> bool {
+    url.scheme() == "https"
+        && match url.host_str() {
+            Some("www.youtube-nocookie.com") => url.path().starts_with("/embed/"),
+            Some("player.vimeo.com") => url.path().starts_with("/video/"),
+            _ => false,
+        }
+}
+
 pub fn ensure_window(app: &AppHandle) -> WebviewWindow {
     if let Some(window) = app.get_webview_window("main") {
         return window;
@@ -383,7 +396,7 @@ pub fn ensure_window(app: &AppHandle) -> WebviewWindow {
         // Note content renders in this window: only the app may load in it,
         // everything else goes to the system browser.
         .on_navigation(move |url| {
-            if trusted(url) {
+            if trusted(url) || embed_player(url) {
                 return true;
             }
             let _ = opener.opener().open_url(url.as_str(), None::<&str>);
@@ -420,5 +433,21 @@ pub fn show_main(app: &AppHandle) {
         let _ = ensure_window(app).show();
     } else {
         open_ui(app);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn embed_players_load_other_pages_do_not() {
+        let ok = |s: &str| embed_player(&Url::parse(s).unwrap());
+        assert!(ok("https://www.youtube-nocookie.com/embed/rYH7AErVd7w"));
+        assert!(ok("https://player.vimeo.com/video/123456"));
+        assert!(!ok("https://www.youtube.com/watch?v=rYH7AErVd7w"));
+        assert!(!ok("https://www.youtube-nocookie.com/"));
+        assert!(!ok("http://www.youtube-nocookie.com/embed/x"));
+        assert!(!ok("https://evil.example/embed/x"));
     }
 }

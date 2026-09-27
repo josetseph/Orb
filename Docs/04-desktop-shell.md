@@ -85,7 +85,9 @@ leaves nothing behind.
   origin equals `Url::parse(app_url()).origin()` (an origin comparison, not a string
   prefix). Any other URL, and anything that asks for a new window (`window.open`,
   `target=_blank`), is opened in the system browser instead — note content renders
-  in this window.
+  in this window. WebKit runs iframe loads through the same handler (URL only, no
+  frame info), so `embed_player()` also admits the editor's video embeds:
+  `https://www.youtube-nocookie.com/embed/…` and `https://player.vimeo.com/video/…`.
 - `init.js` provides `window.orbDesktop` with `isDesktop`, `pickDirectory`, `pickFile`
   (Tauri dialog plugin), `restartBackend` (command) and `notify` (notification plugin,
   requests permission the first time). `frontend/src/lib/desktop.ts` is the typed
