@@ -29,6 +29,5 @@
     ]
   },
   "design": "one-at-a-time",
-  "evaluator": "retrieval",
-  "index": "hp20-e4b"
+  "evaluator": "retrieval"
 }

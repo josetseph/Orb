@@ -34,6 +34,5 @@
     15
   ],
   "keep": 0.5,
-  "metric": "answer_f1",
-  "index": "hp20-e4b"
+  "metric": "answer_f1"
 }

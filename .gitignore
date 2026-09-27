@@ -55,3 +55,4 @@ backend/tests/benchmark/musique_notes/
 /models
 /snapshots
 /llm-cache
+/pod.json
