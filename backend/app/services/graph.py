@@ -43,7 +43,6 @@ import kuzu
 from app.core.config import REPO_ROOT, settings
 from app.core.log import get_logger
 from app.services.qdrant_service import QdrantService, qdrant_service
-from app.schemas.extraction import RELATIONSHIP_TYPES
 logger = get_logger("GraphService")
 
 
@@ -556,10 +555,8 @@ class GraphService:
         import uuid as _uuid
         from datetime import datetime
 
-        if relationship_type not in RELATIONSHIP_TYPES:
-            raise ValueError(
-                f"{relationship_type!r} is not a stored predicate ({source_name} -> {target_name})"
-            )
+        if not relationship_type:
+            raise ValueError(f"relationship has no predicate ({source_name} -> {target_name})")
 
         if not relationship_id:
             relationship_id = str(_uuid.uuid4())

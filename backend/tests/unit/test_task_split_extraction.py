@@ -110,10 +110,11 @@ class TestPassStructure:
             assert "{{" not in prompt and "}}" not in prompt
             assert '"name"' in prompt or '"source_name"' in prompt
 
-    def test_relationship_pass_lists_the_closed_vocabulary(self):
-        llm = FakeLLM(ENTITIES, RELS, BOTH)
-        _run(llm, "note", budget=10_000)
-        assert "lives_in" in llm.prompts[1] and "related_to" in llm.prompts[1]
+    def test_relationship_pass_imposes_no_vocabulary(self):
+        llm = FakeLLM(ENTITIES, [{**RELS[0], "relationship_type": "grew_up_with"}], BOTH)
+        result, _ = _run(llm, "note", budget=10_000)
+        assert result.relationships[0].relationship_type == "grew_up_with"
+        assert "allowed predicates" not in llm.prompts[1] and "related_to" not in llm.prompts[1]
 
     def test_title_comes_from_the_entity_pass(self):
         llm = FakeLLM(ENTITIES, RELS, BOTH)
@@ -278,10 +279,6 @@ class TestRepliesAreUsedAsWrittenOrNotAtAll:
     def test_a_name_echoed_with_its_type(self):
         rels = [{"source_name": "Ama (Person)", "target_name": "Kofi (Person)", "relationship_type": "knows", "natural_language": "x"}]
         self._rejected(FakeLLM(ENTITIES, rels, BOTH), "relationship pass")
-
-    def test_a_predicate_outside_the_vocabulary(self):
-        rels = [{"source_name": "Ama", "target_name": "Kofi", "relationship_type": "is_friends_with", "natural_language": "x"}]
-        assert "relationship_type" in self._rejected(FakeLLM(ENTITIES, rels, BOTH), "relationship pass").reason
 
     def test_an_entity_left_undescribed(self):
         assert "Kofi" in self._rejected(FakeLLM(ENTITIES, RELS, {"Ama": "a girl"}), "context pass").reason

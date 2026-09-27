@@ -143,7 +143,7 @@ def _migrate_stores() -> None:
             continue
         try:
             kb = kb_registry.get_kb(kb_id)
-            # Predicate default renamed relates_to -> related_to (closed vocabulary).
+            # Old default predicate relates_to became related_to.
             kb.graph.execute_query(
                 "MATCH ()-[r:SEMANTIC_REL {rel_type: 'relates_to'}]->() SET r.rel_type = 'related_to'"
             )

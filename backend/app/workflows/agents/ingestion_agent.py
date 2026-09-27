@@ -10,7 +10,6 @@ from app.core.config import settings
 from app.core.log import get_logger
 from app.services import ingestion_checkpoint as checkpoint
 from app.schemas.extraction import (
-    RELATIONSHIP_TYPES,
     ContextPass,
     EntityPass,
     Extraction,
@@ -79,12 +78,10 @@ Identify every distinct entity in the note. For each, assign:
 List every relationship between entities. For each:
 - `source_name`: The entity the relationship originates from.
 - `target_name`: The entity the relationship points to.
-- `relationship_type`: exactly one of the allowed predicates listed below. Use `related_to` when none fits.
+- `relationship_type`: a short predicate in your own words that names how the two are related (e.g. "directed", "married_to", "located_in").
 - `natural_language`: A short natural-language description of the relationship (e.g. "attends school").
 - Only include what the text explicitly states or directly implies.
 
-Allowed `relationship_type` values (no others):
-{", ".join(RELATIONSHIP_TYPES)}
 
 ### STEP 3 — Node Context Generation
 For each node, write a tightly focused contextual description using **only information from the note**.
@@ -115,7 +112,7 @@ Return a single JSON object structured exactly like this:
     {{
       "source_name": "string — the entity the relationship originates from",
       "target_name": "string — the entity the relationship points to",
-      "relationship_type": "string — one of the allowed predicates, or related_to",
+      "relationship_type": "string — short predicate in your own words",
       "natural_language": "string — short natural-language description of the relationship"
     }}
   ]
@@ -168,9 +165,9 @@ Return a single JSON object structured exactly like this:
     {{"source_name": "Ama", "target_name": "Primary School", "relationship_type": "attends", "natural_language": "attends school"}},
     {{"source_name": "Ama", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives in the neighborhood"}},
     {{"source_name": "Kofi", "target_name": "Neighborhood", "relationship_type": "lives_in", "natural_language": "lives and plays in the neighborhood"}},
-    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "related_to", "natural_language": "plays with Kofi during the weekend"}},
-    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "related_to", "natural_language": "plays with Ama during the weekend"}},
-    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "related_to", "natural_language": "completes homework before weekend play"}},
+    {{"source_name": "Ama", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Kofi during the weekend"}},
+    {{"source_name": "Kofi", "target_name": "Weekend", "relationship_type": "plays_during", "natural_language": "plays with Ama during the weekend"}},
+    {{"source_name": "Ama", "target_name": "Homework", "relationship_type": "completes", "natural_language": "completes homework before weekend play"}},
     {{"source_name": "Homework", "target_name": "Weekend", "relationship_type": "precedes", "natural_language": "must be completed before weekend play begins"}}
   ]
 }}
@@ -228,8 +225,7 @@ def _build_relationship_prompt(content: str, entity_lines: str) -> str:
 - Use **only** names from the entity list, spelled exactly as given.
 - Only state what the text says or directly implies. Do not invent relationships.
 - Relationships spanning distant parts of the note are expected — you can see all of it.
-- `relationship_type` must be one of these, with `related_to` when none fits:
-  {", ".join(RELATIONSHIP_TYPES)}
+- `relationship_type` is a short predicate in your own words that names how the two are related.
 
 ENTITIES:
 {entity_lines}
@@ -239,7 +235,7 @@ Return ONLY this JSON:
   "relationships": [{{
     "source_name": "entity the relationship starts from",
     "target_name": "entity it points to",
-    "relationship_type": "one of the allowed predicates",
+    "relationship_type": "short predicate in your own words",
     "natural_language": "short natural-language description"
   }}]
 }}

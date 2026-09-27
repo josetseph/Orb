@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, StringConstraints, model_validator
 
@@ -17,63 +17,13 @@ class Node(BaseModel):
     isolated_context: Name
 
 
-#: The only predicates the graph stores. The model is shown this list; a reply
-#: that uses anything else is invalid.
-RELATIONSHIP_TYPES: tuple[str, ...] = (
-    "related_to",
-    "works_at",
-    "works_with",
-    "reports_to",
-    "manages",
-    "leads",
-    "founded",
-    "owns",
-    "part_of",
-    "member_of",
-    "instance_of",
-    "has_property",
-    "located_in",
-    "lives_in",
-    "born_in",
-    "occurs_at",
-    "attends",
-    "participates_in",
-    "created",
-    "authored",
-    "produces",
-    "uses",
-    "depends_on",
-    "mentions",
-    "discusses",
-    "causes",
-    "precedes",
-    "follows",
-    "knows",
-    "friend_of",
-    "married_to",
-    "parent_of",
-    "child_of",
-    "sibling_of",
-    "studied_at",
-    "teaches",
-    "competes_with",
-    "partners_with",
-    "invests_in",
-    "funds",
-    "sells",
-    "buys",
-)
-
-
-Predicate = Literal[RELATIONSHIP_TYPES]  # type: ignore[valid-type]
-
-
 class ExtractedRelationship(BaseModel):
     """Relationship between two entities, named exactly as the entities are."""
 
     source_name: Name
     target_name: Name
-    relationship_type: Predicate
+    # The model's own predicate, as written: no vocabulary, no normalisation.
+    relationship_type: Name
     natural_language: Name
 
 

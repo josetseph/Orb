@@ -10,7 +10,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.extraction import RELATIONSHIP_TYPES, ExtractedRelationship, Extraction, Node
+from app.schemas.extraction import ExtractedRelationship, Extraction, Node
 
 NODES = [
     {"name": "Alice", "type": "Person", "isolated_context": "Alice is an engineer."},
@@ -34,17 +34,13 @@ def test_title_is_the_only_optional_key():
     assert _parse({"nodes": NODES, "relationships": []}).title is None
 
 
-@pytest.mark.parametrize("predicate", RELATIONSHIP_TYPES)
-def test_every_listed_predicate_is_accepted(predicate):
+@pytest.mark.parametrize("predicate", ["manages", "directed", "stars_in", "Was born in", "authored by"])
+def test_any_predicate_the_model_chooses_is_kept_as_written(predicate):
     assert ExtractedRelationship(**{**REL, "relationship_type": predicate}).relationship_type == predicate
 
 
-@pytest.mark.parametrize(
-    "predicate",
-    ["supervises", "Manages", "manages ", "works at", "", None],
-    ids=["off-list", "wrong-case", "trailing-space", "spaced", "empty", "null"],
-)
-def test_a_predicate_is_never_rewritten(predicate):
+@pytest.mark.parametrize("predicate", ["", None], ids=["empty", "null"])
+def test_a_predicate_is_still_required(predicate):
     with pytest.raises(ValidationError):
         ExtractedRelationship(**{**REL, "relationship_type": predicate})
 

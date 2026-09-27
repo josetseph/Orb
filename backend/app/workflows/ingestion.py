@@ -607,7 +607,7 @@ class IngestionWorkflow:
                         _rel_skipped += 1
                         continue
 
-                    # Validated against RELATIONSHIP_TYPES on the way in.
+                    # The model's predicate, stored as written.
                     rel_type = rel.relationship_type
 
                     source_label = "Indexable"
