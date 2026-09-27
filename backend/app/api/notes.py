@@ -549,6 +549,7 @@ async def update_note(
     Use POST /api/v1/notes/{id}/ingest to re-ingest after updating.
     """
     existing_note = await _get_note_or_404(db, kb, note_id)
+    old_title = existing_note.title
 
     persist_note_body(
         existing_note,
@@ -587,7 +588,23 @@ async def update_note(
     await db.commit()
     await db.refresh(existing_note)
 
+    # The graph's note node carries the title ("Mentioned in", sources, the
+    # graph view). Ingestion set it; a rename must not wait for a re-ingest.
+    if existing_note.title != old_title:
+        await asyncio.to_thread(_rename_graph_note, kb, note_id, existing_note.title)
+
     return _note_response(existing_note, kb)
+
+
+def _rename_graph_note(kb: KBContext, note_id: str, title: str | None) -> None:
+    """Best effort: a note that was never ingested has no node to rename."""
+    try:
+        kb.graph.execute_query(
+            "MATCH (n:Node {id: $id}) WHERE n.kind = 'note' SET n.name = $name",
+            {"id": note_id, "name": (title or "").strip() or "Untitled"},
+        )
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[update_note] Graph rename failed for %s: %s", note_id, exc)
 
 
 @router.delete("/api/v1/notes/{note_id}")
