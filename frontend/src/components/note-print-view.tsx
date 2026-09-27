@@ -7,12 +7,21 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { printPage } from "@/lib/desktop";
 import { resolveFileUrl } from "@/lib/utils";
+import { flattenLinkText } from "@/lib/markdown-entities";
+import { slugOf } from "@/components/markdown-editor/livePreviewHideMarks";
 
 export interface PrintJob {
   title: string;
   content: string;
   createdAt?: string | null;
 }
+
+// Headings carry the slug `[text](#slug)` links use, so a table of contents
+// jumps within the PDF instead of pointing at the app's URL.
+const heading =
+  (Tag: "h1" | "h2" | "h3" | "h4" | "h5" | "h6") =>
+  ({ children }: { children?: React.ReactNode }) => <Tag id={slugOf(flattenLinkText(children))}>{children}</Tag>;
+const headings = { h1: heading("h1"), h2: heading("h2"), h3: heading("h3"), h4: heading("h4"), h5: heading("h5"), h6: heading("h6") };
 
 // The editor only renders the lines on screen, so a note is printed from a
 // full rendering that exists only on paper: `#print-root` is hidden on screen
@@ -55,6 +64,7 @@ export function NotePrintView({ job, kb, onDone }: { job: PrintJob; kb: string; 
           remarkPlugins={[remarkGfm, remarkMath]}
           rehypePlugins={[rehypeKatex]}
           components={{
+            ...headings,
             img: ({ src, alt }) => <img src={resolveFileUrl(String(src ?? ""), kb)} alt={alt ?? ""} />,
             // Attachments are files on disk: name them rather than link to nowhere.
             a: ({ href, children }) =>

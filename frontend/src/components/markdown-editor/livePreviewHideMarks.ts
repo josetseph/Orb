@@ -102,9 +102,12 @@ function openHref(
   else window.open(resolved, "_blank", "noopener,noreferrer");
 }
 
-/** GitHub-style heading slug: `## 3. Poisson vs. Binomial` → `3-poisson-vs-binomial`. */
-const slugOf = (text: string) =>
-  text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, "").replace(/\s+/g, "-");
+/**
+ * GitHub's heading slug: punctuation dropped, then every space a hyphen, so
+ * `## 1. Summary & Scope` → `1-summary--scope` (two spaces, two hyphens).
+ */
+export const slugOf = (text: string) =>
+  text.trim().toLowerCase().replace(/[^\p{L}\p{N}\s_-]/gu, "").replace(/\s/g, "-");
 
 /** Move to the heading a `#fragment` names (by slug or exact text); false when there is none. */
 export function scrollToHeading(view: EditorView, fragment: string): boolean {
