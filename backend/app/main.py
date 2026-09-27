@@ -204,11 +204,16 @@ class _SpaFiles(StaticFiles):
 
     async def get_response(self, path: str, scope):
         try:
-            return await super().get_response(path, scope)
+            response = await super().get_response(path, scope)
         except HTTPException as exc:
             if exc.status_code != 404 or path.split("/", 1)[0] in ("api", "vault-files"):
                 raise
-            return await super().get_response("index.html", scope)
+            response = await super().get_response("index.html", scope)
+        # index.html names the current build's hashed bundles. Without this the
+        # webview reuses a cached copy after an update and runs the old app.
+        if response.media_type == "text/html":
+            response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 # The desktop app has no UI server: the API serves the Vite build so the window
