@@ -120,7 +120,8 @@ const editorTheme = EditorView.theme(
       caretColor: ACCENT,
       padding: "0",
       minHeight: "100%",
-      maxWidth: "720px",
+      // Grows with the pane, capped for readable line length (notes page title block matches).
+      maxWidth: "clamp(720px, 80%, 1100px)",
       margin: "0 auto",
     },
     ".cm-line": {

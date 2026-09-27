@@ -292,8 +292,11 @@ export default function NotesPage() {
               <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto pb-20 pt-7">
                 <div className="flex min-h-0 w-full flex-1 flex-col">
                   {/* The editor spans the pane so its scrollbar sits at the edge;
-                      the title block and the text share one centred reading column. */}
-                  <div className="mx-auto w-full max-w-[720px] px-3">
+                      the title block and the text share one centred reading column
+                      that grows with the pane (same width rule as .cm-content, and
+                      the editor's px-4 so the percentage has the same base). */}
+                  <div className="px-4">
+                  <div className="mx-auto w-full max-w-[clamp(720px,80%,1100px)] px-3">
                     <input
                       ref={titleRef}
                       type="text"
@@ -357,6 +360,7 @@ export default function NotesPage() {
                         ))}
                       </div>
                     )}
+                  </div>
                   </div>
 
                   <MarkdownNoteEditor
