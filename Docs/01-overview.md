@@ -88,7 +88,7 @@ The full picture with diagrams is in [02-system-architecture.md](02-system-archi
 ## 6. Versioning and status
 
 - Current version **1.0.0** — `desktop/src-tauri/tauri.conf.json`, `Cargo.toml`, `frontend/package.json` and the FastAPI `version` string all agree; release tags are `desktop-v<version>` and CI drafts the GitHub Release from them.
-- Installers are **unsigned**; macOS users may need `xattr -cr /Applications/Orb.app`. Notarization and Authenticode hooks exist but are not enabled.
+- Installers are **unsigned**. On macOS, `brew install --cask josetseph/orb/orb` (tap: `josetseph/homebrew-orb`, kept current by `.github/workflows/homebrew-tap.yml` on each published release) clears quarantine itself; a `.dmg` install may need `xattr -cr /Applications/Orb.app`. Notarization and Authenticode hooks exist but are not enabled.
 - Auto-update is not wired (planned: `tauri-plugin-updater`, gated by `ORB_ENABLE_UPDATER=1`).
 - Name lineage: **LiveOS Brain** (January–July 2026 research prototype) → **LifeOS** (desktop pivot, `3f21e08`) → **Orb** (`6162be2`, same day, 2026-08-02). The `LIVEOS_*` / `LifeOS` read-compatibility aliases were removed on 2026-09-19.
 

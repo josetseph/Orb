@@ -140,6 +140,16 @@ Installers ship as macOS `.dmg`, Windows `.exe` and Linux `.deb` / `.rpm` from [
 
 ### macOS
 
+**With Homebrew** (recommended — no security prompt to work around):
+
+```bash
+brew install --cask josetseph/orb/orb
+```
+
+Update later with `brew upgrade --cask orb`. Then launch Orb and complete the first-run wizard (step 4 below).
+
+**Or download the disk image:**
+
 1. Download the latest `.dmg` from [Releases](https://github.com/josetseph/Orb/releases/latest) (`arm64` for Apple Silicon, `x64` for Intel)
 2. Open it and drag **Orb** into Applications
 3. Launch Orb
@@ -149,7 +159,7 @@ Keep the data directory on your local disk — the default `~/Library/Applicatio
 
 On first launch the app downloads Qdrant and Meilisearch into your data dir, and you can pull GGUF models from Setup.
 
-If macOS says the app is **damaged** (common for unsigned downloads), clear quarantine then reopen:
+If you installed from the `.dmg` and macOS says the app is **damaged** (Orb isn't notarized yet), clear quarantine then reopen — the Homebrew install does this for you:
 
 ```bash
 xattr -cr /Applications/Orb.app
