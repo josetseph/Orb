@@ -397,6 +397,10 @@ export default function NotesPage() {
                       name={entityPanelName}
                       kb={currentKB}
                       onClose={() => setEntityPanelNodeId(null)}
+                      onOpenNote={(id) => {
+                        const match = list.notes.find((n) => n.id === id);
+                        void (match ? handleNoteSelect(match) : selection.openNoteById(id));
+                      }}
                     />
                   ) : (
                     <ConnectedNotesPanel

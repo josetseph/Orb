@@ -38,6 +38,8 @@ interface EntityDetailPanelProps {
   name?: string;
   kb?: string;
   onClose: () => void;
+  /** Open a note in place (notes page); without it, rows link to /notes?note=. */
+  onOpenNote?: (noteId: string) => void;
 }
 
 function TypeIcon({ type }: { type?: string }) {
@@ -65,6 +67,7 @@ export function EntityDetailPanel({
   name,
   kb = "default",
   onClose,
+  onOpenNote,
 }: EntityDetailPanelProps) {
   const [detail, setDetail] = useState<EntityDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -172,15 +175,24 @@ export function EntityDetailPanel({
             {(detail.related_notes?.length ?? 0) > 0 && (
               <>
                 <div className="kicker mb-1.5 mt-3.5">Mentioned in</div>
-                {detail.related_notes!.map((note) => (
-                  <div
-                    key={note.note_id}
-                    className="flex items-center gap-2 py-1.5 text-[12.5px] text-n-200"
-                  >
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-n-500" />
-                    <span className="truncate">{note.name}</span>
-                  </div>
-                ))}
+                {detail.related_notes!.map((note) => {
+                  const row = "flex w-full items-center gap-2 rounded-md py-1.5 text-left text-[12.5px] text-n-200 no-underline hover:text-accent-200";
+                  const body = (
+                    <>
+                      <FileText className="h-3.5 w-3.5 shrink-0 text-n-500" />
+                      <span className="truncate">{note.name}</span>
+                    </>
+                  );
+                  return onOpenNote ? (
+                    <button key={note.note_id} type="button" className={row} onClick={() => onOpenNote(note.note_id)}>
+                      {body}
+                    </button>
+                  ) : (
+                    <Link key={note.note_id} to={`/notes?note=${encodeURIComponent(note.note_id)}`} className={row}>
+                      {body}
+                    </Link>
+                  );
+                })}
               </>
             )}
 
