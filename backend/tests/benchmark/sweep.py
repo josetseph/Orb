@@ -49,19 +49,24 @@ def variants(spec: dict) -> list[dict]:
     for lever in list(spec["baseline"]) + list(spec.get("vary", {})):
         if lever not in BY_NAME:
             raise SystemExit(f"unknown lever {lever!r}; declare it in levers.py")
-    base = dict(spec["baseline"])
+    def explicit(levers: dict) -> dict:
+        """Levers set to their default say nothing the baseline does not: leave them out, so equal variants are equal."""
+        return {k: v for k, v in levers.items() if v != BY_NAME[k].default}
+
+    base = explicit(dict(spec["baseline"]))
     out = [{"name": "base", "levers": base}]
     vary = spec.get("vary", {})
     if spec.get("design", "one-at-a-time") == "grid":
         for combo in itertools.product(*vary.values()):
-            levers = {**base, **dict(zip(vary, combo))}
+            levers = explicit({**spec["baseline"], **dict(zip(vary, combo))})
             if levers != base:
-                out.append({"name": ",".join(f"{k}={v}" for k, v in zip(vary, combo)), "levers": levers})
+                changed = [f"{k}={v}" for k, v in zip(vary, combo) if levers.get(k, BY_NAME[k].default) != base.get(k, BY_NAME[k].default)]
+                out.append({"name": ",".join(changed), "levers": levers})
     else:
         for lever, values in vary.items():
             for value in values:
                 if base.get(lever, BY_NAME[lever].default) != value:
-                    out.append({"name": f"{lever}={value}", "levers": {**base, lever: value}})
+                    out.append({"name": f"{lever}={value}", "levers": explicit({**base, lever: value})})
     return out
 
 
@@ -166,11 +171,11 @@ def paired(base: Path, other: Path, metric: str) -> str:
 
 def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
     metric = spec.get("metric", "answer_f1")
-    out = [f"\n## {title}\n", f"| variant | {metric} | exact match | retrieval recall | s / question | unusable replies | vs base |", "|---|---|---|---|---|---|---|"]
+    out = [f"\n## {title}\n", f"| variant | {metric} | exact match | retrieval recall | s / question | index build s | unusable replies | vs base |", "|---|---|---|---|---|---|---|---|"]
     base_path = next((path for name, path in rows if name == "base"), None)
     for name, path in rows:
         if not path.is_file():
-            out.append(f"| {name} | not run | | | | | |")
+            out.append(f"| {name} | not run | | | | | | |")
             continue
         data = json.loads(path.read_text())
         res = data["results"]
@@ -180,7 +185,10 @@ def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
         recall = sum(float(r.get("retrieval_recall", r.get("candidate_recall")) or 0) for r in res) / n
         em = f"{sum(bool(r.get('exact_match')) for r in res) / n:.0%}" if "exact_match" in res[0] else "n/a"
         versus = paired(base_path, path, metric) if base_path and base_path.is_file() and name != "base" else ""
-        out.append(f"| {name} | {score(path, metric):.3f} | {em} | {recall:.3f} | {sum(r['total_time_ms'] for r in res) / n / 1000:.0f} | "
+        levers = next(v["levers"] for v in variants(spec) if v["name"] == name)
+        idx = REPO / "Results" / spec["name"] / "_index" / index_name(levers, spec) / "config.json"
+        build = json.loads(idx.read_text()).get("ingest_seconds", "") if idx.is_file() else ""
+        out.append(f"| {name} | {score(path, metric):.3f} | {em} | {recall:.3f} | {sum(r['total_time_ms'] for r in res) / n / 1000:.0f} | {build} | "
                    f"{sum(bad.values())} {bad or ''} | {versus} |")
     return out
 

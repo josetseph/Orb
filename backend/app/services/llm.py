@@ -312,7 +312,7 @@ class LLMService:
                 kwargs["temperature"] = temperature
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
-            if json_mode:
+            if json_mode and settings.JSON_CONSTRAINED_DECODING:
                 kwargs["response_format"] = {"type": "json_object"}
             choice = client.chat.completions.create(model=model, messages=messages, **kwargs).choices[0]
             text = choice.message.content or ""

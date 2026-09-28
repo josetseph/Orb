@@ -61,3 +61,10 @@ def test_a_named_snapshot_stands_in_for_the_baseline_index_only():
     assert sweep.index_name(SPEC["baseline"], spec) == "hp20-e4b"
     assert sweep.index_name({**SPEC["baseline"], "RERANKER_TOP_K": 5}, spec) == "hp20-e4b"
     assert sweep.index_name({**SPEC["baseline"], "ingestion_model": "qwen35-4b-q4"}, spec) != "hp20-e4b"
+
+
+def test_a_grid_point_equal_to_the_baseline_is_not_a_variant():
+    spec = {**SPEC, "vary": {"JSON_CONSTRAINED_DECODING": [True, False], "LLAMA_FLASH_ATTN": [False, True]}, "design": "grid"}
+    names = [v["name"] for v in sweep.variants(spec)]
+    assert names == ["base", "LLAMA_FLASH_ATTN=True", "JSON_CONSTRAINED_DECODING=False", "JSON_CONSTRAINED_DECODING=False,LLAMA_FLASH_ATTN=True"]
+    assert len({sweep.index_name(v["levers"], spec) for v in sweep.variants(spec)}) == 4

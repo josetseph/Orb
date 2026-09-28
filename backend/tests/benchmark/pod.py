@@ -4,9 +4,11 @@
     python tests/benchmark/pod.py up                          # rent, upload code, install (about 20 min), leave it ready
     python tests/benchmark/pod.py setup                       # redo upload + install on the recorded pod
     python tests/benchmark/pod.py run live-check sweeps/round1-retrieval.json sweeps/round1-loop.json
+    python tests/benchmark/pod.py follow                      # copy progress home every 15 min; stop before credit runs out
+    python tests/benchmark/pod.py --account main up --restore # continue on another account from the saved progress
     python tests/benchmark/pod.py status                      # state, $/hr and spend so far, tail of the queue log
     python tests/benchmark/pod.py logs                        # follow the queue log (Ctrl-C only stops following)
-    python tests/benchmark/pod.py pull                        # results -> Results/runpod/ (restarts a stopped pod to do it)
+    python tests/benchmark/pod.py pull                        # results + cache -> pod-state/ (restarts a stopped pod to do it)
     python tests/benchmark/pod.py down                        # pull, then delete the pod and its volume
 
 Credentials come from <repo>/.env (RUNPOD_API_KEY, RUNPOD_SSH_PRIVATE_KEY, RUNPOD_SSH_PUBLIC_KEY), the second
@@ -35,15 +37,21 @@ REMOTE = "/workspace/orb"
 # RunPod's Cloudflare front blocks urllib's default User-Agent (content-machine found this the hard way).
 USER_AGENT = "orb-testing/1.0 (+https://github.com/josetseph/Orb)"
 # 16 GB and up is enough: models load one at a time and the largest we test (Gemma 4 12B Q4) is 7.7 GB.
+# Cheapest first: the two checks ran no faster on a 4090 than on an A40, so the card is not the bottleneck.
 GPU_TYPES = [
-    "NVIDIA RTX A5000", "NVIDIA RTX 4000 Ada Generation", "NVIDIA RTX A4500", "NVIDIA L4",
-    "NVIDIA GeForce RTX 3090", "NVIDIA A40", "NVIDIA RTX A6000", "NVIDIA GeForce RTX 4090",
+    "NVIDIA RTX A4500", "NVIDIA RTX A5000", "NVIDIA RTX 4000 Ada Generation", "NVIDIA L4", "NVIDIA A40",
+    "NVIDIA RTX A6000", "NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090",
 ]
+STATE_DIR = REPO / "pod-state"  # everything a pod produced, kept at home so a run can resume on any account
+RESERVE_USD = 1.5  # left on the account when a pod stops itself: enough to restart it and copy its volume home
 IMAGE = "runpod/pytorch:1.1.0-cu1290-torch291-ubuntu2404"
 
 
 class PodError(RuntimeError):
     pass
+
+
+ACCOUNT = "alt"  # set from --account / the recorded pod: "alt" reads RUNPOD_*, "main" reads MAIN_RUNPOD_*
 
 
 def env() -> dict[str, str]:
@@ -52,10 +60,23 @@ def env() -> dict[str, str]:
         if "=" in line and not line.lstrip().startswith("#"):
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip()
-    missing = [k for k in ("RUNPOD_API_KEY", "RUNPOD_SSH_PRIVATE_KEY", "RUNPOD_SSH_PUBLIC_KEY") if not values.get(k)]
+    prefix = "MAIN_" if ACCOUNT == "main" else ""
+    names = ("RUNPOD_API_KEY", "RUNPOD_SSH_PRIVATE_KEY", "RUNPOD_SSH_PUBLIC_KEY")
+    missing = [prefix + k for k in names if not values.get(prefix + k)]
     if missing:
-        raise PodError(f"missing in {REPO / '.env'}: {', '.join(missing)}")
-    return values
+        raise PodError(f"missing in {REPO / '.env'} for the {ACCOUNT} account: {', '.join(missing)}")
+    return {k: values[prefix + k] for k in names}
+
+
+def balance() -> tuple[float, float]:
+    """(credit left in USD, what the account is spending per hour right now)."""
+    req = urllib.request.Request(
+        f"https://api.runpod.io/graphql?api_key={env()['RUNPOD_API_KEY']}", method="POST",
+        data=json.dumps({"query": "query { myself { clientBalance currentSpendPerHr } }"}).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        me = json.load(resp)["data"]["myself"]
+    return float(me["clientBalance"]), float(me["currentSpendPerHr"] or 0)
 
 
 def api(method: str, path: str, body: dict | None = None) -> object:
@@ -73,9 +94,12 @@ def api(method: str, path: str, body: dict | None = None) -> object:
 
 
 def saved() -> dict:
+    global ACCOUNT  # noqa: PLW0603 — the recorded pod decides which account's keys reach it
     if not STATE.is_file():
         raise PodError("no pod recorded; run: pod.py up")
-    return json.loads(STATE.read_text())
+    state = json.loads(STATE.read_text())
+    ACCOUNT = state.get("account", "alt")
+    return state
 
 
 def pod_info(pod_id: str) -> dict:
@@ -177,19 +201,40 @@ def cmd_up(args) -> None:
         "ports": ["22/tcp"], "supportPublicIp": True,
         "env": {"PUBLIC_KEY": Path(cfg["RUNPOD_SSH_PUBLIC_KEY"]).expanduser().read_text().strip()},
     }
+    credit, _ = balance()
+    if credit <= RESERVE_USD + 0.5:
+        raise PodError(f"the {ACCOUNT} account has ${credit:.2f}; not renting below the ${RESERVE_USD:.2f} reserve")
     pod = api("POST", "/pods", body)
-    state = {"id": pod["id"], "created": time.time(), "max_hours": args.max_hours, "idle_hours": args.idle_hours}
+    rate = float(pod.get("costPerHr") or 0) or 1.0
+    # The pod stops itself before the account runs dry, keeping the reserve to restart it and copy its volume home.
+    budget_hours = max(0.25, (credit - RESERVE_USD) / rate)
+    state = {"id": pod["id"], "account": ACCOUNT, "created": time.time(), "rate": rate, "credit_at_start": credit,
+             "max_hours": round(min(args.max_hours, budget_hours), 2), "idle_hours": args.idle_hours}
     STATE.write_text(json.dumps(state, indent=2))
-    print(f"  rented pod {pod['id']} ({pod.get('machine', {}).get('gpuTypeId') or pod.get('gpuTypeId') or 'gpu'}"
-          f", ${float(pod.get('costPerHr') or 0):.2f}/hr)", flush=True)
+    print(f"  rented pod {pod['id']} on the {ACCOUNT} account ({pod.get('machine', {}).get('gpuTypeId') or pod.get('gpuTypeId') or 'gpu'}"
+          f", ${rate:.2f}/hr). Credit ${credit:.2f}: it stops itself after {state['max_hours']} h at the latest.", flush=True)
     try:
         endpoint = wait_ssh(pod["id"])
         push_code(endpoint)
+        if args.restore:
+            restore(endpoint)
         provision(endpoint, state)
     except BaseException:
         print("\n  setup did not finish. The pod is still rented and billing: pod.py status / pod.py down", file=sys.stderr)
         raise
     print("  ready. Start work with: pod.py run live-check sweeps/<spec>.json ...")
+
+
+def restore(endpoint: tuple[str, int]) -> None:
+    """Put what earlier pods produced (results, model-call cache) onto this one, so finished runs are skipped."""
+    if not STATE_DIR.is_dir():
+        raise PodError(f"nothing to restore: {STATE_DIR} does not exist (pod.py pull saves there)")
+    tar = subprocess.Popen(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", "-", "-C", str(STATE_DIR), "."],
+                           stdout=subprocess.PIPE, env={"COPYFILE_DISABLE": "1"})
+    untar = subprocess.run(["ssh", *ssh_args(endpoint), f"tar --no-same-owner -xzf - -C {REMOTE}"], stdin=tar.stdout, check=False)
+    if untar.returncode != 0 or tar.wait() != 0:
+        raise PodError("restoring the saved state onto the pod failed")
+    print(f"  restored {STATE_DIR} onto the pod", flush=True)
 
 
 def cmd_setup(_args) -> None:
@@ -248,6 +293,17 @@ def cmd_logs(_args) -> None:
         pass
 
 
+def copy_home(endpoint: tuple[str, int]) -> None:
+    """Results the pod produced and its model-call cache -> pod-state/. Safe to repeat; it only adds and updates."""
+    STATE_DIR.mkdir(exist_ok=True)
+    produced = (f"cd {REMOTE} && {{ find Results -type f | grep -vxF -f .uploaded; find llm-cache -type f 2>/dev/null; "
+                f"ls pod-provision.log pod-watchdog.log 2>/dev/null; }} | tar -czf - -T -")
+    tar = subprocess.Popen(["ssh", *ssh_args(endpoint), produced], stdout=subprocess.PIPE)
+    subprocess.run(["tar", "-xzf", "-", "-C", str(STATE_DIR)], stdin=tar.stdout, check=True)
+    if tar.wait() != 0:
+        raise PodError("copying results from the pod failed")
+
+
 def cmd_pull(_args) -> None:
     state = saved()
     pod = pod_info(state["id"])
@@ -256,20 +312,57 @@ def cmd_pull(_args) -> None:
         print(f"  pod is {pod.get('desiredStatus')}; starting it to reach its volume", flush=True)
         api("POST", f"/pods/{state['id']}/start")
         restarted = True
-    endpoint = wait_ssh(state["id"])
-    dest = REPO / "Results" / "runpod"
-    dest.mkdir(parents=True, exist_ok=True)
-    # Everything under Results/ that the upload did not put there, plus the pod's own logs.
-    produced = (f"cd {REMOTE} && {{ find Results -type f | grep -vxF -f .uploaded; "
-                f"ls pod-provision.log pod-watchdog.log 2>/dev/null; }} | tar -czf - -T -")
-    tar = subprocess.Popen(["ssh", *ssh_args(endpoint), produced], stdout=subprocess.PIPE)
-    subprocess.run(["tar", "-xzf", "-", "-C", str(dest)], stdin=tar.stdout, check=True)
-    if tar.wait() != 0:
-        raise PodError("copying results from the pod failed")
-    print(f"  results copied to {dest}")
+    copy_home(wait_ssh(state["id"]))
+    print(f"  results and cache copied to {STATE_DIR}")
     if restarted:
         api("POST", f"/pods/{state['id']}/stop")
         print("  pod stopped again")
+
+
+def stop_gracefully(state: dict, reason: str) -> None:
+    """Interrupt the queue (finished runs are already on disk), copy everything home, stop the pod (volume kept)."""
+    try:
+        endpoint = running_endpoint()
+        ssh(endpoint, "pkill -INT -f tests/benchmark/ ; sleep 45; pkill -f 'run.py|data/bin/' ; sync", check=False)
+        copy_home(endpoint)
+    finally:
+        api("POST", f"/pods/{state['id']}/stop")
+    (STATE_DIR / "STOPPED.txt").write_text(f"{time.strftime('%F %T')} {reason}\n")
+    print(f"STOPPED: {reason}. Progress saved in {STATE_DIR}; the pod is stopped with its volume kept.", flush=True)
+
+
+def cmd_follow(args) -> None:
+    """Keep progress at home while a queue runs, and stop before the account runs dry. Prints one line per event."""
+    state = saved()
+    while True:
+        pod = pod_info(state["id"])
+        status = pod.get("desiredStatus")
+        try:
+            credit, spend = balance()
+        except (urllib.error.URLError, KeyError, ValueError):
+            credit, spend = float("inf"), 0.0
+        if status != "RUNNING":
+            # The watchdog stopped it (budget, time cap, idle) or RunPod did (no credit). Collect what is there.
+            try:
+                cmd_pull(args)
+            except PodError as exc:
+                print(f"STOPPED: pod is {status} and could not be restarted to copy its volume: {exc}", flush=True)
+                return
+            (STATE_DIR / "STOPPED.txt").write_text(f"{time.strftime('%F %T')} pod was {status}\n")
+            print(f"STOPPED: pod is {status} (watchdog or RunPod). Progress saved in {STATE_DIR}.", flush=True)
+            return
+        endpoint = running_endpoint()
+        copy_home(endpoint)
+        done = ssh(endpoint, f"cat {REMOTE}/Results/queue.done 2>/dev/null", check=False, capture=True).strip()
+        if done:
+            print(f"DONE: queue finished {done}. Results in {STATE_DIR}; the pod idles until its watchdog stops it (or pod.py down).", flush=True)
+            return
+        hours_left = (credit - RESERVE_USD) / spend if spend else float("inf")
+        print(f"{time.strftime('%H:%M')} saved; credit ${credit:.2f}, spending ${spend:.2f}/hr, about {hours_left:.1f} h before the reserve", flush=True)
+        if credit - RESERVE_USD < spend * (args.every / 60 + 0.25):
+            stop_gracefully(state, f"credit ${credit:.2f} is about to reach the ${RESERVE_USD:.2f} reserve on the {ACCOUNT} account")
+            return
+        time.sleep(args.every * 60)
 
 
 def cmd_down(args) -> None:
@@ -297,15 +390,21 @@ def main() -> None:
     up.add_argument("--volume-gb", type=int, default=80, help="persistent /workspace: models, indexes, cache, results")
     up.add_argument("--max-hours", type=float, default=48, help="the pod stops itself after this long, whatever it is doing")
     up.add_argument("--idle-hours", type=float, default=3, help="...or after this long with no queue running")
+    up.add_argument("--restore", action="store_true", help=f"put {STATE_DIR.name}/ (results + model-call cache) onto the new pod")
     run = sub.add_parser("run")
     run.add_argument("items", nargs="+", help='"live-check" or sweep spec paths relative to backend/')
     for name in ("setup", "status", "logs", "pull"):
         sub.add_parser(name)
+    follow = sub.add_parser("follow")
+    follow.add_argument("--every", type=float, default=15, help="minutes between copies home and balance checks")
     down = sub.add_parser("down")
     down.add_argument("--no-pull", action="store_true")
+    ap.add_argument("--account", choices=["alt", "main"], default="alt", help="which RunPod account's keys to use for `up`")
     args = ap.parse_args()
+    global ACCOUNT  # noqa: PLW0603
+    ACCOUNT = args.account
     try:
-        {"up": cmd_up, "setup": cmd_setup, "run": cmd_run, "status": cmd_status, "logs": cmd_logs, "pull": cmd_pull, "down": cmd_down}[args.cmd](args)
+        {"up": cmd_up, "setup": cmd_setup, "follow": cmd_follow, "run": cmd_run, "status": cmd_status, "logs": cmd_logs, "pull": cmd_pull, "down": cmd_down}[args.cmd](args)
     except PodError as exc:
         sys.exit(f"pod: {exc}")
 

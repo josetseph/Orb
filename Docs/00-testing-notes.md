@@ -196,6 +196,13 @@ cd backend
 ```
 
 - Everything on the pod lives on its `/workspace` volume, so stopping it keeps models, indexes, cache and results.
+- **Running out of credit.** `up` reads the account balance and the pod's rate and caps the pod at (credit - $1.50) / rate hours:
+  the watchdog then stops it with $1.50 left, enough to restart it and copy its volume home. `follow` (run on the Mac) copies results
+  and the model-call cache to `pod-state/` every 15 minutes, watches the real balance (another project may spend from the same account),
+  stops the pod gracefully before the reserve is reached, and writes `pod-state/STOPPED.txt` with the reason. To continue elsewhere:
+  `pod.py --account main up --restore` (main-account keys go in `.env` as `MAIN_RUNPOD_*`), then `run` the same queue: finished runs
+  are skipped and the cache replays every model call already made, so rebuilding an interrupted index costs minutes.
+- The AWS and GCP micro servers were considered as an always-on store for progress; on 2026-09-28 AWS refused SSH and the GCP VM was stopped.
 - A watchdog on the pod, holding no API key, ends the container after `--max-hours` (default 48) or `--idle-hours`
   with no queue running (default 3). That stops the GPU charge; only the volume is billed until `down`.
 - `pull` copies only what the pod produced (the upload's file list is kept on the pod as `.uploaded`).

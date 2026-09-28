@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     EXTRACTION_ATTEMPTS: int = 1
     # auto = one call while the note fits, two passes above that; task_split = two passes always.
     EXTRACTION_MODE: str = "auto"
+    # Constrain local and OpenAI-style replies to valid JSON while they are generated. llama.cpp enforces the
+    # grammar on the CPU, so it can cost speed; off, a reply that is not valid JSON is a counted failure.
+    JSON_CONSTRAINED_DECODING: bool = True
     # Evidence returned with an answer: the N best docs by rerank score.
     CHAT_MAX_CONTEXT_DOCS: int = 6
     # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the

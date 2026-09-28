@@ -69,3 +69,30 @@ def test_a_failed_call_stores_nothing(svc, tmp_path):
     with pytest.raises(RuntimeError):
         ask(svc)
     assert not list(tmp_path.rglob("*.json"))
+
+
+def test_json_constraint_is_a_switch(monkeypatch):
+    """With JSON_CONSTRAINED_DECODING off, json_mode no longer sends response_format to local / OpenAI-style servers."""
+    from types import SimpleNamespace
+
+    from app.services.llm import LLMService
+
+    sent = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            sent.update(kwargs)
+            msg = SimpleNamespace(content="{}", reasoning_content=None)
+            return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
+
+    svc = LLMService.__new__(LLMService)
+    svc.provider = svc.ingestion_provider = "local"
+    svc.chat_client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    svc.get_chat_model = lambda: "m"
+    svc.get_base_url = lambda: None
+    monkeypatch.setattr(settings, "LLM_CALL_CACHE_DIR", None)
+    for flag, expected in ((True, True), (False, False)):
+        sent.clear()
+        monkeypatch.setattr(settings, "JSON_CONSTRAINED_DECODING", flag)
+        svc._chat([{"role": "user", "content": "JSON please"}], json_mode=True)
+        assert ("response_format" in sent) is expected
