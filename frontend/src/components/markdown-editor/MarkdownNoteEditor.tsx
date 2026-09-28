@@ -259,6 +259,17 @@ const MarkdownNoteEditor = forwardRef<
   const onCancelRef = useRef(onCancelAttachment);
   onCancelRef.current = onCancelAttachment;
   const cancelHandler = useCallback((rawUrl: string) => onCancelRef.current?.(rawUrl), []);
+  // Click/hover handlers from the page are recreated as the note changes
+  // (they close over it). Reached through a ref so the extension set does not
+  // depend on their identity: a new extension array reconfigures the editor
+  // and restarts the markdown parse, which left the text below the first
+  // ~3000 characters unstyled after every keystroke.
+  const handlersRef = useRef({ onEntityClick, onWikilinkClick, onWikilinkHover, onWikilinkLeave });
+  handlersRef.current = { onEntityClick, onWikilinkClick, onWikilinkHover, onWikilinkLeave };
+  const hasEntityClick = Boolean(onEntityClick);
+  const hasWikilinkClick = Boolean(onWikilinkClick);
+  const hasWikilinkHover = Boolean(onWikilinkHover);
+  const hasWikilinkLeave = Boolean(onWikilinkLeave);
   const onOpenFileRef = useRef(onOpenFile);
   onOpenFileRef.current = onOpenFile;
   const openFileHandler = useCallback(
@@ -438,9 +449,16 @@ const MarkdownNoteEditor = forwardRef<
         maxRenderedOptions: 12,
       }),
       Prec.highest(keymap.of(completionKeymap)),
-      entityClickHandler(onEntityClick),
-      wikilinkClickHandler(onWikilinkClick),
-      wikilinkHoverHandler(onWikilinkHover, onWikilinkLeave),
+      entityClickHandler(
+        hasEntityClick ? (nodeId, name) => handlersRef.current.onEntityClick?.(nodeId, name) : undefined,
+      ),
+      wikilinkClickHandler(
+        hasWikilinkClick ? (target, alias) => handlersRef.current.onWikilinkClick?.(target, alias) : undefined,
+      ),
+      wikilinkHoverHandler(
+        hasWikilinkHover ? (target, rect, alias) => handlersRef.current.onWikilinkHover?.(target, rect, alias) : undefined,
+        hasWikilinkLeave ? () => handlersRef.current.onWikilinkLeave?.() : undefined,
+      ),
       // OS file drops → upload into the note (don't insert the path as text).
       EditorView.domEventHandlers({
         dragover(event) {
@@ -494,10 +512,10 @@ const MarkdownNoteEditor = forwardRef<
     [
       kb,
       placeholder,
-      onEntityClick,
-      onWikilinkClick,
-      onWikilinkHover,
-      onWikilinkLeave,
+      hasEntityClick,
+      hasWikilinkClick,
+      hasWikilinkHover,
+      hasWikilinkLeave,
       entityDecorationsCompartment,
       liveCompartment,
       mediaCompartment,
