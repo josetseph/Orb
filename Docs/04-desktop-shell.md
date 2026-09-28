@@ -88,6 +88,7 @@ leaves nothing behind.
   in this window. WebKit runs iframe loads through the same handler (URL only, no
   frame info), so `embed_player()` also admits the editor's video embeds:
   `https://www.youtube-nocookie.com/embed/…` and `https://player.vimeo.com/video/…`.
+- macOS: `enable_text_checking()` registers `WebContinuousSpellCheckingEnabled` and `WebGrammarCheckingEnabled` as NSUserDefaults *defaults* at setup (before the window exists), so the note editor gets spelling and grammar underlines; the user's choice in the context menu's Spelling and Grammar submenu overrides them.
 - `init.js` provides `window.orbDesktop` with `isDesktop`, `pickDirectory`, `pickFile`
   (Tauri dialog plugin), `restartBackend` (command) and `notify` (notification plugin,
   requests permission the first time). `frontend/src/lib/desktop.ts` is the typed

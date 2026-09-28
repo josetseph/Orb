@@ -22,6 +22,9 @@ fn main() {
             commands::restart_backend
         ])
         .setup(|app| {
+            // Before any webview exists: WebKit reads these when it starts.
+            #[cfg(target_os = "macos")]
+            runtime::enable_text_checking();
             runtime::boot(app.handle().clone());
             Ok(())
         })

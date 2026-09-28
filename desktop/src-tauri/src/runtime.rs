@@ -427,6 +427,25 @@ fn open_ui(app: &AppHandle) {
 }
 
 /// Dock click with no window: recreate it on the UI (or setup) at once.
+/// Note editing gets WebKit's spelling and grammar underlines by default.
+/// Registered, not written, so unticking "Check Grammar With Spelling" in the
+/// editor's context menu (which WebKit saves under the same keys) still sticks.
+#[cfg(target_os = "macos")]
+pub fn enable_text_checking() {
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{NSDictionary, NSNumber, NSString, NSUserDefaults};
+
+    let keys = [
+        NSString::from_str("WebContinuousSpellCheckingEnabled"),
+        NSString::from_str("WebGrammarCheckingEnabled"),
+    ];
+    let on = NSNumber::numberWithBool(true);
+    let on: &AnyObject = &on;
+    let defaults = NSDictionary::from_slices(&[&*keys[0], &*keys[1]], &[on, on]);
+    // SAFETY: plain property-list values (NSString keys, NSNumber values).
+    unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
+}
+
 #[cfg(target_os = "macos")]
 pub fn show_main(app: &AppHandle) {
     if first_run(app) {
@@ -449,5 +468,16 @@ mod tests {
         assert!(!ok("https://www.youtube-nocookie.com/"));
         assert!(!ok("http://www.youtube-nocookie.com/embed/x"));
         assert!(!ok("https://evil.example/embed/x"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn text_checking_defaults_are_registered() {
+        use objc2_foundation::{NSString, NSUserDefaults};
+        enable_text_checking();
+        let d = NSUserDefaults::standardUserDefaults();
+        for key in ["WebContinuousSpellCheckingEnabled", "WebGrammarCheckingEnabled"] {
+            assert!(d.boolForKey(&NSString::from_str(key)), "{key}");
+        }
     }
 }

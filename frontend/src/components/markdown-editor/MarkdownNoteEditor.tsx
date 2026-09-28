@@ -427,6 +427,9 @@ const MarkdownNoteEditor = forwardRef<
       drawSelection(),
       history(),
       EditorView.lineWrapping,
+      // CodeMirror turns the browser's spellcheck off; notes want the red
+      // underlines (grammar checking is enabled by the desktop shell).
+      EditorView.contentAttributes.of({ spellcheck: "true" }),
       EditorState.allowMultipleSelections.of(true),
       markdown({ base: markdownLanguage, extensions: obsidianMarkdown }),
       ...liveMarkdownExtensions,

@@ -71,15 +71,26 @@ export function EntityDetailPanel({
 }: EntityDetailPanelProps) {
   const [detail, setDetail] = useState<EntityDetail | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  // Entities opened from Connections stack on the one the host asked for;
+  // back walks the stack before closing. A new entity from the host resets it.
+  const [trail, setTrail] = useState<{ id: string; name: string }[]>([]);
+  const [trailRoot, setTrailRoot] = useState(nodeId);
+  if (trailRoot !== nodeId) {
+    setTrailRoot(nodeId);
+    setTrail([]);
+  }
+  const top = trail[trail.length - 1];
+  const shownId = top?.id ?? nodeId;
+  const shownName = top?.name ?? name;
 
   useEffect(() => {
-    if (!nodeId) return;
+    if (!shownId) return;
     let cancelled = false;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsLoading(true);
     setDetail(null);
     api
-      .getNodeDetail(nodeId, kb)
+      .getNodeDetail(shownId, kb)
       .then((data) => {
         if (!cancelled) setDetail(data);
       })
@@ -92,7 +103,7 @@ export function EntityDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [nodeId, kb]);
+  }, [shownId, kb]);
 
   if (!nodeId) return null;
 
@@ -107,22 +118,22 @@ export function EntityDetailPanel({
       <div className="flex items-center gap-2 px-3 pb-2 pt-3">
         <button
           type="button"
-          onClick={onClose}
+          onClick={() => (trail.length ? setTrail((t) => t.slice(0, -1)) : onClose())}
           className="btn btn-ghost btn-icon h-[26px] w-[26px]"
-          aria-label="Close entity"
+          aria-label={trail.length ? "Back" : "Close entity"}
         >
           <ArrowLeft className="h-3.5 w-3.5" />
         </button>
         <span className="kicker text-accent">Entity</span>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
+      <div key={shownId} className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         <div className="mb-1.5 flex items-start gap-2.5">
           <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-[9px] bg-accent-700">
             <TypeIcon type={detail?.node_type} />
           </span>
           <div className="min-w-0">
-            <h5 className="truncate text-[17px] font-medium">{detail?.name ?? name ?? "…"}</h5>
+            <h5 className="truncate text-[17px] font-medium">{detail?.name ?? shownName ?? "…"}</h5>
             <div className="text-[11.5px] text-n-500">
               {detail?.node_type ?? "Entity"}
               {(detail?.community_name || detail?.community_id) &&
@@ -157,18 +168,40 @@ export function EntityDetailPanel({
             {(detail.connections?.length ?? 0) > 0 && (
               <>
                 <div className="kicker mb-1.5 mt-3.5">Connections</div>
-                {detail.connections!.slice(0, 10).map((conn) => (
-                  <div
-                    key={conn.node_id}
-                    className="flex items-center gap-2 py-1.5 text-[12.5px]"
-                  >
-                    <span className="min-w-20 truncate text-[11px] text-n-500">
-                      {conn.direction === "incoming" ? "← " : ""}
-                      {conn.relationship || "related"}
-                    </span>
-                    <span className="truncate text-accent-300">{conn.name}</span>
-                  </div>
-                ))}
+                {detail.connections!.slice(0, 10).map((conn) => {
+                  const row = "flex w-full items-center gap-2 rounded-md py-1.5 text-left text-[12.5px] no-underline";
+                  const body = (
+                    <>
+                      <span className="min-w-20 truncate text-[11px] text-n-500">
+                        {conn.direction === "incoming" ? "← " : ""}
+                        {conn.relationship || "related"}
+                      </span>
+                      <span className="truncate text-accent-300 hover:text-accent-100">{conn.name}</span>
+                    </>
+                  );
+                  // A connected note opens like "Mentioned in"; an entity opens here.
+                  if (conn.kind === "note" && !onOpenNote) {
+                    return (
+                      <Link key={conn.node_id} to={`/notes?note=${encodeURIComponent(conn.node_id)}`} className={row}>
+                        {body}
+                      </Link>
+                    );
+                  }
+                  return (
+                    <button
+                      key={conn.node_id}
+                      type="button"
+                      className={row}
+                      onClick={() =>
+                        conn.kind === "note"
+                          ? onOpenNote?.(conn.node_id)
+                          : setTrail((t) => [...t, { id: conn.node_id, name: conn.name }])
+                      }
+                    >
+                      {body}
+                    </button>
+                  );
+                })}
               </>
             )}
 
@@ -203,7 +236,7 @@ export function EntityDetailPanel({
               </p>
             )}
 
-            <Link to={`/graph-3d?node=${encodeURIComponent(nodeId ?? "")}`} className="btn btn-secondary mt-4 w-full no-underline">
+            <Link to={`/graph-3d?node=${encodeURIComponent(shownId ?? "")}`} className="btn btn-secondary mt-4 w-full no-underline">
               <Network className="h-3.5 w-3.5" /> Open in graph
             </Link>
           </>
