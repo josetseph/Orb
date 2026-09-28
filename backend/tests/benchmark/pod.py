@@ -146,8 +146,8 @@ def push_code(endpoint: tuple[str, int]) -> None:
 def provision(endpoint: tuple[str, int], state: dict) -> None:
     llama = subprocess.run([str(BACKEND / ".venv/bin/python"), "-c", "import llama_cpp; print(llama_cpp.__version__)"],
                            capture_output=True, text=True, check=True).stdout.strip()
-    ssh(endpoint, f"cd {REMOTE}/backend && LLAMA_CPP_VERSION={llama} ORB_MAX_HOURS={state['max_hours']} "
-                  f"ORB_IDLE_HOURS={state['idle_hours']} ( nohup setsid tests/benchmark/pod/provision.sh "
+    ssh(endpoint, f"cd {REMOTE}/backend && export LLAMA_CPP_VERSION={llama} ORB_MAX_HOURS={state['max_hours']} "
+                  f"ORB_IDLE_HOURS={state['idle_hours']} && ( nohup setsid tests/benchmark/pod/provision.sh "
                   f"> /dev/null 2>&1 < /dev/null & )")
     print(f"  installing on the pod (llama-cpp-python {llama} built for CUDA); log: {REMOTE}/pod-provision.log", flush=True)
     shown = 0

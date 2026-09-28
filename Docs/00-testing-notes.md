@@ -268,6 +268,13 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-28, second RunPod live check (RTX 4090, about $0.75): ready.** With the three prompt fixes, all four steps pass and the
+  question is answered correctly in each (exact match, recall 1.0; retrieval-only found every gold note; synthesis replay correct).
+  The cache replayed all 4 model calls of the repeat run; its remaining 68 s are embedding, reranking and loading models one at a
+  time, which are not model calls. Extraction still rejects 4 of 10 notes with E4B for relating to entities it did not list (two years,
+  "ConradBrooks" for "Conrad Brooks", "surgeon Strange") even with the rule stated: a real property of this model, and
+  `EXTRACTION_MODE=task_split` is the lever against it. Speed is the open problem: about 150 s a note on a 4090, no faster than the Mac,
+  for a 4B model that should run several times faster. Total RunPod spend so far about $1.30.
 - **2026-09-28, first run on RunPod (A40, $0.56 for setup plus the live check).** All four live-check steps finished and came
   home with `pod.py pull`: strict ingest, retrieval-only evaluator, synthesis replay, and a repeat run replayed from the cache in
   262 ms against 26 s. It also exposed three contract gaps in our own prompts, each rejecting replies that were right by the prompt:
