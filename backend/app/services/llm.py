@@ -57,7 +57,7 @@ ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
 #: Settings that change what a model generates for the same messages. All of them are part of the
 #: experiment cache key; leaving one out makes a variant that flips it silently replay another's replies.
 _REPLY_SHAPING_SETTINGS = (
-    "JSON_CONSTRAINED_DECODING", "LLAMA_FLASH_ATTN", "LLAMA_SWA_FULL", "LLAMA_N_CTX",
+    "JSON_CONSTRAINED_DECODING", "EXTRACTION_JSON_CONSTRAINED", "LLAMA_FLASH_ATTN", "LLAMA_SWA_FULL", "LLAMA_N_CTX",
     "LLAMA_PROMPT_RESERVE", "LLAMA_REPEAT_PENALTY", "LLAMA_MAX_TOKENS",
 )
 
@@ -320,7 +320,8 @@ class LLMService:
                 kwargs["temperature"] = temperature
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
-            if json_mode and settings.JSON_CONSTRAINED_DECODING:
+            constrained = settings.EXTRACTION_JSON_CONSTRAINED if ingestion else settings.JSON_CONSTRAINED_DECODING
+            if json_mode and constrained:
                 kwargs["response_format"] = {"type": "json_object"}
             choice = client.chat.completions.create(model=model, messages=messages, **kwargs).choices[0]
             text = choice.message.content or ""

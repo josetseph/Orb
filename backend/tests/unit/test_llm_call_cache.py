@@ -99,7 +99,7 @@ def test_json_constraint_is_a_switch(monkeypatch):
 
 
 @pytest.mark.parametrize("name, value", [
-    ("JSON_CONSTRAINED_DECODING", False), ("LLAMA_FLASH_ATTN", True), ("LLAMA_SWA_FULL", False),
+    ("JSON_CONSTRAINED_DECODING", False), ("EXTRACTION_JSON_CONSTRAINED", False), ("LLAMA_FLASH_ATTN", True), ("LLAMA_SWA_FULL", False),
     ("LLAMA_N_CTX", 8192), ("LLAMA_PROMPT_RESERVE", 1024), ("LLAMA_REPEAT_PENALTY", 1.0), ("LLAMA_MAX_TOKENS", 512),
 ])
 def test_a_setting_that_shapes_replies_misses(svc, monkeypatch, name, value):
@@ -108,3 +108,30 @@ def test_a_setting_that_shapes_replies_misses(svc, monkeypatch, name, value):
     monkeypatch.setattr(settings, name, value)
     ask(svc)
     assert len(svc.calls) == 2
+
+
+def test_extraction_calls_have_their_own_json_switch(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.services.llm import LLMService
+
+    sent = {}
+
+    class Completions:
+        def create(self, **kwargs):
+            sent.update(kwargs)
+            msg = SimpleNamespace(content="{}", reasoning_content=None)
+            return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")])
+
+    svc = LLMService.__new__(LLMService)
+    svc.provider = svc.ingestion_provider = "local"
+    svc.chat_client = svc.i_chat_client = SimpleNamespace(chat=SimpleNamespace(completions=Completions()))
+    svc.get_chat_model = svc.get_ingestion_model = lambda: "m"
+    svc.get_base_url = lambda: None
+    monkeypatch.setattr(settings, "LLM_CALL_CACHE_DIR", None)
+    monkeypatch.setattr(settings, "JSON_CONSTRAINED_DECODING", True)
+    monkeypatch.setattr(settings, "EXTRACTION_JSON_CONSTRAINED", False)
+    for ingestion, expected in ((False, True), (True, False)):
+        sent.clear()
+        svc._chat([{"role": "user", "content": "JSON please"}], json_mode=True, ingestion=ingestion)
+        assert ("response_format" in sent) is expected

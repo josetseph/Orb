@@ -275,6 +275,15 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-28, round0-speed (RTX 4000 Ada, 1 question, 10 notes): the JSON grammar is the bottleneck.** Index build: baseline
+  1,717 s; flash attention 1,654 s; JSON constraint off 87 s, about 20x faster, with the same 3 of 10 extractions rejected. GPU
+  utilisation sat near 13 % with the constraint on: llama.cpp applies the grammar on the CPU, token by token, and extraction replies
+  are long. Without the constraint the model wrapped its short research-step reply in a markdown code fence, which is rightly
+  rejected, so the question died. Split into two switches: `JSON_CONSTRAINED_DECODING` for chat-side replies (short, cheap to
+  constrain) and `EXTRACTION_JSON_CONSTRAINED` for ingestion replies. Rounds now build indexes unconstrained and keep chat constrained.
+  Also found: the model-call cache key left out the settings the probe varied, so its first pass replayed the baseline's replies for
+  every variant. Every reply-shaping setting is now in the key (`_REPLY_SHAPING_SETTINGS` in `llm.py`), each pinned by a test.
+  Next: `round1-extraction` (five other extraction models, two-pass extraction, and the constraint back on as a check at 199 notes).
 - **2026-09-28, second RunPod live check (RTX 4090, about $0.75): ready.** With the three prompt fixes, all four steps pass and the
   question is answered correctly in each (exact match, recall 1.0; retrieval-only found every gold note; synthesis replay correct).
   The cache replayed all 4 model calls of the repeat run; its remaining 68 s are embedding, reranking and loading models one at a

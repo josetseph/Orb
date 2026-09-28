@@ -64,7 +64,7 @@ def test_a_named_snapshot_stands_in_for_the_baseline_index_only():
 
 
 def test_a_grid_point_equal_to_the_baseline_is_not_a_variant():
-    spec = {**SPEC, "vary": {"JSON_CONSTRAINED_DECODING": [True, False], "LLAMA_FLASH_ATTN": [False, True]}, "design": "grid"}
+    spec = {**SPEC, "vary": {"EXTRACTION_JSON_CONSTRAINED": [True, False], "LLAMA_FLASH_ATTN": [False, True]}, "design": "grid"}
     names = [v["name"] for v in sweep.variants(spec)]
-    assert names == ["base", "LLAMA_FLASH_ATTN=True", "JSON_CONSTRAINED_DECODING=False", "JSON_CONSTRAINED_DECODING=False,LLAMA_FLASH_ATTN=True"]
+    assert names == ["base", "LLAMA_FLASH_ATTN=True", "EXTRACTION_JSON_CONSTRAINED=False", "EXTRACTION_JSON_CONSTRAINED=False,LLAMA_FLASH_ATTN=True"]
     assert len({sweep.index_name(v["levers"], spec) for v in sweep.variants(spec)}) == 4
