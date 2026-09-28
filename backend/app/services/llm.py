@@ -58,7 +58,7 @@ class _ResearchStep(BaseModel):
     """One turn of the iterative research loop, exactly as the prompt specifies it."""
 
     reasoning: str
-    finding: str
+    finding: str | None  # null before the first search: nothing has been found yet
     answer: str | None
     next_query: str | None
 
@@ -543,7 +543,7 @@ class LLMService:
             - "entities": Complete named entities exactly as written — never split multi-word names.
             e.g. "Albert Einstein", "The Great Gatsby", "New York City", "Yale University"
 
-            - "entity_types": The types of entities the answer will involve.
+            - "expected_entity_types": The types of entities the answer will involve.
             e.g. ["Person"], ["Film", "Person"], ["Place"], ["Organization", "Person"], ["Venue"]
 
             - "question_attribute": The specific attribute being asked about.
@@ -636,7 +636,7 @@ class LLMService:
         Returns:
             {
                 "reasoning":    str,           # reasoning over current docs
-                "full_answer":  str,           # contextual answer from docs
+                "full_answer":  str | None,    # what these docs showed; None before any search
                 "can_answer":   bool,          # True if question can be answered
                 "final_answer": str | None,    # bare answer phrase (if can_answer)
                 "next_query":   str | None,    # next search query (if not can_answer)
@@ -707,7 +707,7 @@ class LLMService:
         else:
             task_instructions = (
                 "Reply with one JSON object: "
-                '{"reasoning": "", "finding": "", "answer": null, '
+                '{"reasoning": "", "finding": null, "answer": null, '
                 '"next_query": "the first specific search query needed to start answering this question"}\n'
             )
 

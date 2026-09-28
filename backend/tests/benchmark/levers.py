@@ -33,6 +33,7 @@ class Lever:
 LEVERS = (
     Lever("ingestion_model", "extract", "flag", None, LOCAL_CHAT, "model that reads each note; the costliest stage"),
     Lever("EXTRACTION_ATTEMPTS", "extract", "set", 1, (1, 2, 3), "times an unusable extraction reply may be asked again"),
+    Lever("EXTRACTION_MODE", "extract", "set", "auto", ("auto", "task_split"), "one call per note, or entities first then relationships among them"),
     Lever("EXTRACTION_CHUNK_TOKENS", "extract", "set", None, (1000, 2000, 4000), "note size above which extraction splits; unset = learned per model"),
     Lever("LLAMA_N_CTX", "extract", "set", 16384, (8192, 16384, 32768), "local context window: memory against how much fits in one call"),
     Lever("EMBED_MODEL_ID", "index", "set", None, ("qwen3-embed-0.6b-q8", "qwen3-embed-4b-q4"), "embedding model; changes vector dimensions"),

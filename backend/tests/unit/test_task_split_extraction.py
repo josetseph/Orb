@@ -319,3 +319,24 @@ def test_context_prompt_lists_bare_names():
     ctx = [p for p in llm.prompts if "context extraction engine" in p][0]
     assert "- Ama\n" in ctx or ctx.rstrip().endswith("- Ama")
     assert "- Ama (Person)" not in ctx
+
+
+def test_extraction_mode_task_split_routes_short_notes_through_two_passes(monkeypatch):
+    from app.core.config import settings
+
+    seen = {}
+
+    async def fake_split(llm, content, count, budget, logs):
+        from app.schemas.extraction import Extraction
+        seen["split"] = True
+        return Extraction(nodes=[], relationships=[]), 3
+
+    monkeypatch.setattr(ia, "_extract_task_split", fake_split)
+    monkeypatch.setattr(settings, "EXTRACTION_MODE", "task_split")
+    asyncio.run(ia._extract_with_chunking(FakeLLM(ENTITIES, RELS, BOTH), "short note", []))
+    assert seen == {"split": True}
+
+
+def test_the_single_pass_prompt_states_the_endpoint_rule():
+    prompt = ia._build_extraction_prompt("note")
+    assert "exact `name` of one of your nodes" in prompt

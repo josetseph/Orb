@@ -2,6 +2,7 @@
 """Rent a RunPod GPU for the benchmarks, run a queue on it unattended, bring the results home.
 
     python tests/benchmark/pod.py up                          # rent, upload code, install (about 20 min), leave it ready
+    python tests/benchmark/pod.py setup                       # redo upload + install on the recorded pod
     python tests/benchmark/pod.py run live-check sweeps/round1-retrieval.json sweeps/round1-loop.json
     python tests/benchmark/pod.py status                      # state, $/hr and spend so far, tail of the queue log
     python tests/benchmark/pod.py logs                        # follow the queue log (Ctrl-C only stops following)
@@ -127,8 +128,9 @@ def push_code(endpoint: tuple[str, int]) -> None:
     The list of uploaded files is left on the pod as ``.uploaded``, so ``pull`` brings back only what the pod made.
     """
     files = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True).stdout
-    tar = subprocess.Popen(["tar", "-czf", "-", "--null", "-T", "-"], cwd=REPO, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-    untar = subprocess.Popen(["ssh", *ssh_args(endpoint), f"mkdir -p {REMOTE} && tar -xzf - -C {REMOTE}"], stdin=tar.stdout)
+    tar = subprocess.Popen(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", "-", "--null", "-T", "-"], cwd=REPO,
+                           stdin=subprocess.PIPE, stdout=subprocess.PIPE, env={"COPYFILE_DISABLE": "1"})
+    untar = subprocess.Popen(["ssh", *ssh_args(endpoint), f"mkdir -p {REMOTE} && tar --no-same-owner --warning=no-unknown-keyword -xzf - -C {REMOTE}"], stdin=tar.stdout)
     tar.stdin.write(files)
     tar.stdin.close()
     tar.stdout.close()
@@ -145,8 +147,8 @@ def provision(endpoint: tuple[str, int], state: dict) -> None:
     llama = subprocess.run([str(BACKEND / ".venv/bin/python"), "-c", "import llama_cpp; print(llama_cpp.__version__)"],
                            capture_output=True, text=True, check=True).stdout.strip()
     ssh(endpoint, f"cd {REMOTE}/backend && LLAMA_CPP_VERSION={llama} ORB_MAX_HOURS={state['max_hours']} "
-                  f"ORB_IDLE_HOURS={state['idle_hours']} nohup setsid tests/benchmark/pod/provision.sh "
-                  f"> /dev/null 2>&1 < /dev/null &")
+                  f"ORB_IDLE_HOURS={state['idle_hours']} ( nohup setsid tests/benchmark/pod/provision.sh "
+                  f"> /dev/null 2>&1 < /dev/null & )")
     print(f"  installing on the pod (llama-cpp-python {llama} built for CUDA); log: {REMOTE}/pod-provision.log", flush=True)
     shown = 0
     while True:
@@ -190,6 +192,15 @@ def cmd_up(args) -> None:
     print("  ready. Start work with: pod.py run live-check sweeps/<spec>.json ...")
 
 
+def cmd_setup(_args) -> None:
+    """Upload and install again on the recorded pod: after a failed or interrupted `up`, or new dependencies."""
+    state = saved()
+    endpoint = wait_ssh(state["id"])
+    push_code(endpoint)
+    provision(endpoint, state)
+    print("  ready. Start work with: pod.py run live-check sweeps/<spec>.json ...")
+
+
 def running_endpoint() -> tuple[str, int]:
     pod = pod_info(saved()["id"])
     endpoint = ssh_endpoint(pod)
@@ -209,7 +220,8 @@ def cmd_run(args) -> None:
             raise PodError(f"no such spec: {BACKEND / item}")
     push_code(endpoint)
     items = " ".join(f"'{i}'" for i in args.items)
-    ssh(endpoint, f"cd {REMOTE}/backend && nohup setsid tests/benchmark/pod/queue.sh {items} >> {REMOTE}/Results/queue.log 2>&1 < /dev/null &")
+    ssh(endpoint, f"cd {REMOTE}/backend && mkdir -p {REMOTE}/Results && ( nohup setsid tests/benchmark/pod/queue.sh {items} "
+                  f">> {REMOTE}/Results/queue.log 2>&1 < /dev/null & )")
     print(f"  queue started: {' -> '.join(args.items)}\n  follow it with: pod.py logs")
 
 
@@ -287,13 +299,13 @@ def main() -> None:
     up.add_argument("--idle-hours", type=float, default=3, help="...or after this long with no queue running")
     run = sub.add_parser("run")
     run.add_argument("items", nargs="+", help='"live-check" or sweep spec paths relative to backend/')
-    for name in ("status", "logs", "pull"):
+    for name in ("setup", "status", "logs", "pull"):
         sub.add_parser(name)
     down = sub.add_parser("down")
     down.add_argument("--no-pull", action="store_true")
     args = ap.parse_args()
     try:
-        {"up": cmd_up, "run": cmd_run, "status": cmd_status, "logs": cmd_logs, "pull": cmd_pull, "down": cmd_down}[args.cmd](args)
+        {"up": cmd_up, "setup": cmd_setup, "run": cmd_run, "status": cmd_status, "logs": cmd_logs, "pull": cmd_pull, "down": cmd_down}[args.cmd](args)
     except PodError as exc:
         sys.exit(f"pod: {exc}")
 

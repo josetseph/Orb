@@ -180,6 +180,28 @@ stage once, then judge many variants against the record.
 Specs for the first round are in `backend/sweeps/`: `round1-retrieval.json` (nine retrieval variants over one index, no answering
 model) and `round1-loop.json` (loop limit and four smaller answering models, three rungs, held-out slice).
 
+## 4c. Running on a rented GPU (RunPod)
+
+The Mac runs one model at a time and is needed for other work; the AWS and GCP servers on hand are micro instances
+(2 vCPU, 1 GB RAM, no GPU) and cannot hold even the smallest model. Long runs go to a RunPod GPU instead, on the
+second RunPod account content-machine also uses (keys in the gitignored `<repo>/.env`, copied from content-machine's `ALT_` set).
+
+```bash
+cd backend
+.venv/bin/python tests/benchmark/pod.py up          # rent (SECURE cloud, 16-48 GB card by availability), upload, install: ~20 min
+.venv/bin/python tests/benchmark/pod.py run live-check sweeps/round1-retrieval.json sweeps/round1-loop.json
+.venv/bin/python tests/benchmark/pod.py status      # state, $/hr, spend so far, queue tail
+.venv/bin/python tests/benchmark/pod.py pull        # results -> Results/runpod/ (restarts a stopped pod to reach its volume)
+.venv/bin/python tests/benchmark/pod.py down        # pull, then delete pod and volume
+```
+
+- Everything on the pod lives on its `/workspace` volume, so stopping it keeps models, indexes, cache and results.
+- A watchdog on the pod, holding no API key, ends the container after `--max-hours` (default 48) or `--idle-hours`
+  with no queue running (default 3). That stops the GPU charge; only the volume is billed until `down`.
+- `pull` copies only what the pod produced (the upload's file list is kept on the pod as `.uploaded`).
+- Indexes are built on the pod with the strict pipeline. The Mac snapshot `hp20-e4b` cannot move: its vault paths are absolute.
+- llama-cpp-python is built for CUDA on the pod at the same version as the Mac (0.3.35), so local-model results compare.
+
 ## 5. Measuring honestly
 
 - At N=100 the standard error on exact match is about five points. A gap that size between two runs is noise.
@@ -246,6 +268,17 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-28, first run on RunPod (A40, $0.56 for setup plus the live check).** All four live-check steps finished and came
+  home with `pod.py pull`: strict ingest, retrieval-only evaluator, synthesis replay, and a repeat run replayed from the cache in
+  262 ms against 26 s. It also exposed three contract gaps in our own prompts, each rejecting replies that were right by the prompt:
+  (1) the query-analysis field list said `entity_types` while its examples and schema said `expected_entity_types`, so query hints
+  were lost on every question; (2) the first research step, before any search, was told to write `"finding": ""` and rejected for
+  writing `null`, which ended every question before it searched; (3) the extraction prompt never said relationship ends must be listed
+  entities, yet 5 of 10 notes were rejected for relating to an unlisted date or concept ("2012", "actual accounts"). Fixed by making
+  prompt and schema say the same thing: the field list uses `expected_entity_types`, the first step asks for and accepts `null`, and
+  the extraction prompt states the endpoint rule (add the thing as a node first). New lever `EXTRACTION_MODE`: `task_split` sends every
+  note through entities-then-relationships. Speed: the model ran fully on the GPU (CUDA, all layers), yet extraction averaged about
+  110 s a note against 137 s on the Mac. Not yet explained; JSON-constrained sampling runs on the CPU in llama.cpp and is the first suspect.
 - **2026-09-21, first strict result: the predicate vocabulary does not fit encyclopedic notes.** A live check of the strict
   pipeline (E4B, the 10 notes of HotpotQA question 1) was stopped by the owner after 7 notes: 4 ingested, 3 rejected. All three
   rejections were the same thing. The reply was valid JSON with every field present (the JSON constraint works), but it used

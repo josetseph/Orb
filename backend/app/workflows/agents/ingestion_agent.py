@@ -78,6 +78,7 @@ Identify every distinct entity in the note. For each, assign:
 List every relationship between entities. For each:
 - `source_name`: The entity the relationship originates from.
 - `target_name`: The entity the relationship points to.
+- Both must be the exact `name` of one of your nodes. If a relationship needs something you have not listed (a date, a place, a concept), add it as a node first.
 - `relationship_type`: a short predicate in your own words that names how the two are related (e.g. "directed", "married_to", "located_in").
 - `natural_language`: A short natural-language description of the relationship (e.g. "attends school").
 - Only include what the text explicitly states or directly implies.
@@ -520,7 +521,9 @@ async def _extract_with_chunking(llm, content: str, logs: list[str]) -> tuple[Ex
     # One call while the note fits — task-splitting a short note would triple
     # its cost for nothing. Above that, splitting by task beats splitting the
     # text: fewer calls than chunks, and every pass sees the whole note.
-    if count(content) > budget:
+    # EXTRACTION_MODE=task_split sends every note through the two-pass route (entities, then
+    # relationships among only those entities), not just the notes too long for one call.
+    if settings.EXTRACTION_MODE == "task_split" or count(content) > budget:
         return await _extract_task_split(llm, content, count, budget, logs)
     return await _extract_by_chunks(llm, content, count, budget, logs)
 

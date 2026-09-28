@@ -160,10 +160,9 @@ class TestIterativeStep:
             '```json\n{"reasoning": "", "finding": "", "answer": null, "next_query": "who?"}\n```',
             '{"reasoning": "r", "finding": "f", "answer": "42", "next_query": "also this"}',
             '{"reasoning": "r", "finding": "f", "answer": null, "next_query": null}',
-            '{"reasoning": "", "finding": null, "answer": null, "next_query": "who?"}',
             '{"answer": "42", "next_query": null}',
         ],
-        ids=["garbage", "code-fence", "both-outcomes", "no-outcome", "null-finding", "missing-keys"],
+        ids=["garbage", "code-fence", "both-outcomes", "no-outcome", "missing-keys"],
     )
     def test_an_unusable_reply_is_a_counted_no_op(self, svc, raw, tmp_path, monkeypatch):
         from app.core.config import settings
@@ -184,3 +183,28 @@ class TestIterativeStep:
         prompt = reason.call_args.args[0]
         assert reason.call_args.kwargs == {"json_mode": True}
         assert '"next_query"' in prompt and "NEXT_QUERY" not in prompt
+
+
+def test_the_first_step_may_report_no_finding(svc):
+    """Before any search there is nothing to report; the prompt asks for null and null is accepted."""
+    got = _step(svc, '{"reasoning": "plan", "finding": null, "answer": null, "next_query": "Ed Wood nationality"}')
+    assert got["next_query"] == "Ed Wood nationality" and got["full_answer"] is None
+
+
+def test_query_analysis_prompt_names_every_key_the_schema_requires(svc):
+    """The field list once said "entity_types" while the examples and schema said "expected_entity_types"."""
+    import json as _json
+
+    captured = {}
+
+    def fake_chat(messages, **kwargs):
+        captured["prompt"] = messages[-1]["content"]
+        return _json.dumps({"entities": [], "expected_entity_types": [], "question_attribute": None, "intent": "search",
+                            "keywords": [], "date_filter": None, "period_filter": None}), {}
+
+    svc._chat = fake_chat
+    svc.analyze_query("Who directed Inception?")
+    field_list = captured["prompt"].split("Examples")[0] if "Examples" in captured["prompt"] else captured["prompt"]
+    for key in ("entities", "expected_entity_types", "question_attribute", "intent", "keywords", "date_filter", "period_filter"):
+        assert f'"{key}":' in field_list, key
+    assert '"entity_types":' not in captured["prompt"]

@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     # How many times an extraction call may be asked again after an unusable reply.
     # A reply is never repaired; every unusable one is counted either way.
     EXTRACTION_ATTEMPTS: int = 1
+    # auto = one call while the note fits, two passes above that; task_split = two passes always.
+    EXTRACTION_MODE: str = "auto"
     # Evidence returned with an answer: the N best docs by rerank score.
     CHAT_MAX_CONTEXT_DOCS: int = 6
     # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the

@@ -1716,7 +1716,7 @@ class RetrievalService:
         # answer, the most recent FINDING is the best we have.
         last_answer: str | None = None
         for step in reversed(accumulated_steps):
-            fa = step.get("full_answer", "").strip()
+            fa = (step.get("full_answer") or "").strip()
             if fa and fa.lower() not in {
                 "not found",
                 "none",
