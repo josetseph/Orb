@@ -1,3 +1,4 @@
+import { splitExtension, withExtension } from "../_lib/file-name";
 import {
   useCallback,
   useEffect,
@@ -224,10 +225,8 @@ export function useVaultTree({
   );
 
   const openRenameDialog = useCallback((relPath: string) => {
-    setRenameDialog({
-      rel_path: relPath,
-      name: relPath.split("/").pop() || relPath,
-    });
+    const [name, ext] = splitExtension(relPath.split("/").pop() || relPath);
+    setRenameDialog({ rel_path: relPath, name, ext });
   }, []);
 
   const submitRenameDialog = useCallback(async () => {
@@ -242,7 +241,7 @@ export function useVaultTree({
       return;
     }
     const parts = renameDialog.rel_path.split("/");
-    parts[parts.length - 1] = newName;
+    parts[parts.length - 1] = withExtension(newName, renameDialog.ext);
     const toRel = parts.join("/");
     if (toRel === renameDialog.rel_path) {
       setRenameDialog(null);

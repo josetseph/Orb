@@ -30,7 +30,9 @@ export type FolderDialogState = {
 
 export type RenameDialogState = {
   rel_path: string;
+  /** Edited without the extension, which is re-attached on save. */
   name: string;
+  ext: string;
 };
 
 export type NoteAttachment = {

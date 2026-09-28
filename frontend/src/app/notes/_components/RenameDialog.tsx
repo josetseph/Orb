@@ -25,16 +25,19 @@ export function RenameDialog({
     >
       <div className="dialog-title">Rename file</div>
       <p className="dialog-body truncate font-mono text-[11.5px]">{renameDialog.rel_path}</p>
-      <input
-        autoFocus
-        value={renameDialog.name}
-        onChange={(e) => onNameChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") void onSubmit();
-        }}
-        placeholder="File name"
-        className="input"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          autoFocus
+          value={renameDialog.name}
+          onChange={(e) => onNameChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") void onSubmit();
+          }}
+          placeholder="File name"
+          className="input min-w-0 flex-1"
+        />
+        {renameDialog.ext && <span className="shrink-0 font-mono text-[12px] text-n-500">{renameDialog.ext}</span>}
+      </div>
       <div className="dialog-actions">
         <button type="button" onClick={onCancel} className="btn btn-secondary">
           Cancel
