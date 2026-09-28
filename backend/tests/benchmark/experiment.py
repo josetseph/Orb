@@ -211,6 +211,12 @@ def main() -> None:
             run(cmd, env)
             wait_until("ingestion to drain", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
             record["ingest_seconds"] = round(time.monotonic() - t0)
+            states = list(json.loads((DATA / "prepare_progress.json").read_text()).get(args.dataset, {}).values())
+            ingested = sum(1 for v in states if not str(v).startswith(("pending", "failed", "missing", "empty")))
+            record["notes"] = {"ingested": ingested, "rejected": sum(1 for v in states if v == "failed"), "total": len(states)}
+            print(f"[experiment] notes ingested {ingested} of {len(states)}", flush=True)
+            if ingested == 0:
+                raise SystemExit("[experiment] no note was ingested; an empty index is not evaluated")
         if args.communities:  # works on a restored snapshot too: same index, with and without summaries
             t0 = time.monotonic()
             urlopen(Request(BASE_URL + "/api/v1/admin/rebuild-communities", method="POST"), timeout=60).read()  # noqa: S310

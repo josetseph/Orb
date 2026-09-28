@@ -275,6 +275,11 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-28, round1-extraction first attempt: discarded.** Every index build stopped after its first three notes: `prepare_dataset.py`
+  had a circuit breaker that tripped on three failures in a row, meant for a dead server. Under the strict pipeline a rejected reply is a
+  failure too, so every index was empty and every evaluation meaningless; caught after about an hour and stopped. The breaker now trips only
+  when requests to the server fail. A note the pipeline rejects is counted and passed over. `experiment.py` records ingested / rejected
+  / total notes per build and refuses to evaluate an index with nothing in it.
 - **2026-09-28, round0-speed (RTX 4000 Ada, 1 question, 10 notes): the JSON grammar is the bottleneck.** Index build: baseline
   1,717 s; flash attention 1,654 s; JSON constraint off 87 s, about 20x faster, with the same 3 of 10 extractions rejected. GPU
   utilisation sat near 13 % with the constraint on: llama.cpp applies the grammar on the CPU, token by token, and extraction replies

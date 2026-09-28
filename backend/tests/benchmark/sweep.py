@@ -171,7 +171,7 @@ def paired(base: Path, other: Path, metric: str) -> str:
 
 def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
     metric = spec.get("metric", "answer_f1")
-    out = [f"\n## {title}\n", f"| variant | {metric} | exact match | retrieval recall | s / question | index build s | unusable replies | vs base |", "|---|---|---|---|---|---|---|---|"]
+    out = [f"\n## {title}\n", f"| variant | {metric} | exact match | retrieval recall | s / question | index build s (notes ingested) | unusable replies | vs base |", "|---|---|---|---|---|---|---|---|"]
     base_path = next((path for name, path in rows if name == "base"), None)
     for name, path in rows:
         if not path.is_file():
@@ -187,7 +187,9 @@ def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
         versus = paired(base_path, path, metric) if base_path and base_path.is_file() and name != "base" else ""
         levers = next(v["levers"] for v in variants(spec) if v["name"] == name)
         idx = REPO / "Results" / spec["name"] / "_index" / index_name(levers, spec) / "config.json"
-        build = json.loads(idx.read_text()).get("ingest_seconds", "") if idx.is_file() else ""
+        built = json.loads(idx.read_text()) if idx.is_file() else {}
+        notes = built.get("notes") or {}
+        build = f"{built.get('ingest_seconds', '')} ({notes.get('ingested', '?')}/{notes.get('total', '?')} notes)" if built else ""
         out.append(f"| {name} | {score(path, metric):.3f} | {em} | {recall:.3f} | {sum(r['total_time_ms'] for r in res) / n / 1000:.0f} | {build} | "
                    f"{sum(bad.values())} {bad or ''} | {versus} |")
     return out

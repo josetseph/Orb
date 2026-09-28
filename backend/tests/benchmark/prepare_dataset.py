@@ -250,19 +250,13 @@ async def retry_failed(dataset: str) -> None:
             progress[dataset] = dataset_progress
             _save_progress(progress)
 
+            # A note the pipeline processed and marked failed (an unusable model reply) is a result of the
+            # model under test, counted and moved past. Only requests the server could not take trip the breaker.
             if ok:
                 succeeded += 1
-                consecutive_failures = 0
             else:
                 failed_count += 1
-                consecutive_failures += 1
-                if consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD:
-                    print(
-                        f"\n🔴 Circuit breaker: {consecutive_failures} consecutive failures."
-                        f" LLM backend may be down. Stopping early — run with --resume to continue.",
-                        flush=True,
-                    )
-                    break
+            consecutive_failures = 0
 
     print(f"\n✨ Retry done: {succeeded} succeeded, {failed_count} failed.")
     still = [f for f, v in dataset_progress.items() if v == "failed"]
@@ -433,19 +427,13 @@ async def prepare(
             progress[dataset] = dataset_progress
             _save_progress(progress)
 
+            # A note the pipeline processed and marked failed (an unusable model reply) is a result of the
+            # model under test, counted and moved past. Only requests the server could not take trip the breaker.
             if ok:
                 succeeded += 1
-                consecutive_failures = 0
             else:
                 failed_count += 1
-                consecutive_failures += 1
-                if consecutive_failures >= CIRCUIT_BREAKER_THRESHOLD:
-                    print(
-                        f"\n🔴 Circuit breaker: {consecutive_failures} consecutive failures."
-                        f" LLM backend may be down. Stopping early — run with --resume to continue.",
-                        flush=True,
-                    )
-                    break
+            consecutive_failures = 0
 
     total = len(all_note_files)
     confirmed_total = sum(1 for v in dataset_progress.values() if _is_confirmed(v))
