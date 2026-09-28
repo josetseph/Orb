@@ -146,12 +146,14 @@ def ssh_ok(endpoint: tuple[str, int]) -> bool:
     return subprocess.run(["ssh", *ssh_args(endpoint), "true"], capture_output=True, check=False).returncode == 0
 
 
-def push_code(endpoint: tuple[str, int]) -> None:
+def push_code(endpoint: tuple[str, int], extra: list[str] = ()) -> None:
     """The repo's tracked files (as they are in the working tree), streamed as a tar. Data on the pod is kept.
 
     The list of uploaded files is left on the pod as ``.uploaded``, so ``pull`` brings back only what the pod made.
     """
     files = subprocess.run(["git", "ls-files", "-z"], cwd=REPO, capture_output=True, check=True).stdout
+    # Files named explicitly (a new spec) go up even when git does not track them yet.
+    files += b"".join(str(Path(f).resolve().relative_to(REPO)).encode() + bytes([0]) for f in extra)
     tar = subprocess.Popen(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", "-", "--null", "-T", "-"], cwd=REPO,
                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, env={"COPYFILE_DISABLE": "1"})
     untar = subprocess.Popen(["ssh", *ssh_args(endpoint), f"mkdir -p {REMOTE} && tar --no-same-owner --warning=no-unknown-keyword -xzf - -C {REMOTE}"], stdin=tar.stdout)
@@ -263,7 +265,7 @@ def cmd_run(args) -> None:
     for item in args.items:
         if item != "live-check" and not (BACKEND / item).is_file():
             raise PodError(f"no such spec: {BACKEND / item}")
-    push_code(endpoint)
+    push_code(endpoint, [str(BACKEND / i) for i in args.items if i != "live-check"])
     items = " ".join(f"'{i}'" for i in args.items)
     ssh(endpoint, f"cd {REMOTE}/backend && mkdir -p {REMOTE}/Results && ( nohup setsid tests/benchmark/pod/queue.sh {items} "
                   f">> {REMOTE}/Results/queue.log 2>&1 < /dev/null & )")

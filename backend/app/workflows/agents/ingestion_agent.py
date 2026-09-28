@@ -98,7 +98,7 @@ Rules:
 
 ## OUTPUT FORMAT
 
-Return a single JSON object structured exactly like this:
+Return a single JSON object structured exactly like this. Reply with the JSON object alone: its first character is `{{`, with no markdown code fence and nothing before or after it.
 
 {{
   "title": "string — descriptive title that captures the main subject of this note",
@@ -208,7 +208,7 @@ def _build_entity_prompt(content: str) -> str:
 
 `type` examples (not exhaustive — judge from the note): Person, Place, Organization, Event, Work, Thing, Concept, Time Period.
 
-Return ONLY this JSON:
+Return ONLY this JSON. Reply with the JSON object alone: its first character is `{{`, with no markdown code fence and nothing before or after it.
 {{
   "title": "string — descriptive title capturing the main subject of the note",
   "nodes": [{{"name": "canonical entity name", "type": "most fitting type"}}]
@@ -231,7 +231,7 @@ def _build_relationship_prompt(content: str, entity_lines: str) -> str:
 ENTITIES:
 {entity_lines}
 
-Return ONLY this JSON:
+Return ONLY this JSON. Reply with the JSON object alone: its first character is `{{`, with no markdown code fence and nothing before or after it.
 {{
   "relationships": [{{
     "source_name": "entity the relationship starts from",
@@ -256,7 +256,7 @@ def _build_context_prompt(content: str, entity_lines: str) -> str:
 ENTITIES:
 {entity_lines}
 
-Return ONLY this JSON:
+Return ONLY this JSON. Reply with the JSON object alone: its first character is `{{`, with no markdown code fence and nothing before or after it.
 {{
   "contexts": [{{"name": "entity name exactly as listed", "isolated_context": "entity-centric description"}}]
 }}

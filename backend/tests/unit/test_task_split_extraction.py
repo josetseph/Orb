@@ -340,3 +340,9 @@ def test_extraction_mode_task_split_routes_short_notes_through_two_passes(monkey
 def test_the_single_pass_prompt_states_the_endpoint_rule():
     prompt = ia._build_extraction_prompt("note")
     assert "exact `name` of one of your nodes" in prompt
+
+
+def test_every_extraction_prompt_asks_for_bare_json():
+    """Unconstrained, E4B fenced every extraction reply in a markdown block; the prompts never said not to."""
+    prompts = [ia._build_extraction_prompt("n"), ia._build_entity_prompt("n"), ia._build_relationship_prompt("n", "- A"), ia._build_context_prompt("n", "- A")]
+    assert all("no markdown code fence" in p for p in prompts)

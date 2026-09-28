@@ -57,3 +57,4 @@ backend/tests/benchmark/musique_notes/
 /llm-cache
 /pod.json
 /pod-state
+backend/sweeps/check-*.json

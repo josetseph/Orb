@@ -8,7 +8,8 @@ for item in "$@"; do
   echo "[queue $(date '+%F %T')] start $item"
   if [ "$item" = "live-check" ]; then PYTHON=.venv/bin/python tests/benchmark/live_check.sh
   else .venv/bin/python tests/benchmark/sweep.py "$item"; fi
-  echo "[queue $(date '+%F %T')] end $item (exit $?)"
+  rc=$?
+  echo "[queue $(date '+%F %T')] end $item (exit $rc)"
 done
 date '+%F %T' > $R/queue.done; rm -f $R/queue.pid
 echo "[queue $(date '+%F %T')] all done"

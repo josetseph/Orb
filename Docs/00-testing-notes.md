@@ -275,6 +275,12 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-28, correction to round0-speed, and the fence fix.** The 87 s unconstrained builds were not a clean measurement: most of
+  their replies were replayed, and unconstrained E4B fenced its extraction replies in a markdown code block almost every time (53 of
+  53 in the second round1 attempt, which was stopped). The extraction prompts never said not to. They now say: reply with the JSON object
+  alone, first character `{`, no fence. Re-measured on one question (10 notes, unconstrained): no fenced replies, 6 ingested,
+  4 rejected (all relationships to an unlisted entity), question correct, 441 s = about 44 s a note. The real speedup over constrained
+  extraction (172 s a note) is about 4x, not 20x.
 - **2026-09-28, round1-extraction first attempt: discarded.** Every index build stopped after its first three notes: `prepare_dataset.py`
   had a circuit breaker that tripped on three failures in a row, meant for a dead server. Under the strict pipeline a rejected reply is a
   failure too, so every index was empty and every evaluation meaningless; caught after about an hour and stopped. The breaker now trips only

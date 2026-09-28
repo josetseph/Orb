@@ -83,8 +83,8 @@ class Settings(BaseSettings):
     # Constrain local and OpenAI-style replies to valid JSON while they are generated. llama.cpp enforces the
     # grammar on the CPU, so it can cost speed; off, a reply that is not valid JSON is a counted failure.
     JSON_CONSTRAINED_DECODING: bool = True
-    # The same for ingestion calls (extraction, community summaries), whose replies are long: the round0-speed
-    # probe built an index about 20x faster with it off, with the same share of unusable replies.
+    # The same for ingestion calls (extraction, community summaries), whose replies are long: extraction ran about
+    # 4x faster with it off, once the prompts asked for bare JSON (round0-speed and its correction in the notes).
     EXTRACTION_JSON_CONSTRAINED: bool = True
     # Evidence returned with an answer: the N best docs by rerank score.
     CHAT_MAX_CONTEXT_DOCS: int = 6
