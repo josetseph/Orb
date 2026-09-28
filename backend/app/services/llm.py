@@ -54,6 +54,14 @@ def describe_call_failure(exc: Exception) -> str:
 ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
 
 
+#: Settings that change what a model generates for the same messages. All of them are part of the
+#: experiment cache key; leaving one out makes a variant that flips it silently replay another's replies.
+_REPLY_SHAPING_SETTINGS = (
+    "JSON_CONSTRAINED_DECODING", "LLAMA_FLASH_ATTN", "LLAMA_SWA_FULL", "LLAMA_N_CTX",
+    "LLAMA_PROMPT_RESERVE", "LLAMA_REPEAT_PENALTY", "LLAMA_MAX_TOKENS",
+)
+
+
 class _ResearchStep(BaseModel):
     """One turn of the iterative research loop, exactly as the prompt specifies it."""
 
@@ -213,7 +221,7 @@ class LLMService:
             key = hashlib.sha256(json.dumps([
                 self.ingestion_provider if ingestion else self.provider, self.get_base_url(), model, messages,
                 kwargs.get("temperature"), kwargs.get("max_tokens"), kwargs.get("json_mode", False),
-                settings.LLAMA_REPEAT_PENALTY, settings.LLAMA_MAX_TOKENS,
+                *(getattr(settings, name) for name in _REPLY_SHAPING_SETTINGS),
             ], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             path = Path(settings.LLM_CALL_CACHE_DIR) / key[:2] / f"{key}.json"
             if path.is_file():

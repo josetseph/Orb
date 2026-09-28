@@ -96,3 +96,15 @@ def test_json_constraint_is_a_switch(monkeypatch):
         monkeypatch.setattr(settings, "JSON_CONSTRAINED_DECODING", flag)
         svc._chat([{"role": "user", "content": "JSON please"}], json_mode=True)
         assert ("response_format" in sent) is expected
+
+
+@pytest.mark.parametrize("name, value", [
+    ("JSON_CONSTRAINED_DECODING", False), ("LLAMA_FLASH_ATTN", True), ("LLAMA_SWA_FULL", False),
+    ("LLAMA_N_CTX", 8192), ("LLAMA_PROMPT_RESERVE", 1024), ("LLAMA_REPEAT_PENALTY", 1.0), ("LLAMA_MAX_TOKENS", 512),
+])
+def test_a_setting_that_shapes_replies_misses(svc, monkeypatch, name, value):
+    """The round0-speed probe replayed the baseline's replies for every variant: these were not in the key."""
+    ask(svc)
+    monkeypatch.setattr(settings, name, value)
+    ask(svc)
+    assert len(svc.calls) == 2
