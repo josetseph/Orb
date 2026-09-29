@@ -275,6 +275,17 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-29, round1-extraction, first results (RTX 4000 Ada).**
+  - E4B, unconstrained extraction: 120 of 199 notes ingested, 79 rejected (relationships to unlisted entities), 2.3 h.
+    Evaluated on 20 questions: exact match 30 %, F1 0.429, contains 65 %, retrieval recall 0.550, 95 s a question, no unusable
+    chat replies. Against the old patched pipeline (`base-e4b`: EM 45 %, F1 0.704, recall 0.825) the F1 drop is outside the
+    bootstrap interval but McNemar is not significant (+2/-5). Most of the gap is the 40 % of notes the strict pipeline refuses:
+    their facts are missing from the graph. Two of the lost questions are answer form ("'Animorphs' is a science fantasy series…").
+  - Qwen 3.5 4B: 0 of 199. It writes about 25,000 characters of plain-text reasoning ("Thinking Process: …") before its JSON,
+    outside `<think>` tags, taking about 160 s a note; 9 h of the budget went to learning this. Qwen 3.5 is dropped from the round
+    until a thinking-off lever exists (llama.cpp chat-template option, or constrained decoding, which forces `{` first).
+  - The Mac lost its network around 11:00; the follower died on the DNS error and has been fixed to wait and retry.
+    The pod ran on regardless under its budget cap. GitHub pushes are queued until the network settles.
 - **2026-09-28, correction to round0-speed, and the fence fix.** The 87 s unconstrained builds were not a clean measurement: most of
   their replies were replayed, and unconstrained E4B fenced its extraction replies in a markdown code block almost every time (53 of
   53 in the second round1 attempt, which was stopped). The extraction prompts never said not to. They now say: reply with the JSON object
