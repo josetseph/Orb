@@ -481,7 +481,9 @@ def timed_lines(transcript: Transcript, turns: list[Turn]) -> str:
             who = f"{names[cue[2]]}: " if cue[2] else ""
             lines.append(f"[{minutes:02d}:{seconds:02d}] {who}{text}")
         prev = cue
-    return "\n".join(lines)
+    # A blank line between entries: Markdown joins single-newline lines into
+    # one paragraph, so every viewer but a raw editor showed a wall of text.
+    return "\n\n".join(lines)
 
 
 def untimed(text: str) -> str:
@@ -491,6 +493,8 @@ def untimed(text: str) -> str:
     out: list[str] = []
     who_before = None
     for line in _STAMP_RE.sub("", text or "").splitlines():
+        if not line.strip():  # entries are blank-line separated
+            continue
         who, sep, said = line.partition(": ")
         if sep and who.startswith("Speaker ") and who == who_before:
             out[-1] += " " + said

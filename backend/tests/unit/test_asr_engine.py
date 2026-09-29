@@ -162,6 +162,9 @@ class TestSpeakerLabels:
         out = ae.timed_lines(self._transcript(), self._turns())
         assert out.splitlines()[0].startswith("[00:00] Speaker 1: Good morning.")
         assert "Speaker 2: Thanks, professor." in out and out.count("Speaker 1:") == 2
+        # Each entry is its own Markdown paragraph.
+        entries = out.split("\n\n")
+        assert len(entries) == 3 and all(e.startswith("[00:0") and "\n" not in e for e in entries)
 
     def test_word_in_a_gap_goes_to_the_nearest_turn(self):
         assert ae.speaker_at(self._turns(), 1.5) == "SPEAKER_00"
@@ -175,6 +178,8 @@ class TestSpeakerLabels:
         text = "[00:01] Speaker 1: Hello.\n[00:05] Speaker 1: Welcome.\n[01:10] Speaker 2: Hi."
         assert ae.untimed(text) == "Speaker 1: Hello. Welcome.\n\nSpeaker 2: Hi."
         assert ae.untimed("[00:01] Hello.\n[00:05] Welcome.") == "Hello.\n\nWelcome."
+        # Blank-line separated (as written now) reads the same as the old form.
+        assert ae.untimed(text.replace("\n", "\n\n")) == "Speaker 1: Hello. Welcome.\n\nSpeaker 2: Hi."
 
 
 class TestChunking:

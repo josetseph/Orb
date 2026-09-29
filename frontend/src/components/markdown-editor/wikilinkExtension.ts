@@ -205,8 +205,11 @@ export function wikilinkClickHandler(
   onWikilinkClick?: (target: string, alias?: string) => void,
 ) {
   return EditorView.domEventHandlers({
-    click(event, view) {
-      if (!onWikilinkClick) return false;
+    // On press, like Markdown links: by `click` the cursor has moved onto the
+    // line and live preview has swapped the link for its raw source, so the
+    // element the press landed on is gone. ⌥-click places the cursor instead.
+    mousedown(event, view) {
+      if (!onWikilinkClick || event.button !== 0 || event.altKey) return false;
       const target = event.target as HTMLElement | null;
       const el = target?.closest?.("[data-wikilink-target]") as HTMLElement | null;
       if (!el || !view.dom.contains(el)) return false;
