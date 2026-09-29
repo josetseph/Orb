@@ -499,16 +499,14 @@ export const api = {
     return http.get(`/graph/notes`, withKb(kb), opts);
   },
 
+  /** The note and every note within `depth` (1–2) wikilink hops, either direction. */
   async getNoteNeighbors(
     noteId: string,
     kb = "default",
     opts?: RequestOpts,
+    depth: 1 | 2 = 1,
   ): Promise<NotesGraphPayload> {
-    return http.get(
-      `/graph/notes/${encodeURIComponent(noteId)}/neighbors${kbQuery(kb)}`,
-      undefined,
-      opts,
-    );
+    return http.get(`/graph/notes/${encodeURIComponent(noteId)}/neighbors`, withKb(kb, { depth }), opts);
   },
 
   async getNoteEntitySubgraph(

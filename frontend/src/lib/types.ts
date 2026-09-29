@@ -267,7 +267,8 @@ export interface FinanceReport {
 }
 
 export interface NotesGraphPayload {
-    nodes: Array<{ id: string; title: string; type: string; rel_path?: string | null }>;
+    /** `hop`: link distance from the centre note (neighbourhood payloads only). */
+    nodes: Array<{ id: string; title: string; type: string; rel_path?: string | null; hop?: number }>;
     edges: Array<{ source: string; target: string; type: string }>;
     center_id?: string;
 }

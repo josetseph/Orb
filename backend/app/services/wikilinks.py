@@ -275,16 +275,23 @@ async def note_neighborhood_payload(
     db: AsyncSession,
     kb_id: str,
     note_id: str,
+    depth: int = 1,
 ) -> dict:
-    """Local graph: selected note + direct wikilink neighbors."""
+    """Local graph: the note and every note within ``depth`` wikilink hops,
+    either direction (links out and backlinks). Each node carries its ``hop``."""
     full = await notes_graph_payload(db, kb_id)
-    neighbor_ids = {note_id}
+    adjacent: dict[str, set[str]] = {}
     for edge in full["edges"]:
-        if edge["source"] == note_id:
-            neighbor_ids.add(edge["target"])
-        if edge["target"] == note_id:
-            neighbor_ids.add(edge["source"])
-    nodes = [n for n in full["nodes"] if n["id"] in neighbor_ids]
+        adjacent.setdefault(edge["source"], set()).add(edge["target"])
+        adjacent.setdefault(edge["target"], set()).add(edge["source"])
+    hops = {note_id: 0}
+    frontier = [note_id]
+    for hop in range(1, depth + 1):
+        frontier = [nb for cur in frontier for nb in adjacent.get(cur, ()) if nb not in hops]
+        for nb in frontier:
+            hops.setdefault(nb, hop)
+    neighbor_ids = set(hops)
+    nodes = [{**n, "hop": hops[n["id"]]} for n in full["nodes"] if n["id"] in neighbor_ids]
     edges = [
         e
         for e in full["edges"]

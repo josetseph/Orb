@@ -10,7 +10,8 @@ import {
   FileDown,
   MoreHorizontal,
   X,
-  PanelRight,
+  ArrowLeft,
+  Network,
   Paperclip,
   RefreshCw,
   Square,
@@ -42,6 +43,9 @@ type NoteEditorHeaderProps = {
   onToggleConnectedPanel: () => void;
   onDelete: () => void;
   onExportPdf: () => void;
+  /** Title of the note Back returns to; null when there is no history. */
+  backTitle: string | null;
+  onBack: () => void;
 };
 
 function folderOf(relPath?: string | null): string {
@@ -67,6 +71,8 @@ export function NoteEditorHeader({
   onToggleConnectedPanel,
   onDelete,
   onExportPdf,
+  backTitle,
+  onBack,
 }: NoteEditorHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -103,6 +109,16 @@ export function NoteEditorHeader({
 
   return (
     <div className="flex shrink-0 items-center gap-1.5 border-b border-n-900 px-5 py-2.5">
+      <button
+        type="button"
+        onClick={onBack}
+        disabled={backTitle === null}
+        title={backTitle === null ? "No previous note" : `Back to “${backTitle}” (⌘⌥←)`}
+        aria-label="Back to previous note"
+        className="btn btn-ghost btn-icon h-7 w-7 shrink-0 disabled:opacity-30"
+      >
+        <ArrowLeft className="h-4 w-4" />
+      </button>
       <div className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-n-500">
         <FolderOpen className="h-3.5 w-3.5 shrink-0" />
         <span className="truncate">{folderOf(selectedNote.rel_path) || "Vault"}</span>
@@ -261,13 +277,13 @@ export function NoteEditorHeader({
       <button
         type="button"
         onClick={onToggleConnectedPanel}
-        title="Connections panel"
+        title="Note graph"
         className={cn(
           "btn btn-icon",
           showConnectedPanel ? "border-accent-700 text-accent" : "btn-secondary",
         )}
       >
-        <PanelRight className="h-4 w-4" />
+        <Network className="h-4 w-4" />
       </button>
     </div>
   );

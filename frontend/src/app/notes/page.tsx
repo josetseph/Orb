@@ -81,6 +81,41 @@ export default function NotesPage() {
   const selectedNoteId = selectedNote?.id ?? null;
   const selectedNoteEmpty = Boolean(selectedNote && !selectedNote.title && !selectedNote.content);
 
+  // Back: the last ten notes left for another, newest last. Going back does
+  // not record the note left behind, so repeated Back walks further back.
+  const [nav, setNav] = useState<{ current: string | null; history: string[]; backTo: string | null }>({
+    current: selectedNoteId,
+    history: [],
+    backTo: null,
+  });
+  if (nav.current !== selectedNoteId) {
+    const wentBack = nav.backTo !== null && nav.backTo === selectedNoteId;
+    const history =
+      wentBack || !nav.current || !selectedNoteId
+        ? nav.history
+        : [...nav.history.filter((id) => id !== nav.current && id !== selectedNoteId), nav.current].slice(-10);
+    setNav({ current: selectedNoteId, history, backTo: null });
+  }
+  const notesById = useMemo(() => new Map(list.notes.map((n) => [n.id, n])), [list.notes]);
+  // Deleted notes drop out of the trail.
+  const backHistory = nav.history.filter((id) => notesById.has(id));
+  const backNote = backHistory.length ? notesById.get(backHistory[backHistory.length - 1]) : undefined;
+  const goBack = useCallback(() => {
+    if (!backNote) return;
+    setNav((n) => ({ ...n, history: n.history.slice(0, n.history.lastIndexOf(backNote.id)), backTo: backNote.id }));
+    void handleNoteSelect(backNote);
+  }, [backNote, handleNoteSelect]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.altKey && e.key === "ArrowLeft") {
+        e.preventDefault();
+        goBack();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [goBack]);
+
   // A fresh note lands in the title; an existing one lands in the body (the
   // editor's autoFocus). (Remounting the input with key={id} leaked one input
   // per note switch, so focus is driven by an effect.)
@@ -251,6 +286,8 @@ export default function NotesPage() {
               onToggleRecording={media.isRecording ? media.stopRecording : media.startRecording}
               onToggleConnectedPanel={() => setShowConnectedPanel((v) => !v)}
               onDelete={handleDeleteNote}
+              backTitle={backNote ? backNote.title || "Untitled" : null}
+              onBack={goBack}
               onExportPdf={() =>
                 setPrintJob({ title: selectedNote.title ?? "", content: noteContent, createdAt: selectedNote.created_at })
               }
@@ -390,7 +427,13 @@ export default function NotesPage() {
               </div>
 
               {panelOpen && (
-                <aside className="flex w-[320px] shrink-0 flex-col border-l border-n-900 bg-bg-deep/40">
+                <aside
+                  className={cn(
+                    "flex shrink-0 flex-col border-l border-n-900 bg-bg-deep/40",
+                    // The graph needs room for titles; the entity card does not.
+                    entityPanelNodeId ? "w-[320px]" : "w-[400px]",
+                  )}
+                >
                   {entityPanelNodeId ? (
                     <EntityDetailPanel
                       nodeId={entityPanelNodeId}
@@ -410,7 +453,7 @@ export default function NotesPage() {
                       onClose={() => setShowConnectedPanel(false)}
                       onSelectNote={(id) => {
                         const match = list.notes.find((n) => n.id === id);
-                        if (match) void handleNoteSelect(match);
+                        void (match ? handleNoteSelect(match) : selection.openNoteById(id));
                       }}
                       onSelectEntity={handleEntityClick}
                     />

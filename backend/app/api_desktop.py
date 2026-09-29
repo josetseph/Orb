@@ -311,6 +311,7 @@ async def notes_graph(
 async def notes_graph_neighbors(
     note_id: str,
     rebuild: bool = False,
+    depth: int = Query(1, ge=1, le=2),
     db: AsyncSession = Depends(get_db),
     kb: KBContext = Depends(get_kb),
 ):
@@ -325,7 +326,7 @@ async def notes_graph_neighbors(
         raise HTTPException(status_code=404, detail="Note not found")
     if rebuild:
         await rebuild_kb_note_links(db, kb)
-    return await note_neighborhood_payload(db, kb.kb_id, note_id)
+    return await note_neighborhood_payload(db, kb.kb_id, note_id, depth)
 
 
 @router.post("/api/v1/graph/notes/rebuild")
