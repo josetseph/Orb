@@ -337,34 +337,47 @@ def cmd_follow(args) -> None:
     """Keep progress at home while a queue runs, and stop before the account runs dry. Prints one line per event."""
     state = saved()
     while True:
-        pod = pod_info(state["id"])
-        status = pod.get("desiredStatus")
         try:
-            credit, spend = balance()
-        except (urllib.error.URLError, KeyError, ValueError):
-            credit, spend = float("inf"), 0.0
-        if status != "RUNNING":
-            # The watchdog stopped it (budget, time cap, idle) or RunPod did (no credit). Collect what is there.
-            try:
-                cmd_pull(args)
-            except PodError as exc:
-                print(f"STOPPED: pod is {status} and could not be restarted to copy its volume: {exc}", flush=True)
+            if follow_once(state, args):
                 return
-            (STATE_DIR / "STOPPED.txt").write_text(f"{time.strftime('%F %T')} pod was {status}\n")
-            print(f"STOPPED: pod is {status} (watchdog or RunPod). Progress saved in {STATE_DIR}.", flush=True)
-            return
-        endpoint = running_endpoint()
-        copy_home(endpoint)
-        done = ssh(endpoint, f"cat {REMOTE}/Results/queue.done 2>/dev/null", check=False, capture=True).strip()
-        if done:
-            print(f"DONE: queue finished {done}. Results in {STATE_DIR}; the pod idles until its watchdog stops it (or pod.py down).", flush=True)
-            return
-        hours_left = (credit - RESERVE_USD) / spend if spend else float("inf")
-        print(f"{time.strftime('%H:%M')} saved; credit ${credit:.2f}, spending ${spend:.2f}/hr, about {hours_left:.1f} h before the reserve", flush=True)
-        if credit - RESERVE_USD < spend * (args.every / 60 + 0.25):
-            stop_gracefully(state, f"credit ${credit:.2f} is about to reach the ${RESERVE_USD:.2f} reserve on the {ACCOUNT} account")
-            return
+        except (urllib.error.URLError, OSError, PodError, subprocess.CalledProcessError) as exc:
+            # A laptop losing its network must not end the follower: the pod runs on, and so must the saving.
+            print(f"{time.strftime('%H:%M')} could not reach RunPod or the pod ({str(exc)[:80]}); retrying", flush=True)
+            time.sleep(120)
+            continue
         time.sleep(args.every * 60)
+
+
+def follow_once(state: dict, args) -> bool:
+    """One round of cmd_follow. True when there is nothing left to follow."""
+    pod = pod_info(state["id"])
+    status = pod.get("desiredStatus")
+    try:
+        credit, spend = balance()
+    except (urllib.error.URLError, KeyError, ValueError):
+        credit, spend = float("inf"), 0.0
+    if status != "RUNNING":
+        # The watchdog stopped it (budget, time cap, idle) or RunPod did (no credit). Collect what is there.
+        try:
+            cmd_pull(args)
+        except PodError as exc:
+            print(f"STOPPED: pod is {status} and could not be restarted to copy its volume: {exc}", flush=True)
+            return True
+        (STATE_DIR / "STOPPED.txt").write_text(f"{time.strftime('%F %T')} pod was {status}\n")
+        print(f"STOPPED: pod is {status} (watchdog or RunPod). Progress saved in {STATE_DIR}.", flush=True)
+        return True
+    endpoint = running_endpoint()
+    copy_home(endpoint)
+    done = ssh(endpoint, f"cat {REMOTE}/Results/queue.done 2>/dev/null", check=False, capture=True).strip()
+    if done:
+        print(f"DONE: queue finished {done}. Results in {STATE_DIR}; the pod idles until its watchdog stops it (or pod.py down).", flush=True)
+        return True
+    hours_left = (credit - RESERVE_USD) / spend if spend else float("inf")
+    print(f"{time.strftime('%H:%M')} saved; credit ${credit:.2f}, spending ${spend:.2f}/hr, about {hours_left:.1f} h before the reserve", flush=True)
+    if credit - RESERVE_USD < spend * (args.every / 60 + 0.25):
+        stop_gracefully(state, f"credit ${credit:.2f} is about to reach the ${RESERVE_USD:.2f} reserve on the {ACCOUNT} account")
+        return True
+    return False
 
 
 def cmd_down(args) -> None:
