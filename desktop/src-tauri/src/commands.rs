@@ -4,17 +4,21 @@ use std::{fs, path::Path};
 
 use serde::Deserialize;
 use serde_json::json;
-use tauri::{AppHandle, Webview};
+use tauri::{AppHandle, Manager, Webview};
 
 use crate::runtime;
 
 /// What the bundled page needs to decide between "show setup" and "wait".
 #[tauri::command]
 pub fn app_state(app: AppHandle) -> serde_json::Value {
+    // Filled with the saved folders when setup is shown again after a failure.
+    let saved = runtime::read_paths(&app);
+    let saved_str = |key: &str| saved.get(key).and_then(|v| v.as_str()).map(str::to_string);
     json!({
-        "first_run": runtime::first_run(&app),
-        "data_dir": runtime::app_support_root(&app).join("data"),
-        "models_dir": runtime::default_models_dir(&app),
+        "first_run": runtime::setup_needed(&app),
+        "data_dir": runtime::data_dir(&app),
+        "models_dir": saved_str("models_dir").unwrap_or_else(|| runtime::default_models_dir(&app).display().to_string()),
+        "vault_path": saved_str("default_vault_path"),
         "version": app.package_info().version.to_string(),
     })
 }
@@ -56,11 +60,12 @@ pub fn save_setup(app: AppHandle, webview: Webview, payload: SetupPayload) -> Re
     if let Some(v) = &vault {
         paths["default_vault_path"] = json!(v);
     }
-    for dir in [Some(&data_dir), Some(&models_dir), vault.as_ref()]
-        .into_iter()
-        .flatten()
-    {
-        fs::create_dir_all(dir).map_err(|e| format!("Could not create {dir}: {e}"))?;
+    // Every folder must take a file now, not crash the runtime later: the
+    // macOS picker opens on the Orb installer disk right after install.
+    runtime::usable_dir("data", Path::new(&data_dir), true)?;
+    runtime::usable_dir("models", Path::new(&models_dir), true)?;
+    if let Some(v) = &vault {
+        runtime::usable_dir("notes vault", Path::new(v), true)?;
     }
     // Atomic write: a truncated paths.json used to boot with default dirs and
     // look like total data loss.
@@ -72,6 +77,9 @@ pub fn save_setup(app: AppHandle, webview: Webview, payload: SetupPayload) -> Re
     fs::write(&tmp, serde_json::to_string_pretty(&paths).unwrap()).map_err(|e| e.to_string())?;
     fs::rename(&tmp, &file).map_err(|e| e.to_string())?;
 
+    app.state::<runtime::Runtime>()
+        .setup_requested
+        .store(false, std::sync::atomic::Ordering::SeqCst);
     runtime::start(app);
     Ok(())
 }

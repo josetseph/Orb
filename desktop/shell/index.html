@@ -78,6 +78,7 @@
         if (!state.first_run) return; // the shell navigates to the app when it is up
         $("dataDir").value = state.data_dir || "";
         $("modelsDir").value = state.models_dir || "";
+        $("vaultPath").value = state.vault_path || "";
         $("setup").style.display = "block";
       })();
 

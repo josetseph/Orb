@@ -40,7 +40,16 @@ backend/app/desktop_runtime.py   the process the shell spawns
 1. `main.rs` → `runtime::boot`. The window is created hidden on the bundled page.
 2. If `paths.json` is missing or unreadable, the window is shown: the page calls
    `app_state`, sees `first_run`, and renders the setup form. `save_setup` validates
-   absolute paths, writes `paths.json` atomically, then falls through to step 3.
+   absolute paths and that each folder can be created and written to (`usable_dir`,
+   a probe file; the macOS picker opens on the read-only Orb installer disk right
+   after install), writes `paths.json` atomically, then falls through to step 3.
+   On later launches `check_saved_folders` first re-checks the data dir (probe), the
+   models dir and the vault's `attachments` folder (created as the backend would;
+   no probe file in a synced vault), so an unusable folder is reported by name.
+   Any start failure dialog offers **Change folders…**, which sets `setup_requested`
+   and navigates to the bundled page; `app_state` then reports `first_run` with the
+   saved folders pre-filled. A Dock reopen after a failure re-checks instead of
+   opening the (dead) UI URL.
 3. `runtime::start` spawns `python -m app.desktop_runtime` (own process group,
    stdout/stderr → `DATA_DIR/logs/backend.log`) and a watcher thread.
 4. The runtime frees its ports, fixes sidecar addresses in the environment, starts a

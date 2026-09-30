@@ -4,7 +4,7 @@ use std::{
     fs,
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -25,6 +25,8 @@ pub struct Runtime {
     child: Mutex<Option<Child>>,
     quitting: AtomicBool,
     restarts: Mutex<Vec<Instant>>,
+    /// "Change folders…" after a failed start: the setup page shows again.
+    pub setup_requested: AtomicBool,
 }
 
 // ── Where things are ─────────────────────────────────────────────────────────
@@ -66,6 +68,55 @@ pub fn read_paths(app: &AppHandle) -> serde_json::Value {
 /// A missing or unreadable paths.json re-opens setup rather than booting defaults.
 pub fn first_run(app: &AppHandle) -> bool {
     std::env::var("ORB_SKIP_WIZARD").is_err() && !read_paths(app).is_object()
+}
+
+/// The bundled page shows the setup form: first run, or asked for again.
+pub fn setup_needed(app: &AppHandle) -> bool {
+    first_run(app) || app.state::<Runtime>().setup_requested.load(Ordering::SeqCst)
+}
+
+/// Create `dir` if needed and, with `probe`, prove a file can be written in it.
+/// The message names the folder and, for a separate disk (the Orb installer
+/// is one, and read-only), says so.
+pub fn usable_dir(label: &str, dir: &Path, probe: bool) -> Result<(), String> {
+    let check = || -> std::io::Result<()> {
+        fs::create_dir_all(dir)?;
+        if probe {
+            let file = dir.join(".orb-write-check");
+            fs::write(&file, b"")?;
+            fs::remove_file(&file)?;
+        }
+        Ok(())
+    };
+    check().map_err(|err| unusable(label, dir, &err))
+}
+
+fn unusable(label: &str, dir: &Path, err: &std::io::Error) -> String {
+    let disk = if cfg!(target_os = "macos") && dir.starts_with("/Volumes") {
+        " It is on a separate disk; if that is the Orb installer (the disk image Orb was dragged from), it is read-only."
+    } else {
+        ""
+    };
+    format!(
+        "Orb can't use the {label} folder {} ({err}).{disk} Choose a folder in your home folder, such as Documents.",
+        dir.display()
+    )
+}
+
+/// What the runtime is about to create, checked first so a bad folder is
+/// reported by name instead of as a crash. The vault is only asked for its
+/// attachments folder (as the backend does): no probe file lands in a synced vault.
+pub fn check_saved_folders(app: &AppHandle) -> Result<(), String> {
+    let paths = read_paths(app);
+    let get = |key: &str| paths.get(key).and_then(|v| v.as_str()).map(PathBuf::from);
+    usable_dir("data", &data_dir(app), true)?;
+    if let Some(models) = get("models_dir") {
+        usable_dir("models", &models, false)?;
+    }
+    if let Some(vault) = get("default_vault_path") {
+        fs::create_dir_all(vault.join("attachments")).map_err(|e| unusable("notes vault", &vault, &e))?;
+    }
+    Ok(())
 }
 
 pub fn data_dir(app: &AppHandle) -> PathBuf {
@@ -254,6 +305,10 @@ pub fn boot(app: AppHandle) {
         let _ = window.show(); // the bundled page shows the setup form
         return;
     }
+    if let Err(problem) = check_saved_folders(&app) {
+        fail(&app, &problem);
+        return;
+    }
     start(app);
 }
 
@@ -348,13 +403,33 @@ fn fail(app: &AppHandle, message: &str) {
     let detail = format!("{message}\n\nLog: {}\n\n{tail}", log.display());
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
-        use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
-        app2.dialog()
+        use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
+        const CHANGE: &str = "Change folders…";
+        let choice = app2
+            .dialog()
             .message(detail)
             .title("Orb failed to start")
             .kind(MessageDialogKind::Error)
-            .blocking_show();
+            .buttons(MessageDialogButtons::OkCancelCustom(CHANGE.into(), "Close".into()))
+            .blocking_show_with_result();
+        if matches!(&choice, MessageDialogResult::Ok)
+            || matches!(&choice, MessageDialogResult::Custom(label) if label == CHANGE)
+        {
+            open_setup(&app2);
+        }
     });
+}
+
+/// Back to the setup form, filled in with the current folders.
+fn open_setup(app: &AppHandle) {
+    app.state::<Runtime>().setup_requested.store(true, Ordering::SeqCst);
+    let window = ensure_window(app);
+    let page = if cfg!(windows) { "http://tauri.localhost/index.html" } else { "tauri://localhost/index.html" };
+    if let Ok(url) = Url::parse(page) {
+        let _ = window.navigate(url);
+    }
+    let _ = window.show();
+    let _ = window.set_focus();
 }
 
 // ── Window ───────────────────────────────────────────────────────────────────
@@ -426,7 +501,6 @@ fn open_ui(app: &AppHandle) {
     });
 }
 
-/// Dock click with no window: recreate it on the UI (or setup) at once.
 /// Note editing gets WebKit's spelling and grammar underlines by default.
 /// Registered, not written, so unticking "Check Grammar With Spelling" in the
 /// editor's context menu (which WebKit saves under the same keys) still sticks.
@@ -446,10 +520,15 @@ pub fn enable_text_checking() {
     unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
 }
 
+/// Dock click with no window: recreate it on the UI (or setup) at once.
+/// After a failed start there is no UI to show, so the folders are checked
+/// again rather than opening a blank page.
 #[cfg(target_os = "macos")]
 pub fn show_main(app: &AppHandle) {
-    if first_run(app) {
+    if setup_needed(app) {
         let _ = ensure_window(app).show();
+    } else if let Err(problem) = check_saved_folders(app) {
+        fail(app, &problem);
     } else {
         open_ui(app);
     }
@@ -468,6 +547,27 @@ mod tests {
         assert!(!ok("https://www.youtube-nocookie.com/"));
         assert!(!ok("http://www.youtube-nocookie.com/embed/x"));
         assert!(!ok("https://evil.example/embed/x"));
+    }
+
+    #[test]
+    fn a_writable_folder_passes_and_is_left_clean() {
+        let dir = std::env::temp_dir().join(format!("orb-usable-{}", std::process::id()));
+        let nested = dir.join("new/vault");
+        assert!(usable_dir("notes vault", &nested, true).is_ok(), "creates missing folders");
+        assert!(!nested.join(".orb-write-check").exists(), "probe removed");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// A read-only disk mounted under /Volumes, like the Orb installer
+    /// (ORB_TEST_READONLY_VOLUME points at one; skipped otherwise).
+    #[test]
+    fn a_read_only_disk_is_refused_with_the_installer_hint() {
+        let Ok(volume) = std::env::var("ORB_TEST_READONLY_VOLUME") else { return };
+        let err = usable_dir("notes vault", Path::new(&volume), true).unwrap_err();
+        assert!(err.contains("Orb can't use the notes vault folder"), "{err}");
+        assert!(err.contains("Orb installer"), "{err}");
+        let err = usable_dir("notes vault", &Path::new(&volume).join("attachments"), false).unwrap_err();
+        assert!(err.contains("Read-only file system"), "{err}");
     }
 
     #[cfg(target_os = "macos")]
