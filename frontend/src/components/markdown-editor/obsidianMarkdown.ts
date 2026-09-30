@@ -5,7 +5,7 @@ import { Tag, tags } from "@lezer/highlight";
 
 /*
  * Obsidian-flavoured Markdown as parser nodes, layered on top of
- * `markdownLanguage` (CommonMark + GFM). Live preview and Source mode both
+ * `markdownLanguage` (CommonMark + GFM). Live preview and the syntax styling both
  * read these nodes; nothing here touches the DOM.
  */
 

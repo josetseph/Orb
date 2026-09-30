@@ -75,8 +75,6 @@ export interface MarkdownNoteEditorProps {
   placeholder?: string;
   className?: string;
   /** Show formatting toolbar above the editor (default true). */
-  /** "live" renders markdown as you type; "source" shows plain markdown. */
-  viewMode?: "live" | "source";
   /** Per-attachment jobs keyed by raw markdown url (drives embed footers). */
   attachmentJobs?: Record<string, AttachmentJob>;
   /** Start "process this item only" for one attachment (force = redo). */
@@ -237,7 +235,6 @@ const MarkdownNoteEditor = forwardRef<
     notes = [],
     placeholder = "Start writing...",
     className,
-    viewMode = "live",
     attachmentJobs,
     onProcessAttachment,
     onCancelAttachment,
@@ -247,7 +244,6 @@ const MarkdownNoteEditor = forwardRef<
 ) {
   const cmRef = useRef<ReactCodeMirrorRef>(null);
   const entityDecorationsCompartment = useRef(new Compartment()).current;
-  const liveCompartment = useRef(new Compartment()).current;
   const mediaCompartment = useRef(new Compartment()).current;
   const onProcessRef = useRef(onProcessAttachment);
   onProcessRef.current = onProcessAttachment;
@@ -279,20 +275,16 @@ const MarkdownNoteEditor = forwardRef<
   // Keep autocomplete and embeds in sync without rebuilding the extension set.
   const notesRef = useRef(notes);
   notesRef.current = notes;
-  // Source shows the markup; it is not "strip everything". Media players and
-  // the collapsed extraction blocks stay in both modes — only the syntax
-  // hiding is what Source turns off.
-  const liveExtensions = useCallback(
-    (mode: "live" | "source") => [
-      ...(mode === "live"
-        ? [createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler, getNotes: () => notesRef.current, noteId })]
-        : []),
+  // Always live: the line being edited shows its Markdown, the rest renders.
+  const liveExtensions = useMemo(
+    () => [
+      createLivePreviewHideMarks(kb, { onOpenFile: openFileHandler, getNotes: () => notesRef.current, noteId }),
       createExtractMarkerDecorations(),
     ],
     [kb, openFileHandler, noteId],
   );
   const mediaExtension = useCallback(
-    (_mode: "live" | "source", jobs?: Record<string, AttachmentJob>) =>
+    (jobs?: Record<string, AttachmentJob>) =>
       createMediaEmbedDecorations(kb, { jobs, onProcess: processHandler, onCancel: cancelHandler }),
     [kb, processHandler, cancelHandler],
   );
@@ -408,18 +400,13 @@ const MarkdownNoteEditor = forwardRef<
     });
   }, [scannedEntities, entityDecorationsCompartment]);
 
-  // Live / source and attachment-job changes reconfigure their compartments
-  // instead of rebuilding the whole extension set (which resets the view).
+  // Attachment-job changes reconfigure the media compartment instead of
+  // rebuilding the whole extension set (which resets the view).
   useEffect(() => {
     const v = cmRef.current?.view;
     if (!v) return;
-    v.dispatch({
-      effects: [
-        liveCompartment.reconfigure(liveExtensions(viewMode)),
-        mediaCompartment.reconfigure(mediaExtension(viewMode, attachmentJobs)),
-      ],
-    });
-  }, [viewMode, attachmentJobs, liveCompartment, mediaCompartment, liveExtensions, mediaExtension]);
+    v.dispatch({ effects: mediaCompartment.reconfigure(mediaExtension(attachmentJobs)) });
+  }, [attachmentJobs, mediaCompartment, mediaExtension]);
 
   const extensions = useMemo(
     () => [
@@ -433,10 +420,10 @@ const MarkdownNoteEditor = forwardRef<
       EditorState.allowMultipleSelections.of(true),
       markdown({ base: markdownLanguage, extensions: obsidianMarkdown }),
       ...liveMarkdownExtensions,
-      liveCompartment.of(liveExtensions(viewMode)),
+      ...liveExtensions,
       cmPlaceholder(placeholder),
       createWikilinkDecorations(),
-      mediaCompartment.of(mediaExtension(viewMode, attachmentJobs)),
+      mediaCompartment.of(mediaExtension(attachmentJobs)),
       // One .of() per compartment: a second registration of the same
       // Compartment is not resolvable, and this one seeded it empty.
       entityDecorationsCompartment.of(
@@ -510,7 +497,7 @@ const MarkdownNoteEditor = forwardRef<
         ...searchKeymap,
       ]),
     ],
-    // scannedEntities / viewMode / attachmentJobs initial; updates via compartment.reconfigure
+    // scannedEntities / attachmentJobs initial; updates via compartment.reconfigure
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [
       kb,
@@ -520,7 +507,6 @@ const MarkdownNoteEditor = forwardRef<
       hasWikilinkHover,
       hasWikilinkLeave,
       entityDecorationsCompartment,
-      liveCompartment,
       mediaCompartment,
       liveExtensions,
       mediaExtension,

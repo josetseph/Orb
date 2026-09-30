@@ -366,7 +366,7 @@ export const revealSelection = StateField.define<readonly { from: number; to: nu
 
 export function touchesActive(state: EditorState, from: number, to: number): boolean {
   // Inclusive on both ends: a cursor at the edge of `**bold**` is editing it.
-  // Source mode has no reveal field; the live selection stands in.
+  // Without the reveal field (not installed yet), the live selection stands in.
   const ranges = state.field(revealSelection, false) ?? state.selection.ranges;
   return ranges.some((r) => r.to >= from && r.from <= to);
 }

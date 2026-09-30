@@ -2,8 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import {
   Calendar,
   Check,
-  Code,
-  Eye,
   FolderOpen,
   Loader2,
   Mic,
@@ -24,7 +22,6 @@ import { revealInFolder, revealInFolderLabel } from "@/lib/desktop";
 import type { Note } from "@/lib/types";
 import { getProcessingStage, isActiveProcessingNote } from "../_lib/processing-status";
 
-export type ViewMode = "live" | "source";
 
 type NoteEditorHeaderProps = {
   selectedNote: Note;
@@ -33,8 +30,6 @@ type NoteEditorHeaderProps = {
   isUploading: boolean;
   isRecording: boolean;
   showConnectedPanel: boolean;
-  viewMode: ViewMode;
-  onViewModeChange: (mode: ViewMode) => void;
   onIngest: () => void;
   onCancelIngest: () => void;
   onAttachFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -61,8 +56,6 @@ export function NoteEditorHeader({
   isUploading,
   isRecording,
   showConnectedPanel,
-  viewMode,
-  onViewModeChange,
   onIngest,
   onCancelIngest,
   onAttachFile,
@@ -135,25 +128,6 @@ export function NoteEditorHeader({
         {isSaving ? "Saving…" : isUploading ? "Uploading…" : "Saved"}
       </span>
 
-      <div
-        className="seg mr-1"
-        title="Live: Markdown renders as you type. Source: plain Markdown. ⌘/ toggles"
-      >
-        <button
-          type="button"
-          onClick={() => onViewModeChange("live")}
-          className={cn("seg-opt", viewMode === "live" && "seg-opt-active")}
-        >
-          <Eye className="h-3.5 w-3.5" /> Live
-        </button>
-        <button
-          type="button"
-          onClick={() => onViewModeChange("source")}
-          className={cn("seg-opt", viewMode === "source" && "seg-opt-active")}
-        >
-          <Code className="h-3.5 w-3.5" /> Source
-        </button>
-      </div>
 
       <input
         ref={fileRef}

@@ -23,7 +23,7 @@ import { useNotesPageController } from "./_hooks/useNotesPageController";
 import { parseNoteAttachments } from "./_lib/parse-note-attachments";
 import { isActiveProcessingNote } from "./_lib/processing-status";
 import { NotesSidebar } from "./_components/NotesSidebar";
-import { NoteEditorHeader, type ViewMode } from "./_components/NoteEditorHeader";
+import { NoteEditorHeader } from "./_components/NoteEditorHeader";
 import { NotesEmptyState } from "./_components/NotesEmptyState";
 import { noteStatus } from "./_components/NoteStatusBadge";
 import { DatePickerModal } from "./_components/DatePickerModal";
@@ -67,7 +67,6 @@ export default function NotesPage() {
     handleDeleteVaultAttachment,
     handleDeleteVaultFolder,
   } = useNotesPageController();
-  const [viewMode, setViewMode] = useState<ViewMode>("live");
   type CtxMenu =
     | { kind: "note"; note: Note; x: number; y: number }
     | { kind: "folder"; path: string; x: number; y: number };
@@ -187,16 +186,13 @@ export default function NotesPage() {
     }
   };
 
-  // ⌘N new note, ⌘/ Live↔Source. ?new=1 comes from the command palette.
+  // ⌘N new note. ?new=1 comes from the command palette.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
       if (e.key.toLowerCase() === "n") {
         e.preventDefault();
         void handleCreateNote();
-      } else if (e.key === "/") {
-        e.preventDefault();
-        setViewMode((m) => (m === "live" ? "source" : "live"));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -277,8 +273,6 @@ export default function NotesPage() {
               isUploading={media.isUploading}
               isRecording={media.isRecording}
               showConnectedPanel={showConnectedPanel}
-              viewMode={viewMode}
-              onViewModeChange={setViewMode}
               onIngest={ingest.handleIngestNote}
               onCancelIngest={ingest.handleCancelIngest}
               onAttachFile={media.handleFileAttach}
@@ -415,7 +409,6 @@ export default function NotesPage() {
                     attachDisabled={media.isUploading}
                     kb={currentKB}
                     notes={list.notes}
-                    viewMode={viewMode}
                     attachmentJobs={attachments.jobs}
                     onProcessAttachment={attachments.start}
                     onCancelAttachment={attachments.cancel}

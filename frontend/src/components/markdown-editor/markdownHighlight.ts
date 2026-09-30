@@ -52,7 +52,7 @@ const markdownHighlightStyle = HighlightStyle.define([
   { tag: tags.bool, color: ACCENT300 },
   { tag: tags.labelName, color: ACCENT300 },
   { tag: tags.string, color: N300 },
-  /* Obsidian syntax (obsidianMarkdown.ts) — styled here so Source mode has it too */
+  /* Obsidian syntax (obsidianMarkdown.ts) — styled here for the line being edited */
   { tag: obsidianTags.highlight, color: TEXT, backgroundColor: HIGHLIGHT_BG, borderRadius: "3px", padding: "1px 2px" },
   { tag: obsidianTags.math, color: ACCENT200, fontFamily: MONO, fontSize: "0.9em" },
   // TODO: clicking a tag does nothing yet (search by tag when that exists).
