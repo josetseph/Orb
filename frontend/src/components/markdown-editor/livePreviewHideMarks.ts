@@ -579,7 +579,7 @@ const inlinePlugin = ViewPlugin.fromClass(
       if (
         update.docChanged ||
         update.viewportChanged ||
-        update.state.field(revealSelection) !== update.startState.field(revealSelection) ||
+        update.state.field(revealSelection) !== update.startState.field(revealSelection, false) ||
         syntaxTree(update.state) !== syntaxTree(update.startState)
       ) {
         this.decorations = buildInline(update.view);
@@ -712,7 +712,9 @@ const blockField = (kb: string, options: LivePreviewOptions) =>
       // The parser runs async, so the Table node may not exist yet when the
       // field is created; rebuild once the tree advances.
       const treeChanged = syntaxTree(tr.state) !== syntaxTree(tr.startState);
-      const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection);
+      // `false`: switching Source → Live adds this field, so the state being
+      // left does not have it yet (reading it strictly threw and blanked the page).
+      const revealChanged = tr.state.field(revealSelection) !== tr.startState.field(revealSelection, false);
       return tr.docChanged || revealChanged || treeChanged
         ? buildBlocks(tr.state, kb, options)
         : value;
