@@ -1,0 +1,648 @@
+{
+  "timestamp": "2026-09-28T21:37:47.557443",
+  "dataset": "hotpotqa",
+  "num_tests": 1,
+  "metrics": {
+    "total_tests": 1,
+    "valid_tests": 1,
+    "error_count": 0,
+    "answer_exact_match": 1.0,
+    "answer_f1": 1.0,
+    "answer_fuzzy_match": 1.0,
+    "answer_contains_expected": 1.0,
+    "retrieval_precision": 0.3333333333333333,
+    "retrieval_recall": 1.0,
+    "retrieval_f1": 0.5,
+    "avg_response_time_ms": 168158.59497594647
+  },
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-8b-q4",
+      "reranker_id": "qwen3-rerank-8b-q4",
+      "embedding_dims": 4096,
+      "chat_path": "gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "embed_path": "gguf/Qwen3-Embedding-8B-Q4_K_M.gguf",
+      "reranker_path": "gguf/Qwen3-Reranker-8B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "EXTRACTION_MODE": "auto",
+      "JSON_CONSTRAINED_DECODING": true,
+      "LLAMA_FLASH_ATTN": true,
+      "EXTRACTION_ATTEMPTS": 1,
+      "CHAT_MAX_CONTEXT_DOCS": 6,
+      "EMBED_MODEL_ID": null,
+      "RERANK_MODEL_ID": null,
+      "LLAMA_N_CTX": 16384,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-8b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-8b-q4"
+    }
+  },
+  "note_titles": {
+    "c99bd61e-d7ab-4f07-abb7-aa3f3cc74f79": "Doctor Strange (2016 Film) Production Details",
+    "21a48855-fd65-433f-843d-f30edf9ca7df": "Untitled 9",
+    "7dd72aec-dd62-4e7f-9b24-4fc57e7b237d": "Information about the film Sinister",
+    "55245bf0-e102-4449-97ab-cae56e3247de": "Adam Collis's Career and Education",
+    "182b0d5c-058d-40e1-a823-2aaa50262056": "Deliver Us from Evil Film Production Details",
+    "dc0dd505-662b-4557-b867-14102805d210": "Biography of Ed Wood",
+    "eb705964-43eb-4068-a321-b2de7a92c247": "Tyler Bates' Career as a Musician and Composer",
+    "37f6b89a-e1a9-4213-9555-f2c8f5fe42df": "Geographical and Historical Context of Woodson, Arkansas",
+    "9e2d3a49-53df-420c-a5e4-c65349d4684e": "Scott Derrickson's Career and Biography",
+    "0c0c9f69-f7d0-4ede-b350-3fb960f6a440": "Ed Wood Film Details"
+  },
+  "results": [
+    {
+      "test_id": "5a8b57f25542995d1e6f1371",
+      "question": "Were Scott Derrickson and Ed Wood of the same nationality?",
+      "expected_answer": "yes",
+      "actual_answer": "YES",
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0,
+      "retrieved_note_titles": [
+        "Scott Derrickson's Career and Biography",
+        "Tyler Bates' Career as a Musician and Composer",
+        "Deliver Us from Evil Film Production Details",
+        "Biography of Ed Wood",
+        "Ed Wood Film Details",
+        "Geographical and Historical Context of Woodson, Arkansas"
+      ],
+      "retrieval_precision": 0.3333333333333333,
+      "retrieval_recall": 1.0,
+      "total_time_ms": 168158.59497594647,
+      "error": null,
+      "context": [
+        {
+          "name": "scott derrickson",
+          "text": "scott derrickson is a person. Scott Derrickson is a director with whom Tyler Bates has collaborated. - 2026-09-28T21:14:17.365930 Scott Derrickson was born on July 16, 1966. He is an American director, screenwriter, and producer. He resides in Los Angeles, California. He is recognized for directing horror films such as Sinister, The Exorcism of Emily Rose, and Deliver Us From Evil, and also directed the 2016 Marvel Cinematic Universe installment, Doctor Strange. - 2026-09-28T21:08:59.830164 Scott Derrickson directed the film Sinister and also co-wrote it with C. Robert Cargill. - 2026-09-28T21:26:17.813929 Scott Derrickson directed the film Deliver Us from Evil. - 2026-09-28T21:19:59.987705 Scott Derrickson is the individual whose short \"Love in the Ruins\" was worked on by Adam Collis, where he served as assistant director. - 2026-09-28T21:22:41.214211 Scott Derrickson directed the film Doctor Strange (2016 film) and co-wrote it with Jon Spaihts and C. Robert Cargill. Scott Derrickson directed the film Doctor Strange (2016 film) and co-wrote it with Jon Spaihts and C. Robert Cargill. - 2026-09-28T21:30:29.828026 Scott Derrickson is a director with whom Tyler Bates has collaborated. - 2026-09-28T21:14:17.365930 Scott Derrickson was born on July 16, 1966. He is an American director, screenwriter, and producer. He resides in Los Angeles, California. He is recognized for directing horror films such as Sinister, The Exorcism of Emily Rose, and Deliver Us From Evil, and also directed the 2016 Marvel Cinematic Universe installment, Doctor Strange. - 2026-09-28T21:08:59.830164 Scott Derrickson directed the film Sinister and also co-wrote it with C. Robert Cargill. - 2026-09-28T21:26:17.813929 Scott Derrickson directed the film Deliver Us from Evil. - 2026-09-28T21:19:59.987705 Scott Derrickson is the individual whose short \"Love in the Ruins\" was worked on by Adam Collis, where he served as assistant director. - 2026-09-28T21:22:41.214211 Scott Derrickson directed the film Doctor Strange (2016 film) and co-wrote it with Jon Spaihts and C. Robert Cargill."
+        },
+        {
+          "name": "edward davis wood jr.",
+          "text": "edward davis wood jr. is a person. Edward Davis Wood Jr. was an American filmmaker, actor, writer, producer, and director. His lifespan spanned from October 10, 1924 to December 10, 1978. Edward Davis Wood Jr. was an American filmmaker, actor, writer, producer, and director. His lifespan spanned from October 10, 1924 to December 10, 1978. - 2026-09-28T21:18:49.361928"
+        },
+        {
+          "name": "american",
+          "text": "american is a concept. American describes the origin or nature of the film Deliver Us from Evil. - 2026-09-28T21:19:59.987705 Edward Davis Wood Jr. was an American individual. - 2026-09-28T21:18:49.361928 Scott Derrickson is identified as American. - 2026-09-28T21:08:59.830164 Tyler Bates is identified as an American individual. - 2026-09-28T21:14:17.365930 Adam Collis is identified as being American."
+        },
+        {
+          "name": "ed wood",
+          "text": "ed wood is a person. Ed Wood is the subject of the film, and Johnny Depp plays him. The film concerns a period in his life when he made his best-known films and his relationship with Bela Lugosi. Ed Wood is the subject of the film, and Johnny Depp plays him. The film concerns a period in his life when he made his best-known films and his relationship with Bela Lugosi. - 2026-09-28T21:06:28.548570 Ed Wood is the subject of the film, and Johnny Depp plays him. The film concerns a period in his life when he made his best-known films and his relationship with Bela Lugosi."
+        },
+        {
+          "name": "ed wood (film)",
+          "text": "ed wood (film) is a work. Ed Wood (film) is a 1994 American biographical period comedy-drama film. It was directed and produced by Tim Burton, and it stars Johnny Depp as cult filmmaker Ed Wood. Ed Wood (film) is a 1994 American biographical period comedy-drama film. It was directed and produced by Tim Burton, and it stars Johnny Depp as cult filmmaker Ed Wood. - 2026-09-28T21:06:28.548570 Ed Wood (film) is a 1994 American biographical period comedy-drama film. It was directed and produced by Tim Burton, and it stars Johnny Depp as cult filmmaker Ed Wood."
+        },
+        {
+          "name": "ed wood sr.",
+          "text": "ed wood sr. is a person. Ed Wood Sr. was a prominent plantation owner, trader, and businessman active at the turn of the 20th century. His name is the namesake for Woodson, Woodson Lake, and Wood Hollow. He owned the Wood Plantation. Ed Wood Sr. was a prominent plantation owner, trader, and businessman active at the turn of the 20th century. His name is the namesake for Woodson, Woodson Lake, and Wood Hollow. He owned the Wood Plantation. - 2026-09-28T21:11:25.964760 Ed Wood Sr. was a prominent plantation owner, trader, and businessman active at the turn of the 20th century. His name is the namesake for Woodson, Woodson Lake, and Wood Hollow. He owned the Wood Plantation."
+        }
+      ],
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 23.45
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 5.03
+        },
+        {
+          "kind": "step",
+          "iteration": 1,
+          "query": null,
+          "docs": [],
+          "llm_seconds": 5.06,
+          "can_answer": false,
+          "answer": null,
+          "next_query": "Scott Derrickson nationality",
+          "finding": null
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 4.24
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Scott Derrickson nationality",
+          "top_n": 10,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "entity_match",
+              "score": 0.993589,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "eb705964-43eb-4068-a321-b2de7a92c247"
+              ]
+            },
+            {
+              "name": "american",
+              "type": "entity_match",
+              "score": 0.951395,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "eb705964-43eb-4068-a321-b2de7a92c247"
+              ]
+            },
+            {
+              "name": "doctor strange (2016 film)",
+              "type": "entity_match",
+              "score": 0.580025,
+              "notes": [
+                "c99bd61e-d7ab-4f07-abb7-aa3f3cc74f79"
+              ]
+            },
+            {
+              "name": "sinister",
+              "type": "entity_match",
+              "score": 0.23672,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "7dd72aec-dd62-4e7f-9b24-4fc57e7b237d"
+              ]
+            },
+            {
+              "name": "doctor strange",
+              "type": "entity_match",
+              "score": 0.233745,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "marvel cinematic universe",
+              "type": "entity_match",
+              "score": 0.174783,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "the exorcism of emily rose",
+              "type": "entity_match",
+              "score": 0.138864,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "love in the ruins",
+              "type": "entity_match",
+              "score": 0.108878,
+              "notes": [
+                "55245bf0-e102-4449-97ab-cae56e3247de"
+              ]
+            },
+            {
+              "name": "zack snyder",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "eb705964-43eb-4068-a321-b2de7a92c247"
+              ]
+            },
+            {
+              "name": "jerry bruckheimer",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "182b0d5c-058d-40e1-a823-2aaa50262056"
+              ]
+            },
+            {
+              "name": "director",
+              "type": "entity_match",
+              "score": 0.097471,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "scott adkins",
+              "type": "entity_match",
+              "score": 0.095565,
+              "notes": [
+                "c99bd61e-d7ab-4f07-abb7-aa3f3cc74f79"
+              ]
+            },
+            {
+              "name": "c. robert cargill",
+              "type": "entity_match",
+              "score": 0.087662,
+              "notes": [
+                "7dd72aec-dd62-4e7f-9b24-4fc57e7b237d",
+                "c99bd61e-d7ab-4f07-abb7-aa3f3cc74f79"
+              ]
+            },
+            {
+              "name": "tyler bates",
+              "type": "entity_match",
+              "score": 0.083433,
+              "notes": [
+                "eb705964-43eb-4068-a321-b2de7a92c247"
+              ]
+            },
+            {
+              "name": "july 16, 1966",
+              "type": "entity_match",
+              "score": 0.08251,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "deliver us from evil",
+              "type": "entity_match",
+              "score": 0.07388,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "182b0d5c-058d-40e1-a823-2aaa50262056"
+              ]
+            },
+            {
+              "name": "producer",
+              "type": "entity_match",
+              "score": 0.073216,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "los angeles",
+              "type": "entity_match",
+              "score": 0.063173,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "california",
+              "type": "entity_match",
+              "score": 0.05795,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "jon spaihts",
+              "type": "entity_match",
+              "score": 0.045878,
+              "notes": [
+                "c99bd61e-d7ab-4f07-abb7-aa3f3cc74f79"
+              ]
+            },
+            {
+              "name": "screenwriter",
+              "type": "entity_match",
+              "score": 0.041438,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e"
+              ]
+            },
+            {
+              "name": "1995",
+              "type": "entity_match",
+              "score": 0.015882,
+              "notes": [
+                "55245bf0-e102-4449-97ab-cae56e3247de"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Scott Derrickson nationality",
+          "top_n": 10,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "american",
+              "type": "graph_expansion",
+              "score": 0.979324,
+              "notes": []
+            },
+            {
+              "name": "scott derrickson",
+              "type": "graph_expansion",
+              "score": 0.973657,
+              "notes": [
+                "eb705964-43eb-4068-a321-b2de7a92c247",
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "182b0d5c-058d-40e1-a823-2aaa50262056",
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "dc0dd505-662b-4557-b867-14102805d210",
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 26.44
+        },
+        {
+          "kind": "step",
+          "iteration": 2,
+          "query": "Scott Derrickson nationality",
+          "docs": [
+            "scott derrickson",
+            "american",
+            "doctor strange (2016 film)",
+            "sinister",
+            "doctor strange",
+            "marvel cinematic universe",
+            "the exorcism of emily rose",
+            "love in the ruins",
+            "zack snyder",
+            "jerry bruckheimer",
+            "american",
+            "scott derrickson"
+          ],
+          "llm_seconds": 26.46,
+          "can_answer": false,
+          "answer": null,
+          "next_query": "Ed Wood nationality",
+          "finding": "Scott Derrickson is identified as American. Edward Davis Wood Jr. was an American individual."
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 4.18
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Ed Wood nationality",
+          "top_n": 10,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "edward davis wood jr.",
+              "type": "vector_match",
+              "score": 0.98044,
+              "notes": [
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "ed wood",
+              "type": "entity_match",
+              "score": 0.831967,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "american",
+              "type": "vector_match",
+              "score": 0.831143,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "eb705964-43eb-4068-a321-b2de7a92c247"
+              ]
+            },
+            {
+              "name": "ed wood (film)",
+              "type": "entity_match",
+              "score": 0.78504,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "ed wood sr.",
+              "type": "entity_match",
+              "score": 0.764779,
+              "notes": [
+                "37f6b89a-e1a9-4213-9555-f2c8f5fe42df"
+              ]
+            },
+            {
+              "name": "johnny depp",
+              "type": "entity_match",
+              "score": 0.337866,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "actor",
+              "type": "vector_match",
+              "score": 0.20051,
+              "notes": [
+                "dc0dd505-662b-4557-b867-14102805d210",
+                "55245bf0-e102-4449-97ab-cae56e3247de"
+              ]
+            },
+            {
+              "name": "december 10, 1978",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "tim burton",
+              "type": "entity_match",
+              "score": 0.097627,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "bela lugosi",
+              "type": "entity_match",
+              "score": 0.07769,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "director",
+              "type": "vector_match",
+              "score": 0.066663,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "writer",
+              "type": "vector_match",
+              "score": 0.046247,
+              "notes": [
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "wood plantation",
+              "type": "entity_match",
+              "score": 0.037016,
+              "notes": [
+                "37f6b89a-e1a9-4213-9555-f2c8f5fe42df"
+              ]
+            },
+            {
+              "name": "producer",
+              "type": "vector_match",
+              "score": 0.034286,
+              "notes": [
+                "9e2d3a49-53df-420c-a5e4-c65349d4684e",
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "october 10, 1924",
+              "type": "vector_match",
+              "score": 0.033142,
+              "notes": [
+                "dc0dd505-662b-4557-b867-14102805d210"
+              ]
+            },
+            {
+              "name": "bill murray",
+              "type": "entity_match",
+              "score": 0.030172,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "lisa marie",
+              "type": "entity_match",
+              "score": 0.027998,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "filmmaker",
+              "type": "vector_match",
+              "score": 0.027429,
+              "notes": [
+                "dc0dd505-662b-4557-b867-14102805d210",
+                "55245bf0-e102-4449-97ab-cae56e3247de"
+              ]
+            },
+            {
+              "name": "patricia arquette",
+              "type": "entity_match",
+              "score": 0.021362,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            },
+            {
+              "name": "sarah jessica parker",
+              "type": "entity_match",
+              "score": 0.019878,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Ed Wood nationality",
+          "top_n": 10,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "edward davis wood jr.",
+              "type": "graph_expansion",
+              "score": 0.961418,
+              "notes": []
+            },
+            {
+              "name": "american",
+              "type": "graph_expansion",
+              "score": 0.889296,
+              "notes": []
+            },
+            {
+              "name": "ed wood (film)",
+              "type": "graph_expansion",
+              "score": 0.868426,
+              "notes": [
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440",
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440",
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440",
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440",
+                "0c0c9f69-f7d0-4ede-b350-3fb960f6a440"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 22.23
+        },
+        {
+          "kind": "step",
+          "iteration": 3,
+          "query": "Ed Wood nationality",
+          "docs": [
+            "edward davis wood jr.",
+            "ed wood",
+            "american",
+            "ed wood (film)",
+            "ed wood sr.",
+            "johnny depp",
+            "actor",
+            "december 10, 1978",
+            "tim burton",
+            "bela lugosi",
+            "edward davis wood jr.",
+            "american",
+            "ed wood (film)"
+          ],
+          "llm_seconds": 22.26,
+          "can_answer": true,
+          "answer": "YES",
+          "next_query": null,
+          "finding": "Scott Derrickson is American. Edward Davis Wood Jr. was an American filmmaker, actor, writer, producer, and director."
+        }
+      ]
+    }
+  ]
+}

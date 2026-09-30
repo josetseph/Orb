@@ -275,6 +275,27 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-09-30, round1-extraction complete: extract with Gemma 4 12B.** Full report: `Results/runpod/round1-extraction/report.md`.
+  E4B answers every question; only the extractor changes. 20 HotpotQA questions, 199 notes.
+
+  | Extractor | Notes ingested | EM | F1 | Recall | Build |
+  |---|---|---|---|---|---|
+  | **Gemma 4 12B** | **195** | **55 %** | **0.767** | **0.875** | 4.2 h |
+  | Gemma 4 E4B (baseline) | 120 | 30 % | 0.429 | 0.550 | 2.3 h |
+  | E4B, two-pass extraction | 96 | 30 % | 0.340 | 0.525 | 1.9 h |
+  | Gemma 4 E2B | 100 | 15 % | 0.322 | 0.500 | 1.7 h |
+  | E4B, JSON-constrained extraction | 72 | 15 % | 0.211 | 0.425 | 8.5 h |
+  | Qwen 3.5 4B | 0 | n/a | n/a | n/a | 8.9 h |
+
+  - The 12B extractor beats the strict baseline on 6 questions and loses 1; F1 +0.34, 95 % CI +0.12 to +0.54; McNemar p = 0.125, so
+    confirm on more questions. It also beats the old patched pipeline (F1 0.704), with no repair of any kind.
+  - Answer quality follows the share of notes a model extracts usably. The small models' failure is relating things they did not list
+    as entities; stating the rule did not fix it, and two-pass extraction made it worse.
+  - The JSON grammar is a loss on every count for extraction: slowest by far and the most rejections. Keep extraction unconstrained
+    with the bare-JSON prompt; keep chat-side replies constrained (short, and unconstrained they come back fenced).
+  - Suggested product setting: 12B for ingestion (runs once per note), a small model for chat (runs every question). Test next.
+  - Cost of the round on the alt account: about $9.50 of $13.66 (including the 9 h spent learning Qwen 3.5 does not work as-is).
+    $3.58 left; pod deleted.
 - **2026-09-29, round1-extraction, first results (RTX 4000 Ada).**
   - E4B, unconstrained extraction: 120 of 199 notes ingested, 79 rejected (relationships to unlisted entities), 2.3 h.
     Evaluated on 20 questions: exact match 30 %, F1 0.429, contains 65 %, retrieval recall 0.550, 95 s a question, no unusable

@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-09-28T21:43:13.620803",
+  "dataset": "hotpotqa",
+  "num_tests": 1,
+  "metrics": {
+    "total_tests": 1,
+    "valid_tests": 1,
+    "error_count": 0,
+    "answer_exact_match": 0.0,
+    "answer_f1": 0.0,
+    "answer_fuzzy_match": 0.0,
+    "answer_contains_expected": 0.0,
+    "retrieval_precision": 0.0,
+    "retrieval_recall": 0.0,
+    "retrieval_f1": 0,
+    "avg_response_time_ms": 12425.61370297335
+  },
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-8b-q4",
+      "reranker_id": "qwen3-rerank-8b-q4",
+      "embedding_dims": 4096,
+      "chat_path": "gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "embed_path": "gguf/Qwen3-Embedding-8B-Q4_K_M.gguf",
+      "reranker_path": "gguf/Qwen3-Reranker-8B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "EXTRACTION_MODE": "auto",
+      "JSON_CONSTRAINED_DECODING": false,
+      "LLAMA_FLASH_ATTN": true,
+      "EXTRACTION_ATTEMPTS": 1,
+      "CHAT_MAX_CONTEXT_DOCS": 6,
+      "EMBED_MODEL_ID": null,
+      "RERANK_MODEL_ID": null,
+      "LLAMA_N_CTX": 16384,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-8b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-8b-q4"
+    }
+  },
+  "note_titles": {
+    "1cdcde67-a909-4874-b4a0-7a1f2500df1b": "Untitled 3",
+    "e6fb6ef0-b1a3-4c76-b3be-4722b495046e": "Untitled 2",
+    "f8b156f1-49ad-4662-9f01-ada82dcb1717": "Untitled"
+  },
+  "results": [
+    {
+      "test_id": "5a8b57f25542995d1e6f1371",
+      "question": "Were Scott Derrickson and Ed Wood of the same nationality?",
+      "expected_answer": "yes",
+      "actual_answer": "I couldn't find any relevant information in the knowledge base to answer that.",
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0,
+      "retrieved_note_titles": [],
+      "retrieval_precision": 0.0,
+      "retrieval_recall": 0.0,
+      "total_time_ms": 12425.61370297335,
+      "error": null,
+      "context": [],
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 10.15
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": false,
+          "seconds": 2.07
+        },
+        {
+          "kind": "invalid_output",
+          "stage": "research step",
+          "model": "gemma4-e4b-q4",
+          "reason": "reply: Invalid JSON: expected value at line 1 column 1 (1 problem(s))"
+        },
+        {
+          "kind": "step",
+          "iteration": 1,
+          "query": null,
+          "docs": [],
+          "llm_seconds": 2.11,
+          "can_answer": false,
+          "answer": null,
+          "next_query": null,
+          "finding": ""
+        }
+      ]
+    }
+  ]
+}
