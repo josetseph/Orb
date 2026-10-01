@@ -29,6 +29,9 @@ import hashlib
 import itertools
 import json
 import math
+import queue
+import threading
+from concurrent.futures import ThreadPoolExecutor
 import signal
 import subprocess
 import sys
@@ -116,44 +119,133 @@ def survivors(scored: list[tuple[str, float | None]], keep: float) -> list[str]:
 
 
 _planned: set[str] = set()
+_lanes: "queue.Queue[int]" = queue.Queue()
+_index_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+_stop = threading.Event()
 
 
-def experiment(name: str, args: list[str], proof: Path, plan: bool) -> None:
+def experiment(name: str, args: list[str], proof: Path, plan: bool, lane: int = 0) -> None:
     if name in _planned:
         return  # already listed in this dry run
     if proof.exists():
-        print(f"== skip {name} (done)")
+        print(f"== skip {name} (done)", flush=True)
         return
-    cmd = [sys.executable, "tests/benchmark/experiment.py", name, *args]
-    print("== " + ("would run" if plan else "run") + f" {name}: {' '.join(args)}", flush=True)
+    if _stop.is_set():
+        return
+    print("== " + ("would run" if plan else f"run [lane {lane}]") + f" {name}: {' '.join(args)}", flush=True)
     if plan:
         _planned.add(name)
         return
-    code = subprocess.run(cmd, cwd=BACKEND, check=False).returncode
+    code = subprocess.run([sys.executable, "tests/benchmark/experiment.py", name, "--lane", str(lane), *args],
+                          cwd=BACKEND, check=False).returncode
     if code >= 128 or code < 0:
+        _stop.set()
         raise SystemExit(f"== {name} was interrupted; stopping the sweep")
 
 
-def ensure_index(variant: dict, spec: dict, plan: bool) -> str:
+def index_run(name: str) -> str:
+    """Index builds live in one place, so any spec that needs the same index reuses it."""
+    return f"_indexes/{name}"
+
+
+def ensure_index(variant: dict, spec: dict, plan: bool, lane: int = 0) -> str:
     name = index_name(variant["levers"], spec)
     start = spec["dev"][0]
     end = max(spec["dev"][1], spec.get("holdout", spec["dev"])[1])
-    experiment(
-        f"{spec['name']}/_index/{name}",
-        ["--dataset", spec["dataset"], "--offset", str(start), "--questions", str(end - start), "--fresh", "--ingest",
-         "--no-eval", "--download", "--snapshot", name, *lever_args(variant["levers"], stages=INDEX_STAGES)],
-        REPO / "snapshots" / name, plan,
-    )
+    with _locks_guard:
+        lock = _index_locks.setdefault(name, threading.Lock())
+    with lock:  # two lanes never build the same index; the second waits and then finds the snapshot
+        experiment(
+            index_run(name),
+            ["--dataset", spec["dataset"], "--offset", str(start), "--questions", str(end - start), "--fresh", "--ingest",
+             "--no-eval", "--download", "--snapshot", name, *lever_args(variant["levers"], stages=INDEX_STAGES)],
+            REPO / "snapshots" / name, plan, lane,
+        )
     return name
 
 
-def evaluate(variant: dict, spec: dict, label: str, offset: int, questions: int, plan: bool) -> Path:
+def evaluate(variant: dict, spec: dict, label: str, offset: int, questions: int, plan: bool, lane: int = 0) -> Path:
     run_name = f"{spec['name']}/{variant['name']}/{label}"
     args = ["--dataset", spec["dataset"], "--offset", str(offset), "--questions", str(questions),
             "--restore", index_name(variant["levers"], spec), "--download", "--evaluator", spec.get("evaluator", "full"),
             *lever_args({k: v for k, v in variant["levers"].items() if k != "communities"})]
-    experiment(run_name, args, result_file(spec, run_name), plan)
+    experiment(run_name, args, result_file(spec, run_name), plan, lane)
     return result_file(spec, run_name)
+
+
+def on_a_lane(work):
+    """Run ``work(lane)`` on a free lane, holding it until the work is done."""
+    lane = _lanes.get()
+    try:
+        return work(lane)
+    finally:
+        _lanes.put(lane)
+
+
+def run_rung(pool, field, alive, spec, label, offset, n, plan) -> list[tuple[str, Path]]:
+    """Every variant of one rung. Variants sharing an index run one after another on one lane; groups run side by side."""
+    groups: dict[str, list[dict]] = {}
+    for variant in field:
+        if variant["name"] in alive:
+            groups.setdefault(index_name(variant["levers"], spec), []).append(variant)
+
+    def group(members):
+        def work(lane):
+            ensure_index(members[0], spec, plan, lane)
+            return [(v["name"], evaluate(v, spec, label, offset, n, plan, lane)) for v in members]
+        return work
+
+    if plan:
+        results = [group(members)(0) for members in groups.values()]
+    else:
+        results = [f.result() for f in [pool.submit(on_a_lane, group(m)) for m in groups.values()]]
+    by_name = dict(row for rows in results for row in rows)
+    return [(v["name"], by_name[v["name"]]) for v in field if v["name"] in by_name]
+
+
+def run_spec(spec: dict, pool, plan: bool) -> None:
+    metric = spec.get("metric", "candidate_recall" if spec.get("evaluator") == "retrieval" else "answer_f1")
+    spec["metric"] = metric
+    field = variants(spec)
+    start, end = spec["dev"]
+    rungs = [min(r, end - start) for r in spec.get("rungs", [end - start])]
+    print(f"== {spec['name']}: {len(field)} variants, {len({index_name(v['levers'], spec) for v in field})} distinct index(es), rungs {rungs}", flush=True)
+    report = [f"# Sweep {spec['name']}\n", f"Dataset {spec['dataset']}, dev questions {start} to {end}, evaluator {spec.get('evaluator', 'full')}, metric {metric}.",
+              f"Baseline: `{json.dumps(spec['baseline'])}`", f"Varied: `{json.dumps(spec.get('vary', {}))}` ({spec.get('design', 'one-at-a-time')})"]
+    alive = [v["name"] for v in field]
+    for rung in rungs:
+        rows = run_rung(pool, field, alive, spec, f"r{rung}", start, rung, plan)
+        report += table(f"Rung: first {rung} dev questions ({len(rows)} variants)", rows, spec)
+        if rung != rungs[-1]:
+            alive = survivors([(name, score(path, metric)) for name, path in rows], spec.get("keep", 0.5))
+            report.append(f"\nKept for the next rung: {', '.join(alive)}")
+    if spec.get("holdout"):
+        h0, h1 = spec["holdout"]
+        final = survivors([(n, score(result_file(spec, f"{spec['name']}/{n}/r{rungs[-1]}"), metric)) for n in alive], spec.get("keep", 0.5))
+        rows = run_rung(pool, field, final, spec, "holdout", h0, h1 - h0, plan)
+        report += table(f"Held-out questions {h0} to {h1} (never used to choose)", rows, spec)
+    if not plan:
+        out = REPO / "Results" / spec["name"] / "report.md"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text("\n".join(report) + "\n")
+        print(f"== report: {out}", flush=True)
+
+
+def prefetch(specs: list[dict], plan: bool) -> None:
+    """Download every model the specs need once, before lanes start: lanes downloading the same file at once corrupt it."""
+    combos: dict[tuple, set[str]] = {}
+    for spec in specs:
+        for variant in variants(spec):
+            levers = variant["levers"]
+            key = (levers.get("EMBED_MODEL_ID"), levers.get("RERANK_MODEL_ID"))
+            combos.setdefault(key, set()).update(m for m in (levers.get("chat_model"), levers.get("ingestion_model")) if m)
+    for (embed, rerank), models in combos.items():
+        sets = [a for k, v in (("EMBED_MODEL_ID", embed), ("RERANK_MODEL_ID", rerank)) if v for a in ("--set", f"{k}={v}")]
+        print(f"== prefetch {sorted(models)} with {sets or 'default embed/reranker'}", flush=True)
+        if not plan:
+            subprocess.run([sys.executable, "tests/benchmark/experiment.py", "_prefetch", "--prefetch", *sorted(models), *sets],
+                           cwd=BACKEND, check=True)
 
 
 def paired(base: Path, other: Path, metric: str) -> str:
@@ -186,7 +278,7 @@ def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
         em = f"{sum(bool(r.get('exact_match')) for r in res) / n:.0%}" if "exact_match" in res[0] else "n/a"
         versus = paired(base_path, path, metric) if base_path and base_path.is_file() and name != "base" else ""
         levers = next(v["levers"] for v in variants(spec) if v["name"] == name)
-        idx = REPO / "Results" / spec["name"] / "_index" / index_name(levers, spec) / "config.json"
+        idx = REPO / "Results" / index_run(index_name(levers, spec)) / "config.json"
         built = json.loads(idx.read_text()) if idx.is_file() else {}
         notes = built.get("notes") or {}
         build = f"{built.get('ingest_seconds', '')} ({notes.get('ingested', '?')}/{notes.get('total', '?')} notes)" if built else ""
@@ -205,42 +297,35 @@ def stop_on_signal() -> None:
         signal.signal(sig, interrupt)
 
 
+def load(path: str) -> tuple[list[dict], int]:
+    """A spec, or a bundle {"lanes": N, "specs": [paths]} that runs several specs side by side."""
+    raw = json.loads(Path(path).read_text())
+    if "specs" in raw:
+        return [json.loads((Path(path).parent / p).read_text()) for p in raw["specs"]], int(raw.get("lanes", 1))
+    return [raw], 1
+
+
 def main() -> None:
     stop_on_signal()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("spec")
+    ap.add_argument("spec", help="a sweep spec, or a bundle of specs")
     ap.add_argument("--plan", action="store_true", help="print what would run and stop")
+    ap.add_argument("--lanes", type=int, help="experiments at once on this machine (overrides the bundle)")
     args = ap.parse_args()
-    spec = json.loads(Path(args.spec).read_text())
-    metric = spec.get("metric", "candidate_recall" if spec.get("evaluator") == "retrieval" else "answer_f1")
-    spec["metric"] = metric
-    field = variants(spec)
-    start, end = spec["dev"]
-    rungs = [min(r, end - start) for r in spec.get("rungs", [end - start])]
-    print(f"== {spec['name']}: {len(field)} variants, {len({index_name(v['levers'], spec) for v in field})} distinct index(es), rungs {rungs}")
-
-    report = [f"# Sweep {spec['name']}\n", f"Dataset {spec['dataset']}, dev questions {start} to {end}, evaluator {spec.get('evaluator', 'full')}, metric {metric}.",
-              f"Baseline: `{json.dumps(spec['baseline'])}`", f"Varied: `{json.dumps(spec.get('vary', {}))}` ({spec.get('design', 'one-at-a-time')})"]
-    alive = [v["name"] for v in field]
-    for rung in rungs:
-        rows = []
-        for variant in (v for v in field if v["name"] in alive):
-            ensure_index(variant, spec, args.plan)
-            rows.append((variant["name"], evaluate(variant, spec, f"r{rung}", start, rung, args.plan)))
-        report += table(f"Rung: first {rung} dev questions ({len(rows)} variants)", rows, spec)
-        if rung != rungs[-1]:
-            alive = survivors([(name, score(path, metric)) for name, path in rows], spec.get("keep", 0.5))
-            report.append(f"\nKept for the next rung: {', '.join(alive)}")
-    if spec.get("holdout"):
-        h0, h1 = spec["holdout"]
-        final = survivors([(n, score(result_file(spec, f"{spec['name']}/{n}/r{rungs[-1]}"), metric)) for n in alive], spec.get("keep", 0.5))
-        rows = [(v["name"], evaluate(v, spec, "holdout", h0, h1 - h0, args.plan)) for v in field if v["name"] in final]
-        report += table(f"Held-out questions {h0} to {h1} (never used to choose)", rows, spec)
-    if not args.plan:
-        out = REPO / "Results" / spec["name"] / "report.md"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text("\n".join(report) + "\n")
-        print(f"== report: {out}")
+    specs, lanes = load(args.spec)
+    lanes = args.lanes or lanes
+    for lane in range(lanes):
+        _lanes.put(lane)
+    print(f"== {len(specs)} spec(s) on {lanes} lane(s)", flush=True)
+    prefetch(specs, args.plan)
+    with ThreadPoolExecutor(max_workers=lanes) as pool, ThreadPoolExecutor(max_workers=len(specs)) as drivers:
+        futures = [drivers.submit(run_spec, spec, pool, args.plan) for spec in specs]
+        try:
+            for future in futures:
+                future.result()
+        except (KeyboardInterrupt, SystemExit):
+            _stop.set()
+            raise
 
 
 if __name__ == "__main__":

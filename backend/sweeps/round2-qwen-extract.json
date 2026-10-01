@@ -1,5 +1,5 @@
 {
-  "name": "round2-index",
+  "name": "round2-qwen-extract",
   "dataset": "hotpotqa",
   "dev": [
     0,
@@ -10,19 +10,20 @@
     "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
     "EXTRACTION_JSON_CONSTRAINED": false,
     "chat_model": "gemma4-e4b-q4",
-    "ingestion_model": "gemma4-12b-q4"
+    "ingestion_model": "qwen35-4b-q4",
+    "EXTRACTION_PROMPT_SUFFIX": "/no_think"
   },
   "evaluator": "full",
   "metric": "answer_f1",
   "vary": {
-    "EMBED_MODEL_ID": [
-      "qwen3-embed-4b-q4",
-      "qwen3-embed-0.6b-q8"
+    "ingestion_model": [
+      "qwen35-9b-q4",
+      "qwen35-2b-q4"
     ],
-    "communities": [
+    "EXTRACTION_JSON_CONSTRAINED": [
       true
     ]
   },
-  "_note": "Index choices over 12B extraction (replayed from the cache): the Mac's 4B embedder, the small one, community summaries.",
+  "_note": "Qwen 3.5 as the extractor with /no_think; and with the JSON grammar, which forces the reply to start with {.",
   "design": "one-at-a-time"
 }

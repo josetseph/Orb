@@ -1,0 +1,25 @@
+{
+  "name": "round2-scale-musique",
+  "dataset": "musique",
+  "dev": [
+    0,
+    50
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "MAX_LOOP_ITERATIONS": 5
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "vary": {
+    "ingestion_model": [
+      "gemma4-e4b-q4"
+    ]
+  },
+  "_note": "MuSiQue (2-4 hops): 12B against E4B extraction; 5 loop steps so a 4-hop question can finish.",
+  "design": "one-at-a-time"
+}

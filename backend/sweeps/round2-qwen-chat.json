@@ -1,0 +1,29 @@
+{
+  "name": "round2-qwen-chat",
+  "dataset": "hotpotqa",
+  "dev": [
+    0,
+    20
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "qwen35-4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "PROMPT_SUFFIX": "/no_think"
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "vary": {
+    "chat_model": [
+      "qwen35-9b-q4",
+      "qwen35-2b-q4"
+    ],
+    "PROMPT_SUFFIX": [
+      ""
+    ]
+  },
+  "_note": "Qwen 3.5 as the answering model over the 12B index, reasoning switched off with /no_think (and once without, as a check).",
+  "design": "one-at-a-time"
+}

@@ -1,5 +1,5 @@
 {
-  "name": "round2-index",
+  "name": "round2-answer",
   "dataset": "hotpotqa",
   "dev": [
     0,
@@ -15,14 +15,15 @@
   "evaluator": "full",
   "metric": "answer_f1",
   "vary": {
-    "EMBED_MODEL_ID": [
-      "qwen3-embed-4b-q4",
-      "qwen3-embed-0.6b-q8"
+    "chat_model": [
+      "gemma4-12b-q4",
+      "gemma4-e2b-q4"
     ],
-    "communities": [
-      true
+    "MAX_LOOP_ITERATIONS": [
+      5,
+      8
     ]
   },
-  "_note": "Index choices over 12B extraction (replayed from the cache): the Mac's 4B embedder, the small one, community summaries.",
+  "_note": "Answering over the 12B index: which chat model, and does the loop need more room.",
   "design": "one-at-a-time"
 }

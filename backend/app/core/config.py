@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     # The same for ingestion calls (extraction, community summaries), whose replies are long: extraction ran about
     # 4x faster with it off, once the prompts asked for bare JSON (round0-speed and its correction in the notes).
     EXTRACTION_JSON_CONSTRAINED: bool = True
+    # Appended to the last user message of chat-side / ingestion calls; empty = nothing. Qwen 3.x reads "/no_think".
+    PROMPT_SUFFIX: str = ""
+    EXTRACTION_PROMPT_SUFFIX: str = ""
     # Evidence returned with an answer: the N best docs by rerank score.
     CHAT_MAX_CONTEXT_DOCS: int = 6
     # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the

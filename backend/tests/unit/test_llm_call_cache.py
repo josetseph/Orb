@@ -135,3 +135,20 @@ def test_extraction_calls_have_their_own_json_switch(monkeypatch):
         sent.clear()
         svc._chat([{"role": "user", "content": "JSON please"}], json_mode=True, ingestion=ingestion)
         assert ("response_format" in sent) is expected
+
+
+def test_prompt_suffix_reaches_the_model_and_the_key(svc, monkeypatch):
+    ask(svc)
+    monkeypatch.setattr(settings, "PROMPT_SUFFIX", "/no_think")
+    ask(svc)
+    assert len(svc.calls) == 2
+    assert svc.calls[1][0][-1]["content"].endswith("\n\n/no_think")
+    assert svc.calls[0][0][-1]["content"] == "hello", "the caller's messages are not modified"
+
+
+def test_the_extraction_suffix_leaves_chat_calls_alone(svc, monkeypatch):
+    monkeypatch.setattr(settings, "EXTRACTION_PROMPT_SUFFIX", "/no_think")
+    ask(svc)
+    ask(svc, ingestion=True)
+    assert svc.calls[0][0][-1]["content"] == "hello"
+    assert svc.calls[1][0][-1]["content"].endswith("/no_think")

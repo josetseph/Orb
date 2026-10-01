@@ -34,6 +34,7 @@ import httpx
 
 BASE_DIR = Path(__file__).parent
 # experiment.py points this into the data dir so a snapshot carries its own ingest state.
+GIVE_UP_AFTER = 0  # set by --give-up-after
 PROGRESS_FILE = Path(os.environ.get("ORB_BENCH_PROGRESS") or BASE_DIR / ".prepare_progress.json")
 API_BASE = "http://localhost:8000"
 
@@ -257,6 +258,9 @@ async def retry_failed(dataset: str) -> None:
             else:
                 failed_count += 1
             consecutive_failures = 0
+            if GIVE_UP_AFTER and succeeded == 0 and failed_count >= GIVE_UP_AFTER:
+                print(f"\n🔴 The first {failed_count} notes all failed: this model cannot do the task as configured. Giving up.", flush=True)
+                break
 
     print(f"\n✨ Retry done: {succeeded} succeeded, {failed_count} failed.")
     still = [f for f, v in dataset_progress.items() if v == "failed"]
@@ -434,6 +438,9 @@ async def prepare(
             else:
                 failed_count += 1
             consecutive_failures = 0
+            if GIVE_UP_AFTER and succeeded == 0 and failed_count >= GIVE_UP_AFTER:
+                print(f"\n🔴 The first {failed_count} notes all failed: this model cannot do the task as configured. Giving up.", flush=True)
+                break
 
     total = len(all_note_files)
     confirmed_total = sum(1 for v in dataset_progress.values() if _is_confirmed(v))
@@ -469,12 +476,15 @@ def main() -> None:
     parser.add_argument(
         "--dry-run", action="store_true", help="Preview without sending"
     )
+    parser.add_argument("--give-up-after", type=int, default=0, help="stop when the first N notes all fail (0 = never)")
     parser.add_argument("--delay", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--base-url", type=str, default=API_BASE)
 
     args = parser.parse_args()
 
     API_BASE = args.base_url.rstrip("/")
+    global GIVE_UP_AFTER  # noqa: PLW0603
+    GIVE_UP_AFTER = args.give_up_after
 
     if args.retry_failed:
         asyncio.run(retry_failed(dataset=args.dataset))

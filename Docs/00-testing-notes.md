@@ -209,6 +209,26 @@ cd backend
 - Indexes are built on the pod with the strict pipeline. The Mac snapshot `hp20-e4b` cannot move: its vault paths are absolute.
 - llama-cpp-python is built for CUDA on the pod at the same version as the Mac (0.3.35), so local-model results compare.
 
+## 4d. Lanes: several experiments on one GPU
+
+One process runs one model at a time and leaves most of a big GPU idle, so a 48 GB card runs several experiment processes
+side by side: `sweep.py` bundles (`{"lanes": 3, "specs": [...]}`, e.g. `sweeps/round2.json`) or `--lanes N`. Each lane has its own
+data dir (`data-laneN`), ports (API 8000+10N, Qdrant 6333/6334+10N, Meilisearch 7700+10N) and model-selection manifest
+(`models-laneN/`, its `gguf/` a symlink to the one shared copy of the weights). The model-call cache is shared.
+
+- Variants that share an index run one after another on one lane; different indexes run on different lanes.
+- Index builds live in `Results/_indexes/` and `snapshots/`, shared by every spec; a lock per index means two lanes never build
+  the same one. A snapshot restored into another lane has its registry paths moved there (`experiment.relocate`).
+- Every model the bundle needs is downloaded once before any lane starts (two lanes writing one file corrupt it).
+- An ingest whose first 20 notes all fail stops (`--give-up-after`): round 1 spent 9 h on a model that could not do the task.
+- Pin `EMBED_MODEL_ID` and `RERANK_MODEL_ID` in every spec. Unpinned they follow the machine's RAM: round 1's pods picked the 8B
+  pair, the Mac uses the 4B pair. Round 2 pins 8B to stay comparable with round 1 and tests the 4B and 0.6B as variants.
+
+**Branching (the Dream-RSI idea).** The model-call cache makes every change a branch from the last point it touches: calls before
+it replay, calls after it generate. Changing the answering model replays extraction; raising `MAX_LOOP_ITERATIONS` replays the steps
+already taken and generates only the new ones; a retrieval lever replays every model call and re-runs only search. What is not built:
+an automatic search that proposes new strategies (Dream-RSI's inner loop) and branching mid-question from a saved loop state.
+
 ## 5. Measuring honestly
 
 - At N=100 the standard error on exact match is about five points. A gap that size between two runs is noise.
@@ -275,6 +295,10 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-10-01, round 2 launched on the main account (A40, 3 lanes, bundle `sweeps/round2.json`).** Seven specs: confirmation at scale
+  (HotpotQA 20-70, MuSiQue 0-50; 12B against E4B extraction), answering models and loop limits over the 12B index, Qwen 3.5 as answering
+  model and as extractor with `/no_think`, retrieval levers (no answering model), and index levers (4B / 0.6B embedder, communities).
+  New switches for it: `PROMPT_SUFFIX` / `EXTRACTION_PROMPT_SUFFIX` (per stage, so a chat test never changes the index).
 - **2026-09-30, round1-extraction complete: extract with Gemma 4 12B.** Full report: `Results/runpod/round1-extraction/report.md`.
   E4B answers every question; only the extractor changes. 20 HotpotQA questions, 199 notes.
 

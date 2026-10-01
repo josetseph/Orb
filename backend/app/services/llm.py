@@ -2,6 +2,8 @@
 
 # pylint: disable=wrong-import-order,import-outside-toplevel
 import asyncio
+import threading
+import os
 import functools
 import hashlib
 import json
@@ -215,6 +217,13 @@ class LLMService:
         """
         started = time.perf_counter()
         ingestion = kwargs.get("ingestion", False)
+        suffix = settings.EXTRACTION_PROMPT_SUFFIX if ingestion else settings.PROMPT_SUFFIX
+        if suffix:
+            # A model-specific instruction (Qwen 3.x: "/no_think" switches its reasoning preamble off), set per stage
+            # so testing a chat model does not change how notes were extracted. Part of the messages, so of the cache key.
+            messages = [dict(m) for m in messages]
+            last = next(m for m in reversed(messages) if m["role"] == "user")
+            last["content"] = f"{last['content']}\n\n{suffix}"
         model = kwargs.get("model") or (self.get_ingestion_model() if ingestion else self.get_chat_model())
         path = None
         if settings.LLM_CALL_CACHE_DIR:
@@ -233,7 +242,7 @@ class LLMService:
                      seconds=round(time.perf_counter() - started, 2))
         if path is not None:
             path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
+            tmp = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")  # lanes share the cache
             tmp.write_text(json.dumps({"model": model, "text": text, "meta": meta}, ensure_ascii=False), encoding="utf-8")
             tmp.replace(path)
         return text, meta

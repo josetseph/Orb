@@ -1,0 +1,12 @@
+{
+  "lanes": 3,
+  "specs": [
+    "round2-scale-musique.json",
+    "round2-scale-hotpot.json",
+    "round2-qwen-extract.json",
+    "round2-answer.json",
+    "round2-qwen-chat.json",
+    "round2-retrieval.json",
+    "round2-index.json"
+  ]
+}

@@ -35,6 +35,8 @@ LEVERS = (
     Lever("JSON_CONSTRAINED_DECODING", "loop", "set", True, (True, False), "force valid JSON in chat-side replies (research steps, query analysis)"),
     Lever("EXTRACTION_JSON_CONSTRAINED", "extract", "set", True, (True, False), "force valid JSON in extraction replies (llama.cpp grammar, CPU-bound, ~20x slower)"),
     Lever("LLAMA_FLASH_ATTN", "extract", "set", False, (False, True), "llama.cpp flash attention"),
+    Lever("EXTRACTION_PROMPT_SUFFIX", "extract", "set", "", ("", "/no_think"), "text appended to extraction prompts; /no_think turns Qwen 3.x reasoning off"),
+    Lever("PROMPT_SUFFIX", "loop", "set", "", ("", "/no_think"), "text appended to chat-side prompts (research steps, query analysis)"),
     Lever("EXTRACTION_ATTEMPTS", "extract", "set", 1, (1, 2, 3), "times an unusable extraction reply may be asked again"),
     Lever("EXTRACTION_MODE", "extract", "set", "auto", ("auto", "task_split"), "one call per note, or entities first then relationships among them"),
     Lever("EXTRACTION_CHUNK_TOKENS", "extract", "set", None, (1000, 2000, 4000), "note size above which extraction splits; unset = learned per model"),

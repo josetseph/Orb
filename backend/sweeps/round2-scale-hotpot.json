@@ -1,9 +1,9 @@
 {
-  "name": "round2-index",
+  "name": "round2-scale-hotpot",
   "dataset": "hotpotqa",
   "dev": [
-    0,
-    20
+    20,
+    70
   ],
   "baseline": {
     "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
@@ -15,14 +15,10 @@
   "evaluator": "full",
   "metric": "answer_f1",
   "vary": {
-    "EMBED_MODEL_ID": [
-      "qwen3-embed-4b-q4",
-      "qwen3-embed-0.6b-q8"
-    ],
-    "communities": [
-      true
+    "ingestion_model": [
+      "gemma4-e4b-q4"
     ]
   },
-  "_note": "Index choices over 12B extraction (replayed from the cache): the Mac's 4B embedder, the small one, community summaries.",
+  "_note": "Confirmation on 50 HotpotQA questions round 1 never saw: 12B extraction against E4B extraction.",
   "design": "one-at-a-time"
 }

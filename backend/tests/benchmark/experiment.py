@@ -40,6 +40,7 @@ BENCH = Path(__file__).resolve().parent
 BACKEND = BENCH.parent.parent
 REPO = BACKEND.parent
 DATA, SNAPSHOTS, RESULTS = REPO / "data", REPO / "snapshots", REPO / "Results"
+LANE = 0  # several experiments at once on one GPU: each lane has its own data dir, ports and model selection
 KEEP = {"bin"}  # sidecar binaries: large, identical across runs
 BASE_URL = "http://127.0.0.1:8000"
 
@@ -49,9 +50,24 @@ def save_snapshot(name: str, selection: dict) -> None:
     if dest.exists():
         shutil.rmtree(dest)
     shutil.copytree(DATA, dest, ignore=shutil.ignore_patterns(*KEEP, "logs"))
-    # The vectors inside are only valid for this embed model.
-    (dest / "snapshot.json").write_text(json.dumps({"selection": selection}, indent=2))
+    # The vectors inside are only valid for this embed model; the paths inside point at this data dir.
+    (dest / "snapshot.json").write_text(json.dumps({"selection": selection, "data_dir": str(DATA)}, indent=2))
     print(f"[experiment] snapshot saved: {dest}")
+
+
+def relocate(old: str) -> None:
+    """A snapshot restored into another lane's data dir: point the KB registry's paths at where it now is."""
+    import sqlite3
+
+    if not old or old == str(DATA):
+        return
+    (DATA / "paths.json").unlink(missing_ok=True)
+    conn = sqlite3.connect(DATA / "orb.db")
+    with conn:
+        for column in ("vault_path", "kuzu_path"):
+            conn.execute(f"UPDATE knowledge_bases SET {column} = ? || substr({column}, ?) WHERE substr({column}, 1, ?) = ?",
+                         (str(DATA), len(old) + 1, len(old), old))
+    conn.close()
 
 
 def restore_snapshot(name: str) -> None:
@@ -63,6 +79,8 @@ def restore_snapshot(name: str) -> None:
         if child.name not in KEEP:
             shutil.rmtree(child) if child.is_dir() else child.unlink()
     shutil.copytree(src, DATA, dirs_exist_ok=True)
+    meta = src / "snapshot.json"
+    relocate(json.loads(meta.read_text()).get("data_dir", "") if meta.is_file() else str(REPO / "data"))
     print(f"[experiment] restored snapshot {name} -> {DATA}")
 
 
@@ -112,6 +130,9 @@ def main() -> None:
     ap.add_argument("--queries-from", nargs="*", default=[], metavar="RESULTS.json",
                     help="retrieval evaluator: also run the follow-up queries these past runs recorded")
     ap.add_argument("--no-cache", action="store_true", help="do not replay unchanged model calls from <repo>/llm-cache")
+    ap.add_argument("--lane", type=int, default=0, help="run beside other lanes on the same machine (own data dir, ports, model selection)")
+    ap.add_argument("--prefetch", nargs="+", metavar="MODEL", help="only download these catalogue models (and the pinned embed/reranker), then stop")
+    ap.add_argument("--give-up-after", type=int, default=20, help="stop an ingest whose first N notes all fail (a model that cannot do the task)")
     ap.add_argument("--restore", metavar="SNAPSHOT", help="start from this snapshot instead of the current data dir")
     ap.add_argument("--fresh", action="store_true", help="start from an empty data dir")
     ap.add_argument("--ingest", action="store_true", help="ingest the dataset's notes before evaluating")
@@ -128,8 +149,13 @@ def main() -> None:
     ap.add_argument("--base-url", dest="llm_base_url", help="endpoint for --provider openai_compat")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="env override for the server (repeatable)")
     args = ap.parse_args()
-    if not args.synthesis_from and not args.dataset:
-        ap.error("--dataset is required unless --synthesis-from is given")
+    if not args.synthesis_from and not args.dataset and not args.prefetch:
+        ap.error("--dataset is required unless --synthesis-from or --prefetch is given")
+    global DATA, BASE_URL, LANE  # noqa: PLW0603 — every helper below works on this lane
+    LANE = args.lane
+    if LANE:
+        DATA = REPO / f"data-lane{LANE}"
+        BASE_URL = f"http://127.0.0.1:{8000 + 10 * LANE}"
 
     overrides = dict(kv.split("=", 1) for kv in args.set)
     out = RESULTS / args.name
@@ -156,7 +182,17 @@ def main() -> None:
     cache = {} if args.no_cache else {"LLM_CALL_CACHE_DIR": str(REPO / "llm-cache")}
     failures = DATA / "logs" / "invalid_model_output.jsonl"
     failures.unlink(missing_ok=True)  # counted per run
-    env = {**os.environ, "BENCHMARK_MODE": "true", **cache, **overrides,
+    lane_env = {}
+    if LANE:
+        # Weights are shared (one copy on disk); the manifest, which records the model selection, is per lane.
+        shared, own = REPO / "models" / "gguf", REPO / f"models-lane{LANE}"
+        shared.mkdir(parents=True, exist_ok=True)
+        own.mkdir(exist_ok=True)
+        if not (own / "gguf").exists():
+            (own / "gguf").symlink_to(shared, target_is_directory=True)
+        lane_env = {"ORB_MODELS_DIR": str(own), "ORB_API_PORT": str(8000 + 10 * LANE), "QDRANT_PORT": str(6333 + 10 * LANE),
+                    "QDRANT_GRPC_PORT": str(6334 + 10 * LANE), "MEILI_PORT": str(7700 + 10 * LANE)}
+    env = {**os.environ, "BENCHMARK_MODE": "true", **cache, **lane_env, **overrides,
            "ORB_DATA_DIR": str(DATA), "ORB_BENCH_PROGRESS": str(DATA / "prepare_progress.json")}
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
               "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,
@@ -175,6 +211,11 @@ def main() -> None:
         catalogue = {m["id"]: m for m in get_json("/api/v1/models", 60)["local"]["downloadable"]}
         # Ingestion model first, chat model last: the last one set up is what the manifest selects.
         wanted = [m for m in (args.ingestion_model, args.chat_model) if m in catalogue] or [selection.get("chat_id")]
+        if args.prefetch:
+            unknown = [m for m in args.prefetch if m not in catalogue]
+            if unknown:
+                sys.exit(f"[experiment] not in the model catalogue: {', '.join(unknown)}")
+            wanted, args.download, args.no_eval = list(args.prefetch), True, True
         if not args.download:
             missing = [m for m in wanted if m in catalogue and not catalogue[m]["downloaded"]]
             missing += [f"{k}={v}" for k, v in overrides.items() if k in ("EMBED_MODEL_ID", "RERANK_MODEL_ID")
@@ -204,9 +245,10 @@ def main() -> None:
         print(f"[experiment] server up: chat={record['server'].get('chat_model')} ingestion={record['server'].get('ingestion_model')}")
 
         if args.ingest:
-            cmd = [sys.executable, "tests/benchmark/prepare_dataset.py", "--dataset", args.dataset, "--resume"]
+            cmd = [sys.executable, "tests/benchmark/prepare_dataset.py", "--dataset", args.dataset, "--resume", "--base-url", BASE_URL]
             if args.questions:
                 cmd += ["--questions", str(args.questions), "--question-offset", str(args.offset)]
+            cmd += ["--give-up-after", str(args.give_up_after)]
             t0 = time.monotonic()
             run(cmd, env)
             wait_until("ingestion to drain", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
@@ -225,14 +267,14 @@ def main() -> None:
             record["communities_seconds"] = round(time.monotonic() - t0)
 
         if args.synthesis_from:
-            run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from,
+            run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from, "--base-url", BASE_URL,
                  "--output", str(out / "synthesis.json")], env)
         elif not args.no_eval:
             if args.evaluator == "retrieval":
-                cmd = [sys.executable, "tests/benchmark/retrieval_eval.py", "--dataset", args.dataset,
+                cmd = [sys.executable, "tests/benchmark/retrieval_eval.py", "--dataset", args.dataset, "--base-url", BASE_URL,
                        "--output", str(out / "retrieval.json"), "--queries-from", *args.queries_from]
             else:
-                cmd = [sys.executable, "tests/benchmark/evaluate.py", "--dataset", args.dataset,
+                cmd = [sys.executable, "tests/benchmark/evaluate.py", "--dataset", args.dataset, "--base-url", BASE_URL,
                        "--output", str(out / f"{args.dataset}.json")]
             cmd += ["--offset", str(args.offset)]
             if args.questions:

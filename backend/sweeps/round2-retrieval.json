@@ -1,0 +1,36 @@
+{
+  "name": "round2-retrieval",
+  "dataset": "hotpotqa",
+  "dev": [
+    0,
+    20
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4"
+  },
+  "evaluator": "retrieval",
+  "vary": {
+    "RERANK_MODEL_ID": [
+      "qwen3-rerank-4b-q4",
+      "qwen3-rerank-0.6b-q4"
+    ],
+    "RERANKER_TOP_K": [
+      5,
+      20
+    ],
+    "VECTOR_PRE_RERANK_THRESHOLD": [
+      0.3,
+      0.6
+    ],
+    "GRAPH_EXPAND_TOP_NEIGHBORS": [
+      0,
+      20
+    ]
+  },
+  "_note": "Search alone on the 12B index, scored against the gold notes; no answering model.",
+  "design": "one-at-a-time"
+}

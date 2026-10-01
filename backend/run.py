@@ -27,6 +27,7 @@ MEILI_VERSION = os.environ.get("ORB_MEILI_VERSION", "v1.49.0")
 API_PORT = int(os.environ.get("ORB_API_PORT", "8000"))
 QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
 MEILI_PORT = int(os.environ.get("MEILI_PORT", "7700"))
+QDRANT_GRPC_PORT = int(os.environ.get("QDRANT_GRPC_PORT", "6334"))  # bound even though the app speaks HTTP
 MEILI_MASTER_KEY = os.environ.get("MEILI_MASTER_KEY", "orb-dev-key")
 
 _children: list[subprocess.Popen] = []
@@ -134,7 +135,7 @@ def start_sidecars(data_dir: Path) -> None:
     storage.mkdir(parents=True, exist_ok=True)
     log("Starting Qdrant")
     q = _spawn([str(qdrant)], cwd=storage, logfile=logs / "qdrant.log",
-               env={"QDRANT__STORAGE__STORAGE_PATH": str(storage), "QDRANT__SERVICE__HTTP_PORT": str(QDRANT_PORT),
+               env={"QDRANT__STORAGE__STORAGE_PATH": str(storage), "QDRANT__SERVICE__HTTP_PORT": str(QDRANT_PORT), "QDRANT__SERVICE__GRPC_PORT": str(QDRANT_GRPC_PORT),
                     "QDRANT__SERVICE__HOST": "127.0.0.1"})  # loopback only, like Meilisearch
     _wait(f"http://127.0.0.1:{QDRANT_PORT}/", q)
     log("Starting Meilisearch")
