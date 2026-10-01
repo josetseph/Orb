@@ -302,7 +302,7 @@ def copy_home(endpoint: tuple[str, int]) -> None:
                 f"ls pod-provision.log pod-watchdog.log 2>/dev/null; }} | tar -czf - -T -")
     tar = subprocess.Popen(["ssh", *ssh_args(endpoint), produced], stdout=subprocess.PIPE)
     subprocess.run(["tar", "-xzf", "-", "-C", str(STATE_DIR)], stdin=tar.stdout, check=True)
-    if tar.wait() != 0:
+    if tar.wait() not in (0, 1):  # GNU tar exits 1 when a log grew while it was read; the archive is still complete
         raise PodError("copying results from the pod failed")
 
 
