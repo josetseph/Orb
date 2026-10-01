@@ -243,9 +243,17 @@ def prefetch(specs: list[dict], plan: bool) -> None:
     for (embed, rerank), models in combos.items():
         sets = [a for k, v in (("EMBED_MODEL_ID", embed), ("RERANK_MODEL_ID", rerank)) if v for a in ("--set", f"{k}={v}")]
         print(f"== prefetch {sorted(models)} with {sets or 'default embed/reranker'}", flush=True)
-        if not plan:
-            subprocess.run([sys.executable, "tests/benchmark/experiment.py", "_prefetch", "--prefetch", *sorted(models), *sets],
-                           cwd=BACKEND, check=True)
+        if plan:
+            continue
+        # Downloads from Hugging Face sometimes stop short; the backend resumes them on the next attempt.
+        for attempt in range(1, 4):
+            done = subprocess.run([sys.executable, "tests/benchmark/experiment.py", "_prefetch", "--prefetch", *sorted(models), *sets],
+                                  cwd=BACKEND).returncode == 0
+            if done:
+                break
+            print(f"== prefetch attempt {attempt} failed", flush=True)
+        else:
+            sys.exit("== prefetch failed 3 times; stopping")
 
 
 def paired(base: Path, other: Path, metric: str) -> str:
