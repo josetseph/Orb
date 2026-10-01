@@ -11,7 +11,7 @@
     "EXTRACTION_JSON_CONSTRAINED": false,
     "chat_model": "qwen35-4b-q4",
     "ingestion_model": "gemma4-12b-q4",
-    "PROMPT_SUFFIX": "/no_think"
+    "ENABLE_THINKING": false
   },
   "evaluator": "full",
   "metric": "answer_f1",
@@ -19,11 +19,8 @@
     "chat_model": [
       "qwen35-9b-q4",
       "qwen35-2b-q4"
-    ],
-    "PROMPT_SUFFIX": [
-      ""
     ]
   },
-  "_note": "Qwen 3.5 as the answering model over the 12B index, reasoning switched off with /no_think (and once without, as a check).",
+  "_note": "Qwen 3.5 as the answering model over the 12B index, thinking off through the chat template. Thinking on is not run: round 1 showed its untagged reasoning fails strict parsing.",
   "design": "one-at-a-time"
 }

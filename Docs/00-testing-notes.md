@@ -295,6 +295,15 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 8. Log
 
+- **2026-10-01, Qwen 3.5 ignores `/no_think`; thinking is switched off through the chat template instead.** Round 2's first
+  Qwen extraction note still opened with an untagged "Thinking Process:" despite the `/no_think` suffix. The Qwen 3.5 GGUF templates
+  read `enable_thinking` (4B and 9B think unless it is false; 2B only when it is true); Gemma 4's template defaults it to false.
+  New per-stage settings `EXTRACTION_ENABLE_THINKING` and `ENABLE_THINKING` send `chat_template_kwargs` (the OpenAI-compatible field
+  llama-server and vLLM honour); the in-process runtime passes it to the template. Checked on the pod with Qwen 3.5 4B: no switch gives
+  "Thinking Process: ...", `enable_thinking=false` gives `{"capital": "Paris"}`. The switch only joins the cache key when set, so
+  earlier replies keep their keys. The Qwen specs use it in place of the suffix; the "thinking on" check is dropped (round 1 already
+  showed it fails strict parsing). Round 2 was restarted with this; the first launch also lost 3 minutes to a Hugging Face download
+  that stopped short, so the prefetch now retries up to three times.
 - **2026-10-01, round 2 launched on the main account (A40, 3 lanes, bundle `sweeps/round2.json`).** Seven specs: confirmation at scale
   (HotpotQA 20-70, MuSiQue 0-50; 12B against E4B extraction), answering models and loop limits over the 12B index, Qwen 3.5 as answering
   model and as extractor with `/no_think`, retrieval levers (no answering model), and index levers (4B / 0.6B embedder, communities).

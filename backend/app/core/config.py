@@ -103,6 +103,10 @@ class Settings(BaseSettings):
     LLAMA_MAX_TOKENS: int | None = None  # None = whatever context is left
     LLAMA_SWA_FULL: bool = True  # full-size cache on sliding-window layers
     LLAMA_FLASH_ATTN: bool = False
+    # Passed to the model's own chat template as enable_thinking (Qwen 3.5 thinks unless it is false),
+    # for chat-side calls and for extraction. None leaves the template's default.
+    ENABLE_THINKING: bool | None = None
+    EXTRACTION_ENABLE_THINKING: bool | None = None
     LLAMA_BACKEND: str = "auto"  # auto | metal | cuda | vulkan | cpu
     LLAMA_N_GPU_LAYERS: int | None = None  # None = backend default (-1 = all)
     LLAMA_N_THREADS: int | None = None

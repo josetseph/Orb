@@ -64,6 +64,10 @@ _REPLY_SHAPING_SETTINGS = (
 )
 
 
+def _thinking_switch(ingestion: bool) -> bool | None:
+    return settings.EXTRACTION_ENABLE_THINKING if ingestion else settings.ENABLE_THINKING
+
+
 class _ResearchStep(BaseModel):
     """One turn of the iterative research loop, exactly as the prompt specifies it."""
 
@@ -231,6 +235,8 @@ class LLMService:
                 self.ingestion_provider if ingestion else self.provider, self.get_base_url(), model, messages,
                 kwargs.get("temperature"), kwargs.get("max_tokens"), kwargs.get("json_mode", False),
                 *(getattr(settings, name) for name in _REPLY_SHAPING_SETTINGS),
+                # Only when set, so replies recorded before this switch existed keep their keys.
+                *(["enable_thinking", thinking] if (thinking := _thinking_switch(ingestion)) is not None else []),
             ], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             path = Path(settings.LLM_CALL_CACHE_DIR) / key[:2] / f"{key}.json"
             if path.is_file():
@@ -332,6 +338,8 @@ class LLMService:
             constrained = settings.EXTRACTION_JSON_CONSTRAINED if ingestion else settings.JSON_CONSTRAINED_DECODING
             if json_mode and constrained:
                 kwargs["response_format"] = {"type": "json_object"}
+            if (switch := _thinking_switch(ingestion)) is not None:
+                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": switch}}
             choice = client.chat.completions.create(model=model, messages=messages, **kwargs).choices[0]
             text = choice.message.content or ""
             # LM Studio and some OpenAI-compat servers expose thinking in

@@ -1000,6 +1000,7 @@ class _ChatCompletions:
             max_tokens=max_tokens,
             model=kwargs.get("model") or self._model_id,
             response_format=kwargs.get("response_format"),
+            template_args=(kwargs.get("extra_body") or {}).get("chat_template_kwargs"),
         )
 
 
@@ -1245,7 +1246,15 @@ class LocalLlamaRuntime:
             try:
                 from llama_cpp.llama_chat_format import MTMDChatHandler  # type: ignore
 
-                handler = MTMDChatHandler(
+                class _TemplateArgsHandler(MTMDChatHandler):
+                    """Adds per-call chat_template_kwargs; the handler hands extra keyword arguments to the template only."""
+
+                    template_args: dict = {}
+
+                    def __call__(self, **kwargs):
+                        return super().__call__(**kwargs, **self.template_args)
+
+                handler = _TemplateArgsHandler(
                     clip_model_path=str(mmproj),
                     verbose=False,
                     use_gpu=int(self.accel["n_gpu_layers"]) != 0,
@@ -1543,6 +1552,7 @@ class LocalLlamaRuntime:
         max_tokens: int | None = None,
         model: str | None = None,
         response_format: dict | None = None,
+        template_args: dict | None = None,
     ) -> SimpleNamespace:
         """``response_format={"type": "json_object"}`` turns on llama.cpp's JSON
         grammar. Never pass a schema: schema-constrained sampling empties nested
@@ -1567,6 +1577,7 @@ class LocalLlamaRuntime:
                     max_tokens=max_tokens,
                     repeat_penalty=repeat_penalty,
                     response_format=response_format,
+                    template_args=template_args,
                 )
                 return _openaiish_chat_response(raw, model_id)
             except RepetitionLoopError as exc:
@@ -1587,8 +1598,12 @@ class LocalLlamaRuntime:
         max_tokens: int,
         repeat_penalty: float,
         response_format: dict | None = None,
+        template_args: dict | None = None,
     ) -> dict:
         assert self._chat is not None
+        if template_args and self._chat_handler is None:
+            # ponytail: only the projector handler takes template args; add a text-only one if a model lacks a projector.
+            raise RuntimeError(f"chat_template_kwargs need a vision projector next to {self._chat_path}; none is loaded")
         kwargs: dict = {
             "messages": messages,
             "temperature": temperature,
@@ -1598,6 +1613,8 @@ class LocalLlamaRuntime:
         if response_format:
             kwargs["response_format"] = response_format
         with self._lock:
+            if self._chat_handler is not None:
+                self._chat_handler.template_args = template_args or {}
             # Prefer streaming so we can abort mid-generation on ordinal loops.
             try:
                 stream = self._chat.create_chat_completion(**kwargs, stream=True)

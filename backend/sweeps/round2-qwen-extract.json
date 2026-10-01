@@ -11,7 +11,7 @@
     "EXTRACTION_JSON_CONSTRAINED": false,
     "chat_model": "gemma4-e4b-q4",
     "ingestion_model": "qwen35-4b-q4",
-    "EXTRACTION_PROMPT_SUFFIX": "/no_think"
+    "EXTRACTION_ENABLE_THINKING": false
   },
   "evaluator": "full",
   "metric": "answer_f1",
@@ -24,6 +24,6 @@
       true
     ]
   },
-  "_note": "Qwen 3.5 as the extractor with /no_think; and with the JSON grammar, which forces the reply to start with {.",
+  "_note": "Qwen 3.5 as the extractor with thinking off through the chat template (enable_thinking=false; /no_think in the prompt is ignored by Qwen 3.5); and with the JSON grammar.",
   "design": "one-at-a-time"
 }
