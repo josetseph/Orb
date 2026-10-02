@@ -1,0 +1,5609 @@
+{
+  "timestamp": "2026-10-02T03:18:21.232933",
+  "dataset": "hotpotqa",
+  "mode": "retrieval",
+  "num_tests": 20,
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-8b-q4",
+      "reranker_id": "qwen3-rerank-8b-q4",
+      "embedding_dims": 4096,
+      "embed_path": "/workspace/orb/models-lane1/gguf/Qwen3-Embedding-8B-Q4_K_M.gguf",
+      "reranker_path": "/workspace/orb/models-lane1/gguf/Qwen3-Reranker-8B.Q4_K_M.gguf",
+      "chat_path": "/workspace/orb/models-lane1/gguf/google_gemma-4-E4B-it-Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "EXTRACTION_MODE": "auto",
+      "PROMPT_SUFFIX": "",
+      "EXTRACTION_PROMPT_SUFFIX": "",
+      "JSON_CONSTRAINED_DECODING": true,
+      "EXTRACTION_JSON_CONSTRAINED": false,
+      "LLAMA_FLASH_ATTN": false,
+      "ENABLE_THINKING": null,
+      "EXTRACTION_ENABLE_THINKING": null,
+      "EXTRACTION_ATTEMPTS": 1,
+      "CHAT_MAX_CONTEXT_DOCS": 6,
+      "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+      "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+      "LLAMA_N_CTX": 16384,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 20,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-8b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-8b-q4"
+    }
+  },
+  "note_titles": {
+    "5c097d63-0e61-4d58-a17b-7cb885d76fae": "Biography of Robert Childers Barton",
+    "77d47d6e-054d-4689-bb59-020b1c8aee59": "Biography of Erskine Barton Childers",
+    "9337c5e5-b1b9-497a-9408-a81b49591aeb": "History and Publication of the Irish Bulletin",
+    "742337dc-9e7f-4b16-8a77-c4e73ee47f66": "Biography of Robert Erskine Childers",
+    "cbbf8117-3f86-4542-abdb-592992159d55": "Biography of Robert Caesar Childers",
+    "4abec9ef-c8dd-44b2-85a2-258232eede95": "Biography of Gretchen Osgood Warren",
+    "43fe7a41-528c-42d5-8bf4-11791169824b": "Biography of Molly Childers",
+    "80ac024e-1f80-449b-a8eb-4e22762e4fac": "The R509 Road in Limerick City",
+    "38228541-7a89-484b-88b6-9044551517d3": "Biography of Henry Roth",
+    "698b9524-8644-49a9-b71e-2cfbe15d2215": "The Yacht Asgard and its History",
+    "4c23211b-98e7-4f99-a6ef-8bffd006314b": "Edward D. Martin and the Military Health System",
+    "36795253-cdcb-41bb-b241-4565fc8cce34": "Biography of Roger O. Egeberg",
+    "1cff2eff-1816-40dc-91a8-468f586d4fdb": "Structure and Mandate of the Office of Population Affairs",
+    "88a2b296-7e68-44b5-b053-f8a673df4095": "Career Profile of Bradford P. Campbell",
+    "14b3d1da-5aa2-454e-9ae2-36d889f89036": "Biography of Robert D. Hormats",
+    "c36baf14-0243-40bf-8e71-0b06a43e18b2": "Professional Biography of Robert R. Hood",
+    "03d7aa82-5caf-4009-a164-c1fa56ad58ae": "Professional Biography of Steven K. Galson",
+    "40769f6f-5fd6-44ea-8aa0-1321297ba339": "Biographical Overview of Richard Nixon",
+    "ff83593b-bc03-474a-8d3d-45fb7faf43f0": "Biography of Douglas J. Bennet",
+    "92982912-4197-4ebf-b911-ac1d64284700": "United States Assistant Secretary of State Roles and Hierarchy",
+    "ad2e386a-cb09-4a3e-86a6-8b7612e0858f": "The 1953 Film Verdi, the King of Melody",
+    "06a61e91-5ee2-45d9-bb86-d4ceecdf0352": "Major Opera Composers Overview",
+    "61e673ed-a854-44f1-b723-df9d6bc153c1": "Biography and Career of Ferdinando Provesi",
+    "f65e1b9b-e395-434d-88af-6d4c5cb15415": "Biography of Armand Castelmary",
+    "d2e53efc-5018-4401-ad0e-c311fe1469ae": "Biography of Ambroise Thomas",
+    "c95554a3-a727-41cd-b3d1-616ee5858796": "Teatro Giuseppe Verdi and the Rocca dei Marchesi Pallavicino",
+    "d0b34946-e07b-4534-aa78-2d4c9fa72da7": "Biographical Overview of Giuseppe Verdi",
+    "459e3d7e-4cf4-49e0-a7a0-3838cd2cdde8": "Parma Airport Overview",
+    "2ccfd2f3-0ba3-4557-877e-160caa1f0472": "The 1938 Film Giuseppe Verdi",
+    "324e2f0e-63ff-4a94-8e3f-eb06b15515bb": "Biography and Career of Bernhard B\u00f6tel",
+    "29964394-c2fd-4b36-b0f0-d7523a1645c3": "Vermont Catamounts Men's Basketball Team Overview",
+    "c4c0d315-8844-484e-a6f8-9ad27d4402bb": "2011\u201312 Vermont Catamounts Men's Basketball Team Season",
+    "1b88ad87-e783-49be-b570-f062d626c882": "2016\u201317 Vermont Catamounts Men's Basketball Team Season",
+    "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb": "2015\u201316 Vermont Catamounts Men's Basketball Team Season",
+    "519fa42e-68c2-4fcd-b5df-075e46fd8cd2": "Vermont Catamounts Men's Ice Hockey Program Overview",
+    "f08bc0f6-c491-4793-96e1-ab68ecd153d6": "Vermont Catamounts Men's Soccer Team Overview",
+    "c89cbb98-974f-4c25-a813-83a76ba5a00a": "America East Conference Overview",
+    "6383d03a-faee-4f05-a619-e1161277f438": "2013\u201314 Vermont Catamounts Men's Basketball Team Season",
+    "78c8e259-73a2-4659-acd3-e0c43e4ff9a2": "2012\u201313 Vermont Catamounts Men's Basketball Team Season",
+    "be692f52-4468-432a-813e-f14e6d19c762": "2010\u201311 Vermont Catamounts Men's Basketball Team",
+    "d3e8e560-3c0e-455d-9273-dcc4e36a51ab": "Geography and Demographics of Brown County, Kansas",
+    "955b5ff7-db51-41fb-88c5-0438755423f4": "Geography and Characteristics of Commanda Lake",
+    "6b78538e-c781-417c-ac2d-ae91281688e6": "Geographic and Hydrological Profile of Higgins Lake",
+    "adbce817-059c-48f1-b974-445b13100029": "Geography and Community Structure of Higgins Lake, Michigan",
+    "ac6ba7de-635a-4b85-af2f-b712496d5b3f": "Shawnee State Fishing Lake Geography and Specifications",
+    "e7a6f092-fe70-4269-b6b6-ceddf6947e76": "Narrow Hills Provincial Park Overview",
+    "4bba5f80-54fa-4c73-b188-63912412dab7": "Neosho State Fishing Lake (Lake McKinley) Overview",
+    "0c14bda0-b9e8-4dd0-9b56-490821f3771a": "Brown State Fishing Lake Overview",
+    "96deb8ff-d0c7-463e-be9c-79b0bbbebdf8": "Osage State Fishing Lake Geography and Specifications",
+    "3495d783-008d-4273-90e8-3fc0b97e0008": "Fishing Lake Geography and Flood Control",
+    "befb745b-f090-4ef0-bd6d-886b58660a10": "Biography of Sir Alex Ferguson",
+    "ec78b61d-8148-4e3d-8689-26aa536dd957": "Biography of Matt Busby",
+    "22e1b3c2-8354-4313-83de-6eb07d8160ca": "David Beckham's Soccer USA Show Overview",
+    "4f6b0edd-b344-428f-9cab-c03be42b2d04": "The Class of '92 Documentary Film",
+    "ed690c57-c83f-4f6a-82c8-a1a3e9b32333": "1995\u201396 Manchester United F.C. Season",
+    "c043b239-9fff-400d-b13f-03591f1f4f2e": "History and Locations of the David Beckham Academy",
+    "ffd6ac20-1a1f-453f-824e-b7645945b7a8": "The Managerial Career of James Ernest Mangnall",
+    "9cb1f7a7-e991-48b6-adae-1f95c7a0c2c7": "Sir Matt Busby Sports Complex and its namesake",
+    "f81f92c9-2368-4005-a2a4-d4a8010f931f": "1996 FA Charity Shield Match Details",
+    "b3096264-08d5-4bfa-9431-947ed8fa9d06": "Biography of Joshua Parlby",
+    "f73dc3ce-9d00-4de3-8f68-3ceafe8f8f7f": "Geography and Infrastructure of South Phoenix",
+    "dfde1329-ebf8-43cd-9e46-648f3f323d93": "Overview of Real Estate Technology (Proptech)",
+    "06101fd7-cdcf-4724-88ce-98936a96eaf7": "Carl B. Stokes United States Courthouse Overview",
+    "88607c94-2ed0-474e-b563-a7f7222dc56d": "Pershing Square Capital Management Overview",
+    "f3cda8b5-2f58-41fc-8893-7fc58138f2de": "Random House Tower and Park Imperial Apartments",
+    "ea2e19aa-eb6d-494b-b625-f9868bdbb930": "888 7th Avenue Building Overview",
+    "8b452d24-3575-4c90-ac8f-8e815e7a1248": "History and Structure of Villard Publishing Imprint",
+    "7ddbbfda-07a0-4214-9b84-202c5d8970ee": "Hounsfield Heights/Briar Hill Geography and Features",
+    "31ff3da8-1427-4ed0-acd8-9ce2817d80a4": "Real Estate Benchmarking Definitions",
+    "dea998ac-49f7-452d-890c-08d33fe347ad": "Get Christie Love! Film and Series Overview",
+    "4c0f80bb-c692-415d-8632-91c0a73febd8": "Guns N' Roses Song 'Oh My God'",
+    "fcdf86a5-0852-4c75-bdf2-ca3b197e7f68": "End of Days Film Overview",
+    "fa3cbe86-ec75-4b0a-aa2f-c31a0208b75c": "Last Action Hero Film Analysis",
+    "e087625e-f581-48dd-a784-be9a0f68cc28": "True Lies Film Overview",
+    "922da9e7-4bc2-45e1-bd07-74811f307a56": "Faction With Jason Ellis on Sirius XM",
+    "b59cbd44-28b6-483a-a313-8607bc4c933c": "Biography of Steven Adler",
+    "178f5c20-e0fc-4c14-859e-240af4523f2b": "History and Legacy of Hammerjacks Concert Hall and Nightclub",
+    "48b6b8c3-984c-462d-a98e-0bf8626f3d19": "Guns N' Roses Discography and History",
+    "2c997a40-6160-4591-acc0-692a8f3ad994": "Arnold Schwarzenegger's Filmography and Career Overview",
+    "034ca728-2008-4c20-af30-2e16efb6a5b2": "The Family Man Film Overview",
+    "64eb4733-7c90-4e98-b822-39bb375ba5fd": "City of Angels Film Analysis",
+    "226df765-30c9-4136-a9cb-23e2a44b3203": "It Could Happen to You (1994 Film) Overview",
+    "12c9931f-1d69-40ab-9049-38461bb09835": "Drive Angry Film Overview",
+    "070fe06c-a27f-4bef-92ce-a5c7bf378c46": "Gone in 60 Seconds (2000 Film) Overview",
+    "56cbd0ed-3444-48fc-9772-a8aded88b427": "Deadfall (1993 Film) and Related Works",
+    "1430ef39-75c4-47b7-9c90-eaebaa361a70": "Filmography of David Weissman",
+    "fa13d7dc-93df-45eb-ad52-5bcd60a99e10": "Time to Kill (1989 Film) Overview",
+    "59112b3a-ab78-4c75-a29a-b865ee65a454": "Season of the Witch (2011 Film) Overview",
+    "634530c5-06f1-485f-b617-c851694a6f12": "Stabbing Westward's Album Ungod and Film Appearances",
+    "acf5e353-7c87-4c26-a88a-f4d00084ca06": "Overview of the University of Kansas",
+    "9c5d3f5c-d21f-4b00-974a-85f509d2b384": "History of the Kansas City Metropolitan Area",
+    "87975d65-3714-47d4-b4e8-2c5108febb5c": "Overview of the University of the Incarnate Word",
+    "e26981ec-bd82-4f45-add1-b8b23dbfcbc7": "Kansas City Metropolitan Area Overview",
+    "7309a646-7b77-4771-94dc-90241054fe7e": "Geography and Definitions of Downtown Kansas City",
+    "84bfa14e-e73d-4b35-8214-a9d848185a55": "Kansas Song (We\u2019re From Kansas)",
+    "f62afb8c-c86d-4eef-ba0e-a5e42207bce8": "Untitled 104",
+    "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8": "The Development and Significance of Kansas City Jazz",
+    "8905a8a1-569d-434d-b102-e233aeb62f8c": "University of Missouri\u2013Kansas City (UMKC) Overview",
+    "1f101ef2-0351-4ac6-82b5-3c1f22932b48": "Geography and Context of North Kansas City",
+    "04618738-4202-4635-bd8e-0f64d3fcfbf5": "Local H's Concept Album: Hallelujah! I'm A Bum",
+    "50295051-52e3-4f4c-be49-fc162c36784b": "Suffrajett Band Overview",
+    "3c3f811d-d63a-4fbd-81b6-2af5b8c4058e": "Ophur Rock Band Overview",
+    "d63856ab-8828-4dbe-befd-316bd93994ae": "History and Origin of For Against",
+    "c5019ef5-107f-4c84-b25c-174dbce09dda": "Untitled 96",
+    "c1e3baab-8c99-4695-8b21-dc0a9382413a": "Formation of Local H",
+    "2d0bd3d8-6ea8-4909-a1e2-9a1a330516f0": "Geography and Culture of Amherst, Massachusetts",
+    "fed3e2a7-fcf3-4e05-b294-c8c65fbf15e9": "William H. Cook Water Tank House",
+    "e8384704-c6e4-48a3-8c23-177cca5c13b0": "1978 United States Senate Election in Illinois",
+    "3f6ea769-4de9-410e-9ad6-4eaa191e434d": "Mendocino County GMO Ban and Measure H",
+    "36cdd3b5-89af-4050-96bf-f2ecab438171": "Profile of Kenton Terry Richardson",
+    "663911ef-30bc-4338-ad8b-331bb8c2bf3f": "Snoecks Magazine Overview",
+    "0e09fd3c-305b-4268-bf47-63151466af2a": "History and Content of index Magazine",
+    "38a4d7ca-f6a5-4481-a65e-4722b89bec85": "Piano Girl (Deli Deli Olma) Film Overview",
+    "a2c9bcc9-2423-4cd8-9efb-d56ff0fffcef": "Biography and Career of Amanda Lepore",
+    "ec85b238-caee-4fc3-8632-0fee0bb2740d": "Gumbo by PJ Morton",
+    "ff65c66d-a545-4002-95f9-6a6175f4fc15": "Lady Gaga x Terry Richardson Photo-book",
+    "4c748dae-ac6c-4bf8-bdba-53d6525d1a09": "Biography of Terry Richardson",
+    "58bc5f4e-ca6c-46f8-aebe-a6b5a0ec4f5a": "Biography of Madonna by Andrew Morton",
+    "33ac8889-4e7b-4650-bcd5-aed522ea7eb9": "Biography and Career of Annie Morton",
+    "462b4ca2-15d8-46be-bda3-7ace7aa417bc": "2006\u201307 QMJHL Season Overview",
+    "861b0c20-5413-4774-bf16-dd431f0aed5f": "Robert and Concetta Dwyer Arena Overview",
+    "1776ddf8-640a-436a-83ff-20e8a5116b80": "History of the Lewiston Maineiacs",
+    "3c61b442-2bb0-43aa-90ab-5433cbd9a61f": "2007 MasterCard Memorial Cup Tournament",
+    "1eeb7805-5df6-4f52-8b46-3d24314f8cd2": "History and Details of the Androscoggin Bank Colis\u00e9e",
+    "aee43523-b4f0-4f7d-bcb3-eb503d97c475": "Case Gym and Boston University Athletics",
+    "3e4b6aae-d6ab-4ad7-b33b-3e18e30c271f": "Untitled 74",
+    "f945004d-f0d9-450e-b5e5-58697ee29ec1": "2011\u201312 QMJHL Season Overview",
+    "c994797d-5706-4967-ba3e-45f21bbe7e18": "The Robins Center Arena and its History",
+    "48b64e7c-2342-4ba1-9cd1-9d01b3222adf": "History and Venue of the Billings Bulls",
+    "7bc81618-92fc-4ad2-933c-66eb228bade6": "Biography and Artistic Profile of Amaruk Kayshapanta",
+    "71bcd284-dfa2-4221-b19c-5913fda199ca": "Biography of Rapper Lil Ru",
+    "8c2c10d8-3dcc-4f10-9ba4-b419bb4855d3": "Overview of Management Consulting",
+    "7e76b6e2-c437-4b5c-a28d-1bf8e97c5ceb": "Biography of Lanre Dabiri (eLDee)",
+    "fd9ea2da-a0ff-4673-9894-cd24fca0b40c": "Career and Performances of Criss Angel",
+    "99e84d62-04a9-4d4c-82da-aed4b7b6449d": "Profile of DJ and Entrepreneur Mick Batyske",
+    "287e7014-4214-44cb-9503-09163f7a8a83": "Profile of Eenasul Fateh",
+    "63198cdc-af97-463f-bce9-9a612d359fe9": "Biography of Indriati Iskak",
+    "fcf199a5-f02c-4682-8fcc-c8152b198db1": "Biography and Career of Method Man",
+    "be1e0c0e-c018-43f3-98d9-71fb730ac250": "Biography and Career of James P. Comer",
+    "3d966027-eb17-4103-b615-82cf36b3f4bd": "BTS Discography and Chart History",
+    "a00d0a7f-4865-4411-b85f-04f7c2697389": "Seventeen Discography Overview",
+    "f3f67760-46df-43ad-92a6-bb9f10559087": "Overview of the South Korean Boy Group SF9",
+    "4f8a4217-4a00-44cb-bee8-fa45798ae423": "Ravi's Musical Career and Songwriting Contributions",
+    "50bb4b81-b54b-484e-abbc-fb0dfd392f11": "Overview of the South Korean Boy Group Madtown",
+    "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1": "Overview of the South Korean Boy Group Winner",
+    "36ec986e-a5d7-4c54-ad9a-0a1e5d735b8e": "History (Band) Overview",
+    "e0e938f8-b578-478f-b695-85342776791c": "WINNER's Debut Album 2014 S/S",
+    "87e0eec0-9dd6-4694-977e-e03ab9d78670": "Biography of Cho Kyuhyun",
+    "be3053ad-de6f-4d31-b735-30c74c7de1c9": "Awards and Nominations of the South Korean Boy Group Shinee",
+    "45fdea72-b4c9-4741-9f21-1e045a43366d": "Big Stone Gap Film Overview",
+    "4c003d40-4e2b-4de1-a293-3743b9f1ea21": "I Love NY (2015 film) Production and Plot Details",
+    "86c6167c-b7a4-4cdf-a825-ac2f4b1fc8c3": "Hamish and Andy's Gap Year Comedy Series",
+    "5dce8336-b14d-41c5-aee6-c698968f60cf": "Overview of Clinton, Minnesota",
+    "2e82fc1e-0510-4b90-a8d1-c75b49ebce46": "History and Evolution of the New York Society of Model Engineers",
+    "f78efa65-888e-4d8f-ace9-3cd03f0ff9f9": "History and Operations of Great Eastern Conventions",
+    "9900c32b-2a5b-460e-bbc8-33e7c3969ba8": "Profile of Adriana Trigiani",
+    "9a5c2bd3-33f8-4d93-b1eb-2710e425f8be": "Nola (2003 Film) Overview",
+    "f8c12c6e-57cc-4dbf-83ec-922ac59c4e7b": "Kingston Morning Release and Recognition",
+    "97a5e949-64e0-4621-aaac-14f235975d35": "Just Another Romantic Wrestling Comedy Film Details",
+    "dd6d899c-f692-4ddb-9dfe-c6acabf20455": "Biographical Overview of Esma Sultan",
+    "2f5294db-1078-45c9-9beb-4f26b5baad0f": "Biography of Gevheri Kad\u0131n",
+    "b1206850-a150-45e7-a839-f39280247910": "The Name Esma Sultan",
+    "2c36ba18-3e01-474a-91ef-eb9a281d3843": "The Esma Sultan Mansion",
+    "e3e7016a-24eb-4b72-8d9b-07e61979b6a1": "The Laleli Mosque",
+    "3a96ed0e-6571-4ffb-9ab4-884bf8569f34": "The Sultan Ahmed Mosque (Blue Mosque)",
+    "6081c87f-ef45-4517-923b-11a1b8e556bd": "Biographical Overview of Esma Sultan",
+    "9a113b52-e926-459a-b051-e5443f69c483": "Biography of K\u00fc\u00e7\u00fck H\u00fcseyin Pasha",
+    "b58550fe-da5f-4861-8050-140e30e4eb47": "The Great Mosque of Algiers (Djama\u00e2 el Kebir)",
+    "3d4f68c9-109e-41fa-9c56-7677c3d9b790": "Biographical Overview of Esma Sultan",
+    "9fdcf32c-8e35-4bd1-a7f7-5717a0349ec0": "Etiquette & Espionage by Gail Carriger",
+    "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2": "Overview of the Animorphs Series",
+    "2d913c88-2ba7-4ca3-853c-ffd914a7c244": "History of Science Fantasy Magazine",
+    "fca82928-a772-439d-9257-6b766eb85101": "The Divide Trilogy Overview",
+    "902fcc5d-c1cf-4b9a-a655-fdf0661b8f75": "History of Square Enix Companion Books",
+    "7b1bb352-af73-4d68-8f43-729c47f076e4": "Left Behind: The Kids Series Overview",
+    "12759ffb-d6ff-4054-8abf-cf23fdac3c69": "Shadowshaper by Daniel Jos\u00e9 Older",
+    "33597541-ab24-4195-be99-79de349dd5ae": "The Hork-Bajir Chronicles and its Narrative Context",
+    "18fe00e7-0c25-4200-9cad-732cf7315502": "Works and Publications of Victoria Hanley",
+    "ba6585a9-9b65-4db7-9ee9-de66a4ff1656": "The Andre Norton Award for Young Adult Science Fiction and Fantasy",
+    "5d1203cb-c736-4fa8-b1dc-7c0672429b87": "Biography of Film and Television Editor Charles Craft",
+    "aac8436f-761e-48cd-9d53-298e82cdd550": "The Village Accountant Position in the Indian Sub-continent",
+    "7f205151-7741-4973-bda5-a624e0673a28": "The Office of Secretary of State for Constitutional Affairs",
+    "2a12cded-e4ac-485c-b481-290c1c9ce0a0": "Kiss and Tell (1945 film) Overview",
+    "0c59d868-64af-4454-a626-607361177f81": "A Kiss for Corliss Film Details",
+    "255961e5-eccd-49e7-8fcd-e8e55c7a3716": "Untitled 15",
+    "9126be64-89cc-4fa0-80d9-89ec9c81acdd": "Meet Corliss Archer Television Series Overview",
+    "0710ed5a-0518-4d02-8f85-bac4b1958fad": "Biography of Janet Waldo",
+    "241dd2b9-0674-4f26-a552-e36d031ed921": "Biography of Shirley Temple Black",
+    "8eae9c6a-184a-438a-8314-c25569cf917c": "Meet Corliss Archer Radio Program History",
+    "4d7c8005-3f83-4d54-9b6a-5fe9fbed6048": "Doctor Strange (2016 Film) Overview",
+    "c3f62162-6794-41ad-bc84-06ea4ebfd6da": "Biography of Conrad Brooks",
+    "284d7031-7b69-492c-b2d8-b2122bb86ac3": "Sinister (2012 Film) Overview",
+    "61bfd25e-d015-4730-8a4b-4451bdfcffc6": "Biography of Adam Collis",
+    "e9bf4e09-010d-4013-bd79-47b8b54e671b": "Deliver Us from Evil (2014 Film) Overview",
+    "8616a614-6296-4339-a204-30f3ddc2c18a": "Biographical Overview of Ed Wood",
+    "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3": "Biography and Career of Tyler Bates",
+    "d5b28f46-b22c-4578-9b5f-25b6e162fd86": "Geography and History of Woodson, Arkansas",
+    "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde": "Biography of Scott Derrickson",
+    "15827d90-5399-4535-976a-a5b756c696f7": "Ed Wood (1994 Film) Overview"
+  },
+  "metrics": {
+    "candidate_recall": 0.875,
+    "errors": 0
+  },
+  "results": [
+    {
+      "test_id": "5a8b57f25542995d1e6f1371",
+      "question": "Were Scott Derrickson and Ed Wood of the same nationality?",
+      "query": "Were Scott Derrickson and Ed Wood of the same nationality?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Were Scott Derrickson and Ed Wood of the same nationality?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "entity_match",
+              "score": 0.990383,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "edward davis wood jr.",
+              "type": "vector_match",
+              "score": 0.956134,
+              "notes": [
+                "8616a614-6296-4339-a204-30f3ddc2c18a"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "entity_match",
+              "score": 0.801832,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "ed wood",
+              "type": "entity_match",
+              "score": 0.739083,
+              "notes": [
+                "15827d90-5399-4535-976a-a5b756c696f7",
+                "8616a614-6296-4339-a204-30f3ddc2c18a"
+              ]
+            },
+            {
+              "name": "ed wood (filmmaker)",
+              "type": "entity_match",
+              "score": 0.228049,
+              "notes": [
+                "15827d90-5399-4535-976a-a5b756c696f7"
+              ]
+            },
+            {
+              "name": "woodson",
+              "type": "vector_match",
+              "score": 0.110506,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86"
+              ]
+            },
+            {
+              "name": "october 10, 1924",
+              "type": "vector_match",
+              "score": 0.106403,
+              "notes": [
+                "8616a614-6296-4339-a204-30f3ddc2c18a"
+              ]
+            },
+            {
+              "name": "the exorcism of emily rose",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde"
+              ]
+            },
+            {
+              "name": "johnny depp",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "15827d90-5399-4535-976a-a5b756c696f7"
+              ]
+            },
+            {
+              "name": "marvel cinematic universe",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde"
+              ]
+            },
+            {
+              "name": "sinister",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "284d7031-7b69-492c-b2d8-b2122bb86ac3"
+              ]
+            },
+            {
+              "name": "plan 9 from outer space",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c3f62162-6794-41ad-bc84-06ea4ebfd6da"
+              ]
+            },
+            {
+              "name": "love in the ruins",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "61bfd25e-d015-4730-8a4b-4451bdfcffc6"
+              ]
+            },
+            {
+              "name": "woodson lake",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86"
+              ]
+            },
+            {
+              "name": "bela lugosi",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "15827d90-5399-4535-976a-a5b756c696f7"
+              ]
+            },
+            {
+              "name": "zack snyder",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "bill murray",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "15827d90-5399-4535-976a-a5b756c696f7"
+              ]
+            },
+            {
+              "name": "tyler bates",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "conrad brooks",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c3f62162-6794-41ad-bc84-06ea4ebfd6da"
+              ]
+            },
+            {
+              "name": "wood hollow",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86"
+              ]
+            },
+            {
+              "name": "wood plantation",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86"
+              ]
+            },
+            {
+              "name": "los angeles, california",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "5d1203cb-c736-4fa8-b1dc-7c0672429b87"
+              ]
+            },
+            {
+              "name": "tim burton",
+              "type": "vector_match",
+              "score": 0.092153,
+              "notes": [
+                "15827d90-5399-4535-976a-a5b756c696f7"
+              ]
+            },
+            {
+              "name": "ed wood sr.",
+              "type": "entity_match",
+              "score": 0.088349,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86"
+              ]
+            },
+            {
+              "name": "december 10, 1978",
+              "type": "vector_match",
+              "score": 0.043491,
+              "notes": [
+                "8616a614-6296-4339-a204-30f3ddc2c18a"
+              ]
+            },
+            {
+              "name": "deliver us from evil",
+              "type": "vector_match",
+              "score": 0.036322,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "e9bf4e09-010d-4013-bd79-47b8b54e671b"
+              ]
+            },
+            {
+              "name": "july 16, 1966",
+              "type": "vector_match",
+              "score": 0.034364,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde"
+              ]
+            },
+            {
+              "name": "doctor strange",
+              "type": "vector_match",
+              "score": 0.016063,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Were Scott Derrickson and Ed Wood of the same nationality?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "graph_expansion",
+              "score": 0.757045,
+              "notes": [
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "e9bf4e09-010d-4013-bd79-47b8b54e671b",
+                "4d7c8005-3f83-4d54-9b6a-5fe9fbed6048",
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde",
+                "5d1203cb-c736-4fa8-b1dc-7c0672429b87",
+                "3d6e1ef7-d64d-47df-b8d6-101c0ffeadde"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 94349.1971893236
+    },
+    {
+      "test_id": "5a8c7595554299585d9e36b6",
+      "question": "What government position was held by the woman who portrayed Corliss Archer in the film Kiss and Tell?",
+      "query": "What government position was held by the woman who portrayed Corliss Archer in the film Kiss and Tell?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "What government position was held by the woman who portrayed Corliss Archer in the film Kiss and Tell?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "kiss and tell",
+              "type": "entity_match",
+              "score": 0.90629,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81",
+                "2a12cded-e4ac-485c-b481-290c1c9ce0a0"
+              ]
+            },
+            {
+              "name": "corliss archer",
+              "type": "entity_match",
+              "score": 0.904641,
+              "notes": [
+                "0710ed5a-0518-4d02-8f85-bac4b1958fad",
+                "2a12cded-e4ac-485c-b481-290c1c9ce0a0"
+              ]
+            },
+            {
+              "name": "shirley temple",
+              "type": "vector_match",
+              "score": 0.90187,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81",
+                "2a12cded-e4ac-485c-b481-290c1c9ce0a0"
+              ]
+            },
+            {
+              "name": "janet marie waldo",
+              "type": "vector_match",
+              "score": 0.211084,
+              "notes": [
+                "0710ed5a-0518-4d02-8f85-bac4b1958fad"
+              ]
+            },
+            {
+              "name": "meet corliss archer (tv series)",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "9126be64-89cc-4fa0-80d9-89ec9c81acdd"
+              ]
+            },
+            {
+              "name": "meet corliss archer",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "8eae9c6a-184a-438a-8314-c25569cf917c",
+                "0710ed5a-0518-4d02-8f85-bac4b1958fad"
+              ]
+            },
+            {
+              "name": "meet corliss archer (radio series)",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "9126be64-89cc-4fa0-80d9-89ec9c81acdd"
+              ]
+            },
+            {
+              "name": "november 25, 1949",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81"
+              ]
+            },
+            {
+              "name": "united artists",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81"
+              ]
+            },
+            {
+              "name": "october 3, 1952 to june 26, 1953",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8eae9c6a-184a-438a-8314-c25569cf917c"
+              ]
+            },
+            {
+              "name": "two teenage girls",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2a12cded-e4ac-485c-b481-290c1c9ce0a0"
+              ]
+            },
+            {
+              "name": "a date with judy",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8eae9c6a-184a-438a-8314-c25569cf917c"
+              ]
+            },
+            {
+              "name": "richard wallace",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81"
+              ]
+            },
+            {
+              "name": "july 13, 1951 - august 10, 1951",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "9126be64-89cc-4fa0-80d9-89ec9c81acdd"
+              ]
+            },
+            {
+              "name": "shirley temple black",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "241dd2b9-0674-4f26-a552-e36d031ed921"
+              ]
+            },
+            {
+              "name": "cbs",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8eae9c6a-184a-438a-8314-c25569cf917c",
+                "9126be64-89cc-4fa0-80d9-89ec9c81acdd"
+              ]
+            },
+            {
+              "name": "september 30, 1956",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8eae9c6a-184a-438a-8314-c25569cf917c"
+              ]
+            },
+            {
+              "name": "abc",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8eae9c6a-184a-438a-8314-c25569cf917c"
+              ]
+            },
+            {
+              "name": "howard dimsdale",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81"
+              ]
+            },
+            {
+              "name": "1948",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c3f62162-6794-41ad-bc84-06ea4ebfd6da",
+                "8eae9c6a-184a-438a-8314-c25569cf917c"
+              ]
+            },
+            {
+              "name": "chief of protocol of the united states",
+              "type": "vector_match",
+              "score": 0.077517,
+              "notes": [
+                "241dd2b9-0674-4f26-a552-e36d031ed921"
+              ]
+            },
+            {
+              "name": "a kiss for corliss",
+              "type": "vector_match",
+              "score": 0.057703,
+              "notes": [
+                "0c59d868-64af-4454-a626-607361177f81"
+              ]
+            },
+            {
+              "name": "1945",
+              "type": "vector_match",
+              "score": 0.023589,
+              "notes": [
+                "2a12cded-e4ac-485c-b481-290c1c9ce0a0"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "What government position was held by the woman who portrayed Corliss Archer in the film Kiss and Tell?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "kiss and tell",
+              "type": "graph_expansion",
+              "score": 0.97721,
+              "notes": [
+                "2a12cded-e4ac-485c-b481-290c1c9ce0a0",
+                "0c59d868-64af-4454-a626-607361177f81"
+              ]
+            },
+            {
+              "name": "corliss archer",
+              "type": "graph_expansion",
+              "score": 0.630678,
+              "notes": []
+            },
+            {
+              "name": "janet marie waldo",
+              "type": "graph_expansion",
+              "score": 0.019279,
+              "notes": [
+                "0710ed5a-0518-4d02-8f85-bac4b1958fad"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 88561.89912557602
+    },
+    {
+      "test_id": "5a85ea095542994775f606a8",
+      "question": "What science fantasy young adult series, told in first person, has a set of companion books narrating the stories of enslaved worlds and alien species?",
+      "query": "What science fantasy young adult series, told in first person, has a set of companion books narrating the stories of enslaved worlds and alien species?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "What science fantasy young adult series, told in first person, has a set of companion books narrating the stories of enslaved worlds and alien species?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "animorphs",
+              "type": "vector_match",
+              "score": 0.98742,
+              "notes": [
+                "33597541-ab24-4195-be99-79de349dd5ae",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "the divide trilogy",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "fca82928-a772-439d-9257-6b766eb85101"
+              ]
+            },
+            {
+              "name": "dehumanization",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "freedom",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "six main characters",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "growing up",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "megamorphs",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "33597541-ab24-4195-be99-79de349dd5ae"
+              ]
+            },
+            {
+              "name": "andre norton award for young adult science fiction and fantasy",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ba6585a9-9b65-4db7-9ee9-de66a4ff1656"
+              ]
+            },
+            {
+              "name": "nova publications",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2d913c88-2ba7-4ca3-853c-ffd914a7c244"
+              ]
+            },
+            {
+              "name": "katherine applegate",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "michael grant",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            },
+            {
+              "name": "kyril bonfiglioli",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2d913c88-2ba7-4ca3-853c-ffd914a7c244"
+              ]
+            },
+            {
+              "name": "jara hamee",
+              "type": "vector_match",
+              "score": 0.079266,
+              "notes": [
+                "33597541-ab24-4195-be99-79de349dd5ae"
+              ]
+            },
+            {
+              "name": "the hork-bajir chronicles",
+              "type": "vector_match",
+              "score": 0.03811,
+              "notes": [
+                "33597541-ab24-4195-be99-79de349dd5ae"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "What science fantasy young adult series, told in first person, has a set of companion books narrating the stories of enslaved worlds and alien species?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "animorphs",
+              "type": "graph_expansion",
+              "score": 0.91668,
+              "notes": [
+                "fca82928-a772-439d-9257-6b766eb85101",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2",
+                "33597541-ab24-4195-be99-79de349dd5ae",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2",
+                "33597541-ab24-4195-be99-79de349dd5ae",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2",
+                "e533dbf6-7f72-43d9-9e2b-54cb3b84f8d2"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 60704.988097772
+    },
+    {
+      "test_id": "5adbf0a255429947ff17385a",
+      "question": "Are the Laleli Mosque and Esma Sultan Mansion located in the same neighborhood?",
+      "query": "Are the Laleli Mosque and Esma Sultan Mansion located in the same neighborhood?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Are the Laleli Mosque and Esma Sultan Mansion located in the same neighborhood?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "laleli mosque",
+              "type": "entity_match",
+              "score": 0.996423,
+              "notes": [
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "laleli",
+              "type": "vector_match",
+              "score": 0.964859,
+              "notes": [
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "ortak\u00f6y",
+              "type": "vector_match",
+              "score": 0.911921,
+              "notes": [
+                "2c36ba18-3e01-474a-91ef-eb9a281d3843"
+              ]
+            },
+            {
+              "name": "esma sultan mansion",
+              "type": "entity_match",
+              "score": 0.9,
+              "notes": [
+                "2c36ba18-3e01-474a-91ef-eb9a281d3843"
+              ]
+            },
+            {
+              "name": "istanbul",
+              "type": "entity_match",
+              "score": 0.77694,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34",
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "fatih",
+              "type": "vector_match",
+              "score": 0.378912,
+              "notes": [
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "turkey",
+              "type": "entity_match",
+              "score": 0.33209,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34",
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "bosphorus",
+              "type": "vector_match",
+              "score": 0.199303,
+              "notes": [
+                "2c36ba18-3e01-474a-91ef-eb9a281d3843"
+              ]
+            },
+            {
+              "name": "tulip mosque",
+              "type": "vector_match",
+              "score": 0.135647,
+              "notes": [
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "sultan ahmed mosque",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "18th-century",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            },
+            {
+              "name": "hagia sophia",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "ahmed's tomb",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "k\u00fclliye",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "ottoman empire",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d4f68c9-109e-41fa-9c56-7677c3d9b790",
+                "2f5294db-1078-45c9-9beb-4f26b5baad0f"
+              ]
+            },
+            {
+              "name": "blue mosque",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "ahmed i",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "hospice",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3a96ed0e-6571-4ffb-9ab4-884bf8569f34"
+              ]
+            },
+            {
+              "name": "sultan mustafa iii",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "dd6d899c-f692-4ddb-9dfe-c6acabf20455"
+              ]
+            },
+            {
+              "name": "gevheri kad\u0131n",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d4f68c9-109e-41fa-9c56-7677c3d9b790",
+                "2f5294db-1078-45c9-9beb-4f26b5baad0f"
+              ]
+            },
+            {
+              "name": "gallery",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "b58550fe-da5f-4861-8050-140e30e4eb47"
+              ]
+            },
+            {
+              "name": "minaret",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "b58550fe-da5f-4861-8050-140e30e4eb47"
+              ]
+            },
+            {
+              "name": "abd\u00fclaziz",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d4f68c9-109e-41fa-9c56-7677c3d9b790"
+              ]
+            },
+            {
+              "name": "cultural center",
+              "type": "vector_match",
+              "score": 0.016435,
+              "notes": [
+                "2c36ba18-3e01-474a-91ef-eb9a281d3843"
+              ]
+            },
+            {
+              "name": "esma sultan",
+              "type": "vector_match",
+              "score": 0.015547,
+              "notes": [
+                "3d4f68c9-109e-41fa-9c56-7677c3d9b790",
+                "9a113b52-e926-459a-b051-e5443f69c483"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Are the Laleli Mosque and Esma Sultan Mansion located in the same neighborhood?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "esma sultan mansion",
+              "type": "graph_expansion",
+              "score": 0.997777,
+              "notes": [
+                "3d4f68c9-109e-41fa-9c56-7677c3d9b790",
+                "9a113b52-e926-459a-b051-e5443f69c483",
+                "2c36ba18-3e01-474a-91ef-eb9a281d3843"
+              ]
+            },
+            {
+              "name": "laleli mosque",
+              "type": "graph_expansion",
+              "score": 0.995178,
+              "notes": [
+                "e3e7016a-24eb-4b72-8d9b-07e61979b6a1"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 72517.48878788203
+    },
+    {
+      "test_id": "5a8e3ea95542995a26add48d",
+      "question": "The director of the romantic comedy \"Big Stone Gap\" is based in what New York city?",
+      "query": "The director of the romantic comedy \"Big Stone Gap\" is based in what New York city?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "The director of the romantic comedy \"Big Stone Gap\" is based in what New York city?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "adriana trigiani",
+              "type": "entity_match",
+              "score": 0.997398,
+              "notes": [
+                "9900c32b-2a5b-460e-bbc8-33e7c3969ba8",
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "big stone gap (film)",
+              "type": "entity_match",
+              "score": 0.851003,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "greenwich village",
+              "type": "vector_match",
+              "score": 0.591576,
+              "notes": [
+                "9900c32b-2a5b-460e-bbc8-33e7c3969ba8"
+              ]
+            },
+            {
+              "name": "new york city",
+              "type": "entity_match",
+              "score": 0.27009,
+              "notes": [
+                "97a5e949-64e0-4621-aaac-14f235975d35",
+                "9a5c2bd3-33f8-4d93-b1eb-2710e425f8be"
+              ]
+            },
+            {
+              "name": "big stone gap",
+              "type": "entity_match",
+              "score": 0.102937,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "new york city police officer",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "226df765-30c9-4136-a9cb-23e2a44b3203"
+              ]
+            },
+            {
+              "name": "kingston morning",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "f8c12c6e-57cc-4dbf-83ec-922ac59c4e7b"
+              ]
+            },
+            {
+              "name": "donna gigliotti",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "virginia film festival",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "1970s",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c3f62162-6794-41ad-bc84-06ea4ebfd6da",
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "november 6, 2014",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "i love ny",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c003d40-4e2b-4de1-a293-3743b9f1ea21"
+              ]
+            },
+            {
+              "name": "big stone gap, virginia",
+              "type": "entity_match",
+              "score": 0.042154,
+              "notes": [
+                "f8c12c6e-57cc-4dbf-83ec-922ac59c4e7b"
+              ]
+            },
+            {
+              "name": "big stone gap (novel)",
+              "type": "entity_match",
+              "score": 0.038054,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "altar identity studios",
+              "type": "entity_match",
+              "score": 0.017164,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "The director of the romantic comedy \"Big Stone Gap\" is based in what New York city?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "adriana trigiani",
+              "type": "graph_expansion",
+              "score": 0.998834,
+              "notes": [
+                "9900c32b-2a5b-460e-bbc8-33e7c3969ba8",
+                "9900c32b-2a5b-460e-bbc8-33e7c3969ba8",
+                "9900c32b-2a5b-460e-bbc8-33e7c3969ba8",
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            },
+            {
+              "name": "big stone gap (film)",
+              "type": "graph_expansion",
+              "score": 0.842191,
+              "notes": [
+                "45fdea72-b4c9-4741-9f21-1e045a43366d"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 0.5,
+      "total_time_ms": 150062.99626175314
+    },
+    {
+      "test_id": "5abd94525542992ac4f382d2",
+      "question": "2014 S/S is the debut album of a South Korean boy group that was formed by who?",
+      "query": "2014 S/S is the debut album of a South Korean boy group that was formed by who?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "2014 S/S is the debut album of a South Korean boy group that was formed by who?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "2014 s/s",
+              "type": "entity_match",
+              "score": 0.995621,
+              "notes": [
+                "e0e938f8-b578-478f-b695-85342776791c"
+              ]
+            },
+            {
+              "name": "winner",
+              "type": "entity_match",
+              "score": 0.987745,
+              "notes": [
+                "e0e938f8-b578-478f-b695-85342776791c",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1"
+              ]
+            },
+            {
+              "name": "yg entertainment",
+              "type": "entity_match",
+              "score": 0.924209,
+              "notes": [
+                "e0e938f8-b578-478f-b695-85342776791c",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1"
+              ]
+            },
+            {
+              "name": "members of winner",
+              "type": "entity_match",
+              "score": 0.391125,
+              "notes": [
+                "e0e938f8-b578-478f-b695-85342776791c"
+              ]
+            },
+            {
+              "name": "shinee",
+              "type": "vector_match",
+              "score": 0.233663,
+              "notes": [
+                "be3053ad-de6f-4d31-b735-30c74c7de1c9"
+              ]
+            },
+            {
+              "name": "madtown",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "50bb4b81-b54b-484e-abbc-fb0dfd392f11"
+              ]
+            },
+            {
+              "name": "s.m. entertainment",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "be3053ad-de6f-4d31-b735-30c74c7de1c9"
+              ]
+            },
+            {
+              "name": "south korea",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87e0eec0-9dd6-4694-977e-e03ab9d78670",
+                "a00d0a7f-4865-4411-b85f-04f7c2697389"
+              ]
+            },
+            {
+              "name": "sf9",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f3f67760-46df-43ad-92a6-bb9f10559087"
+              ]
+            },
+            {
+              "name": "s.m. the ballad",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87e0eec0-9dd6-4694-977e-e03ab9d78670"
+              ]
+            },
+            {
+              "name": "june 2013",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d966027-eb17-4103-b615-82cf36b3f4bd"
+              ]
+            },
+            {
+              "name": "history",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "36ec986e-a5d7-4c54-ad9a-0a1e5d735b8e"
+              ]
+            },
+            {
+              "name": "fnc entertainment",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f3f67760-46df-43ad-92a6-bb9f10559087"
+              ]
+            },
+            {
+              "name": "super junior",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87e0eec0-9dd6-4694-977e-e03ab9d78670"
+              ]
+            },
+            {
+              "name": "loen entertainment",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "36ec986e-a5d7-4c54-ad9a-0a1e5d735b8e"
+              ]
+            },
+            {
+              "name": "pledis entertainment",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "a00d0a7f-4865-4411-b85f-04f7c2697389"
+              ]
+            },
+            {
+              "name": "super junior-m",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87e0eec0-9dd6-4694-977e-e03ab9d78670"
+              ]
+            },
+            {
+              "name": "super junior-k.r.y.",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87e0eec0-9dd6-4694-977e-e03ab9d78670"
+              ]
+            },
+            {
+              "name": "vixx",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4f8a4217-4a00-44cb-bee8-fa45798ae423"
+              ]
+            },
+            {
+              "name": "seungyoon",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1"
+              ]
+            },
+            {
+              "name": "2 cool 4 skool",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3d966027-eb17-4103-b615-82cf36b3f4bd"
+              ]
+            },
+            {
+              "name": "cho kyuhyun",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87e0eec0-9dd6-4694-977e-e03ab9d78670"
+              ]
+            },
+            {
+              "name": "ravi",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4f8a4217-4a00-44cb-bee8-fa45798ae423"
+              ]
+            },
+            {
+              "name": "2015",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4f8a4217-4a00-44cb-bee8-fa45798ae423",
+                "a00d0a7f-4865-4411-b85f-04f7c2697389"
+              ]
+            },
+            {
+              "name": "august 12, 2014",
+              "type": "entity_match",
+              "score": 0.086523,
+              "notes": [
+                "e0e938f8-b578-478f-b695-85342776791c"
+              ]
+            },
+            {
+              "name": "2014",
+              "type": "entity_match",
+              "score": 0.077942,
+              "notes": [
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "50bb4b81-b54b-484e-abbc-fb0dfd392f11"
+              ]
+            },
+            {
+              "name": "2013",
+              "type": "vector_match",
+              "score": 0.057947,
+              "notes": [
+                "86c6167c-b7a4-4cdf-a825-ac2f4b1fc8c3",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1"
+              ]
+            },
+            {
+              "name": "seventeen",
+              "type": "vector_match",
+              "score": 0.036679,
+              "notes": [
+                "a00d0a7f-4865-4411-b85f-04f7c2697389"
+              ]
+            },
+            {
+              "name": "bts",
+              "type": "entity_match",
+              "score": 0.032231,
+              "notes": [
+                "3d966027-eb17-4103-b615-82cf36b3f4bd"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "2014 S/S is the debut album of a South Korean boy group that was formed by who?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "winner",
+              "type": "graph_expansion",
+              "score": 0.998485,
+              "notes": [
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "86c6167c-b7a4-4cdf-a825-ac2f4b1fc8c3",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "43bb17c6-1e5f-4a27-80ec-f7f5a5686ff1",
+                "50bb4b81-b54b-484e-abbc-fb0dfd392f11"
+              ]
+            },
+            {
+              "name": "2014 s/s",
+              "type": "graph_expansion",
+              "score": 0.983488,
+              "notes": [
+                "e0e938f8-b578-478f-b695-85342776791c"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 0.5,
+      "total_time_ms": 74719.87718064338
+    },
+    {
+      "test_id": "5a85b2d95542997b5ce40028",
+      "question": "Who was known by his stage name Aladin and helped organizations improve their performance as a consultant?",
+      "query": "Who was known by his stage name Aladin and helped organizations improve their performance as a consultant?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Who was known by his stage name Aladin and helped organizations improve their performance as a consultant?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "aladin",
+              "type": "entity_match",
+              "score": 0.995815,
+              "notes": [
+                "287e7014-4214-44cb-9503-09163f7a8a83"
+              ]
+            },
+            {
+              "name": "eenasul fateh",
+              "type": "vector_match",
+              "score": 0.9,
+              "notes": [
+                "287e7014-4214-44cb-9503-09163f7a8a83"
+              ]
+            },
+            {
+              "name": "international management consultant",
+              "type": "vector_match",
+              "score": 0.026161,
+              "notes": [
+                "287e7014-4214-44cb-9503-09163f7a8a83"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Who was known by his stage name Aladin and helped organizations improve their performance as a consultant?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "eenasul fateh",
+              "type": "graph_expansion",
+              "score": 0.998668,
+              "notes": [
+                "287e7014-4214-44cb-9503-09163f7a8a83",
+                "287e7014-4214-44cb-9503-09163f7a8a83",
+                "287e7014-4214-44cb-9503-09163f7a8a83",
+                "287e7014-4214-44cb-9503-09163f7a8a83",
+                "287e7014-4214-44cb-9503-09163f7a8a83",
+                "287e7014-4214-44cb-9503-09163f7a8a83"
+              ]
+            },
+            {
+              "name": "aladin",
+              "type": "graph_expansion",
+              "score": 0.990199,
+              "notes": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 0.5,
+      "total_time_ms": 9826.184417121112
+    },
+    {
+      "test_id": "5a87ab905542996e4f3088c1",
+      "question": "The arena where the Lewiston Maineiacs played their home games can seat how many people?",
+      "query": "The arena where the Lewiston Maineiacs played their home games can seat how many people?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "The arena where the Lewiston Maineiacs played their home games can seat how many people?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "androscoggin bank colis\u00e9e",
+              "type": "entity_match",
+              "score": 0.9,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2",
+                "1776ddf8-640a-436a-83ff-20e8a5116b80"
+              ]
+            },
+            {
+              "name": "lewiston maineiacs",
+              "type": "entity_match",
+              "score": 0.304076,
+              "notes": [
+                "f945004d-f0d9-450e-b5e5-58697ee29ec1",
+                "3c61b442-2bb0-43aa-90ab-5433cbd9a61f"
+              ]
+            },
+            {
+              "name": "central maine civic center",
+              "type": "vector_match",
+              "score": 0.28016,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2"
+              ]
+            },
+            {
+              "name": "main rink",
+              "type": "entity_match",
+              "score": 0.257179,
+              "notes": [
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "lewiston colisee",
+              "type": "vector_match",
+              "score": 0.194116,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "centennial ice arena",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "48b64e7c-2342-4ba1-9cd1-9d01b3222adf"
+              ]
+            },
+            {
+              "name": "billings bulls",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "48b64e7c-2342-4ba1-9cd1-9d01b3222adf"
+              ]
+            },
+            {
+              "name": "boston university terriers men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "aee43523-b4f0-4f7d-bcb3-eb503d97c475"
+              ]
+            },
+            {
+              "name": "case gym",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "aee43523-b4f0-4f7d-bcb3-eb503d97c475"
+              ]
+            },
+            {
+              "name": "niagara purple eagles men's ice hockey team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "lewiston, maine",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1776ddf8-640a-436a-83ff-20e8a5116b80"
+              ]
+            },
+            {
+              "name": "maine",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2",
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "quebec major junior hockey league",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1776ddf8-640a-436a-83ff-20e8a5116b80",
+                "462b4ca2-15d8-46be-bda3-7ace7aa417bc"
+              ]
+            },
+            {
+              "name": "qmjhl",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3c61b442-2bb0-43aa-90ab-5433cbd9a61f"
+              ]
+            },
+            {
+              "name": "regular season",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f945004d-f0d9-450e-b5e5-58697ee29ec1",
+                "462b4ca2-15d8-46be-bda3-7ace7aa417bc"
+              ]
+            },
+            {
+              "name": "jean rougeau trophy",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "462b4ca2-15d8-46be-bda3-7ace7aa417bc"
+              ]
+            },
+            {
+              "name": "2007",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1776ddf8-640a-436a-83ff-20e8a5116b80"
+              ]
+            },
+            {
+              "name": "playoffs",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f945004d-f0d9-450e-b5e5-58697ee29ec1",
+                "462b4ca2-15d8-46be-bda3-7ace7aa417bc"
+              ]
+            },
+            {
+              "name": "val-d'or foreurs",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "462b4ca2-15d8-46be-bda3-7ace7aa417bc"
+              ]
+            },
+            {
+              "name": "president's cup",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f945004d-f0d9-450e-b5e5-58697ee29ec1",
+                "1776ddf8-640a-436a-83ff-20e8a5116b80"
+              ]
+            },
+            {
+              "name": "2007 mastercard memorial cup",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3c61b442-2bb0-43aa-90ab-5433cbd9a61f"
+              ]
+            },
+            {
+              "name": "lewiston",
+              "type": "vector_match",
+              "score": 0.098892,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2",
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "niagara university",
+              "type": "entity_match",
+              "score": 0.019292,
+              "notes": [
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "The arena where the Lewiston Maineiacs played their home games can seat how many people?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "androscoggin bank colis\u00e9e",
+              "type": "graph_expansion",
+              "score": 0.9,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2",
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2",
+                "861b0c20-5413-4774-bf16-dd431f0aed5f",
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "graph_expansion",
+              "score": 0.512231,
+              "notes": []
+            },
+            {
+              "name": "lewiston maineiacs",
+              "type": "graph_expansion",
+              "score": 0.314958,
+              "notes": [
+                "f945004d-f0d9-450e-b5e5-58697ee29ec1",
+                "1776ddf8-640a-436a-83ff-20e8a5116b80"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 70901.71867888421
+    },
+    {
+      "test_id": "5a7bbb64554299042af8f7cc",
+      "question": "Who is older, Annie Morton or Terry Richardson?",
+      "query": "Who is older, Annie Morton or Terry Richardson?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Who is older, Annie Morton or Terry Richardson?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "annie morton",
+              "type": "entity_match",
+              "score": 0.962419,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "terry richardson",
+              "type": "entity_match",
+              "score": 0.943147,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "august 14, 1965",
+              "type": "vector_match",
+              "score": 0.513434,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "kenton terry richardson",
+              "type": "entity_match",
+              "score": 0.358083,
+              "notes": [
+                "36cdd3b5-89af-4050-96bf-f2ecab438171"
+              ]
+            },
+            {
+              "name": "richard avedon",
+              "type": "entity_match",
+              "score": 0.203723,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "annie leibovitz",
+              "type": "entity_match",
+              "score": 0.203675,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "26 july 1999",
+              "type": "vector_match",
+              "score": 0.139067,
+              "notes": [
+                "36cdd3b5-89af-4050-96bf-f2ecab438171"
+              ]
+            },
+            {
+              "name": "paul jasmin",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "victoria's secret",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "donna karan",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "rolling stone",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "chanel",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "vogue",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "gq",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "vegetarianism",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "i-d",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "marie claire",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "tom ford",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "yves saint laurent",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "pennsylvania",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f78efa65-888e-4d8f-ace9-3cd03f0ff9f9",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "supreme",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "marc jacobs",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09",
+                "0e09fd3c-305b-4268-bf47-63151466af2a"
+              ]
+            },
+            {
+              "name": "juergen teller",
+              "type": "entity_match",
+              "score": 0.095027,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "0e09fd3c-305b-4268-bf47-63151466af2a"
+              ]
+            },
+            {
+              "name": "peter lindbergh",
+              "type": "entity_match",
+              "score": 0.043796,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "663911ef-30bc-4338-ad8b-331bb8c2bf3f"
+              ]
+            },
+            {
+              "name": "mary ellen mark",
+              "type": "vector_match",
+              "score": 0.041046,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "aldo",
+              "type": "vector_match",
+              "score": 0.035888,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "harper's bazaar",
+              "type": "vector_match",
+              "score": 0.030851,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "natural healthcare",
+              "type": "vector_match",
+              "score": 0.029036,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "vice",
+              "type": "vector_match",
+              "score": 0.02734,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            },
+            {
+              "name": "lady gaga x terry richardson",
+              "type": "entity_match",
+              "score": 0.027174,
+              "notes": [
+                "ff65c66d-a545-4002-95f9-6a6175f4fc15"
+              ]
+            },
+            {
+              "name": "sports illustrated",
+              "type": "vector_match",
+              "score": 0.024246,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "organic lifestyle",
+              "type": "vector_match",
+              "score": 0.023752,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "helmut newton",
+              "type": "entity_match",
+              "score": 0.021138,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "guerlain",
+              "type": "vector_match",
+              "score": 0.019036,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "id",
+              "type": "vector_match",
+              "score": 0.014738,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "british vogue",
+              "type": "vector_match",
+              "score": 0.013424,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "givenchy",
+              "type": "vector_match",
+              "score": 0.013076,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "vanity fair",
+              "type": "vector_match",
+              "score": 0.012743,
+              "notes": [
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Who is older, Annie Morton or Terry Richardson?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "annie morton",
+              "type": "graph_expansion",
+              "score": 0.976392,
+              "notes": [
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "4c748dae-ac6c-4bf8-bdba-53d6525d1a09",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "0e09fd3c-305b-4268-bf47-63151466af2a",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "663911ef-30bc-4338-ad8b-331bb8c2bf3f",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9",
+                "33ac8889-4e7b-4650-bcd5-aed522ea7eb9"
+              ]
+            },
+            {
+              "name": "terry richardson",
+              "type": "graph_expansion",
+              "score": 0.934187,
+              "notes": [
+                "38a4d7ca-f6a5-4481-a65e-4722b89bec85"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 60550.924439914525
+    },
+    {
+      "test_id": "5a8db19d5542994ba4e3dd00",
+      "question": "Are Local H and For Against both from the United States?",
+      "query": "Are Local H and For Against both from the United States?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Are Local H and For Against both from the United States?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "for against",
+              "type": "entity_match",
+              "score": 0.993819,
+              "notes": [
+                "d63856ab-8828-4dbe-befd-316bd93994ae"
+              ]
+            },
+            {
+              "name": "local h",
+              "type": "entity_match",
+              "score": 0.989379,
+              "notes": [
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "3c3f811d-d63a-4fbd-81b6-2af5b8c4058e"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "vector_match",
+              "score": 0.961355,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "lincoln",
+              "type": "vector_match",
+              "score": 0.590407,
+              "notes": [
+                "d63856ab-8828-4dbe-befd-316bd93994ae"
+              ]
+            },
+            {
+              "name": "nebraska",
+              "type": "vector_match",
+              "score": 0.499817,
+              "notes": [
+                "d63856ab-8828-4dbe-befd-316bd93994ae"
+              ]
+            },
+            {
+              "name": "chicago",
+              "type": "entity_match",
+              "score": 0.38668,
+              "notes": [
+                "04618738-4202-4635-bd8e-0f64d3fcfbf5",
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8"
+              ]
+            },
+            {
+              "name": "zion, illinois",
+              "type": "vector_match",
+              "score": 0.248264,
+              "notes": [
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a"
+              ]
+            },
+            {
+              "name": "1990",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "b59cbd44-28b6-483a-a313-8607bc4c933c"
+              ]
+            },
+            {
+              "name": "1984",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d63856ab-8828-4dbe-befd-316bd93994ae"
+              ]
+            },
+            {
+              "name": "post-punk",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d63856ab-8828-4dbe-befd-316bd93994ae"
+              ]
+            },
+            {
+              "name": "1987",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "ophur",
+              "type": "vector_match",
+              "score": 0.034288,
+              "notes": [
+                "3c3f811d-d63a-4fbd-81b6-2af5b8c4058e"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Are Local H and For Against both from the United States?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "for against",
+              "type": "graph_expansion",
+              "score": 0.996276,
+              "notes": [
+                "d63856ab-8828-4dbe-befd-316bd93994ae"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "graph_expansion",
+              "score": 0.985848,
+              "notes": []
+            },
+            {
+              "name": "local h",
+              "type": "graph_expansion",
+              "score": 0.9663,
+              "notes": [
+                "04618738-4202-4635-bd8e-0f64d3fcfbf5",
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 55995.56167982519
+    },
+    {
+      "test_id": "5a7166395542994082a3e814",
+      "question": "What is the name of the fight song of the university whose main campus is in Lawrence, Kansas and whose branch campuses are in the Kansas City metropolitan area?",
+      "query": "What is the name of the fight song of the university whose main campus is in Lawrence, Kansas and whose branch campuses are in the Kansas City metropolitan area?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "What is the name of the fight song of the university whose main campus is in Lawrence, Kansas and whose branch campuses are in the Kansas City metropolitan area?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "kansas song",
+              "type": "vector_match",
+              "score": 0.995911,
+              "notes": [
+                "84bfa14e-e73d-4b35-8214-a9d848185a55"
+              ]
+            },
+            {
+              "name": "university of kansas",
+              "type": "vector_match",
+              "score": 0.978473,
+              "notes": [
+                "84bfa14e-e73d-4b35-8214-a9d848185a55",
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "kansas city metropolitan area",
+              "type": "entity_match",
+              "score": 0.483485,
+              "notes": [
+                "1f101ef2-0351-4ac6-82b5-3c1f22932b48",
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8"
+              ]
+            },
+            {
+              "name": "edwards campus",
+              "type": "vector_match",
+              "score": 0.430298,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "medical school and hospital",
+              "type": "vector_match",
+              "score": 0.378739,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "lawrence",
+              "type": "vector_match",
+              "score": 0.24439,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "overland park",
+              "type": "vector_match",
+              "score": 0.208608,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "university of missouri\u2013kansas city",
+              "type": "vector_match",
+              "score": 0.166151,
+              "notes": [
+                "8905a8a1-569d-434d-b102-e233aeb62f8c"
+              ]
+            },
+            {
+              "name": "mount oread",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "topeka",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06",
+                "ac6ba7de-635a-4b85-af2f-b712496d5b3f"
+              ]
+            },
+            {
+              "name": "hays",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "campus for the arts",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8905a8a1-569d-434d-b102-e233aeb62f8c"
+              ]
+            },
+            {
+              "name": "main campus",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "87975d65-3714-47d4-b4e8-2c5108febb5c"
+              ]
+            },
+            {
+              "name": "kansas city, missouri",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1f101ef2-0351-4ac6-82b5-3c1f22932b48",
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8"
+              ]
+            },
+            {
+              "name": "kansas city website",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8"
+              ]
+            },
+            {
+              "name": "kansas city jazz",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8"
+              ]
+            },
+            {
+              "name": "osage state fishing lake",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "96deb8ff-d0c7-463e-be9c-79b0bbbebdf8"
+              ]
+            },
+            {
+              "name": "north kansas city",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1f101ef2-0351-4ac6-82b5-3c1f22932b48",
+                "7309a646-7b77-4771-94dc-90241054fe7e"
+              ]
+            },
+            {
+              "name": "parsons",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06",
+                "4bba5f80-54fa-4c73-b188-63912412dab7"
+              ]
+            },
+            {
+              "name": "missouri",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "1f101ef2-0351-4ac6-82b5-3c1f22932b48",
+                "8905a8a1-569d-434d-b102-e233aeb62f8c"
+              ]
+            },
+            {
+              "name": "kansas city, kansas",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8",
+                "e26981ec-bd82-4f45-add1-b8b23dbfcbc7"
+              ]
+            },
+            {
+              "name": "kansas river",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "9c5d3f5c-d21f-4b00-974a-85f509d2b384"
+              ]
+            },
+            {
+              "name": "wichita",
+              "type": "vector_match",
+              "score": 0.073412,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "kansas city",
+              "type": "vector_match",
+              "score": 0.072197,
+              "notes": [
+                "8905a8a1-569d-434d-b102-e233aeb62f8c",
+                "d0727b7b-ac78-41c3-a6a7-18e0a2aa05d8"
+              ]
+            },
+            {
+              "name": "salina",
+              "type": "vector_match",
+              "score": 0.051154,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "kansas",
+              "type": "vector_match",
+              "score": 0.03669,
+              "notes": [
+                "e26981ec-bd82-4f45-add1-b8b23dbfcbc7",
+                "9c5d3f5c-d21f-4b00-974a-85f509d2b384"
+              ]
+            },
+            {
+              "name": "garden city",
+              "type": "vector_match",
+              "score": 0.033891,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            },
+            {
+              "name": "university of missouri",
+              "type": "vector_match",
+              "score": 0.027612,
+              "notes": [
+                "8905a8a1-569d-434d-b102-e233aeb62f8c"
+              ]
+            },
+            {
+              "name": "volker campus",
+              "type": "vector_match",
+              "score": 0.025441,
+              "notes": [
+                "8905a8a1-569d-434d-b102-e233aeb62f8c"
+              ]
+            },
+            {
+              "name": "leavenworth",
+              "type": "vector_match",
+              "score": 0.017549,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "What is the name of the fight song of the university whose main campus is in Lawrence, Kansas and whose branch campuses are in the Kansas City metropolitan area?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "kansas song",
+              "type": "graph_expansion",
+              "score": 0.996757,
+              "notes": []
+            },
+            {
+              "name": "university of kansas",
+              "type": "graph_expansion",
+              "score": 0.965449,
+              "notes": [
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06",
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06",
+                "acf5e353-7c87-4c26-a88a-f4d00084ca06",
+                "e26981ec-bd82-4f45-add1-b8b23dbfcbc7",
+                "9c5d3f5c-d21f-4b00-974a-85f509d2b384"
+              ]
+            },
+            {
+              "name": "kansas city metropolitan area",
+              "type": "graph_expansion",
+              "score": 0.220998,
+              "notes": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 88811.95915210992
+    },
+    {
+      "test_id": "5a877e5d5542993e715abf7d",
+      "question": "What screenwriter with credits for \"Evolution\" co-wrote a film starring Nicolas Cage and T\u00e9a Leoni?",
+      "query": "What screenwriter with credits for \"Evolution\" co-wrote a film starring Nicolas Cage and T\u00e9a Leoni?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "What screenwriter with credits for \"Evolution\" co-wrote a film starring Nicolas Cage and T\u00e9a Leoni?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "david weissman",
+              "type": "entity_match",
+              "score": 0.411537,
+              "notes": [
+                "1430ef39-75c4-47b7-9c90-eaebaa361a70",
+                "034ca728-2008-4c20-af30-2e16efb6a5b2"
+              ]
+            },
+            {
+              "name": "evolution",
+              "type": "entity_match",
+              "score": 0.345091,
+              "notes": [
+                "1430ef39-75c4-47b7-9c90-eaebaa361a70"
+              ]
+            },
+            {
+              "name": "2001",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "1430ef39-75c4-47b7-9c90-eaebaa361a70"
+              ]
+            },
+            {
+              "name": "gone in 60 seconds (2000 film)",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            },
+            {
+              "name": "season of the witch",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "59112b3a-ab78-4c75-a29a-b865ee65a454"
+              ]
+            },
+            {
+              "name": "the family man",
+              "type": "vector_match",
+              "score": 0.091214,
+              "notes": [
+                "1430ef39-75c4-47b7-9c90-eaebaa361a70",
+                "034ca728-2008-4c20-af30-2e16efb6a5b2"
+              ]
+            },
+            {
+              "name": "it could happen to you",
+              "type": "vector_match",
+              "score": 0.06748,
+              "notes": [
+                "226df765-30c9-4136-a9cb-23e2a44b3203"
+              ]
+            },
+            {
+              "name": "t\u00e9a leoni",
+              "type": "entity_match",
+              "score": 0.050387,
+              "notes": [
+                "634530c5-06f1-485f-b617-c851694a6f12",
+                "034ca728-2008-4c20-af30-2e16efb6a5b2"
+              ]
+            },
+            {
+              "name": "city of angels",
+              "type": "vector_match",
+              "score": 0.034703,
+              "notes": [
+                "64eb4733-7c90-4e98-b822-39bb375ba5fd"
+              ]
+            },
+            {
+              "name": "nicolas cage",
+              "type": "entity_match",
+              "score": 0.028395,
+              "notes": [
+                "59112b3a-ab78-4c75-a29a-b865ee65a454",
+                "fa13d7dc-93df-45eb-ad52-5bcd60a99e10"
+              ]
+            },
+            {
+              "name": "con air",
+              "type": "vector_match",
+              "score": 0.027522,
+              "notes": [
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            },
+            {
+              "name": "the rock",
+              "type": "vector_match",
+              "score": 0.019288,
+              "notes": [
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "What screenwriter with credits for \"Evolution\" co-wrote a film starring Nicolas Cage and T\u00e9a Leoni?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "david weissman",
+              "type": "graph_expansion",
+              "score": 0.800344,
+              "notes": [
+                "1430ef39-75c4-47b7-9c90-eaebaa361a70"
+              ]
+            },
+            {
+              "name": "the family man",
+              "type": "graph_expansion",
+              "score": 0.479384,
+              "notes": [
+                "034ca728-2008-4c20-af30-2e16efb6a5b2"
+              ]
+            },
+            {
+              "name": "gone in 60 seconds (2000 film)",
+              "type": "graph_expansion",
+              "score": 0.1,
+              "notes": [
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46",
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46",
+                "59112b3a-ab78-4c75-a29a-b865ee65a454",
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 50289.98928889632
+    },
+    {
+      "test_id": "5ab3b0bf5542992ade7c6e39",
+      "question": "What year did Guns N Roses perform a promo for a movie starring Arnold Schwarzenegger as a former New York Police detective?",
+      "query": "What year did Guns N Roses perform a promo for a movie starring Arnold Schwarzenegger as a former New York Police detective?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "What year did Guns N Roses perform a promo for a movie starring Arnold Schwarzenegger as a former New York Police detective?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "oh my god",
+              "type": "vector_match",
+              "score": 0.986381,
+              "notes": [
+                "4c0f80bb-c692-415d-8632-91c0a73febd8"
+              ]
+            },
+            {
+              "name": "arnold schwarzenegger",
+              "type": "entity_match",
+              "score": 0.686705,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994",
+                "e087625e-f581-48dd-a784-be9a0f68cc28"
+              ]
+            },
+            {
+              "name": "guns n' roses",
+              "type": "vector_match",
+              "score": 0.378059,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994",
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "guns n roses radio",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "922da9e7-4bc2-45e1-bd07-74811f307a56"
+              ]
+            },
+            {
+              "name": "music videos",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994"
+              ]
+            },
+            {
+              "name": "bon jovi",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994"
+              ]
+            },
+            {
+              "name": "ac/dc",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994"
+              ]
+            },
+            {
+              "name": "action films",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994"
+              ]
+            },
+            {
+              "name": "1986",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "comedy films",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994"
+              ]
+            },
+            {
+              "name": "arnold strong",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "2c997a40-6160-4591-acc0-692a8f3ad994"
+              ]
+            },
+            {
+              "name": "late 1980s",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "b59cbd44-28b6-483a-a313-8607bc4c933c"
+              ]
+            },
+            {
+              "name": "1985",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "geffen records",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "tom arnold",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e087625e-f581-48dd-a784-be9a0f68cc28"
+              ]
+            },
+            {
+              "name": "appetite for destruction",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "l.a. guns",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "hollywood rose",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "heroin addiction",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "b59cbd44-28b6-483a-a313-8607bc4c933c"
+              ]
+            },
+            {
+              "name": "nothing",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "634530c5-06f1-485f-b617-c851694a6f12"
+              ]
+            },
+            {
+              "name": "will patton",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            },
+            {
+              "name": "nicolas cage",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "59112b3a-ab78-4c75-a29a-b865ee65a454",
+                "fa13d7dc-93df-45eb-ad52-5bcd60a99e10"
+              ]
+            },
+            {
+              "name": "dominic sena",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "59112b3a-ab78-4c75-a29a-b865ee65a454",
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            },
+            {
+              "name": "jerry bruckheimer",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "e9bf4e09-010d-4013-bd79-47b8b54e671b",
+                "070fe06c-a27f-4bef-92ce-a5c7bf378c46"
+              ]
+            },
+            {
+              "name": "1990",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c1e3baab-8c99-4695-8b21-dc0a9382413a",
+                "b59cbd44-28b6-483a-a313-8607bc4c933c"
+              ]
+            },
+            {
+              "name": "los angeles",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "99e84d62-04a9-4d4c-82da-aed4b7b6449d",
+                "48b6b8c3-984c-462d-a98e-0bf8626f3d19"
+              ]
+            },
+            {
+              "name": "true lies",
+              "type": "vector_match",
+              "score": 0.098673,
+              "notes": [
+                "e087625e-f581-48dd-a784-be9a0f68cc28"
+              ]
+            },
+            {
+              "name": "jack slater",
+              "type": "vector_match",
+              "score": 0.084027,
+              "notes": [
+                "fa3cbe86-ec75-4b0a-aa2f-c31a0208b75c"
+              ]
+            },
+            {
+              "name": "jericho cane",
+              "type": "vector_match",
+              "score": 0.070505,
+              "notes": [
+                "fcdf86a5-0852-4c75-bdf2-ca3b197e7f68"
+              ]
+            },
+            {
+              "name": "guns n roses",
+              "type": "entity_match",
+              "score": 0.061541,
+              "notes": [
+                "178f5c20-e0fc-4c14-859e-240af4523f2b"
+              ]
+            },
+            {
+              "name": "end of days",
+              "type": "vector_match",
+              "score": 0.01943,
+              "notes": [
+                "fcdf86a5-0852-4c75-bdf2-ca3b197e7f68",
+                "4c0f80bb-c692-415d-8632-91c0a73febd8"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "What year did Guns N Roses perform a promo for a movie starring Arnold Schwarzenegger as a former New York Police detective?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "oh my god",
+              "type": "graph_expansion",
+              "score": 0.895202,
+              "notes": [
+                "4c0f80bb-c692-415d-8632-91c0a73febd8",
+                "fcdf86a5-0852-4c75-bdf2-ca3b197e7f68",
+                "4c0f80bb-c692-415d-8632-91c0a73febd8",
+                "4c0f80bb-c692-415d-8632-91c0a73febd8",
+                "fcdf86a5-0852-4c75-bdf2-ca3b197e7f68",
+                "4c0f80bb-c692-415d-8632-91c0a73febd8"
+              ]
+            },
+            {
+              "name": "arnold schwarzenegger",
+              "type": "graph_expansion",
+              "score": 0.531843,
+              "notes": [
+                "fa3cbe86-ec75-4b0a-aa2f-c31a0208b75c",
+                "fa3cbe86-ec75-4b0a-aa2f-c31a0208b75c"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 0.0,
+      "total_time_ms": 50016.025848686695
+    },
+    {
+      "test_id": "5ab56e32554299637185c594",
+      "question": "Are Random House Tower and 888 7th Avenue both used for real estate?",
+      "query": "Are Random House Tower and 888 7th Avenue both used for real estate?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Are Random House Tower and 888 7th Avenue both used for real estate?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "random house tower",
+              "type": "entity_match",
+              "score": 0.994152,
+              "notes": [
+                "f3cda8b5-2f58-41fc-8893-7fc58138f2de"
+              ]
+            },
+            {
+              "name": "888 7th avenue",
+              "type": "entity_match",
+              "score": 0.976284,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930",
+                "88607c94-2ed0-474e-b563-a7f7222dc56d"
+              ]
+            },
+            {
+              "name": "park imperial apartments",
+              "type": "vector_match",
+              "score": 0.729236,
+              "notes": [
+                "f3cda8b5-2f58-41fc-8893-7fc58138f2de"
+              ]
+            },
+            {
+              "name": "luxury apartment complex",
+              "type": "vector_match",
+              "score": 0.615888,
+              "notes": [
+                "f3cda8b5-2f58-41fc-8893-7fc58138f2de"
+              ]
+            },
+            {
+              "name": "random house",
+              "type": "vector_match",
+              "score": 0.512118,
+              "notes": [
+                "8b452d24-3575-4c90-ac8f-8e815e7a1248",
+                "f3cda8b5-2f58-41fc-8893-7fc58138f2de"
+              ]
+            },
+            {
+              "name": "vornado realty trust",
+              "type": "vector_match",
+              "score": 0.181861,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "new york city",
+              "type": "entity_match",
+              "score": 0.173068,
+              "notes": [
+                "97a5e949-64e0-4621-aaac-14f235975d35",
+                "9a5c2bd3-33f8-4d93-b1eb-2710e425f8be"
+              ]
+            },
+            {
+              "name": "pershing square capital management",
+              "type": "vector_match",
+              "score": 0.101125,
+              "notes": [
+                "88607c94-2ed0-474e-b563-a7f7222dc56d"
+              ]
+            },
+            {
+              "name": "arlen building",
+              "type": "vector_match",
+              "score": 0.100921,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "stanford white brownstone mansion",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8b452d24-3575-4c90-ac8f-8e815e7a1248"
+              ]
+            },
+            {
+              "name": "ballantine books",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8b452d24-3575-4c90-ac8f-8e815e7a1248"
+              ]
+            },
+            {
+              "name": "villard",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "8b452d24-3575-4c90-ac8f-8e815e7a1248"
+              ]
+            },
+            {
+              "name": "west 56th street",
+              "type": "vector_match",
+              "score": 0.090871,
+              "notes": [
+                "f3cda8b5-2f58-41fc-8893-7fc58138f2de"
+              ]
+            },
+            {
+              "name": "the red eye grill",
+              "type": "vector_match",
+              "score": 0.078215,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "1969",
+              "type": "vector_match",
+              "score": 0.039189,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "broadway",
+              "type": "vector_match",
+              "score": 0.034608,
+              "notes": [
+                "f3cda8b5-2f58-41fc-8893-7fc58138f2de"
+              ]
+            },
+            {
+              "name": "midtown manhattan",
+              "type": "vector_match",
+              "score": 0.031719,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "arlen realty & development corporation",
+              "type": "vector_match",
+              "score": 0.030377,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "new york",
+              "type": "entity_match",
+              "score": 0.02894,
+              "notes": [
+                "5dce8336-b14d-41c5-aee6-c698968f60cf",
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "central park place",
+              "type": "vector_match",
+              "score": 0.025553,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "emery roth & sons",
+              "type": "vector_match",
+              "score": 0.015758,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Are Random House Tower and 888 7th Avenue both used for real estate?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "random house tower",
+              "type": "graph_expansion",
+              "score": 0.983661,
+              "notes": []
+            },
+            {
+              "name": "888 7th avenue",
+              "type": "graph_expansion",
+              "score": 0.905738,
+              "notes": [
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930",
+                "5dce8336-b14d-41c5-aee6-c698968f60cf",
+                "861b0c20-5413-4774-bf16-dd431f0aed5f",
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930",
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930",
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930",
+                "ea2e19aa-eb6d-494b-b625-f9868bdbb930"
+              ]
+            },
+            {
+              "name": "new york city",
+              "type": "graph_expansion",
+              "score": 0.315123,
+              "notes": [
+                "97a5e949-64e0-4621-aaac-14f235975d35"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 68309.54560637474
+    },
+    {
+      "test_id": "5ab6d09255429954757d337d",
+      "question": "The football manager who recruited David Beckham managed Manchester United during what timeframe?",
+      "query": "The football manager who recruited David Beckham managed Manchester United during what timeframe?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "The football manager who recruited David Beckham managed Manchester United during what timeframe?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "sir alex ferguson",
+              "type": "entity_match",
+              "score": 0.977127,
+              "notes": [
+                "ec78b61d-8148-4e3d-8689-26aa536dd957",
+                "befb745b-f090-4ef0-bd6d-886b58660a10"
+              ]
+            },
+            {
+              "name": "david beckham",
+              "type": "entity_match",
+              "score": 0.83141,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f",
+                "c043b239-9fff-400d-b13f-03591f1f4f2e"
+              ]
+            },
+            {
+              "name": "manchester united",
+              "type": "entity_match",
+              "score": 0.762151,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f",
+                "9cb1f7a7-e991-48b6-adae-1f95c7a0c2c7"
+              ]
+            },
+            {
+              "name": "1970\u201371 season (second half)",
+              "type": "vector_match",
+              "score": 0.668937,
+              "notes": [
+                "ec78b61d-8148-4e3d-8689-26aa536dd957"
+              ]
+            },
+            {
+              "name": "1945\u20131969",
+              "type": "vector_match",
+              "score": 0.423036,
+              "notes": [
+                "ec78b61d-8148-4e3d-8689-26aa536dd957"
+              ]
+            },
+            {
+              "name": "alex ferguson",
+              "type": "vector_match",
+              "score": 0.355568,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "sir matt busby",
+              "type": "vector_match",
+              "score": 0.109864,
+              "notes": [
+                "9cb1f7a7-e991-48b6-adae-1f95c7a0c2c7"
+              ]
+            },
+            {
+              "name": "david beckham's soccer usa",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca"
+              ]
+            },
+            {
+              "name": "david beckham academy",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c043b239-9fff-400d-b13f-03591f1f4f2e"
+              ]
+            },
+            {
+              "name": "joshua parlby",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "b3096264-08d5-4bfa-9431-947ed8fa9d06"
+              ]
+            },
+            {
+              "name": "james ernest mangnall",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "ffd6ac20-1a1f-453f-824e-b7645945b7a8"
+              ]
+            },
+            {
+              "name": "manchester city",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "b3096264-08d5-4bfa-9431-947ed8fa9d06",
+                "ffd6ac20-1a1f-453f-824e-b7645945b7a8"
+              ]
+            },
+            {
+              "name": "english football",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "1995\u201396 season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "the class of '92",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04"
+              ]
+            },
+            {
+              "name": "1903\u20131912",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ffd6ac20-1a1f-453f-824e-b7645945b7a8"
+              ]
+            },
+            {
+              "name": "nicky butt",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f",
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "paul scholes",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333",
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04"
+              ]
+            },
+            {
+              "name": "phil neville",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333",
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04"
+              ]
+            },
+            {
+              "name": "gary neville",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333",
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04"
+              ]
+            },
+            {
+              "name": "ryan giggs",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04"
+              ]
+            },
+            {
+              "name": "eric cantona",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f"
+              ]
+            },
+            {
+              "name": "roy keane",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f"
+              ]
+            },
+            {
+              "name": "1992",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04"
+              ]
+            },
+            {
+              "name": "double of premier league and fa cup",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f"
+              ]
+            },
+            {
+              "name": "mark hughes",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "1912\u20131924",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ffd6ac20-1a1f-453f-824e-b7645945b7a8"
+              ]
+            },
+            {
+              "name": "paul ince",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "los angeles galaxy",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca"
+              ]
+            },
+            {
+              "name": "premier league",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f",
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "british sports personality",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca"
+              ]
+            },
+            {
+              "name": "special guest",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca"
+              ]
+            },
+            {
+              "name": "4\u20130",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f"
+              ]
+            },
+            {
+              "name": "major league soccer",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca"
+              ]
+            },
+            {
+              "name": "october 2009",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c043b239-9fff-400d-b13f-03591f1f4f2e"
+              ]
+            },
+            {
+              "name": "sir matt busby sports complex",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "9cb1f7a7-e991-48b6-adae-1f95c7a0c2c7"
+              ]
+            },
+            {
+              "name": "england",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "5d1203cb-c736-4fa8-b1dc-7c0672429b87",
+                "86c6167c-b7a4-4cdf-a825-ac2f4b1fc8c3"
+              ]
+            },
+            {
+              "name": "2005",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c043b239-9fff-400d-b13f-03591f1f4f2e",
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "united kingdom",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "97a5e949-64e0-4621-aaac-14f235975d35",
+                "58bc5f4e-ca6c-46f8-aebe-a6b5a0ec4f5a"
+              ]
+            },
+            {
+              "name": "london",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "be1e0c0e-c018-43f3-98d9-71fb730ac250",
+                "c043b239-9fff-400d-b13f-03591f1f4f2e"
+              ]
+            },
+            {
+              "name": "fa cup",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f81f92c9-2368-4005-a2a4-d4a8010f931f",
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "five",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca"
+              ]
+            },
+            {
+              "name": "cbe",
+              "type": "vector_match",
+              "score": 0.07976,
+              "notes": [
+                "befb745b-f090-4ef0-bd6d-886b58660a10"
+              ]
+            },
+            {
+              "name": "matt busby",
+              "type": "entity_match",
+              "score": 0.045743,
+              "notes": [
+                "ec78b61d-8148-4e3d-8689-26aa536dd957"
+              ]
+            },
+            {
+              "name": "andrei kanchelskis",
+              "type": "vector_match",
+              "score": 0.024164,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            },
+            {
+              "name": "manchester united f.c.",
+              "type": "entity_match",
+              "score": 0.015871,
+              "notes": [
+                "ed690c57-c83f-4f6a-82c8-a1a3e9b32333"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "The football manager who recruited David Beckham managed Manchester United during what timeframe?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "sir alex ferguson",
+              "type": "graph_expansion",
+              "score": 0.943079,
+              "notes": []
+            },
+            {
+              "name": "david beckham",
+              "type": "graph_expansion",
+              "score": 0.927792,
+              "notes": [
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca",
+                "4f6b0edd-b344-428f-9cab-c03be42b2d04",
+                "22e1b3c2-8354-4313-83de-6eb07d8160ca",
+                "5d1203cb-c736-4fa8-b1dc-7c0672429b87",
+                "86c6167c-b7a4-4cdf-a825-ac2f4b1fc8c3"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 73758.38126894087
+    },
+    {
+      "test_id": "5a75e05c55429976ec32bc5f",
+      "question": "Brown State Fishing Lake is in a country that has a population of how many inhabitants ?",
+      "query": "Brown State Fishing Lake is in a country that has a population of how many inhabitants ?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Brown State Fishing Lake is in a country that has a population of how many inhabitants ?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "united states",
+              "type": "entity_match",
+              "score": 0.942838,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "brown county",
+              "type": "entity_match",
+              "score": 0.931031,
+              "notes": [
+                "0c14bda0-b9e8-4dd0-9b56-490821f3771a",
+                "d3e8e560-3c0e-455d-9273-dcc4e36a51ab"
+              ]
+            },
+            {
+              "name": "brown state fishing lake",
+              "type": "entity_match",
+              "score": 0.401972,
+              "notes": [
+                "0c14bda0-b9e8-4dd0-9b56-490821f3771a"
+              ]
+            },
+            {
+              "name": "saskatchewan",
+              "type": "vector_match",
+              "score": 0.330358,
+              "notes": [
+                "3495d783-008d-4273-90e8-3fc0b97e0008",
+                "e7a6f092-fe70-4269-b6b6-ceddf6947e76"
+              ]
+            },
+            {
+              "name": "brown county state park",
+              "type": "entity_match",
+              "score": 0.182233,
+              "notes": [
+                "0c14bda0-b9e8-4dd0-9b56-490821f3771a"
+              ]
+            },
+            {
+              "name": "hiawatha",
+              "type": "entity_match",
+              "score": 0.101794,
+              "notes": [
+                "0c14bda0-b9e8-4dd0-9b56-490821f3771a",
+                "d3e8e560-3c0e-455d-9273-dcc4e36a51ab"
+              ]
+            },
+            {
+              "name": "kansas",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "e26981ec-bd82-4f45-add1-b8b23dbfcbc7",
+                "9c5d3f5c-d21f-4b00-974a-85f509d2b384"
+              ]
+            },
+            {
+              "name": "kickapoo indian reservation of kansas",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "d3e8e560-3c0e-455d-9273-dcc4e36a51ab"
+              ]
+            },
+            {
+              "name": "sac and fox reservation",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "d3e8e560-3c0e-455d-9273-dcc4e36a51ab"
+              ]
+            },
+            {
+              "name": "iowa reservation of kansas and nebraska",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "d3e8e560-3c0e-455d-9273-dcc4e36a51ab"
+              ]
+            },
+            {
+              "name": "2010 census",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "5dce8336-b14d-41c5-aee6-c698968f60cf",
+                "2d0bd3d8-6ea8-4909-a1e2-9a1a330516f0"
+              ]
+            },
+            {
+              "name": "osage state fishing lake",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "96deb8ff-d0c7-463e-be9c-79b0bbbebdf8"
+              ]
+            },
+            {
+              "name": "shawnee state fishing lake",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ac6ba7de-635a-4b85-af2f-b712496d5b3f"
+              ]
+            },
+            {
+              "name": "fishing",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4bba5f80-54fa-4c73-b188-63912412dab7"
+              ]
+            },
+            {
+              "name": "neosho state fishing lake",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4bba5f80-54fa-4c73-b188-63912412dab7"
+              ]
+            },
+            {
+              "name": "state of kansas",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "96deb8ff-d0c7-463e-be9c-79b0bbbebdf8"
+              ]
+            },
+            {
+              "name": "largemouth bass",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "955b5ff7-db51-41fb-88c5-0438755423f4"
+              ]
+            },
+            {
+              "name": "northern pike",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "955b5ff7-db51-41fb-88c5-0438755423f4"
+              ]
+            },
+            {
+              "name": "record floods of 2007",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "3495d783-008d-4273-90e8-3fc0b97e0008"
+              ]
+            },
+            {
+              "name": "smallmouth bass",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "955b5ff7-db51-41fb-88c5-0438755423f4"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Brown State Fishing Lake is in a country that has a population of how many inhabitants ?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "brown county",
+              "type": "graph_expansion",
+              "score": 0.904269,
+              "notes": []
+            },
+            {
+              "name": "united states",
+              "type": "graph_expansion",
+              "score": 0.853595,
+              "notes": [
+                "fed3e2a7-fcf3-4e05-b294-c8c65fbf15e9",
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415",
+                "97a5e949-64e0-4621-aaac-14f235975d35",
+                "ec85b238-caee-4fc3-8632-0fee0bb2740d",
+                "04618738-4202-4635-bd8e-0f64d3fcfbf5"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 71105.39455432445
+    },
+    {
+      "test_id": "5ab3e45655429976abd1bcd4",
+      "question": "The Vermont Catamounts men's soccer team currently competes in a conference that was formerly known as what from 1988 to 1996?",
+      "query": "The Vermont Catamounts men's soccer team currently competes in a conference that was formerly known as what from 1988 to 1996?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "The Vermont Catamounts men's soccer team currently competes in a conference that was formerly known as what from 1988 to 1996?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "north atlantic conference",
+              "type": "vector_match",
+              "score": 0.998102,
+              "notes": [
+                "c89cbb98-974f-4c25-a813-83a76ba5a00a"
+              ]
+            },
+            {
+              "name": "vermont catamounts men's soccer team",
+              "type": "entity_match",
+              "score": 0.988654,
+              "notes": [
+                "f08bc0f6-c491-4793-96e1-ab68ecd153d6"
+              ]
+            },
+            {
+              "name": "1988 to 1996",
+              "type": "vector_match",
+              "score": 0.979993,
+              "notes": [
+                "c89cbb98-974f-4c25-a813-83a76ba5a00a"
+              ]
+            },
+            {
+              "name": "america east conference",
+              "type": "entity_match",
+              "score": 0.871157,
+              "notes": [
+                "aee43523-b4f0-4f7d-bcb3-eb503d97c475",
+                "be692f52-4468-432a-813e-f14e6d19c762"
+              ]
+            },
+            {
+              "name": "colonial athletic association",
+              "type": "vector_match",
+              "score": 0.602275,
+              "notes": [
+                "c994797d-5706-4967-ba3e-45f21bbe7e18"
+              ]
+            },
+            {
+              "name": "hockey east",
+              "type": "entity_match",
+              "score": 0.21989,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "america east conference tournament",
+              "type": "entity_match",
+              "score": 0.124527,
+              "notes": [
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "ncaa division i",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c89cbb98-974f-4c25-a813-83a76ba5a00a",
+                "f08bc0f6-c491-4793-96e1-ab68ecd153d6"
+              ]
+            },
+            {
+              "name": "vermont catamounts men's ice hockey team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "gutterson fieldhouse",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "national invitation tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762",
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "patrick gym",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2",
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "division i",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "john becker",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2",
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "2010\u201311 vermont catamounts men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762"
+              ]
+            },
+            {
+              "name": "2012\u201313 vermont catamounts men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2"
+              ]
+            },
+            {
+              "name": "2013\u201314 vermont catamounts men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "2015\u201316 vermont catamounts men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "2016\u201317 vermont catamounts men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "1b88ad87-e783-49be-b570-f062d626c882"
+              ]
+            },
+            {
+              "name": "2011\u201312 vermont catamounts men's basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c4c0d315-8844-484e-a6f8-9ad27d4402bb"
+              ]
+            },
+            {
+              "name": "2010\u201311 ncaa division i men's basketball season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762"
+              ]
+            },
+            {
+              "name": "america east tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2",
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "america east basketball tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c4c0d315-8844-484e-a6f8-9ad27d4402bb"
+              ]
+            },
+            {
+              "name": "ncaa tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "1b88ad87-e783-49be-b570-f062d626c882"
+              ]
+            },
+            {
+              "name": "conference tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762"
+              ]
+            },
+            {
+              "name": "america east regular season championship",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "college basketball invitational",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "stony brook",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762",
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "albany",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2",
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "santa clara",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2"
+              ]
+            },
+            {
+              "name": "nevada",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "lamar",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c4c0d315-8844-484e-a6f8-9ad27d4402bb"
+              ]
+            },
+            {
+              "name": "western carolina",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "new hampshire",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb",
+                "1b88ad87-e783-49be-b570-f062d626c882"
+              ]
+            },
+            {
+              "name": "america east conference regular season championship",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762"
+              ]
+            },
+            {
+              "name": "midwest region",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "1b88ad87-e783-49be-b570-f062d626c882"
+              ]
+            },
+            {
+              "name": "maine",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "1eeb7805-5df6-4f52-8b46-3d24314f8cd2",
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "ncaa division i men's basketball tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "29964394-c2fd-4b36-b0f0-d7523a1645c3"
+              ]
+            },
+            {
+              "name": "vermont catamounts basketball team",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "29964394-c2fd-4b36-b0f0-d7523a1645c3"
+              ]
+            },
+            {
+              "name": "2012\u201313 ncaa division i men's basketball season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2"
+              ]
+            },
+            {
+              "name": "2013\u201314 ncaa division i men's basketball season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "6383d03a-faee-4f05-a619-e1161277f438"
+              ]
+            },
+            {
+              "name": "2015\u201316 ncaa division i men's basketball season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "3c6485a8-fd68-4a7d-a3b8-76f5d19f8ccb"
+              ]
+            },
+            {
+              "name": "2016\u201317 ncaa division i men's basketball season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "1b88ad87-e783-49be-b570-f062d626c882"
+              ]
+            },
+            {
+              "name": "2011\u201312 ncaa division i men's basketball season",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c4c0d315-8844-484e-a6f8-9ad27d4402bb"
+              ]
+            },
+            {
+              "name": "2004",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "29964394-c2fd-4b36-b0f0-d7523a1645c3"
+              ]
+            },
+            {
+              "name": "2012",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "86c6167c-b7a4-4cdf-a825-ac2f4b1fc8c3",
+                "4f8a4217-4a00-44cb-bee8-fa45798ae423"
+              ]
+            },
+            {
+              "name": "2010",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "fd9ea2da-a0ff-4673-9894-cd24fca0b40c",
+                "1430ef39-75c4-47b7-9c90-eaebaa361a70"
+              ]
+            },
+            {
+              "name": "2003",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "7f205151-7741-4973-bda5-a624e0673a28",
+                "902fcc5d-c1cf-4b9a-a655-fdf0661b8f75"
+              ]
+            },
+            {
+              "name": "2017",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "8905a8a1-569d-434d-b102-e233aeb62f8c",
+                "29964394-c2fd-4b36-b0f0-d7523a1645c3"
+              ]
+            },
+            {
+              "name": "2013 college basketball invitational",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2"
+              ]
+            },
+            {
+              "name": "2012 ncaa tournament",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c4c0d315-8844-484e-a6f8-9ad27d4402bb"
+              ]
+            },
+            {
+              "name": "national collegiate athletic association (ncaa)",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "2005",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c043b239-9fff-400d-b13f-03591f1f4f2e",
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "1996",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "f78efa65-888e-4d8f-ace9-3cd03f0ff9f9",
+                "fcf199a5-f02c-4682-8fcc-c8152b198db1"
+              ]
+            },
+            {
+              "name": "vermont",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2",
+                "29964394-c2fd-4b36-b0f0-d7523a1645c3"
+              ]
+            },
+            {
+              "name": "burlington",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2",
+                "29964394-c2fd-4b36-b0f0-d7523a1645c3"
+              ]
+            },
+            {
+              "name": "2009",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c043b239-9fff-400d-b13f-03591f1f4f2e",
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "frozen four",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "ncaa men's hockey championship",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "1974-75",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "college hockey america",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "atlantic hockey",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "niagara purple eagles men's ice hockey team",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "861b0c20-5413-4774-bf16-dd431f0aed5f"
+              ]
+            },
+            {
+              "name": "ecac south",
+              "type": "vector_match",
+              "score": 0.057221,
+              "notes": [
+                "c994797d-5706-4967-ba3e-45f21bbe7e18"
+              ]
+            },
+            {
+              "name": "ecac hockey",
+              "type": "entity_match",
+              "score": 0.038181,
+              "notes": [
+                "519fa42e-68c2-4fcd-b5df-075e46fd8cd2"
+              ]
+            },
+            {
+              "name": "university of vermont",
+              "type": "entity_match",
+              "score": 0.037383,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762",
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2"
+              ]
+            },
+            {
+              "name": "1979 to 1988",
+              "type": "vector_match",
+              "score": 0.033231,
+              "notes": [
+                "c89cbb98-974f-4c25-a813-83a76ba5a00a"
+              ]
+            },
+            {
+              "name": "eastern college athletic conference-north",
+              "type": "vector_match",
+              "score": 0.020536,
+              "notes": [
+                "c89cbb98-974f-4c25-a813-83a76ba5a00a"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "The Vermont Catamounts men's soccer team currently competes in a conference that was formerly known as what from 1988 to 1996?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "north atlantic conference",
+              "type": "graph_expansion",
+              "score": 0.997641,
+              "notes": []
+            },
+            {
+              "name": "vermont catamounts men's soccer team",
+              "type": "graph_expansion",
+              "score": 0.95667,
+              "notes": [
+                "be692f52-4468-432a-813e-f14e6d19c762",
+                "78c8e259-73a2-4659-acd3-e0c43e4ff9a2"
+              ]
+            },
+            {
+              "name": "america east conference",
+              "type": "graph_expansion",
+              "score": 0.862357,
+              "notes": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 98134.78139322251
+    },
+    {
+      "test_id": "5ab29c24554299449642c932",
+      "question": "Are Giuseppe Verdi and Ambroise Thomas both Opera composers ?",
+      "query": "Are Giuseppe Verdi and Ambroise Thomas both Opera composers ?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Are Giuseppe Verdi and Ambroise Thomas both Opera composers ?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "giuseppe verdi",
+              "type": "entity_match",
+              "score": 0.958862,
+              "notes": [
+                "324e2f0e-63ff-4a94-8e3f-eb06b15515bb",
+                "2ccfd2f3-0ba3-4557-877e-160caa1f0472"
+              ]
+            },
+            {
+              "name": "ambroise thomas",
+              "type": "entity_match",
+              "score": 0.947702,
+              "notes": [
+                "324e2f0e-63ff-4a94-8e3f-eb06b15515bb",
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae"
+              ]
+            },
+            {
+              "name": "opera",
+              "type": "vector_match",
+              "score": 0.624369,
+              "notes": [
+                "d0b34946-e07b-4534-aa78-2d4c9fa72da7",
+                "06a61e91-5ee2-45d9-bb86-d4ceecdf0352"
+              ]
+            },
+            {
+              "name": "verdi",
+              "type": "vector_match",
+              "score": 0.494988,
+              "notes": [
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415"
+              ]
+            },
+            {
+              "name": "the life of giuseppe verdi",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "2ccfd2f3-0ba3-4557-877e-160caa1f0472"
+              ]
+            },
+            {
+              "name": "piazza giuseppe verdi",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c95554a3-a727-41cd-b3d1-616ee5858796"
+              ]
+            },
+            {
+              "name": "teatro giuseppe verdi",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "c95554a3-a727-41cd-b3d1-616ee5858796"
+              ]
+            },
+            {
+              "name": "the life and music of giuseppe verdi",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "ad2e386a-cb09-4a3e-86a6-8b7612e0858f"
+              ]
+            },
+            {
+              "name": "conservatoire de paris",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae"
+              ]
+            },
+            {
+              "name": "busseto",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "c95554a3-a727-41cd-b3d1-616ee5858796",
+                "61e673ed-a854-44f1-b723-df9d6bc153c1"
+              ]
+            },
+            {
+              "name": "ferdinando angelo maria provesi",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "61e673ed-a854-44f1-b723-df9d6bc153c1"
+              ]
+            },
+            {
+              "name": "parma airport",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "459e3d7e-4cf4-49e0-a7a0-3838cd2cdde8"
+              ]
+            },
+            {
+              "name": "jacopo peri",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "06a61e91-5ee2-45d9-bb86-d4ceecdf0352"
+              ]
+            },
+            {
+              "name": "rigoletto",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "324e2f0e-63ff-4a94-8e3f-eb06b15515bb"
+              ]
+            },
+            {
+              "name": "john adams",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "06a61e91-5ee2-45d9-bb86-d4ceecdf0352"
+              ]
+            },
+            {
+              "name": "don carlos",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415"
+              ]
+            },
+            {
+              "name": "armand castelmary",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415"
+              ]
+            },
+            {
+              "name": "the barber of seville",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "324e2f0e-63ff-4a94-8e3f-eb06b15515bb"
+              ]
+            },
+            {
+              "name": "la belle h\u00e9l\u00e8ne",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "324e2f0e-63ff-4a94-8e3f-eb06b15515bb"
+              ]
+            },
+            {
+              "name": "l'africaine",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415"
+              ]
+            },
+            {
+              "name": "france",
+              "type": "vector_match",
+              "score": 0.056196,
+              "notes": [
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae"
+              ]
+            },
+            {
+              "name": "hamlet",
+              "type": "vector_match",
+              "score": 0.044293,
+              "notes": [
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae",
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415"
+              ]
+            },
+            {
+              "name": "giuseppe verdi (film)",
+              "type": "entity_match",
+              "score": 0.043913,
+              "notes": [
+                "2ccfd2f3-0ba3-4557-877e-160caa1f0472"
+              ]
+            },
+            {
+              "name": "verdi, the king of melody",
+              "type": "vector_match",
+              "score": 0.040814,
+              "notes": [
+                "ad2e386a-cb09-4a3e-86a6-8b7612e0858f"
+              ]
+            },
+            {
+              "name": "mignon",
+              "type": "vector_match",
+              "score": 0.028523,
+              "notes": [
+                "324e2f0e-63ff-4a94-8e3f-eb06b15515bb",
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae"
+              ]
+            },
+            {
+              "name": "italy",
+              "type": "vector_match",
+              "score": 0.018597,
+              "notes": [
+                "459e3d7e-4cf4-49e0-a7a0-3838cd2cdde8",
+                "d0b34946-e07b-4534-aa78-2d4c9fa72da7"
+              ]
+            },
+            {
+              "name": "major opera composers list",
+              "type": "vector_match",
+              "score": 0.015118,
+              "notes": [
+                "06a61e91-5ee2-45d9-bb86-d4ceecdf0352"
+              ]
+            },
+            {
+              "name": "shakespeare",
+              "type": "vector_match",
+              "score": 0.014746,
+              "notes": [
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Are Giuseppe Verdi and Ambroise Thomas both Opera composers ?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "giuseppe verdi",
+              "type": "graph_expansion",
+              "score": 0.884586,
+              "notes": []
+            },
+            {
+              "name": "ambroise thomas",
+              "type": "graph_expansion",
+              "score": 0.88361,
+              "notes": [
+                "d2e53efc-5018-4401-ad0e-c311fe1469ae",
+                "f65e1b9b-e395-434d-88af-6d4c5cb15415"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 60712.85748668015
+    },
+    {
+      "test_id": "5ae0d4c9554299603e418468",
+      "question": "Roger O. Egeberg was Assistant Secretary for Health and Scientific Affairs during the administration of a president that served during what years?",
+      "query": "Roger O. Egeberg was Assistant Secretary for Health and Scientific Affairs during the administration of a president that served during what years?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Roger O. Egeberg was Assistant Secretary for Health and Scientific Affairs during the administration of a president that served during what years?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "nixon administration",
+              "type": "entity_match",
+              "score": 0.85514,
+              "notes": [
+                "14b3d1da-5aa2-454e-9ae2-36d889f89036",
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "1969\u20131974",
+              "type": "vector_match",
+              "score": 0.668229,
+              "notes": [
+                "40769f6f-5fd6-44ea-8aa0-1321297ba339"
+              ]
+            },
+            {
+              "name": "roger olaf egeberg",
+              "type": "entity_match",
+              "score": 0.475761,
+              "notes": [
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "president of the united states",
+              "type": "vector_match",
+              "score": 0.161481,
+              "notes": [
+                "40769f6f-5fd6-44ea-8aa0-1321297ba339"
+              ]
+            },
+            {
+              "name": "department of health, education, and welfare",
+              "type": "entity_match",
+              "score": 0.123607,
+              "notes": [
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "general douglas macarthur",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "world war ii",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "pacific theater",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "washington, d.c.",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "university of southern california",
+              "type": "entity_match",
+              "score": 0.1,
+              "notes": [
+                "61bfd25e-d015-4730-8a4b-4451bdfcffc6",
+                "36795253-cdcb-41bb-b241-4565fc8cce34"
+              ]
+            },
+            {
+              "name": "richard milhous nixon",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "40769f6f-5fd6-44ea-8aa0-1321297ba339"
+              ]
+            },
+            {
+              "name": "assistant secretary for health",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "03d7aa82-5caf-4009-a164-c1fa56ad58ae",
+                "1cff2eff-1816-40dc-91a8-468f586d4fdb"
+              ]
+            },
+            {
+              "name": "1953\u20131961",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "40769f6f-5fd6-44ea-8aa0-1321297ba339"
+              ]
+            },
+            {
+              "name": "edward dana martin",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "4c23211b-98e7-4f99-a6ef-8bffd006314b"
+              ]
+            },
+            {
+              "name": "douglas joseph \u201cdoug\u201d bennet, jr.",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "ff83593b-bc03-474a-8d3d-45fb7faf43f0"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Roger O. Egeberg was Assistant Secretary for Health and Scientific Affairs during the administration of a president that served during what years?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "nixon administration",
+              "type": "graph_expansion",
+              "score": 0.932841,
+              "notes": [
+                "14b3d1da-5aa2-454e-9ae2-36d889f89036",
+                "14b3d1da-5aa2-454e-9ae2-36d889f89036"
+              ]
+            },
+            {
+              "name": "1969\u20131974",
+              "type": "graph_expansion",
+              "score": 0.762245,
+              "notes": []
+            },
+            {
+              "name": "university of southern california",
+              "type": "graph_expansion",
+              "score": 0.1,
+              "notes": []
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 32905.49545083195
+    },
+    {
+      "test_id": "5a8133725542995ce29dcbdb",
+      "question": "Which writer was from England, Henry Roth or Robert Erskine Childers?",
+      "query": "Which writer was from England, Henry Roth or Robert Erskine Childers?",
+      "is_question": true,
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Which writer was from England, Henry Roth or Robert Erskine Childers?",
+          "top_n": 20,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "robert erskine childers",
+              "type": "entity_match",
+              "score": 0.990719,
+              "notes": [
+                "43fe7a41-528c-42d5-8bf4-11791169824b",
+                "4abec9ef-c8dd-44b2-85a2-258232eede95"
+              ]
+            },
+            {
+              "name": "henry roth",
+              "type": "entity_match",
+              "score": 0.941057,
+              "notes": [
+                "38228541-7a89-484b-88b6-9044551517d3"
+              ]
+            },
+            {
+              "name": "erskine childers",
+              "type": "vector_match",
+              "score": 0.938569,
+              "notes": [
+                "698b9524-8644-49a9-b71e-2cfbe15d2215",
+                "80ac024e-1f80-449b-a8eb-4e22762e4fac"
+              ]
+            },
+            {
+              "name": "erskine barton childers",
+              "type": "vector_match",
+              "score": 0.597785,
+              "notes": [
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            },
+            {
+              "name": "united states",
+              "type": "entity_match",
+              "score": 0.59401,
+              "notes": [
+                "d5b28f46-b22c-4578-9b5f-25b6e162fd86",
+                "e8ba90f8-6cf5-4214-8c3e-ec31bb9ce3a3"
+              ]
+            },
+            {
+              "name": "erskine hamilton childers",
+              "type": "vector_match",
+              "score": 0.205655,
+              "notes": [
+                "43fe7a41-528c-42d5-8bf4-11791169824b",
+                "4abec9ef-c8dd-44b2-85a2-258232eede95"
+              ]
+            },
+            {
+              "name": "robert caesar childers",
+              "type": "vector_match",
+              "score": 0.190083,
+              "notes": [
+                "cbbf8117-3f86-4542-abdb-592992159d55",
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66"
+              ]
+            },
+            {
+              "name": "molly childers",
+              "type": "vector_match",
+              "score": 0.17596,
+              "notes": [
+                "698b9524-8644-49a9-b71e-2cfbe15d2215",
+                "43fe7a41-528c-42d5-8bf4-11791169824b"
+              ]
+            },
+            {
+              "name": "the riddle of the sands",
+              "type": "vector_match",
+              "score": 0.102454,
+              "notes": [
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66"
+              ]
+            },
+            {
+              "name": "childers road",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "80ac024e-1f80-449b-a8eb-4e22762e4fac"
+              ]
+            },
+            {
+              "name": "bbc",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            },
+            {
+              "name": "agnes childers",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "5c097d63-0e61-4d58-a17b-7cb885d76fae"
+              ]
+            },
+            {
+              "name": "gretchen osgood warren",
+              "type": "vector_match",
+              "score": 0.1,
+              "notes": [
+                "43fe7a41-528c-42d5-8bf4-11791169824b",
+                "4abec9ef-c8dd-44b2-85a2-258232eede95"
+              ]
+            },
+            {
+              "name": "february 8, 1906",
+              "type": "vector_match",
+              "score": 0.084189,
+              "notes": [
+                "38228541-7a89-484b-88b6-9044551517d3"
+              ]
+            },
+            {
+              "name": "robert childers barton",
+              "type": "vector_match",
+              "score": 0.06737,
+              "notes": [
+                "5c097d63-0e61-4d58-a17b-7cb885d76fae"
+              ]
+            },
+            {
+              "name": "desmond fitzgerald",
+              "type": "vector_match",
+              "score": 0.067217,
+              "notes": [
+                "9337c5e5-b1b9-497a-9408-a81b49591aeb"
+              ]
+            },
+            {
+              "name": "hugh childers",
+              "type": "vector_match",
+              "score": 0.044948,
+              "notes": [
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66"
+              ]
+            },
+            {
+              "name": "irish nationalist",
+              "type": "vector_match",
+              "score": 0.04379,
+              "notes": [
+                "43fe7a41-528c-42d5-8bf4-11791169824b"
+              ]
+            },
+            {
+              "name": "mary alden childers",
+              "type": "vector_match",
+              "score": 0.042958,
+              "notes": [
+                "4abec9ef-c8dd-44b2-85a2-258232eede95",
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            },
+            {
+              "name": "robert barton",
+              "type": "vector_match",
+              "score": 0.042648,
+              "notes": [
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66",
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            },
+            {
+              "name": "asgard",
+              "type": "vector_match",
+              "score": 0.032025,
+              "notes": [
+                "698b9524-8644-49a9-b71e-2cfbe15d2215",
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66"
+              ]
+            },
+            {
+              "name": "irish free state",
+              "type": "vector_match",
+              "score": 0.028654,
+              "notes": [
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66"
+              ]
+            },
+            {
+              "name": "ireland",
+              "type": "vector_match",
+              "score": 0.027722,
+              "notes": [
+                "80ac024e-1f80-449b-a8eb-4e22762e4fac",
+                "43fe7a41-528c-42d5-8bf4-11791169824b"
+              ]
+            },
+            {
+              "name": "october 13, 1995",
+              "type": "vector_match",
+              "score": 0.019811,
+              "notes": [
+                "38228541-7a89-484b-88b6-9044551517d3"
+              ]
+            },
+            {
+              "name": "ruth ellen dow childers",
+              "type": "vector_match",
+              "score": 0.018903,
+              "notes": [
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            },
+            {
+              "name": "irish civil war",
+              "type": "vector_match",
+              "score": 0.015163,
+              "notes": [
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66",
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Which writer was from England, Henry Roth or Robert Erskine Childers?",
+          "top_n": 20,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "robert erskine childers",
+              "type": "graph_expansion",
+              "score": 0.880589,
+              "notes": [
+                "77d47d6e-054d-4689-bb59-020b1c8aee59",
+                "4abec9ef-c8dd-44b2-85a2-258232eede95",
+                "77d47d6e-054d-4689-bb59-020b1c8aee59",
+                "9337c5e5-b1b9-497a-9408-a81b49591aeb",
+                "43fe7a41-528c-42d5-8bf4-11791169824b",
+                "698b9524-8644-49a9-b71e-2cfbe15d2215",
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66",
+                "80ac024e-1f80-449b-a8eb-4e22762e4fac",
+                "43fe7a41-528c-42d5-8bf4-11791169824b",
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66",
+                "77d47d6e-054d-4689-bb59-020b1c8aee59",
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66",
+                "742337dc-9e7f-4b16-8a77-c4e73ee47f66",
+                "77d47d6e-054d-4689-bb59-020b1c8aee59"
+              ]
+            }
+          ]
+        }
+      ],
+      "error": null,
+      "candidate_recall": 1.0,
+      "total_time_ms": 80158.23064092547
+    }
+  ]
+}

@@ -272,6 +272,11 @@ ingestion model or a much smaller local one is the way to make them affordable.
 
 ## 7. Open questions
 
+Round 2 (log, 2026-10-02) answers 3 (Qwen 3.5 9B extracts near the 12B; Qwen 9B answers as well as E4B),
+5 (the 0.6B embedder is within noise; reranker size is still untested by a valid metric), 8 (communities did not help)
+and 2 for HotpotQA (more loop steps: within noise). Still open: retrieval recall by note id, so MuSiQue can be scored;
+whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answering.
+
 1. Fresh baseline on the current pipeline: E4B ingest and chat, `BENCHMARK_MODE`, default knobs.
 2. Does raising `MAX_LOOP_ITERATIONS` from 3 recover the archived scores on multi-hop questions?
 3. Which smaller local models (Qwen in the catalogue has never been run) hold the baseline as chat model,
@@ -294,6 +299,37 @@ ingestion model or a much smaller local one is the way to make them affordable.
 5. Would smaller embedding and reranker models (0.6B) cost accuracy? They are loaded on every search.
 
 ## 8. Log
+
+- **2026-10-02, round 2 results (main account, A40, 3 lanes; 30.6 h, about $15; reports in `Results/runpod/round2-*`).**
+  All on the strict pipeline, 8B embedder and reranker pinned, E4B answering unless stated; HotpotQA dev 0-20 unless stated.
+  - *Scale confirms the extractor.* HotpotQA dev 20-70 (492 fresh notes): 12B extraction ingested 487, E4B 283; answer F1
+    0.670 against 0.416, exact match 58% against 32%, retrieval recall 0.79 against 0.43. +0/-13 on exact match, F1 CI
+    -0.38 to -0.13: real. E4B could not extract MuSiQue at all: its first 20 notes all failed (relationship endpoints
+    that are not entities), so the guard ended that build.
+  - *MuSiQue with the 12B index* (50 questions, 526 notes, 366 ingested, 25 h to build): exact match 12%, F1 0.165,
+    5 research steps. 18 query-analysis replies were rejected (a list for `question_attribute`, which the prompt asks
+    for as one string, on multi-attribute questions; `date_filter` left out). **Retrieval recall reads 0.000 and is not
+    a measurement:** the evaluator matches gold names as substrings of the model-written note titles, and MuSiQue gold
+    names are `q000 p00 ...` file names. HotpotQA recall works only because its gold names are entity titles the model
+    tends to repeat. Recall should match by note id; the id map lived on the deleted pod, so this run cannot be recounted.
+  - *Answering model over the 12B index:* E4B F1 0.712, 12B 0.722, E2B 0.466 (CI -0.45 to -0.07). Qwen 3.5 with
+    thinking off: 9B 0.738 (55% EM, best so far, within noise of E4B), 4B 0.603, 2B 0.261 (real loss).
+    The answering model matters far less than the extractor once it is E4B-sized.
+  - *Loop limit:* 3 steps 0.712, 5 steps 0.745, 8 steps 0.723: within noise on HotpotQA (2-hop).
+  - *Qwen 3.5 as extractor, thinking off:* 4B ingested 163/199 (F1 0.413), **9B 163/199 with F1 0.696 and 60% EM**,
+    +7/-0 on exact match against the 4B: real. 2B 99/199, F1 0.298. JSON grammar on the 4B: 164/199, F1 0.439, no change,
+    2.3x the build time. Qwen 9B is the first non-Gemma extractor near the 12B (0.712-0.764 on the same questions).
+  - *Index:* embedder 8B 0.764, 4B 0.712, 0.6B 0.747 (recall 0.90 / 0.90 / 0.825), all within noise; communities 0.657,
+    within noise and slower. The 0.6B embedder is a cheap candidate for the desktop.
+  - *Retrieval levers* (retrieval-only evaluator): candidate recall 0.875 for every reranker model, top-k and graph-expansion
+    setting; vector threshold 0.3 gives 0.900 at twice the time, 0.6 gives 0.825. **The retrieval-only evaluator cannot see
+    reranker settings:** it scores the whole candidate set before the reranker cuts it. Reranker levers need full answer runs.
+  - *Run-to-run noise:* the same base configuration scored F1 0.712 (round2-answer) and 0.764 (round2-index). Search is not
+    cached, so a small retrieval difference changes the prompt and the answer is generated afresh. At 20 questions, F1
+    differences under about 0.05 are not measurable; only the paired counts and CIs above should be read.
+  - *Infrastructure:* a Hugging Face download that stopped short ended the first launch (prefetch now retries); the follower
+    stopped saving for an hour because GNU tar exits 1 when a log grows while it is read (now accepted). Lanes worked:
+    up to three builds at once on the A40, with no port, manifest or graph-lock conflicts.
 
 - **2026-10-01, Qwen 3.5 ignores `/no_think`; thinking is switched off through the chat template instead.** Round 2's first
   Qwen extraction note still opened with an untagged "Thinking Process:" despite the `/no_think` suffix. The Qwen 3.5 GGUF templates

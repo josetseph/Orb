@@ -1,0 +1,1 @@
+{"ts": 1790829985.826498, "stage": "query analysis", "model": "gemma4-e4b-q4", "reason": "date_filter: Field required (2 problem(s))", "raw": "{\"entities\": [\"Guns N Roses\", \"End of Days\", \"Arnold Schwarzenegger\"], \"expected_entity_types\": [\"Band\", \"Film\", \"Person\"], \"question_attribute\": \"year\", \"intent\": \"search\", \"keywords\": [\"promo movie\"]}"}
