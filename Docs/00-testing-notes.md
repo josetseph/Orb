@@ -300,7 +300,7 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
-- **2026-10-02, round 2 results (main account, A40, 3 lanes; 30.6 h, about $15; reports in `Results/runpod/round2-*`).**
+- **2026-10-02, round 2 results (main account, A40, 3 lanes; 30.6 h, $16 ($47.19 to $31.20); reports in `Results/runpod/round2-*`).**
   All on the strict pipeline, 8B embedder and reranker pinned, E4B answering unless stated; HotpotQA dev 0-20 unless stated.
   - *Scale confirms the extractor.* HotpotQA dev 20-70 (492 fresh notes): 12B extraction ingested 487, E4B 283; answer F1
     0.670 against 0.416, exact match 58% against 32%, retrieval recall 0.79 against 0.43. +0/-13 on exact match, F1 CI
