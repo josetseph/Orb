@@ -25,15 +25,15 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from evaluate import expected_note_names, match_titles  # noqa: E402
+from evaluate import gold_groups, score_retrieval  # noqa: E402
 
 TOP_KS = (3, 5, 8, 10, 15, 20, 30, 10_000)
 THRESHOLDS = (0.0, 0.01, 0.05, 0.1, 0.2, 0.3, 0.5)
 CAPS = (4, 6, 8, 12, 10_000)
 
 
-def simulate(events: list[dict], top_k: int, threshold: float, cap: int, titles: dict[str, str]) -> list[str]:
-    """Note titles the pipeline would cite under these settings (mirrors the loop + chat truncation)."""
+def simulate(events: list[dict], top_k: int, threshold: float, cap: int) -> list[str]:
+    """Note ids the pipeline would cite under these settings (mirrors the loop + chat truncation)."""
     docs: dict[str, dict] = {}
     for ev in events:
         if ev.get("kind") != "rerank":
@@ -45,22 +45,17 @@ def simulate(events: list[dict], top_k: int, threshold: float, cap: int, titles:
             seen = docs.setdefault(c["name"], {"score": c["score"], "notes": []})
             seen["notes"] += [n for n in c["notes"] if n not in seen["notes"]]
     best = sorted(docs.values(), key=lambda d: d["score"], reverse=True)[:cap]
-    out: list[str] = []
-    for d in best:
-        for note_id in d["notes"]:
-            title = titles.get(note_id, "")
-            if title and title not in out:
-                out.append(title)
-    return out
+    return list(dict.fromkeys(note_id for d in best for note_id in d["notes"]))
 
 
-def prf(rows: list[tuple[list[str], set[str]]]) -> tuple[float, float, float]:
-    ps, rs = [], []
-    for got, gold in rows:
-        hit = len(match_titles(got, gold))
-        ps.append(hit / len(got) if got else 0.0)
-        rs.append(hit / len(gold) if gold else 0.0)
-    p, r = sum(ps) / len(ps), sum(rs) / len(rs)
+def complete(got: list[str], groups: list[list[str]], files: dict[str, str]) -> bool:
+    return score_retrieval(got, groups, files)["retrieval_recall"] == 1.0
+
+
+def prf(rows: list[tuple[list[str], list[list[str]]]], files: dict[str, str]) -> tuple[float, float, float]:
+    scored = [score_retrieval(got, groups, files) for got, groups in rows]
+    p = sum(s["retrieval_precision"] for s in scored) / len(scored)
+    r = sum(s["retrieval_recall"] for s in scored) / len(scored)
     return p, r, (2 * p * r / (p + r) if p + r else 0.0)
 
 
@@ -73,7 +68,9 @@ def main() -> None:
     run = json.loads(Path(args.results).read_text())
     manifest = json.loads((Path(__file__).parent / f"{run['dataset']}_manifest.json").read_text())
     cases = {tc["id"]: tc for tc in manifest["test_cases"]}
-    titles = run.get("note_titles") or {}
+    files = run.get("note_files")
+    if not files:
+        sys.exit("This results file has no note_files map (written before retrieval was scored by note id); it cannot be replayed.")
     rows = [r for r in run["results"] if r.get("trace") and r["test_id"] in cases]
     if not rows:
         sys.exit("No traces in this file. Re-run evaluate.py from this branch to record them.")
@@ -85,14 +82,14 @@ def main() -> None:
     buckets = ({"gold notes kept": [], "never surfaced": [], "surfaced, then cut": []} if retrieval_only
                else {"answered": [], "never surfaced": [], "surfaced, then cut": [], "retrieved, answered wrong": []})
     for r in rows:
-        gold = expected_note_names(cases[r["test_id"]])
-        everything = simulate(r["trace"], 10_000, 0.0, 10_000, titles)
-        kept = simulate(r["trace"], *live, titles)
+        gold = gold_groups(cases[r["test_id"]])
+        everything = simulate(r["trace"], 10_000, 0.0, 10_000)
+        kept = simulate(r["trace"], *live)
         if not retrieval_only and (r["exact_match"] or r.get("answer_contains_expected")):
             buckets["answered"].append(r)
-        elif len(match_titles(everything, gold)) < len(gold):
+        elif not complete(everything, gold, files):
             buckets["never surfaced"].append(r)
-        elif len(match_titles(kept, gold)) < len(gold):
+        elif not complete(kept, gold, files):
             buckets["surfaced, then cut"].append(r)
         else:
             buckets["gold notes kept" if retrieval_only else "retrieved, answered wrong"].append(r)
@@ -127,12 +124,12 @@ def main() -> None:
               f"{exhausted} of {len(rows)} ran out of iterations without answering")
 
     # 2. filter sweep
-    gold_sets = [expected_note_names(cases[r["test_id"]]) for r in rows]
+    gold_sets = [gold_groups(cases[r["test_id"]]) for r in rows]
     sweep = []
     for k in TOP_KS:
         for t in THRESHOLDS:
             for cap in CAPS:
-                p, rc, f1 = prf([(simulate(r["trace"], k, t, cap, titles), g) for r, g in zip(rows, gold_sets)])
+                p, rc, f1 = prf([(simulate(r["trace"], k, t, cap), g) for r, g in zip(rows, gold_sets)], files)
                 sweep.append((f1, rc, p, k, t, cap))
     sweep.sort(reverse=True)
     show = lambda v: "all" if v >= 10_000 else v  # noqa: E731
@@ -143,7 +140,7 @@ def main() -> None:
     now = next((s for s in sweep if s[3:] == live), None)
     if now:
         print(f"  recorded settings: P={now[2]:.3f} R={now[1]:.3f} F1={now[0]:.3f}")
-    ceiling = prf([(simulate(r["trace"], 10_000, 0.0, 10_000, titles), g) for r, g in zip(rows, gold_sets)])
+    ceiling = prf([(simulate(r["trace"], 10_000, 0.0, 10_000), g) for r, g in zip(rows, gold_sets)], files)
     print(f"  recall ceiling with no filtering at all: {ceiling[1]:.3f}  (above this needs better queries, graph or ingestion)")
 
 

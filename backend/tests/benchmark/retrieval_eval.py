@@ -23,7 +23,7 @@ import httpx
 from tqdm import tqdm
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from evaluate import expected_note_names, fetch_config, match_titles  # noqa: E402
+from evaluate import fetch_config, gold_groups, load_note_files, score_retrieval  # noqa: E402
 
 
 def query_bank(cases: list[dict], past_runs: list[str]) -> list[tuple[dict, str]]:
@@ -55,34 +55,44 @@ def main() -> None:
     cases = manifest["test_cases"][args.offset : args.offset + args.limit if args.limit else None]
     bank = query_bank(cases, args.queries_from)
     titles = {n["id"]: n.get("title") or "" for n in httpx.get(f"{args.base_url}/api/v1/notes", timeout=120).json()}
+    note_files = load_note_files(args.dataset)
 
     rows = []
     with httpx.Client(timeout=1800) as client:
         for case, query in tqdm(bank, desc="Retrieving"):
             t0 = time.perf_counter()
             row = {"test_id": case["id"], "question": case["question"], "query": query,
-                   "is_question": query == case["question"], "trace": [], "error": None}
+                   "is_question": query == case["question"], "trace": [], "context_notes": [], "error": None}
             try:
                 reply = client.post(f"{args.base_url}/api/v1/benchmark/retrieve", json={"query": query})
                 reply.raise_for_status()
                 row["trace"] = reply.json()["trace"]
+                row["context_notes"] = reply.json()["context_notes"]
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 row["error"] = str(exc)
-            kept = [titles.get(n, "") for e in row["trace"] if e.get("kind") == "rerank" for c in e["candidates"] for n in c["notes"]]
-            gold = expected_note_names(case)
-            row["candidate_recall"] = len(match_titles([t for t in kept if t], gold)) / len(gold) if gold else 0.0
+            groups = gold_groups(case)
+            candidates = [n for e in row["trace"] if e.get("kind") == "rerank" for c in e["candidates"] for n in c["notes"]]
+            # Every reranked candidate, before the cut; then what the model would actually read.
+            row["candidate_recall"] = score_retrieval(candidates, groups, note_files)["retrieval_recall"]
+            scored = score_retrieval(row["context_notes"], groups, note_files)
+            row["context_recall"] = row["retrieval_recall"] = scored["retrieval_recall"]
+            row["gold_ingested"] = scored["gold_ingested"]
             row["total_time_ms"] = (time.perf_counter() - t0) * 1000
             rows.append(row)
 
     n = len(rows) or 1
     out = {"timestamp": datetime.now().isoformat(), "dataset": args.dataset, "mode": "retrieval",
-           "num_tests": len(rows), "config": fetch_config(args.base_url), "note_titles": titles,
+           "num_tests": len(rows), "config": fetch_config(args.base_url), "note_titles": titles, "note_files": note_files,
            "metrics": {"candidate_recall": sum(r["candidate_recall"] for r in rows) / n,
+                       "context_recall": sum(r["context_recall"] for r in rows) / n,
+                       "gold_ingested": sum(r["gold_ingested"] for r in rows) / n,
                        "errors": sum(1 for r in rows if r["error"])},
            "results": rows}
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     Path(args.output).write_text(json.dumps(out, indent=2))
-    print(f"{len(rows)} queries | gold notes among the candidates: {out['metrics']['candidate_recall']:.1%} -> {args.output}")
+    m = out["metrics"]
+    print(f"{len(rows)} queries | gold among the candidates {m['candidate_recall']:.1%}, in the model's context "
+          f"{m['context_recall']:.1%}, in the index {m['gold_ingested']:.1%} -> {args.output}")
 
 
 if __name__ == "__main__":

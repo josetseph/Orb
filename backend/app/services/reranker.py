@@ -16,9 +16,14 @@ class RerankerService:  # pylint: disable=too-few-public-methods
     ) -> list[dict]:
         if not documents:
             return []
-        from app.services.local_models import local_gguf_reranker
+        from app.services.call_cache import cached
+        from app.services.local_models import local_gguf_reranker, reranker_gguf_path
 
-        return await asyncio.to_thread(local_gguf_reranker.rerank, query, documents, top_n)
+        def score() -> list[dict]:
+            return cached("rerank", [str(reranker_gguf_path()), query, documents, top_n],
+                          lambda: local_gguf_reranker.rerank(query, documents, top_n))
+
+        return await asyncio.to_thread(score)
 
 
 reranker_service = RerankerService()

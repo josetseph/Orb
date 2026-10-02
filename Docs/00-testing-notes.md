@@ -300,6 +300,27 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-02, measurement fixes before round 3.**
+  - *Retrieval is scored by note id.* Recall used to match gold names as substrings of note titles, and those titles are
+    written by the extraction model: recall measured how each extractor phrases titles (and was 0 on MuSiQue, whose gold
+    names are file names). The evaluators now map each retrieved note id to its file through the ingestion progress file,
+    and every result file embeds that map (`note_files`), so any run can be recounted or replayed later.
+    New column `gold_ingested`: the share of gold notes that made it into the index at all, which splits extraction loss
+    from retrieval loss. Recall numbers before this date are not comparable with those after it.
+  - *MuSiQue gold.* LongBench's `required_notes` are every passage of a question (distractors included) and it keeps no
+    supporting flags. All 50 questions appear verbatim in the original MuSiQue answerable dev set, which marks supporting
+    paragraphs; LongBench rebuilt the passages from Wikipedia, so they are matched to notes by exact article title.
+    116 of 117 supporting articles are present (one, Black Death for `musique_45`, is not in LongBench's passages and is
+    listed as `supporting_missing`). Written into the manifest as `supporting_notes` by `fetch_notes.py`.
+  - *Retrieval-only evaluator sees the reranker's cut.* `/benchmark/retrieve` now also returns the notes the loop would hand
+    the model; `context_recall` scores those, `candidate_recall` still scores every candidate before the cut.
+  - *Run-to-run noise removed at the source.* Two runs of one configuration diverged at the reranker: the GPU returns scores
+    that move in the third decimal, and tied candidates came back in a different order. Reranker scores and query
+    embeddings are now recorded in the experiment cache like model replies, and the server runs with a fixed hash seed.
+    Round 3 runs one configuration twice to check that the two are identical.
+  - *Sweeps:* an `also` list adds variants whose settings only make sense together (Qwen as extractor with thinking off),
+    so the Gemma baseline keeps its cache keys.
+
 - **2026-10-02, round 2 results (main account, A40, 3 lanes; 30.6 h, $16 ($47.19 to $31.20); reports in `Results/runpod/round2-*`).**
   All on the strict pipeline, 8B embedder and reranker pinned, E4B answering unless stated; HotpotQA dev 0-20 unless stated.
   - *Scale confirms the extractor.* HotpotQA dev 20-70 (492 fresh notes): 12B extraction ingested 487, E4B 283; answer F1

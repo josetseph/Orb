@@ -59,7 +59,15 @@ class EmbeddingService:
         if self.is_qwen3:
             instruction = custom_instruction or self.query_instruction
             text = instruction + text
-        return self.embeddings.embed_query(text)
+        from app.services.call_cache import cached
+        from app.services.local_models import gguf_paths_if_present
+
+        def model() -> str:
+            paths = gguf_paths_if_present() or {}
+            return str(paths.get("embed"))
+
+        return cached("embed_query", [model() if settings.LLM_CALL_CACHE_DIR else None, text],
+                      lambda: self.embeddings.embed_query(text))
 
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Embed documents/passages without instruction prefix."""

@@ -1,0 +1,25 @@
+{
+  "name": "round3-hotpot",
+  "dataset": "hotpotqa",
+  "dev": [
+    20,
+    70
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4"
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "_note": "Qwen 3.5 9B (thinking off) against Gemma 4 12B as extractor, 50 HotpotQA questions; retrieval scored by note id.",
+  "design": "one-at-a-time",
+  "also": [
+    {
+      "ingestion_model": "qwen35-9b-q4",
+      "EXTRACTION_ENABLE_THINKING": false
+    }
+  ]
+}

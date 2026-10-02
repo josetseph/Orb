@@ -18,8 +18,8 @@ Usage:
 
 import argparse
 import asyncio
-import html
 import json
+import os
 import re
 import sys
 import time
@@ -59,6 +59,7 @@ class EvaluationResult:
     expected_notes: list = field(default_factory=list)
     retrieval_precision: float = 0.0
     retrieval_recall: float = 0.0
+    gold_ingested: float = 0.0  # share of gold groups that made it into the index at all
 
     # Timing
     retrieval_time_ms: float = 0.0
@@ -242,27 +243,44 @@ def score_answer(expected: str, actual: str) -> dict:
     }
 
 
-def expected_note_names(test_case: dict) -> set[str]:
-    """Lower-cased gold note names, as retrieval precision/recall matches them."""
-    facts = test_case.get("supporting_facts", [])
-    if facts and isinstance(facts[0], str):
-        raw = facts
-    else:
-        notes = test_case.get("required_notes", test_case.get("notes", []))
-        raw = [fn.replace(".md", "").replace("_", " ").strip() for fn in notes]
-    return {html.unescape(name).lower() for name in raw}
+def gold_groups(test_case: dict) -> list[list[str]]:
+    """Gold note files, grouped: a group is found when any one of its files is retrieved.
+
+    HotpotQA: ``required_notes`` are the supporting articles, one file each. MuSiQue: ``supporting_notes``,
+    the supporting articles from the original MuSiQue release (an article can sit in two passages);
+    LongBench's ``required_notes`` there are every passage of the question, distractors included.
+    """
+    if "supporting_notes" in test_case:
+        return test_case["supporting_notes"]
+    return [[name] for name in test_case["required_notes"]]
 
 
-def match_titles(titles: list[str], expected: set[str]) -> set[str]:
-    """Gold names found as a substring of any retrieved note title."""
-    found = set()
-    for title in titles:
-        low = html.unescape(title).lower()
-        for name in expected:
-            if name in low:
-                found.add(name)
-                break
-    return found
+def load_note_files(dataset: str) -> dict[str, str]:
+    """{note id: note file} from the ingestion progress file (``ORB_BENCH_PROGRESS``).
+
+    Retrieval is scored by which notes came back, not by their titles: titles are written by the
+    extraction model, so title matching measured how each model phrases titles.
+    """
+    path = os.environ.get("ORB_BENCH_PROGRESS")
+    if not path or not Path(path).is_file():
+        sys.exit("retrieval scoring needs ORB_BENCH_PROGRESS: the ingestion progress file that maps notes to their ids")
+    progress = json.loads(Path(path).read_text()).get(dataset, {})
+    return {state: name for name, state in progress.items()
+            if state not in ("failed", "missing", "empty") and not state.startswith("pending:")}
+
+
+def score_retrieval(note_ids: list[str], groups: list[list[str]], note_files: dict[str, str]) -> dict:
+    """Recall over gold groups, precision over the retrieved notes, and how much of the gold made it into the index."""
+    got = {note_files[n] for n in note_ids if n in note_files}
+    gold = {name for group in groups for name in group}
+    indexed = set(note_files.values())
+    if not groups:
+        return {"retrieval_recall": 0.0, "retrieval_precision": 0.0, "gold_ingested": 0.0}
+    return {
+        "retrieval_recall": sum(1 for g in groups if got & set(g)) / len(groups),
+        "retrieval_precision": len(got & gold) / len(got) if got else 0.0,
+        "gold_ingested": sum(1 for g in groups if indexed & set(g)) / len(groups),
+    }
 
 
 def result_row(r: "EvaluationResult") -> dict:
@@ -278,6 +296,8 @@ def result_row(r: "EvaluationResult") -> dict:
         "retrieved_note_titles": r.retrieved_note_titles,
         "retrieval_precision": r.retrieval_precision,
         "retrieval_recall": r.retrieval_recall,
+        "gold_ingested": r.gold_ingested,
+        "retrieved_note_ids": r.retrieved_note_ids,
         "total_time_ms": r.total_time_ms,
         "error": r.error,
         "context": r.context,
@@ -379,6 +399,7 @@ async def evaluate_single(
     base_url: str,
     verbose: bool = False,
     note_title_map: dict[str, str] | None = None,
+    note_files: dict[str, str] | None = None,
 ) -> EvaluationResult:
     """Evaluate a single test case."""
     question = test_case["question"]
@@ -427,15 +448,8 @@ async def evaluate_single(
     for key, value in score_answer(expected_answer, actual_answer).items():
         setattr(result, key, value)
 
-    # Retrieval quality metrics
-    # Match expected note filenames to retrieved note IDs
-    # Expected: ["Scott Derrickson.md", "Ed Wood.md"]
-    # Retrieved: note IDs from linked_notes
-    if expected_notes and (titles or note_ids):
-        expected_names = expected_note_names(test_case)
-        true_positives = len(match_titles(titles, expected_names))
-        result.retrieval_precision = true_positives / len(titles) if titles else 0
-        result.retrieval_recall = true_positives / len(expected_names) if expected_names else 0
+    for key, value in score_retrieval(note_ids, gold_groups(test_case), note_files or {}).items():
+        setattr(result, key, value)
 
     if verbose:
         print(f"\n{'='*60}")
@@ -465,14 +479,14 @@ async def run_evaluation(
     print(f"\n🧪 Evaluating {len(test_cases)} test cases from {manifest['dataset']}")
     print(f"   Endpoint: {base_url}")
 
-    # Pre-fetch note titles once so retrieval precision/recall can resolve
-    # note IDs returned by the pipeline back to human-readable titles.
+    # Titles are for reading the results; retrieval is scored by note id (note_files).
     note_title_map = await fetch_note_title_map(base_url)
     print(f"   Note title map: {len(note_title_map)} notes loaded")
+    note_files = load_note_files(manifest_path.name.removesuffix("_manifest.json"))
 
     results = []
     for test_case in tqdm(test_cases, desc="Evaluating"):
-        result = await evaluate_single(test_case, base_url, verbose, note_title_map)
+        result = await evaluate_single(test_case, base_url, verbose, note_title_map, note_files)
         results.append(result)
         await asyncio.sleep(0.5)
 
@@ -503,6 +517,7 @@ def calculate_metrics(results: list[EvaluationResult]) -> dict:
     # Retrieval quality
     avg_precision = sum(r.retrieval_precision for r in valid_results) / valid_count
     avg_recall = sum(r.retrieval_recall for r in valid_results) / valid_count
+    avg_gold_ingested = sum(r.gold_ingested for r in valid_results) / valid_count
 
     # Timing
     avg_time = sum(r.total_time_ms for r in valid_results) / valid_count
@@ -517,6 +532,7 @@ def calculate_metrics(results: list[EvaluationResult]) -> dict:
         "answer_contains_expected": contains_matches / valid_count,
         "retrieval_precision": avg_precision,
         "retrieval_recall": avg_recall,
+        "gold_ingested": avg_gold_ingested,
         "retrieval_f1": (
             (2 * avg_precision * avg_recall / (avg_precision + avg_recall))
             if (avg_precision + avg_recall) > 0
@@ -657,6 +673,7 @@ def main():
             "metrics": metrics,
             "config": fetch_config(args.base_url),
             "note_titles": asyncio.run(fetch_note_title_map(args.base_url)),
+            "note_files": load_note_files(args.dataset),
             "results": [result_row(r) for r in results],
         }
         with open(output_path, "w") as f:

@@ -1,0 +1,9 @@
+{
+  "lanes": 3,
+  "specs": [
+    "round3-musique.json",
+    "round3-hotpot.json",
+    "round3-retrieval.json",
+    "round3-repeat-a.json"
+  ]
+}

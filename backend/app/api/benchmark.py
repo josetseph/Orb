@@ -80,16 +80,22 @@ class RetrieveInput(BaseModel):
 async def retrieve(body: RetrieveInput, kb: KBContext = Depends(get_kb)):
     """One search-and-expand for one query, exactly as the research loop runs it, with no answering model.
 
-    Returns the trace: every reranked candidate with its score before any cut. Retrieval levers can be
-    judged against the gold notes for a whole query bank in the time one full question takes.
+    Returns the trace (every reranked candidate with its score, before any cut) and ``context_notes``:
+    the notes linked to the docs the research loop would hand the model for this query, after the cut.
+    Retrieval levers can be judged against the gold notes in the time one full question takes.
     """
     require_ai(kb)
     kb.get_chat_workflow()  # builds the KB's lazily created services
     events = trace.start()
     started = time.perf_counter()
     analysis = kb.llm.analyze_query(body.query)
-    await kb.retrieval_service.search_with_expansion(body.query, analysis.get("question_attribute") or None, set())
-    return {"trace": events, "seconds": round(time.perf_counter() - started, 2)}
+    selected, expanded = await kb.retrieval_service.search_with_expansion(
+        body.query, analysis.get("question_attribute") or None, set()
+    )
+    context_notes = list(dict.fromkeys(
+        n if isinstance(n, str) else n.get("id") for d in selected + expanded for n in d.get("linked_notes", [])
+    ))
+    return {"trace": events, "context_notes": context_notes, "seconds": round(time.perf_counter() - started, 2)}
 
 
 class SynthesizeInput(BaseModel):

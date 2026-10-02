@@ -242,7 +242,37 @@ def fetch_musique(*, force: bool) -> int:
             count += 1
 
     print(f"✅ Wrote {count} MuSiQue notes → {notes_dir}")
+    annotate_musique_support(manifest_path, notes_dir)
     return count
+
+
+def annotate_musique_support(manifest_path: Path, notes_dir: Path) -> None:
+    """Add ``supporting_notes`` to each MuSiQue test case: the gold for retrieval scoring.
+
+    LongBench keeps no supporting flags, and its ``required_notes`` are every passage of the question.
+    The original MuSiQue answerable dev set marks the supporting paragraphs; each LongBench question is
+    in it verbatim. LongBench rebuilt the passages from Wikipedia, so they are matched by article title
+    (the passage's title line), exactly. An article can sit in two passages: such a title is one group,
+    found when either passage is retrieved. A supporting article LongBench left out is listed in
+    ``supporting_missing`` and not counted.
+    """
+    from huggingface_hub import hf_hub_download
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if all("supporting_notes" in tc for tc in manifest["test_cases"]):
+        return
+    source = hf_hub_download("bdsaglam/musique", "musique_ans_v1.0_dev.jsonl", repo_type="dataset")
+    by_question = {row["question"]: row for row in map(json.loads, Path(source).read_text(encoding="utf-8").splitlines())}
+    for tc in manifest["test_cases"]:
+        titles = {fname: (notes_dir / fname).read_text(encoding="utf-8").splitlines()[3] for fname in tc["notes"]}
+        supporting = dict.fromkeys(p["title"] for p in by_question[tc["question"]]["paragraphs"] if p["is_supporting"])
+        groups = {title: [f for f, t in titles.items() if t == title] for title in supporting}
+        tc["supporting_notes"] = [files for files in groups.values() if files]
+        tc["supporting_missing"] = [title for title, files in groups.items() if not files]
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    found = sum(len(tc["supporting_notes"]) for tc in manifest["test_cases"])
+    missing = sum(len(tc["supporting_missing"]) for tc in manifest["test_cases"])
+    print(f"✅ Supporting notes: {found} articles found, {missing} not in LongBench's passages → {manifest_path.name}")
 
 
 def main() -> None:

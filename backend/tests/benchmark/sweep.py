@@ -49,7 +49,7 @@ INDEX_STAGES = ("extract", "index")
 
 def variants(spec: dict) -> list[dict]:
     """The baseline first, then each variant as a full lever -> value mapping with a ``name``."""
-    for lever in list(spec["baseline"]) + list(spec.get("vary", {})):
+    for lever in [*spec["baseline"], *spec.get("vary", {}), *(k for combo in spec.get("also", []) for k in combo)]:
         if lever not in BY_NAME:
             raise SystemExit(f"unknown lever {lever!r}; declare it in levers.py")
     def explicit(levers: dict) -> dict:
@@ -70,6 +70,9 @@ def variants(spec: dict) -> list[dict]:
             for value in values:
                 if base.get(lever, BY_NAME[lever].default) != value:
                     out.append({"name": f"{lever}={value}", "levers": explicit({**base, lever: value})})
+    # "also": settings that only make sense together (Qwen as extractor with its thinking switched off), one variant each.
+    for combo in spec.get("also", []):
+        out.append({"name": ",".join(f"{k}={v}" for k, v in combo.items()), "levers": explicit({**base, **combo})})
     return out
 
 
@@ -205,7 +208,7 @@ def run_rung(pool, field, alive, spec, label, offset, n, plan) -> list[tuple[str
 
 
 def run_spec(spec: dict, pool, plan: bool) -> None:
-    metric = spec.get("metric", "candidate_recall" if spec.get("evaluator") == "retrieval" else "answer_f1")
+    metric = spec.get("metric", "context_recall" if spec.get("evaluator") == "retrieval" else "answer_f1")
     spec["metric"] = metric
     field = variants(spec)
     start, end = spec["dev"]
@@ -271,11 +274,11 @@ def paired(base: Path, other: Path, metric: str) -> str:
 
 def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
     metric = spec.get("metric", "answer_f1")
-    out = [f"\n## {title}\n", f"| variant | {metric} | exact match | retrieval recall | s / question | index build s (notes ingested) | unusable replies | vs base |", "|---|---|---|---|---|---|---|---|"]
+    out = [f"\n## {title}\n", f"| variant | {metric} | exact match | retrieval recall | gold in index | s / question | index build s (notes ingested) | unusable replies | vs base |", "|---|---|---|---|---|---|---|---|---|"]
     base_path = next((path for name, path in rows if name == "base"), None)
     for name, path in rows:
         if not path.is_file():
-            out.append(f"| {name} | not run | | | | | | |")
+            out.append(f"| {name} | not run | | | | | | | |")
             continue
         data = json.loads(path.read_text())
         res = data["results"]
@@ -283,6 +286,7 @@ def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
         config = path.parent / "config.json"
         bad = json.loads(config.read_text()).get("invalid_replies", {}) if config.is_file() else {}
         recall = sum(float(r.get("retrieval_recall", r.get("candidate_recall")) or 0) for r in res) / n
+        indexed = f"{sum(float(r['gold_ingested']) for r in res) / n:.3f}" if "gold_ingested" in res[0] else "n/a"
         em = f"{sum(bool(r.get('exact_match')) for r in res) / n:.0%}" if "exact_match" in res[0] else "n/a"
         versus = paired(base_path, path, metric) if base_path and base_path.is_file() and name != "base" else ""
         levers = next(v["levers"] for v in variants(spec) if v["name"] == name)
@@ -290,7 +294,7 @@ def table(title: str, rows: list[tuple], spec: dict) -> list[str]:
         built = json.loads(idx.read_text()) if idx.is_file() else {}
         notes = built.get("notes") or {}
         build = f"{built.get('ingest_seconds', '')} ({notes.get('ingested', '?')}/{notes.get('total', '?')} notes)" if built else ""
-        out.append(f"| {name} | {score(path, metric):.3f} | {em} | {recall:.3f} | {sum(r['total_time_ms'] for r in res) / n / 1000:.0f} | {build} | "
+        out.append(f"| {name} | {score(path, metric):.3f} | {em} | {recall:.3f} | {indexed} | {sum(r['total_time_ms'] for r in res) / n / 1000:.0f} | {build} | "
                    f"{sum(bad.values())} {bad or ''} | {versus} |")
     return out
 
