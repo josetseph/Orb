@@ -194,7 +194,7 @@ def main() -> None:
                     "QDRANT_GRPC_PORT": str(6334 + 10 * LANE), "MEILI_PORT": str(7700 + 10 * LANE)}
     env = {**os.environ, "BENCHMARK_MODE": "true", **cache, **lane_env, **overrides,
            "ORB_DATA_DIR": str(DATA), "ORB_BENCH_PROGRESS": str(DATA / "prepare_progress.json"),
-           "PYTHONHASHSEED": "0"}  # set and dict-of-set iteration order, so tied candidates keep one order across runs
+           "PYTHONHASHSEED": "0", "BENCHMARK_TODAY": "2026-10-01"}  # a fixed "today": query analysis puts it in its prompt  # set and dict-of-set iteration order, so tied candidates keep one order across runs
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
               "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,
               "chat_model": args.chat_model, "ingestion_model": args.ingestion_model, "started": datetime.now().isoformat(timespec="seconds"),

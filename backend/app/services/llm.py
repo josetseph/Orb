@@ -513,7 +513,7 @@ class LLMService:
         # resolution ("yesterday") depends on today; failures raise, so only
         # successful analyses are cached.
         try:
-            return dict(self._analyze_query_cached(query, date.today().isoformat()))
+            return dict(self._analyze_query_cached(query, settings.BENCHMARK_TODAY or date.today().isoformat()))
         except Exception as e:  # pylint: disable=broad-exception-caught
             logger.error(f"Query analysis failed: {e}")
             return {

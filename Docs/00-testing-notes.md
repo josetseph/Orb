@@ -300,6 +300,26 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-03, round 3 results (main account, A40, 3 lanes; 17.3 h, $8.18: $30.29 to $22.11; reports in `Results/runpod/round3-*`).**
+  Retrieval scored by note id from here on. E4B answering, 8B embedder and reranker.
+  - *Qwen 3.5 9B does not hold up as extractor at scale.* HotpotQA dev 20-70: 12B 54% EM, F1 0.683, gold in index 0.99,
+    recall 0.92; Qwen 9B (thinking off) 46%, 0.555, 0.84, 0.76 (+4/-8 EM, F1 CI -0.26 to -0.00). MuSiQue: 12B 12%, 0.158,
+    0.49, 0.45; Qwen 9B 4%, 0.062, 0.29, 0.22 (F1 CI -0.17 to -0.03). Qwen ingested 399/492 and 230/526 notes against the
+    12B's 486 and 369, almost all rejected for relationships whose endpoint is not one of its entities, and it took 5-7x
+    as long. Round 2's 20-question lead (F1 0.696) did not survive 50 fresh questions. Gemma 4 12B stays the extractor.
+  - *MuSiQue is lost at extraction, not search.* With the 12B index, only 49% of the gold articles are in the index, and
+    retrieval reaches 45%: it finds about nine in ten of what was indexed. The 12B rejected 157 of 526 MuSiQue notes
+    (long Wikipedia passages: fences and non-entity endpoints), and those included half the gold.
+  - *Retrieval levers, scored properly* (HotpotQA 0-20, 12B index): gold in what the model reads 0.95 (0.975 among the
+    candidates). Reranker 4B 0.975, 0.6B 0.95; top-k 5 0.95, 20 0.975; graph expansion off 0.95 at 18 s per query against
+    46 s; vector threshold 0.3 0.975 at twice the time, 0.6 drops to 0.90. HotpotQA retrieval is near its ceiling: the
+    0.6B reranker and no graph expansion cost nothing measurable here and are much cheaper.
+  - *The repeat check failed, and found the last source of noise.* The same configuration run twice: 16 of 20 answers
+    identical, F1 0.673 and 0.700. Each divergence began at a query-analysis call that missed the cache: its prompt carries
+    today's date (to resolve "yesterday"), and the two runs fell on different days. Experiments now pin the date
+    (`BENCHMARK_TODAY`, set by `experiment.py`). Reranker scores and embeddings did replay. Not yet re-verified on a run.
+  - The 12B HotpotQA dev 20-70 index rebuilt from the cache with 486 of 492 notes against round 2's 487.
+
 - **2026-10-02, measurement fixes before round 3.**
   - *Retrieval is scored by note id.* Recall used to match gold names as substrings of note titles, and those titles are
     written by the extraction model: recall measured how each extractor phrases titles (and was 0 on MuSiQue, whose gold

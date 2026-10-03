@@ -72,6 +72,9 @@ class Settings(BaseSettings):
     MAX_LOOP_ITERATIONS: int = 3
     # Benchmark runs: short extracted answers + the HotPotQA/MuSiQue reasoning rules.
     BENCHMARK_MODE: bool = False
+    # Experiments: the date query analysis treats as today. Its prompt carries the date, so without this a
+    # rerun on another day misses the call cache and regenerates. None = the real date.
+    BENCHMARK_TODAY: str | None = None
     # Experiment cache: every model call keyed by provider, model, exact messages and generation
     # parameters; an unchanged call is replayed from disk. Unset = off, which is the app's behaviour.
     LLM_CALL_CACHE_DIR: str | None = None

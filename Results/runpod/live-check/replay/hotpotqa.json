@@ -1,0 +1,360 @@
+{
+  "timestamp": "2026-10-02T11:07:05.349090",
+  "dataset": "hotpotqa",
+  "num_tests": 1,
+  "metrics": {
+    "total_tests": 1,
+    "valid_tests": 1,
+    "error_count": 0,
+    "answer_exact_match": 1.0,
+    "answer_f1": 1.0,
+    "answer_fuzzy_match": 1.0,
+    "answer_contains_expected": 1.0,
+    "retrieval_precision": 0.5,
+    "retrieval_recall": 1.0,
+    "gold_ingested": 1.0,
+    "retrieval_f1": 0.6666666666666666,
+    "avg_response_time_ms": 2145.2356092631817
+  },
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-8b-q4",
+      "reranker_id": "qwen3-rerank-8b-q4",
+      "embedding_dims": 4096,
+      "chat_path": "gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "embed_path": "gguf/Qwen3-Embedding-8B-Q4_K_M.gguf",
+      "reranker_path": "gguf/Qwen3-Reranker-8B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "EXTRACTION_MODE": "auto",
+      "PROMPT_SUFFIX": "",
+      "EXTRACTION_PROMPT_SUFFIX": "",
+      "JSON_CONSTRAINED_DECODING": true,
+      "EXTRACTION_JSON_CONSTRAINED": true,
+      "LLAMA_FLASH_ATTN": false,
+      "ENABLE_THINKING": null,
+      "EXTRACTION_ENABLE_THINKING": null,
+      "EXTRACTION_ATTEMPTS": 1,
+      "CHAT_MAX_CONTEXT_DOCS": 6,
+      "EMBED_MODEL_ID": null,
+      "RERANK_MODEL_ID": null,
+      "LLAMA_N_CTX": 16384,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-8b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-8b-q4"
+    }
+  },
+  "note_titles": {
+    "96500690-e884-4752-87c2-24e4c1b27863": "Untitled 10",
+    "fe0c78e2-c59c-485b-9187-ca1e5b047245": "Untitled 9",
+    "a77da76c-dd35-421c-9e02-5ff26edbbeae": "Untitled 8",
+    "0a8e1021-1bd9-4636-a504-cf951c0ec5ce": "Adam Collis's Career and Education",
+    "21c4ed74-e7b6-47cd-a833-0bdb9870cbc3": "Untitled 6",
+    "3ffde6d2-845e-412f-861b-ec30e49d09e8": "Biography of Ed Wood",
+    "55a1c654-c3b9-4db2-94c5-d7ad2248a0fa": "Tyler Bates's Career in Music and Film",
+    "79f03aa2-8366-4753-b6d3-55488fdfccc3": "Geographical and Historical Context of Woodson, Arkansas",
+    "4c370da4-f32d-44bf-89b6-2588944ec162": "Scott Derrickson's Career and Biography",
+    "f925e6cd-46d4-4c57-b10a-49b588a30208": "Ed Wood Film Details"
+  },
+  "note_files": {
+    "f925e6cd-46d4-4c57-b10a-49b588a30208": "Ed Wood _film_.md",
+    "4c370da4-f32d-44bf-89b6-2588944ec162": "Scott Derrickson.md",
+    "79f03aa2-8366-4753-b6d3-55488fdfccc3": "Woodson_ Arkansas.md",
+    "55a1c654-c3b9-4db2-94c5-d7ad2248a0fa": "Tyler Bates.md",
+    "3ffde6d2-845e-412f-861b-ec30e49d09e8": "Ed Wood.md",
+    "0a8e1021-1bd9-4636-a504-cf951c0ec5ce": "Adam Collis.md"
+  },
+  "results": [
+    {
+      "test_id": "5a8b57f25542995d1e6f1371",
+      "question": "Were Scott Derrickson and Ed Wood of the same nationality?",
+      "expected_answer": "yes",
+      "actual_answer": "YES",
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0,
+      "retrieved_note_titles": [
+        "Scott Derrickson's Career and Biography",
+        "Tyler Bates's Career in Music and Film",
+        "Biography of Ed Wood",
+        "Adam Collis's Career and Education"
+      ],
+      "retrieval_precision": 0.5,
+      "retrieval_recall": 1.0,
+      "gold_ingested": 1.0,
+      "retrieved_note_ids": [
+        "4c370da4-f32d-44bf-89b6-2588944ec162",
+        "55a1c654-c3b9-4db2-94c5-d7ad2248a0fa",
+        "3ffde6d2-845e-412f-861b-ec30e49d09e8",
+        "0a8e1021-1bd9-4636-a504-cf951c0ec5ce"
+      ],
+      "total_time_ms": 2145.2356092631817,
+      "error": null,
+      "context": [
+        {
+          "name": "scott derrickson",
+          "text": "scott derrickson is a person. Scott Derrickson was born on July 16, 1966. He is an American director, screenwriter, and producer. He resides in Los Angeles, California. He is recognized for directing horror films such as Sinister, The Exorcism of Emily Rose, and Deliver Us From Evil, and also directed the 2016 Marvel Cinematic Universe installment, Doctor Strange. - 2026-10-02T11:02:21.226992 Scott Derrickson is a director with whom Tyler Bates has collaborated. - 2026-10-02T11:02:46.627234 Scott Derrickson is the individual whose short film \"Love in the Ruins\" (1995) Adam Collis assisted as a director. Scott Derrickson is the individual whose short film \"Love in the Ruins\" (1995) Adam Collis assisted as a director. - 2026-10-02T11:03:17.177015 Scott Derrickson was born on July 16, 1966. He is an American director, screenwriter, and producer. He resides in Los Angeles, California. He is recognized for directing horror films such as Sinister, The Exorcism of Emily Rose, and Deliver Us From Evil, and also directed the 2016 Marvel Cinematic Universe installment, Doctor Strange. - 2026-10-02T11:02:21.226992 Scott Derrickson is a director with whom Tyler Bates has collaborated. - 2026-10-02T11:02:46.627234 Scott Derrickson is the individual whose short film \"Love in the Ruins\" (1995) Adam Collis assisted as a director."
+        },
+        {
+          "name": "american",
+          "text": "american is a concept. Edward Davis Wood Jr. was an American individual. - 2026-10-02T11:03:01.826627 Scott Derrickson is identified as American. - 2026-10-02T11:02:21.226992 Tyler Bates is identified as an American individual. - 2026-10-02T11:02:46.627234 Adam Collis is identified as being American."
+        },
+        {
+          "name": "doctor strange",
+          "text": "doctor strange is a work. Doctor Strange is the 2016 Marvel Cinematic Universe installment that Scott Derrickson directed. Doctor Strange is the 2016 Marvel Cinematic Universe installment that Scott Derrickson directed. - 2026-10-02T11:02:21.226992"
+        },
+        {
+          "name": "marvel cinematic universe",
+          "text": "marvel cinematic universe is a concept. The Marvel Cinematic Universe is a designation for the context of Doctor Strange, which was released in 2016 and directed by Scott Derrickson. The Marvel Cinematic Universe is a designation for the context of Doctor Strange, which was released in 2016 and directed by Scott Derrickson. - 2026-10-02T11:02:21.226992"
+        },
+        {
+          "name": "the exorcism of emily rose",
+          "text": "the exorcism of emily rose is a work. The Exorcism of Emily Rose is a horror film that Scott Derrickson directed. The Exorcism of Emily Rose is a horror film that Scott Derrickson directed. - 2026-10-02T11:02:21.226992"
+        },
+        {
+          "name": "love in the ruins",
+          "text": "love in the ruins is a work. \"Love in the Ruins\" is a short film directed by Scott Derrickson, and Adam Collis served as its assistant director. It was released in 1995. \"Love in the Ruins\" is a short film directed by Scott Derrickson, and Adam Collis served as its assistant director. It was released in 1995. - 2026-10-02T11:03:17.177015"
+        }
+      ],
+      "trace": [
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "step",
+          "iteration": 1,
+          "query": null,
+          "docs": [],
+          "llm_seconds": 0.01,
+          "can_answer": false,
+          "answer": null,
+          "next_query": "Scott Derrickson nationality",
+          "finding": null
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "rerank",
+          "stage": "search",
+          "query": "Scott Derrickson nationality",
+          "top_n": 10,
+          "score_threshold": 0.05,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "entity_match",
+              "score": 0.991992,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162",
+                "55a1c654-c3b9-4db2-94c5-d7ad2248a0fa"
+              ]
+            },
+            {
+              "name": "american",
+              "type": "entity_match",
+              "score": 0.96003,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162",
+                "55a1c654-c3b9-4db2-94c5-d7ad2248a0fa"
+              ]
+            },
+            {
+              "name": "doctor strange",
+              "type": "entity_match",
+              "score": 0.214948,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "marvel cinematic universe",
+              "type": "entity_match",
+              "score": 0.17295,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "the exorcism of emily rose",
+              "type": "entity_match",
+              "score": 0.132779,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "love in the ruins",
+              "type": "entity_match",
+              "score": 0.10961,
+              "notes": [
+                "0a8e1021-1bd9-4636-a504-cf951c0ec5ce"
+              ]
+            },
+            {
+              "name": "deliver us from evil",
+              "type": "entity_match",
+              "score": 0.101635,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "july 16, 1966",
+              "type": "entity_match",
+              "score": 0.077808,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "director",
+              "type": "entity_match",
+              "score": 0.076928,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162",
+                "3ffde6d2-845e-412f-861b-ec30e49d09e8"
+              ]
+            },
+            {
+              "name": "tyler bates",
+              "type": "entity_match",
+              "score": 0.071841,
+              "notes": [
+                "55a1c654-c3b9-4db2-94c5-d7ad2248a0fa"
+              ]
+            },
+            {
+              "name": "los angeles",
+              "type": "entity_match",
+              "score": 0.066843,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "sinister",
+              "type": "entity_match",
+              "score": 0.062213,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "producer",
+              "type": "entity_match",
+              "score": 0.060475,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162",
+                "3ffde6d2-845e-412f-861b-ec30e49d09e8"
+              ]
+            },
+            {
+              "name": "california",
+              "type": "entity_match",
+              "score": 0.05537,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "screenwriter",
+              "type": "entity_match",
+              "score": 0.038597,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "rerank",
+          "stage": "expansion",
+          "query": "Scott Derrickson nationality",
+          "top_n": 10,
+          "score_threshold": null,
+          "candidates": [
+            {
+              "name": "scott derrickson",
+              "type": "graph_expansion",
+              "score": 0.990864,
+              "notes": [
+                "4c370da4-f32d-44bf-89b6-2588944ec162",
+                "3ffde6d2-845e-412f-861b-ec30e49d09e8",
+                "4c370da4-f32d-44bf-89b6-2588944ec162"
+              ]
+            },
+            {
+              "name": "american",
+              "type": "graph_expansion",
+              "score": 0.98419,
+              "notes": [
+                "3ffde6d2-845e-412f-861b-ec30e49d09e8"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "llm_call",
+          "model": "gemma4-e4b-q4",
+          "ingestion": false,
+          "cached": true,
+          "seconds": 0.0
+        },
+        {
+          "kind": "step",
+          "iteration": 2,
+          "query": "Scott Derrickson nationality",
+          "docs": [
+            "scott derrickson",
+            "american",
+            "doctor strange",
+            "marvel cinematic universe",
+            "the exorcism of emily rose",
+            "love in the ruins",
+            "deliver us from evil",
+            "july 16, 1966",
+            "director",
+            "tyler bates",
+            "scott derrickson",
+            "american"
+          ],
+          "llm_seconds": 0.01,
+          "can_answer": true,
+          "answer": "YES",
+          "next_query": null,
+          "finding": "Scott Derrickson is identified as American. Edward Davis Wood Jr. was an American individual."
+        }
+      ]
+    }
+  ]
+}
