@@ -1,0 +1,34 @@
+{
+  "name": "round4-cheap-retrieval",
+  "dataset": "hotpotqa",
+  "dev": [
+    20,
+    70
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4"
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "vary": {
+    "RERANK_MODEL_ID": [
+      "qwen3-rerank-0.6b-q4"
+    ],
+    "GRAPH_EXPAND_TOP_NEIGHBORS": [
+      0
+    ]
+  },
+  "also": [
+    {
+      "RERANK_MODEL_ID": "qwen3-rerank-0.6b-q4",
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 0,
+      "EMBED_MODEL_ID": "qwen3-embed-0.6b-q8"
+    }
+  ],
+  "_note": "The cheap retrieval stack round 3 pointed to, confirmed on 50 questions with full answers: 0.6B reranker, no graph expansion, and both with the 0.6B embedder."
+}

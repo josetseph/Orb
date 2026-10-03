@@ -221,6 +221,8 @@ class LLMService:
         """
         started = time.perf_counter()
         ingestion = kwargs.get("ingestion", False)
+        # A re-ask (EXTRACTION_ATTEMPTS) sends the same messages; without its number in the key it would replay the reply it re-asks.
+        attempt = kwargs.pop("attempt", 0)
         suffix = settings.EXTRACTION_PROMPT_SUFFIX if ingestion else settings.PROMPT_SUFFIX
         if suffix:
             # A model-specific instruction (Qwen 3.x: "/no_think" switches its reasoning preamble off), set per stage
@@ -237,6 +239,7 @@ class LLMService:
                 *(getattr(settings, name) for name in _REPLY_SHAPING_SETTINGS),
                 # Only when set, so replies recorded before this switch existed keep their keys.
                 *(["enable_thinking", thinking] if (thinking := _thinking_switch(ingestion)) is not None else []),
+                *(["attempt", attempt] if attempt else []),
             ], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             path = Path(settings.LLM_CALL_CACHE_DIR) / key[:2] / f"{key}.json"
             if path.is_file():
@@ -938,6 +941,7 @@ class LLMService:
         temperature: float = 0.1,
         max_tokens: int | None = None,
         json_mode: bool = False,
+        attempt: int = 0,
     ) -> tuple[str, dict]:
         """``ingestion_generate`` plus ``{"finish_reason", "truncated"}``.
 
@@ -952,6 +956,7 @@ class LLMService:
             max_tokens=max_tokens,
             ingestion=True,
             json_mode=json_mode,
+            attempt=attempt,
         )
         if not text:
             raise ValueError(

@@ -1,0 +1,9 @@
+{
+  "lanes": 3,
+  "specs": [
+    "round4-musique.json",
+    "round4-small-extract.json",
+    "round4-cheap-retrieval.json",
+    "round4-repeat-a.json"
+  ]
+}

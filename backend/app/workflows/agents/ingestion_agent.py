@@ -330,7 +330,7 @@ async def _extract_chunk(
         try:
             # json_mode constrains the reply to valid JSON as it is generated.
             raw, meta = await checkpoint.generate_with_meta(
-                llm, _build_extraction_prompt(text), temperature=0.1, json_mode=True
+                llm, _build_extraction_prompt(text), temperature=0.1, json_mode=True, attempt=attempt
             )
             tokens = count_tokens(text)
             model_name = llm.get_ingestion_model()

@@ -1,0 +1,52 @@
+{
+  "name": "round4-musique",
+  "dataset": "musique",
+  "dev": [
+    0,
+    20
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "MAX_LOOP_ITERATIONS": 5
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "vary": {
+    "EXTRACTION_ATTEMPTS": [
+      2
+    ],
+    "EXTRACTION_PROMPT_SUFFIX": [
+      "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one."
+    ],
+    "EXTRACTION_JSON_CONSTRAINED": [
+      true
+    ],
+    "EXTRACTION_MODE": [
+      "task_split"
+    ],
+    "EXTRACTION_CHUNK_TOKENS": [
+      1000
+    ],
+    "MAX_LOOP_ITERATIONS": [
+      8
+    ],
+    "chat_model": [
+      "gemma4-12b-q4"
+    ],
+    "CHAT_MAX_CONTEXT_DOCS": [
+      12
+    ]
+  },
+  "also": [
+    {
+      "chat_model": "qwen35-9b-q4",
+      "ENABLE_THINKING": false
+    }
+  ],
+  "_note": "MuSiQue loses half its gold at extraction (long passages: code fences, relationship endpoints that are not entities). Five extraction levers against that, and four answering levers over the 12B index."
+}

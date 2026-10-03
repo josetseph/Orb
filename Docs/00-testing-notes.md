@@ -300,6 +300,18 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-03, round 4 launched (bundle `sweeps/round4.json`, 3 lanes, credit $22.11).** Every test that follows from rounds 1-3:
+  - *MuSiQue extraction* (dev 0-20, 12B): a second attempt; a closing reminder of the endpoint rule; the JSON grammar
+    (no code fences); entities-then-relationships (`task_split`); 1000-token chunks. *MuSiQue answering* over the 12B
+    index: 8 loop steps, 12B answering, 12 context docs, Qwen 3.5 9B answering with thinking off.
+  - *Small extractors* (HotpotQA 0-20): E4B with the reminder and with a second attempt; Qwen 3.5 9B with the reminder.
+  - *Cheap retrieval at scale* (HotpotQA 20-70, full answers): 0.6B reranker; no graph expansion; both plus the 0.6B embedder.
+  - *Repeat check* after pinning the date.
+  Not run: a 32k context (only 4 MuSiQue rejects were truncations, and it would regenerate every note); larger models
+  (goal 2 is smaller ones); community summaries on MuSiQue (no gain on HotpotQA, costly).
+  Fixed first: a retry re-sent the same prompt, so under the call cache (and the per-note checkpoint) a second attempt
+  replayed the reply it was re-asking. The attempt number now joins both keys for retries only.
+
 - **2026-10-03, round 3 results (main account, A40, 3 lanes; 17.6 h, $9.09: $31.20 to $22.11; reports in `Results/runpod/round3-*`).**
   Retrieval scored by note id from here on. E4B answering, 8B embedder and reranker.
   - *Qwen 3.5 9B does not hold up as extractor at scale.* HotpotQA dev 20-70: 12B 54% EM, F1 0.683, gold in index 0.99,

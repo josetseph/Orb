@@ -1,0 +1,19 @@
+{
+  "name": "round4-repeat-b",
+  "dataset": "hotpotqa",
+  "dev": [
+    0,
+    20
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4"
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "_note": "Run-to-run check after pinning today's date: the two runs must be identical.",
+  "design": "one-at-a-time"
+}

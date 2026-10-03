@@ -42,28 +42,29 @@ def clear(kb_id: str, note_id: str) -> None:
     shutil.rmtree(_dir(kb_id, note_id), ignore_errors=True)
 
 
-def _slot(llm, prompt: str, temperature: float) -> Path | None:
+def _slot(llm, prompt: str, temperature: float, attempt: int = 0) -> Path | None:
     key = _active.get()
     if key is None:
         return None
+    retry = f"\nattempt {attempt}" if attempt else ""
     digest = hashlib.sha256(
-        f"{llm.get_ingestion_model()}\n{temperature}\n{prompt}".encode("utf-8")
+        f"{llm.get_ingestion_model()}\n{temperature}\n{prompt}{retry}".encode("utf-8")
     ).hexdigest()
     return _dir(*key) / f"{digest}.json"
 
 
 async def generate_with_meta(
-    llm, prompt: str, temperature: float = 0.1, json_mode: bool = False
+    llm, prompt: str, temperature: float = 0.1, json_mode: bool = False, attempt: int = 0
 ) -> tuple[str, dict]:
     """``llm.ingestion_generate_with_meta`` with a replay from disk when the call was already made."""
-    slot = _slot(llm, prompt, temperature)
+    slot = _slot(llm, prompt, temperature, attempt)
     if slot is not None and slot.exists():
         try:
             saved = json.loads(slot.read_text(encoding="utf-8"))
             return saved["raw"], saved["meta"]
         except (OSError, ValueError, KeyError):
             pass  # unreadable checkpoint: just make the call again
-    raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=temperature, json_mode=json_mode)
+    raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=temperature, json_mode=json_mode, attempt=attempt)
     if slot is not None:
         try:
             slot.parent.mkdir(parents=True, exist_ok=True)
