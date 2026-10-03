@@ -300,7 +300,7 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
-- **2026-10-03, round 3 results (main account, A40, 3 lanes; 17.3 h, $8.18: $30.29 to $22.11; reports in `Results/runpod/round3-*`).**
+- **2026-10-03, round 3 results (main account, A40, 3 lanes; 17.6 h, $9.09: $31.20 to $22.11; reports in `Results/runpod/round3-*`).**
   Retrieval scored by note id from here on. E4B answering, 8B embedder and reranker.
   - *Qwen 3.5 9B does not hold up as extractor at scale.* HotpotQA dev 20-70: 12B 54% EM, F1 0.683, gold in index 0.99,
     recall 0.92; Qwen 9B (thinking off) 46%, 0.555, 0.84, 0.76 (+4/-8 EM, F1 CI -0.26 to -0.00). MuSiQue: 12B 12%, 0.158,
