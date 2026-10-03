@@ -35,6 +35,7 @@ import httpx
 BASE_DIR = Path(__file__).parent
 # experiment.py points this into the data dir so a snapshot carries its own ingest state.
 GIVE_UP_AFTER = 0  # set by --give-up-after
+CONCURRENCY = 1  # set by --concurrency: notes in flight at once
 PROGRESS_FILE = Path(os.environ.get("ORB_BENCH_PROGRESS") or BASE_DIR / ".prepare_progress.json")
 API_BASE = "http://localhost:8000"
 
@@ -222,7 +223,9 @@ async def retry_failed(dataset: str) -> None:
     consecutive_failures = 0
     CIRCUIT_BREAKER_THRESHOLD = 3
 
-    async with httpx.AsyncClient() as client:
+    # A fresh connection per request: with many notes in flight, a kept-alive connection the server has just
+    # closed fails with "Server disconnected", which would count as a failed note.
+    async with httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0)) as client:
         for i, (fname, content, title) in enumerate(items, 1):
             print(f"   [{i}/{len(items)}] {title}…", flush=True)
             note_id = await _create_and_ingest(client, content, title)
@@ -328,7 +331,7 @@ async def prepare(
         print(
             f"   Checking {len(pending_entries)} in-progress notes from previous run…"
         )
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0)) as client:
             statuses = await _resolve_pending(client, list(pending_entries.values()))
         for fname, note_id in pending_entries.items():
             result = statuses.get(note_id)
@@ -396,14 +399,46 @@ async def prepare(
         return
 
     # Capture log position BEFORE any requests so we don't miss completions.
-    print(f"   Sending {len(items)} notes sequentially (1 at a time)…\n", flush=True)
+    # Notes are submitted one by one, in file order (the server writes the graph in that order), with up to
+    # a window of them in flight; at concurrency 1 the window is 1: submit, wait, submit the next.
+    window = 1 if CONCURRENCY <= 1 else 3 * CONCURRENCY
+    print(f"   Sending {len(items)} notes, {window} in flight at a time…\n", flush=True)
     succeeded = 0
     failed_count = 0
     consecutive_failures = 0
     CIRCUIT_BREAKER_THRESHOLD = 3
+    in_flight: dict[asyncio.Task, tuple[str, str]] = {}
+    gave_up = False
 
-    async with httpx.AsyncClient() as client:
+    def record(task: asyncio.Task) -> None:
+        nonlocal succeeded, failed_count, gave_up
+        fname, note_id = in_flight.pop(task)
+        ok = task.result()
+        dataset_progress[fname] = note_id if ok else "failed"
+        progress[dataset] = dataset_progress
+        _save_progress(progress)
+        # A note the pipeline processed and marked failed (an unusable model reply) is a result of the
+        # model under test, counted and moved past. Only requests the server could not take trip the breaker.
+        if ok:
+            succeeded += 1
+        else:
+            failed_count += 1
+        if GIVE_UP_AFTER and succeeded == 0 and failed_count >= GIVE_UP_AFTER and not gave_up:
+            gave_up = True
+            print(f"\n🔴 The first {failed_count} notes all failed: this model cannot do the task as configured. Giving up.", flush=True)
+
+    async def settle(limit: int) -> None:
+        while len(in_flight) > limit:
+            done, _ = await asyncio.wait(in_flight, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                record(task)
+
+    # A fresh connection per request: with many notes in flight, a kept-alive connection the server has just
+    # closed fails with "Server disconnected", which would count as a failed note.
+    async with httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0)) as client:
         for i, (fname, content, title) in enumerate(items, 1):
+            if gave_up:
+                break
             print(f"   [{i}/{len(items)}] {title}…", flush=True)
             note_id = await _create_and_ingest(client, content, title)
             if not note_id:
@@ -425,22 +460,10 @@ async def prepare(
             dataset_progress[fname] = f"pending:{note_id}"
             progress[dataset] = dataset_progress
             _save_progress(progress)
-
-            ok = await _wait_for_completion(client, note_id)
-            dataset_progress[fname] = note_id if ok else "failed"
-            progress[dataset] = dataset_progress
-            _save_progress(progress)
-
-            # A note the pipeline processed and marked failed (an unusable model reply) is a result of the
-            # model under test, counted and moved past. Only requests the server could not take trip the breaker.
-            if ok:
-                succeeded += 1
-            else:
-                failed_count += 1
             consecutive_failures = 0
-            if GIVE_UP_AFTER and succeeded == 0 and failed_count >= GIVE_UP_AFTER:
-                print(f"\n🔴 The first {failed_count} notes all failed: this model cannot do the task as configured. Giving up.", flush=True)
-                break
+            in_flight[asyncio.create_task(_wait_for_completion(client, note_id))] = (fname, note_id)
+            await settle(window - 1)
+        await settle(0)  # notes already submitted finish either way
 
     total = len(all_note_files)
     confirmed_total = sum(1 for v in dataset_progress.values() if _is_confirmed(v))
@@ -477,14 +500,16 @@ def main() -> None:
         "--dry-run", action="store_true", help="Preview without sending"
     )
     parser.add_argument("--give-up-after", type=int, default=0, help="stop when the first N notes all fail (0 = never)")
+    parser.add_argument("--concurrency", type=int, default=1, help="notes in flight at once (the server's INGESTION_PIPELINE_CONCURRENCY)")
     parser.add_argument("--delay", type=float, default=None, help=argparse.SUPPRESS)
     parser.add_argument("--base-url", type=str, default=API_BASE)
 
     args = parser.parse_args()
 
     API_BASE = args.base_url.rstrip("/")
-    global GIVE_UP_AFTER  # noqa: PLW0603
+    global GIVE_UP_AFTER, CONCURRENCY  # noqa: PLW0603
     GIVE_UP_AFTER = args.give_up_after
+    CONCURRENCY = args.concurrency
 
     if args.retry_failed:
         asyncio.run(retry_failed(dataset=args.dataset))

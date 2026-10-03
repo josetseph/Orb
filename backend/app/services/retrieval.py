@@ -933,7 +933,8 @@ class RetrievalService:
 
         # Query Analysis with LLM structured outputs
         logger.info("  [HybridSearch] Calling LLM query analysis...")
-        query_analysis = self._llm.analyze_query(query)
+        # A model call: in a thread, so other requests are not held up while it runs.
+        query_analysis = await asyncio.to_thread(self._llm.analyze_query, query)
 
         # Extract expected entity types for filtering/boosting
         expected_entity_types = [
@@ -1580,7 +1581,7 @@ class RetrievalService:
         # (type pre-filter + initial reranking). This call covers the expansion
         # docs which are reranked outside hybrid_search.
         _progress("Analyzing question", "Gemma4")
-        _loop_qa = llm.analyze_query(query)
+        _loop_qa = await asyncio.to_thread(llm.analyze_query, query)
         _loop_question_attr = _loop_qa.get("question_attribute") or None
         logger.info(f"  [IterLoop] question_attribute={_loop_question_attr!r}")
 

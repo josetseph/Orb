@@ -56,6 +56,15 @@ class Settings(BaseSettings):
     LLM_BASE_URL: str = "http://127.0.0.1:8080"
     LLM_API_KEY: str = "local"
     LLM_MODEL: str = "local-chat"
+    # Seconds an OpenAI-compatible endpoint may take for one reply. A local server answering several
+    # requests at once can need far longer than a cloud API for one long extraction.
+    LLM_REQUEST_TIMEOUT: float = 300.0
+    # Experiments: the configuration of the model server behind LLM_BASE_URL (engine version, template defaults,
+    # context). It shapes replies, so it joins the call-cache key; None for the in-process runtime.
+    LLM_SERVER_FINGERPRINT: str | None = None
+    # The endpoint is llama-server: constrain JSON with the in-process runtime's grammar, applied from the first
+    # token. llama-server's own response_format lets a thinking-capable template reason before the JSON.
+    LLM_SERVER_GRAMMAR: bool = False
     CHAT_MODEL: str | None = None
 
     EMBEDDING_PROVIDER: str = "local"

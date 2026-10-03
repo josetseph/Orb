@@ -300,6 +300,31 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-03, parallel runs: llama.cpp model servers (`--serve SLOTS`).** The in-process runtime answers one request
+  at a time and leaves most of a rented GPU idle (three lanes gave about 1.3x). Experiments can now serve the model from
+  llama-server with parallel slots (`tests/benchmark/model_server.py`; one server per model on a fixed port, one model
+  resident at a time) and run that many notes or questions at once. Answers do not depend on concurrency: questions read a
+  fixed index, and extraction reads only its note. What does depend on order, graph writes (entity merges read what
+  earlier notes wrote), stays in submission order: above concurrency 1, notes extract in parallel and each waits for its
+  turn to write (`IngestionWorkflow._pipeline_slot`); at 1, nothing changes. Timings under `--serve` are wall times
+  under load; desktop speed needs its own sequential run.
+  Parity work, each found on a two-question Mac run before any pod time was spent:
+  - llama-server passes `enable_thinking=true` to the template; Gemma 4 then reasoned for ~6000 tokens before its JSON
+    (0 of 20 notes). Servers start with thinking off; a request can still turn it on.
+  - With `response_format: json_object` and a thinking-capable template, llama-server lets the model reason before
+    applying the grammar (3 of 4 replies began with a thinking channel). Served runs send the in-process runtime's own
+    JSON grammar (`LLM_SERVER_GRAMMAR`), applied from the first token: 4 of 4 began with `{`.
+  - The server's repeat penalty matches the in-process 1.12.
+  - The server's configuration joins the call-cache key (`LLM_SERVER_FINGERPRINT`, not the slot count); before that, a
+    rerun replayed the thinking replies. Those 20 cache entries were deleted.
+  - A kept-alive HTTP connection closed under load made note creation fail ("Server disconnected"), which would have
+    counted as rejected notes; the ingest client now opens a connection per request.
+  - Query analysis ran on the event loop and held every other request up; it now runs in a thread.
+  Parity check (Mac, E4B, HotpotQA 0-2, unconstrained extraction): served and in-process both ingested 12 of 20 notes,
+  50% EM, recall 0.50. Ingestion 1196 s served (4 slots) against 3075 s. The served evaluation was slower on the Mac
+  (prompts reprocessed each step: no full sliding-window cache, which would cost too much memory per slot); to be
+  measured on the GPU. Round 4 finishes in-process so its variants share one runtime; served runs start with round 5.
+
 - **2026-10-03, round 4 launched (bundle `sweeps/round4.json`, 3 lanes, credit $22.11).** Every test that follows from rounds 1-3:
   - *MuSiQue extraction* (dev 0-20, 12B): a second attempt; a closing reminder of the endpoint rule; the JSON grammar
     (no code fences); entities-then-relationships (`task_split`); 1000-token chunks. *MuSiQue answering* over the 12B

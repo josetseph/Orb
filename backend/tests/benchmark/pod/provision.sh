@@ -24,6 +24,17 @@ if ! .venv/bin/python -c "import llama_cpp, sys; sys.exit(0 if llama_cpp.llama_s
     .venv/bin/pip install -q --no-cache-dir "llama-cpp-python==${LLAMA_CPP_VERSION}" || fail "llama-cpp-python CUDA build"
 fi
 .venv/bin/python -c "import llama_cpp, sys; sys.exit(0 if llama_cpp.llama_supports_gpu_offload() else 1)" || fail "llama-cpp-python has no GPU offload"
+# llama-server: the same engine with parallel slots, for experiments run with --serve (tests/benchmark/model_server.py).
+LLAMA_SERVER_TAG=${LLAMA_SERVER_TAG:-v0.5.0}
+if [ ! -x $ROOT/llama.cpp/build/bin/llama-server ]; then
+  log "building llama-server ${LLAMA_SERVER_TAG} for CUDA"
+  command -v git >/dev/null || apt-get install -y -qq git >/dev/null || fail "git"
+  rm -rf $ROOT/llama.cpp
+  git clone -q --depth 1 --branch "$LLAMA_SERVER_TAG" https://github.com/ggml-org/llama.cpp $ROOT/llama.cpp || fail "llama.cpp clone"
+  cmake -S $ROOT/llama.cpp -B $ROOT/llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES=native -DLLAMA_CURL=OFF \
+    -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF >/dev/null || fail "llama.cpp configure"
+  cmake --build $ROOT/llama.cpp/build --target llama-server -j "$(nproc)" >/dev/null || fail "llama-server build"
+fi
 .venv/bin/pip install -q -r requirements.txt -r requirements-dev.txt httpx tqdm || fail "requirements"
 .venv/bin/python tests/benchmark/fetch_notes.py || fail "fetch_notes"
 
@@ -40,7 +51,7 @@ while true; do
   if [ $((NOW - START)) -gt $HARD ]; then echo "[watchdog $(date '+%F %T')] ${ORB_MAX_HOURS:-48} h cap reached, stopping"; break; fi
   if [ $((NOW - BUSY)) -gt $IDLE ]; then echo "[watchdog $(date '+%F %T')] idle ${ORB_IDLE_HOURS:-3} h, stopping"; break; fi
 done
-pkill -INT -f "tests/benchmark/" ; sleep 30; pkill -f "run.py|data/bin/" ; sync
+pkill -INT -f "tests/benchmark/" ; sleep 30; pkill -f "run.py|data/bin/|llama-server" ; sync
 kill -TERM 1
 WATCHDOG
   chmod +x /usr/local/bin/orb-watchdog

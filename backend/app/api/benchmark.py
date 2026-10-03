@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 from fastapi import APIRouter, Depends
@@ -88,7 +89,7 @@ async def retrieve(body: RetrieveInput, kb: KBContext = Depends(get_kb)):
     kb.get_chat_workflow()  # builds the KB's lazily created services
     events = trace.start()
     started = time.perf_counter()
-    analysis = kb.llm.analyze_query(body.query)
+    analysis = await asyncio.to_thread(kb.llm.analyze_query, body.query)
     selected, expanded = await kb.retrieval_service.search_with_expansion(
         body.query, analysis.get("question_attribute") or None, set()
     )

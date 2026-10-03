@@ -126,6 +126,7 @@ _lanes: "queue.Queue[int]" = queue.Queue()
 _index_locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _stop = threading.Event()
+SERVE = 0  # parallel slots of a llama.cpp model server per experiment (0 = in-process, one request at a time)
 
 
 def experiment(name: str, args: list[str], proof: Path, plan: bool, lane: int = 0) -> None:
@@ -140,7 +141,8 @@ def experiment(name: str, args: list[str], proof: Path, plan: bool, lane: int = 
     if plan:
         _planned.add(name)
         return
-    code = subprocess.run([sys.executable, "tests/benchmark/experiment.py", name, "--lane", str(lane), *args],
+    serve = ["--serve", str(SERVE)] if SERVE else []
+    code = subprocess.run([sys.executable, "tests/benchmark/experiment.py", name, "--lane", str(lane), *args, *serve],
                           cwd=BACKEND, check=False).returncode
     if code >= 128 or code < 0:
         _stop.set()
@@ -309,12 +311,13 @@ def stop_on_signal() -> None:
         signal.signal(sig, interrupt)
 
 
-def load(path: str) -> tuple[list[dict], int]:
-    """A spec, or a bundle {"lanes": N, "specs": [paths]} that runs several specs side by side."""
+def load(path: str) -> tuple[list[dict], int, int]:
+    """A spec, or a bundle {"lanes": N, "serve": SLOTS, "specs": [paths]} that runs several specs side by side."""
     raw = json.loads(Path(path).read_text())
     if "specs" in raw:
-        return [json.loads((Path(path).parent / p).read_text()) for p in raw["specs"]], int(raw.get("lanes", 1))
-    return [raw], 1
+        specs = [json.loads((Path(path).parent / p).read_text()) for p in raw["specs"]]
+        return specs, int(raw.get("lanes", 1)), int(raw.get("serve", 0))
+    return [raw], 1, int(raw.get("serve", 0))
 
 
 def main() -> None:
@@ -323,9 +326,16 @@ def main() -> None:
     ap.add_argument("spec", help="a sweep spec, or a bundle of specs")
     ap.add_argument("--plan", action="store_true", help="print what would run and stop")
     ap.add_argument("--lanes", type=int, help="experiments at once on this machine (overrides the bundle)")
+    ap.add_argument("--serve", type=int, help="parallel slots per model server (overrides the bundle; 0 = in-process)")
     args = ap.parse_args()
-    specs, lanes = load(args.spec)
+    specs, lanes, serve = load(args.spec)
+    global SERVE  # noqa: PLW0603
+    SERVE = serve if args.serve is None else args.serve
     lanes = args.lanes or lanes
+    if SERVE and lanes > 1:
+        # The parallelism is in the server's slots, and one model is resident at a time.
+        print(f"== serving with {SERVE} slots: one lane instead of {lanes}", flush=True)
+        lanes = 1
     for lane in range(lanes):
         _lanes.put(lane)
     print(f"== {len(specs)} spec(s) on {lanes} lane(s)", flush=True)

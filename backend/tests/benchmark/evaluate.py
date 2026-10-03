@@ -468,8 +468,13 @@ async def run_evaluation(
     offset: int = 0,
     base_url: str = "http://localhost:8000",
     verbose: bool = False,
+    concurrency: int = 1,
 ) -> list[EvaluationResult]:
-    """Run evaluation on all test cases."""
+    """Run evaluation on all test cases, ``concurrency`` questions at a time (results keep the manifest order).
+
+    Questions are independent: each reads a fixed index, so running several at once changes how long a run
+    takes, not its answers. Per-question times are then wall times under that load.
+    """
 
     with open(manifest_path, "r") as f:
         manifest = json.load(f)
@@ -484,13 +489,18 @@ async def run_evaluation(
     print(f"   Note title map: {len(note_title_map)} notes loaded")
     note_files = load_note_files(manifest_path.name.removesuffix("_manifest.json"))
 
-    results = []
-    for test_case in tqdm(test_cases, desc="Evaluating"):
-        result = await evaluate_single(test_case, base_url, verbose, note_title_map, note_files)
-        results.append(result)
-        await asyncio.sleep(0.5)
+    gate = asyncio.Semaphore(max(1, concurrency))
+    progress = tqdm(total=len(test_cases), desc="Evaluating")
 
-    return results
+    async def one(test_case: dict) -> EvaluationResult:
+        async with gate:
+            result = await evaluate_single(test_case, base_url, verbose, note_title_map, note_files)
+        progress.update()
+        return result
+
+    results = await asyncio.gather(*(one(tc) for tc in test_cases))
+    progress.close()
+    return list(results)
 
 
 def calculate_metrics(results: list[EvaluationResult]) -> dict:
@@ -598,6 +608,7 @@ def main():
         "--limit", type=int, default=None, help="Limit number of test cases"
     )
     parser.add_argument("--offset", type=int, default=0, help="Skip the first N test cases (held-out slices)")
+    parser.add_argument("--concurrency", type=int, default=1, help="questions in flight at once (a server with parallel slots)")
     parser.add_argument(
         "--base-url",
         type=str,
@@ -644,6 +655,7 @@ def main():
             offset=args.offset,
             base_url=args.base_url,
             verbose=args.verbose,
+            concurrency=args.concurrency,
         )
     )
 

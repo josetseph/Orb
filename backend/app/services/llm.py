@@ -164,7 +164,7 @@ class LLMService:
             client = OpenAI(
                 base_url=request_base_url(base_url),
                 api_key=self.get_endpoint_key(base_url),
-                timeout=300.0,
+                timeout=settings.LLM_REQUEST_TIMEOUT,
                 max_retries=2,
             )
             return client, None, None
@@ -240,6 +240,7 @@ class LLMService:
                 # Only when set, so replies recorded before this switch existed keep their keys.
                 *(["enable_thinking", thinking] if (thinking := _thinking_switch(ingestion)) is not None else []),
                 *(["attempt", attempt] if attempt else []),
+                *(["server", settings.LLM_SERVER_FINGERPRINT] if settings.LLM_SERVER_FINGERPRINT else []),
             ], sort_keys=True, ensure_ascii=False).encode()).hexdigest()
             path = Path(settings.LLM_CALL_CACHE_DIR) / key[:2] / f"{key}.json"
             if path.is_file():
@@ -339,10 +340,18 @@ class LLMService:
             if max_tokens is not None:
                 kwargs["max_tokens"] = max_tokens
             constrained = settings.EXTRACTION_JSON_CONSTRAINED if ingestion else settings.JSON_CONSTRAINED_DECODING
+            extra: dict = {}
             if json_mode and constrained:
-                kwargs["response_format"] = {"type": "json_object"}
+                if settings.LLM_SERVER_GRAMMAR:
+                    from llama_cpp.llama_grammar import JSON_GBNF  # the grammar response_format selects in-process
+
+                    extra["grammar"] = JSON_GBNF
+                else:
+                    kwargs["response_format"] = {"type": "json_object"}
             if (switch := _thinking_switch(ingestion)) is not None:
-                kwargs["extra_body"] = {"chat_template_kwargs": {"enable_thinking": switch}}
+                extra["chat_template_kwargs"] = {"enable_thinking": switch}
+            if extra:
+                kwargs["extra_body"] = extra
             choice = client.chat.completions.create(model=model, messages=messages, **kwargs).choices[0]
             text = choice.message.content or ""
             # LM Studio and some OpenAI-compat servers expose thinking in

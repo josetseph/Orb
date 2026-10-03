@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 import sys
 import time
 from datetime import datetime
@@ -49,6 +50,7 @@ def main() -> None:
     ap.add_argument("--queries-from", nargs="*", default=[], metavar="RESULTS.json")
     ap.add_argument("--base-url", default="http://localhost:8000")
     ap.add_argument("--output", "-o", required=True)
+    ap.add_argument("--concurrency", type=int, default=1, help="queries in flight at once")
     args = ap.parse_args()
 
     manifest = json.loads((Path(__file__).parent / f"{args.dataset}_manifest.json").read_text())
@@ -57,28 +59,33 @@ def main() -> None:
     titles = {n["id"]: n.get("title") or "" for n in httpx.get(f"{args.base_url}/api/v1/notes", timeout=120).json()}
     note_files = load_note_files(args.dataset)
 
-    rows = []
-    with httpx.Client(timeout=1800) as client:
-        for case, query in tqdm(bank, desc="Retrieving"):
-            t0 = time.perf_counter()
-            row = {"test_id": case["id"], "question": case["question"], "query": query,
-                   "is_question": query == case["question"], "trace": [], "context_notes": [], "error": None}
-            try:
-                reply = client.post(f"{args.base_url}/api/v1/benchmark/retrieve", json={"query": query})
-                reply.raise_for_status()
-                row["trace"] = reply.json()["trace"]
-                row["context_notes"] = reply.json()["context_notes"]
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                row["error"] = str(exc)
-            groups = gold_groups(case)
-            candidates = [n for e in row["trace"] if e.get("kind") == "rerank" for c in e["candidates"] for n in c["notes"]]
-            # Every reranked candidate, before the cut; then what the model would actually read.
-            row["candidate_recall"] = score_retrieval(candidates, groups, note_files)["retrieval_recall"]
-            scored = score_retrieval(row["context_notes"], groups, note_files)
-            row["context_recall"] = row["retrieval_recall"] = scored["retrieval_recall"]
-            row["gold_ingested"] = scored["gold_ingested"]
-            row["total_time_ms"] = (time.perf_counter() - t0) * 1000
-            rows.append(row)
+    client = httpx.Client(timeout=1800)
+
+    def one(item: tuple[dict, str]) -> dict:
+        case, query = item
+        t0 = time.perf_counter()
+        row = {"test_id": case["id"], "question": case["question"], "query": query,
+               "is_question": query == case["question"], "trace": [], "context_notes": [], "error": None}
+        try:
+            reply = client.post(f"{args.base_url}/api/v1/benchmark/retrieve", json={"query": query})
+            reply.raise_for_status()
+            row["trace"] = reply.json()["trace"]
+            row["context_notes"] = reply.json()["context_notes"]
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            row["error"] = str(exc)
+        groups = gold_groups(case)
+        candidates = [n for e in row["trace"] if e.get("kind") == "rerank" for c in e["candidates"] for n in c["notes"]]
+        # Every reranked candidate, before the cut; then what the model would actually read.
+        row["candidate_recall"] = score_retrieval(candidates, groups, note_files)["retrieval_recall"]
+        scored = score_retrieval(row["context_notes"], groups, note_files)
+        row["context_recall"] = row["retrieval_recall"] = scored["retrieval_recall"]
+        row["gold_ingested"] = scored["gold_ingested"]
+        row["total_time_ms"] = (time.perf_counter() - t0) * 1000
+        return row
+
+    with ThreadPoolExecutor(max(1, args.concurrency)) as pool:  # map keeps the bank's order
+        rows = list(tqdm(pool.map(one, bank), total=len(bank), desc="Retrieving"))
+    client.close()
 
     n = len(rows) or 1
     out = {"timestamp": datetime.now().isoformat(), "dataset": args.dataset, "mode": "retrieval",

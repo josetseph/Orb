@@ -2,6 +2,7 @@
 
 # pylint: disable=too-many-lines,import-outside-toplevel
 import asyncio
+import contextlib
 from datetime import date
 import threading
 import time
@@ -95,6 +96,13 @@ class IngestionWorkflow:
             settings.INGESTION_PIPELINE_CONCURRENCY
         )
         self._entity_locks = defaultdict(asyncio.Lock)
+        # Ordered writes. With concurrency above 1, notes extract at the same time but each writes the
+        # graph in the order it was submitted, so the graph does not depend on which extraction
+        # finished first (entity merges read what earlier notes wrote).
+        self._next_ticket = 0
+        self._write_turn = 0
+        self._finished_tickets: set[int] = set()
+        self._turn_events: dict[int, asyncio.Event] = {}
         self._community_run_state_lock = threading.Lock()
         self._community_run_seq = 0
         self._community_run_active_seq = 0
@@ -111,7 +119,9 @@ class IngestionWorkflow:
         if not note_id:
             note_id = str(uuid.uuid4())
         key = (self.kb_id, note_id)
-        inner = asyncio.create_task(self._process_note(note_input, note_id))
+        ticket = self._next_ticket
+        self._next_ticket += 1
+        inner = asyncio.create_task(self._process_note(note_input, note_id, ticket))
         _running_ingestions[key] = inner
         try:
             return await inner
@@ -131,10 +141,53 @@ class IngestionWorkflow:
             )
             return {"note_id": note_id, "status": "cancelled"}
         finally:
+            self._finish_ticket(ticket)  # also when cancelled before it reached a pipeline slot
             if _running_ingestions.get(key) is inner:
                 del _running_ingestions[key]
 
-    async def _process_note(self, note_input: NoteInput, note_id: str):
+    def _turn_event(self, ticket: int) -> asyncio.Event:
+        return self._turn_events.setdefault(ticket, asyncio.Event())
+
+    def _finish_ticket(self, ticket: int) -> None:
+        """This note is done (written, failed or cancelled): let the next one in order write. Idempotent."""
+        if ticket < self._write_turn:
+            return
+        self._finished_tickets.add(ticket)
+        while self._write_turn in self._finished_tickets:
+            self._finished_tickets.discard(self._write_turn)
+            self._turn_events.pop(self._write_turn, None)
+            self._write_turn += 1
+        self._turn_event(self._write_turn).set()
+
+    @contextlib.asynccontextmanager
+    async def _pipeline_slot(self, ticket: int):
+        """A pipeline slot (``INGESTION_PIPELINE_CONCURRENCY``); yields the note's ``write_turn``.
+
+        At concurrency 1 the slot is held for the whole note, exactly as before. Above 1 a note gives
+        its slot up once extracted, so the next can start, then waits for its turn to write.
+        """
+        ordered = settings.INGESTION_PIPELINE_CONCURRENCY > 1
+        held = False
+
+        async def write_turn() -> None:
+            nonlocal held
+            if not ordered:
+                return
+            self._process_semaphore.release()
+            held = False
+            if self._write_turn != ticket:
+                await self._turn_event(ticket).wait()
+
+        try:
+            await self._process_semaphore.acquire()
+            held = True
+            yield write_turn
+        finally:
+            if held:
+                self._process_semaphore.release()
+            self._finish_ticket(ticket)
+
+    async def _process_note(self, note_input: NoteInput, note_id: str, ticket: int):
 
         # Register with the tracker BEFORE the semaphore so a running rebuild is
         # told to yield as soon as a note is queued, not only when it starts.
@@ -145,7 +198,7 @@ class IngestionWorkflow:
 
         # Wait for a pipeline slot.  Without this cap, sending 990 notes at once
         # spawns 990 concurrent coroutines that all hit the DB pool simultaneously.
-        async with self._process_semaphore:
+        async with self._pipeline_slot(ticket) as write_turn:
             await self._update_note_processing_status(
                 note_id, "Starting ingestion", None
             )
@@ -173,7 +226,7 @@ class IngestionWorkflow:
                 saved = checkpoint.activate(self.kb_id, note_id)
                 if saved:
                     logger.info(f"[Ingestion] resuming note_id={note_id}: {saved} model call(s) replay from disk")
-                final_state = await run_ingestion_agent(initial_state)
+                final_state = await run_ingestion_agent(initial_state, write_turn=write_turn)
                 checkpoint.clear(self.kb_id, note_id)
                 t_end = time.perf_counter()
                 self._log_timing(note_id, t_end - t_start, load_before, final_state)

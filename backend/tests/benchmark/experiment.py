@@ -36,6 +36,8 @@ from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+import model_server
+
 BENCH = Path(__file__).resolve().parent
 BACKEND = BENCH.parent.parent
 REPO = BACKEND.parent
@@ -148,6 +150,9 @@ def main() -> None:
     ap.add_argument("--ingestion-model", help="extraction model (defaults to the chat model)")
     ap.add_argument("--base-url", dest="llm_base_url", help="endpoint for --provider openai_compat")
     ap.add_argument("--set", action="append", default=[], metavar="KEY=VALUE", help="env override for the server (repeatable)")
+    ap.add_argument("--serve", type=int, default=0, metavar="SLOTS",
+                    help="serve the chat/extraction model from a llama.cpp server with this many parallel slots, and run "
+                         "that many notes or questions at once (0 = the in-process runtime, one at a time, as the app does)")
     args = ap.parse_args()
     if not args.synthesis_from and not args.dataset and not args.prefetch:
         ap.error("--dataset is required unless --synthesis-from or --prefetch is given")
@@ -194,7 +199,16 @@ def main() -> None:
                     "QDRANT_GRPC_PORT": str(6334 + 10 * LANE), "MEILI_PORT": str(7700 + 10 * LANE)}
     env = {**os.environ, "BENCHMARK_MODE": "true", **cache, **lane_env, **overrides,
            "ORB_DATA_DIR": str(DATA), "ORB_BENCH_PROGRESS": str(DATA / "prepare_progress.json"),
-           "PYTHONHASHSEED": "0", "BENCHMARK_TODAY": "2026-10-01"}  # a fixed "today": query analysis puts it in its prompt  # set and dict-of-set iteration order, so tied candidates keep one order across runs
+           # A fixed hash seed (set iteration order: tied candidates keep one order) and a fixed "today"
+           # (query analysis puts the date in its prompt): two runs of one configuration are identical.
+           "PYTHONHASHSEED": "0", "BENCHMARK_TODAY": "2026-10-01"}
+    serve_ctx = int(overrides.get("LLAMA_N_CTX", 16384))
+    serve_flash = overrides.get("LLAMA_FLASH_ATTN", "false").lower() == "true"
+    serve_penalty = float(overrides.get("LLAMA_REPEAT_PENALTY", 1.12))
+    if args.serve:
+        # Notes extract in parallel and write in submission order; a reply under load can take a long time.
+        env.update(INGESTION_PIPELINE_CONCURRENCY=str(args.serve), LLM_REQUEST_TIMEOUT="7200", LLM_SERVER_GRAMMAR="true",
+                   LLM_SERVER_FINGERPRINT=model_server.fingerprint(serve_ctx, serve_flash, serve_penalty))
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
               "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,
               "chat_model": args.chat_model, "ingestion_model": args.ingestion_model, "started": datetime.now().isoformat(timespec="seconds"),
@@ -223,6 +237,8 @@ def main() -> None:
                         and v not in (selection.get("embed_id"), selection.get("reranker_id"))]
             if missing:
                 sys.exit(f"[experiment] not downloaded yet: {', '.join(missing)}. Re-run with --download.")
+        models_dir = Path(get_json("/api/v1/models", 60)["local"]["models_dir"])
+        gguf: dict[str, Path] = {}
         for model_id in dict.fromkeys(wanted):
             req = Request(BASE_URL + "/api/v1/setup/download-models", method="POST",
                           data=json.dumps({"chat_id": model_id}).encode(), headers={"content-type": "application/json"})
@@ -230,16 +246,31 @@ def main() -> None:
                 urlopen(req, timeout=14400).read()  # noqa: S310 — loopback; a first download can take a while
             except HTTPError as exc:
                 sys.exit(f"[experiment] model setup failed for {model_id}: {exc.read().decode()}")
-        if args.provider or args.chat_model or args.ingestion_model:
-            # Pinned on the KB, which lives in the data dir: no shared manifest is touched.
-            pin = {"provider": args.provider, "model": args.chat_model,
-                   "ingestion_model": args.ingestion_model, "base_url": args.llm_base_url}
-            req = Request(BASE_URL + "/api/v1/kb/default/llm", method="PATCH", data=json.dumps(pin).encode(),
+            chat_path = get_json("/api/v1/benchmark/config")["selection"].get("chat_path")
+            if chat_path:
+                gguf[model_id] = Path(chat_path) if Path(chat_path).is_absolute() else models_dir / chat_path
+
+        def pin(provider: str | None, base_url: str | None) -> None:
+            """Pinned on the KB, which lives in the data dir: no shared manifest is touched."""
+            body = {"provider": provider, "model": args.chat_model, "ingestion_model": args.ingestion_model, "base_url": base_url}
+            req = Request(BASE_URL + "/api/v1/kb/default/llm", method="PATCH", data=json.dumps(body).encode(),
                           headers={"content-type": "application/json"})
             try:
                 urlopen(req, timeout=60).read()  # noqa: S310 — loopback
             except HTTPError as exc:
                 sys.exit(f"[experiment] model pin rejected: {exc.read().decode()}")
+
+        def serve(model_id: str) -> None:
+            """Each phase needs one model: extraction while ingesting, the answering model while evaluating."""
+            pin("openai_compat", model_server.ensure(model_id, gguf[model_id], args.serve, serve_ctx, serve_flash, serve_penalty))
+
+        if args.serve:
+            if not args.chat_model or (args.ingest and not args.ingestion_model):
+                sys.exit("[experiment] --serve needs --chat-model (and --ingestion-model with --ingest)")
+            record["serve"] = {"slots": args.serve, "llama_server": model_server.version()}
+            serve(args.ingestion_model if args.ingest else args.chat_model)
+        elif args.provider or args.chat_model or args.ingestion_model:
+            pin(args.provider, args.llm_base_url)
         record["server"] = get_json("/api/v1/benchmark/config")
         if not get_json("/api/v1/models", 60)["global"]["configured"]:
             sys.exit("[experiment] the server reports no usable model (AI not configured); see server.log")
@@ -249,7 +280,7 @@ def main() -> None:
             cmd = [sys.executable, "tests/benchmark/prepare_dataset.py", "--dataset", args.dataset, "--resume", "--base-url", BASE_URL]
             if args.questions:
                 cmd += ["--questions", str(args.questions), "--question-offset", str(args.offset)]
-            cmd += ["--give-up-after", str(args.give_up_after)]
+            cmd += ["--give-up-after", str(args.give_up_after), "--concurrency", str(max(1, args.serve))]
             t0 = time.monotonic()
             run(cmd, env)
             wait_until("ingestion to drain", lambda: get_json("/api/v1/benchmark/idle")["idle"], 7200, server)
@@ -267,6 +298,8 @@ def main() -> None:
             wait_until("the community rebuild", lambda: get_json("/api/v1/benchmark/idle")["idle"], 14400, server)
             record["communities_seconds"] = round(time.monotonic() - t0)
 
+        if args.serve and not args.no_eval and args.ingest and args.chat_model != args.ingestion_model:
+            serve(args.chat_model)
         if args.synthesis_from:
             run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from, "--base-url", BASE_URL,
                  "--output", str(out / "synthesis.json")], env)
@@ -277,7 +310,7 @@ def main() -> None:
             else:
                 cmd = [sys.executable, "tests/benchmark/evaluate.py", "--dataset", args.dataset, "--base-url", BASE_URL,
                        "--output", str(out / f"{args.dataset}.json")]
-            cmd += ["--offset", str(args.offset)]
+            cmd += ["--offset", str(args.offset), "--concurrency", str(max(1, args.serve))]
             if args.questions:
                 cmd += ["--limit", str(args.questions)]
             run(cmd, env)
