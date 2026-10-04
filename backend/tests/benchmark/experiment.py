@@ -265,8 +265,8 @@ def main() -> None:
             pin("openai_compat", model_server.ensure(model_id, gguf[model_id], args.serve, serve_ctx, serve_flash, serve_penalty))
 
         if args.serve:
-            if not args.chat_model or (args.ingest and not args.ingestion_model):
-                sys.exit("[experiment] --serve needs --chat-model (and --ingestion-model with --ingest)")
+            if (args.ingest and not args.ingestion_model) or (not args.no_eval and not args.chat_model):
+                sys.exit("[experiment] --serve needs --ingestion-model to ingest and --chat-model to evaluate")
             record["serve"] = {"slots": args.serve, "llama_server": model_server.version()}
             serve(args.ingestion_model if args.ingest else args.chat_model)
         elif args.provider or args.chat_model or args.ingestion_model:

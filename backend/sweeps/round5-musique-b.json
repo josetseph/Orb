@@ -1,0 +1,27 @@
+{
+  "name": "round5-musique-b",
+  "dataset": "musique",
+  "dev": [
+    0,
+    50
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "MAX_LOOP_ITERATIONS": 5,
+    "EXTRACTION_PROMPT_SUFFIX": "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one."
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "EXTRACTION_JSON_CONSTRAINED": [
+      true
+    ]
+  },
+  "_note": "MuSiQue at 50 questions, served: 12B extraction with the closing endpoint reminder (round 4: gold in index 45% -> 60%), and with the JSON grammar as well. Compare with round5-musique-a's base."
+}

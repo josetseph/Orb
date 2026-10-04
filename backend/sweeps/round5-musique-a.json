@@ -1,0 +1,32 @@
+{
+  "name": "round5-musique-a",
+  "dataset": "musique",
+  "dev": [
+    0,
+    50
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "MAX_LOOP_ITERATIONS": 5
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "MAX_LOOP_ITERATIONS": [
+      8
+    ]
+  },
+  "also": [
+    {
+      "chat_model": "qwen35-9b-q4",
+      "ENABLE_THINKING": false
+    }
+  ],
+  "_note": "MuSiQue at 50 questions, served: the 12B baseline, 8 research steps, and Qwen 3.5 9B answering (20-question leads from round 4)."
+}

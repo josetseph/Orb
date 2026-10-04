@@ -1,0 +1,31 @@
+{
+  "name": "round5-hotpot",
+  "dataset": "hotpotqa",
+  "dev": [
+    20,
+    70
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4"
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "EXTRACTION_PROMPT_SUFFIX": [
+      "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one."
+    ]
+  },
+  "also": [
+    {
+      "chat_model": "qwen35-9b-q4",
+      "ENABLE_THINKING": false
+    }
+  ],
+  "_note": "HotpotQA at 50 questions, served: the reminder where extraction already works, and Qwen 3.5 9B answering. The base also checks served against rounds 3-4 in-process (F1 0.683 / 0.672)."
+}

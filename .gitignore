@@ -62,3 +62,5 @@ backend/tests/benchmark/musique_notes/
 /model-servers
 /llama.cpp
 backend/sweeps/check-*.json
+/pod-*.json
+/pod-state-*

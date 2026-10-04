@@ -43,6 +43,8 @@ GPU_TYPES = [
     "NVIDIA RTX A6000", "NVIDIA GeForce RTX 3090", "NVIDIA GeForce RTX 4090",
 ]
 STATE_DIR = REPO / "pod-state"  # everything a pod produced, kept at home so a run can resume on any account
+HOME_STATE = STATE_DIR  # what --restore seeds a new pod with (results + model-call cache), whatever its --name
+NAME = ""  # --name: several pods at once, each with its own record (pod-NAME.json) and home (pod-state-NAME/)
 RESERVE_USD = 1.5  # left on the account when a pod stops itself: enough to restart it and copy its volume home
 IMAGE = "runpod/pytorch:1.1.0-cu1290-torch291-ubuntu2404"
 
@@ -197,7 +199,7 @@ def cmd_up(args) -> None:
         raise PodError(f"a pod is already recorded in {STATE}; use it, or pod.py down first")
     cfg = env()
     body = {
-        "name": "orb-benchmark", "imageName": args.image, "gpuTypeIds": args.gpu or GPU_TYPES,
+        "name": f"orb-{NAME or 'benchmark'}", "imageName": args.image, "gpuTypeIds": args.gpu or GPU_TYPES,
         "gpuTypePriority": "availability", "cloudType": "SECURE", "gpuCount": 1,
         "containerDiskInGb": 40, "volumeInGb": args.volume_gb, "volumeMountPath": "/workspace",
         "ports": ["22/tcp"], "supportPublicIp": True,
@@ -229,14 +231,14 @@ def cmd_up(args) -> None:
 
 def restore(endpoint: tuple[str, int]) -> None:
     """Put what earlier pods produced (results, model-call cache) onto this one, so finished runs are skipped."""
-    if not STATE_DIR.is_dir():
-        raise PodError(f"nothing to restore: {STATE_DIR} does not exist (pod.py pull saves there)")
-    tar = subprocess.Popen(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", "-", "-C", str(STATE_DIR), "."],
+    if not HOME_STATE.is_dir():
+        raise PodError(f"nothing to restore: {HOME_STATE} does not exist (pod.py pull saves there)")
+    tar = subprocess.Popen(["tar", "--no-xattrs", "--no-mac-metadata", "-czf", "-", "-C", str(HOME_STATE), "."],
                            stdout=subprocess.PIPE, env={"COPYFILE_DISABLE": "1"})
     untar = subprocess.run(["ssh", *ssh_args(endpoint), f"tar --no-same-owner -xzf - -C {REMOTE}"], stdin=tar.stdout, check=False)
-    if untar.returncode != 0 or tar.wait() != 0:
+    if untar.returncode != 0 or tar.wait() not in (0, 1):  # 1: a file grew while read (a follower saving beside us)
         raise PodError("restoring the saved state onto the pod failed")
-    print(f"  restored {STATE_DIR} onto the pod", flush=True)
+    print(f"  restored {HOME_STATE} onto the pod", flush=True)
 
 
 def cmd_setup(_args) -> None:
@@ -397,6 +399,7 @@ def cmd_down(args) -> None:
 
 
 def main() -> None:
+    global ACCOUNT, STATE, STATE_DIR, NAME  # noqa: PLW0603
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     up = sub.add_parser("up")
@@ -415,9 +418,12 @@ def main() -> None:
     down = sub.add_parser("down")
     down.add_argument("--no-pull", action="store_true")
     ap.add_argument("--account", choices=["alt", "main"], default="alt", help="which RunPod account's keys to use for `up`")
+    ap.add_argument("--name", default="", help="run several pods at once: each name has its own record and home folder")
     args = ap.parse_args()
-    global ACCOUNT  # noqa: PLW0603
     ACCOUNT = args.account
+    if args.name:
+        NAME = args.name
+        STATE, STATE_DIR = REPO / f"pod-{NAME}.json", REPO / f"pod-state-{NAME}"
     try:
         {"up": cmd_up, "setup": cmd_setup, "follow": cmd_follow, "run": cmd_run, "status": cmd_status, "logs": cmd_logs, "pull": cmd_pull, "down": cmd_down}[args.cmd](args)
     except PodError as exc:

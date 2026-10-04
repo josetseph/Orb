@@ -91,7 +91,8 @@ def index_name(levers: dict, spec: dict) -> str:
     if spec.get("index") and parts == base:
         return spec["index"]  # an existing snapshot stands in for the baseline's index; it must cover the span
     digest = hashlib.sha256(json.dumps([spec["dataset"], span, parts], sort_keys=True).encode()).hexdigest()[:8]
-    return f"idx-{spec['dataset']}-{digest}"
+    # A served index was extracted by llama-server, not the in-process runtime: never the same snapshot.
+    return f"idx-{spec['dataset']}-{digest}" + ("-served" if SERVE else "")
 
 
 def lever_args(levers: dict, *, stages: tuple[str, ...] | None = None) -> list[str]:

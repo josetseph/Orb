@@ -1,0 +1,37 @@
+{
+  "name": "round5-small",
+  "dataset": "hotpotqa",
+  "dev": [
+    20,
+    70
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": false,
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4"
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "EXTRACTION_ATTEMPTS": [
+      2
+    ]
+  },
+  "also": [
+    {
+      "ingestion_model": "qwen35-4b-q4",
+      "EXTRACTION_ENABLE_THINKING": false,
+      "EXTRACTION_PROMPT_SUFFIX": "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one."
+    },
+    {
+      "ingestion_model": "qwen35-0.8b-q4",
+      "EXTRACTION_ENABLE_THINKING": false,
+      "EXTRACTION_PROMPT_SUFFIX": "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one."
+    }
+  ],
+  "_note": "Smaller extractors at 50 questions, served: E4B, E4B with a second attempt, Qwen 3.5 4B and 0.8B with thinking off and the reminder."
+}
