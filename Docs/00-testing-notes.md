@@ -300,6 +300,15 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-04, round 5 restarted a second time: served 12B replies carried the template's empty thinking block.**
+  Gemma 4 12B's chat template ends the prompt with an empty thinking block (`<|channel>thought\n<channel|>`), its way of
+  switching thinking off. llama-server with `--reasoning-format none` copies that block into the reply, so every served
+  12B extraction began with it and failed strict parsing (0 of the first 10 notes per 12B pod). In-process the reply holds
+  only generated tokens. Servers now use `--reasoning-format auto` (in the fingerprint): checked on the Mac, the reply
+  is then exactly the generated text. Trade-off: a model that genuinely thinks has that text moved out of the reply,
+  where in-process it would stay and fail; rare with thinking off (1 of 157 in-process 12B rejects). Also fixed before
+  this restart: an index build pins the served model's name (an OpenAI-compatible endpoint requires one).
+
 - **2026-10-04, round 5 restarted before any result: llama-server's prompt cache can swap conversations.**
   llama.cpp issue #27148 (open): with parallel slots, the host-RAM prompt cache (`--cache-ram`, on by default) and
   `kv-unified` off, a slot can be restored with an unrelated finished conversation under concurrent load, and the reply

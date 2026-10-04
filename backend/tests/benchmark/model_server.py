@@ -59,7 +59,7 @@ TEMPLATE_KWARGS = {"enable_thinking": False}
 def fingerprint(ctx_per_slot: int, flash_attn: bool, repeat_penalty: float) -> str:
     """What about the server shapes a reply (not its slot count): it joins the call-cache key."""
     return json.dumps({"engine": version(), "template_kwargs": TEMPLATE_KWARGS, "ctx_per_slot": ctx_per_slot,
-                       "flash_attn": flash_attn, "repeat_penalty": repeat_penalty, "reasoning_format": "none",
+                       "flash_attn": flash_attn, "repeat_penalty": repeat_penalty, "reasoning_format": "auto",
                        "json_constraint": "in-process GBNF", "cache_ram": 0}, sort_keys=True)
 
 
@@ -78,8 +78,11 @@ def ensure(model_id: str, gguf: Path, slots: int, ctx_per_slot: int, flash_attn:
     time.sleep(3)
     cmd = [str(BINARY), "-m", str(gguf), "--alias", model_id, "--host", "127.0.0.1", "--port", str(port(model_id)),
            "-ngl", "999", "-np", str(slots), "-c", str(slots * ctx_per_slot), "--jinja",
-           # Raw replies, as the in-process runtime returns them: the backend separates any thinking itself.
-           "--reasoning-format", "none", "-fa", "on" if flash_attn else "off", "--no-webui",
+           # "auto": the reply is what the model generated. With "none" the server copies a thinking block the
+           # template itself opened into the reply (Gemma 4 12B's prompt ends with an empty one), so every 12B reply
+           # began with "<|channel>thought<channel|>", which the in-process runtime never returns. Trade-off: a model
+           # that does think gets its thinking moved to reasoning_content, where in-process it would stay in the reply.
+           "--reasoning-format", "auto", "-fa", "on" if flash_attn else "off", "--no-webui",
            "--chat-template-kwargs", json.dumps(template_kwargs),
            # The in-process runtime's sampling defaults (llama-cpp-python's top-k/top-p/min-p match llama-server's).
            "--repeat-penalty", str(repeat_penalty),
