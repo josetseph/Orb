@@ -14,5 +14,12 @@ def test_embed_and_reranker_follow_ram_unless_named(monkeypatch):
     assert model_catalog.pick_rerank_for_budget(26).id == "qwen3-rerank-0.6b-q4"
 
 
-def test_context_cap_defaults_to_six():
-    assert settings.CHAT_MAX_CONTEXT_DOCS == 6
+
+def test_query_attribute_modes(monkeypatch):
+    from app.services import llm
+
+    assert settings.QUERY_ATTRIBUTE_MODE == "single"
+    assert llm._attribute_example("nationality") == '"nationality"' and llm._attribute_example(None) == "null"
+    monkeypatch.setattr(settings, "QUERY_ATTRIBUTE_MODE", "list")
+    assert llm._attribute_example("nationality") == '["nationality"]' and llm._attribute_example(None) == "[]"
+    assert set(llm._ATTRIBUTE_INSTRUCTIONS) == {"single", "final", "list"}

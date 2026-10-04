@@ -60,7 +60,7 @@ def fingerprint(ctx_per_slot: int, flash_attn: bool, repeat_penalty: float) -> s
     """What about the server shapes a reply (not its slot count): it joins the call-cache key."""
     return json.dumps({"engine": version(), "template_kwargs": TEMPLATE_KWARGS, "ctx_per_slot": ctx_per_slot,
                        "flash_attn": flash_attn, "repeat_penalty": repeat_penalty, "reasoning_format": "none",
-                       "json_constraint": "in-process GBNF"}, sort_keys=True)
+                       "json_constraint": "in-process GBNF", "cache_ram": 0}, sort_keys=True)
 
 
 def ensure(model_id: str, gguf: Path, slots: int, ctx_per_slot: int, flash_attn: bool, repeat_penalty: float) -> str:
@@ -68,7 +68,7 @@ def ensure(model_id: str, gguf: Path, slots: int, ctx_per_slot: int, flash_attn:
     STATE.mkdir(exist_ok=True)
     template_kwargs = TEMPLATE_KWARGS
     wanted = {"model": str(gguf), "slots": slots, "ctx_per_slot": ctx_per_slot, "flash_attn": flash_attn,
-              "repeat_penalty": repeat_penalty, "template_kwargs": template_kwargs}
+              "repeat_penalty": repeat_penalty, "template_kwargs": template_kwargs, "cache_ram": 0}
     config = STATE / f"{model_id}.json"
     pid_file = STATE / f"{model_id}.pid"
     if _props(model_id) is not None and config.is_file() and json.loads(config.read_text()) == wanted:
@@ -82,7 +82,10 @@ def ensure(model_id: str, gguf: Path, slots: int, ctx_per_slot: int, flash_attn:
            "--reasoning-format", "none", "-fa", "on" if flash_attn else "off", "--no-webui",
            "--chat-template-kwargs", json.dumps(template_kwargs),
            # The in-process runtime's sampling defaults (llama-cpp-python's top-k/top-p/min-p match llama-server's).
-           "--repeat-penalty", str(repeat_penalty)]
+           "--repeat-penalty", str(repeat_penalty),
+           # The host-RAM prompt cache can restore an unrelated conversation into a slot under concurrent load,
+           # silently (llama.cpp issue #27148, open as of 2026-10): off.
+           "--cache-ram", "0"]
     with open(STATE / f"{model_id}.log", "ab") as log:
         proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
     pid_file.write_text(str(proc.pid))

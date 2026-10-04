@@ -64,6 +64,25 @@ _REPLY_SHAPING_SETTINGS = (
 )
 
 
+#: How query analysis asks for the attribute a question is about (QUERY_ATTRIBUTE_MODE).
+_ATTRIBUTE_INSTRUCTIONS = {
+    "single": 'The specific attribute being asked about.\n            e.g. "nationality", "occupation", "director", "location", "capacity", "birth_date", "award"',
+    "final": ('The attribute of the final answer, as one string. For a chained question, the attribute of its '
+              'last link: for "Who plays the wife of the producer of Film X in Film Y?" it is "actor"; for '
+              '"What nationality was the director of Film X?" it is "nationality". Null if no attribute is asked.'),
+    "list": ('Every attribute the question asks about, as a list of strings, in the order the question resolves '
+             'them: for "Who plays the wife of the producer of Film X in Film Y?" it is ["producer", "wife", "actor"]. '
+             'An empty list if no attribute is asked.'),
+}
+
+
+def _attribute_example(value: str | None) -> str:
+    """An example's question_attribute, written the way QUERY_ATTRIBUTE_MODE asks for it."""
+    if settings.QUERY_ATTRIBUTE_MODE == "list":
+        return json.dumps([value] if value else [])
+    return json.dumps(value)
+
+
 def _thinking_switch(ingestion: bool) -> bool | None:
     return settings.EXTRACTION_ENABLE_THINKING if ingestion else settings.ENABLE_THINKING
 
@@ -559,7 +578,8 @@ class LLMService:
             expected_entity_types: list[str] = Field(
                 description="Types of entities the answer should be about: Person, Film, Place, Organization, etc.",
             )
-            question_attribute: Optional[str] = Field(
+            # QUERY_ATTRIBUTE_MODE "list": every attribute a chained question resolves, in order.
+            question_attribute: (list[str] if settings.QUERY_ATTRIBUTE_MODE == "list" else Optional[str]) = Field(
                 description="What attribute is being asked about: nationality, occupation, birth_date, location, director, capacity, etc.",  # pylint: disable=line-too-long
             )
             date_filter: Optional[str] = Field(
@@ -584,8 +604,7 @@ class LLMService:
             - "expected_entity_types": The types of entities the answer will involve.
             e.g. ["Person"], ["Film", "Person"], ["Place"], ["Organization", "Person"], ["Venue"]
 
-            - "question_attribute": The specific attribute being asked about.
-            e.g. "nationality", "occupation", "director", "location", "capacity", "birth_date", "award"
+            - "question_attribute": {_ATTRIBUTE_INSTRUCTIONS[settings.QUERY_ATTRIBUTE_MODE]}
 
             - "intent": One of — search / compare / summarize / explain / list
 
@@ -598,28 +617,28 @@ class LLMService:
             EXAMPLES:
 
             Query: "Were Albert Einstein and Marie Curie of the same nationality?"
-            {{"entities": ["Albert Einstein", "Marie Curie"], "expected_entity_types": ["Person"], "question_attribute": "nationality", "intent": "compare", "keywords": ["nationality"], "date_filter": null, "period_filter": null}}
+            {{"entities": ["Albert Einstein", "Marie Curie"], "expected_entity_types": ["Person"], "question_attribute": {_attribute_example("nationality")}, "intent": "compare", "keywords": ["nationality"], "date_filter": null, "period_filter": null}}
 
             Query: "What award did the author of 1984 win?"
-            {{"entities": ["1984"], "expected_entity_types": ["Book", "Person"], "question_attribute": "award", "intent": "search", "keywords": ["author", "award"], "date_filter": null, "period_filter": null}}
+            {{"entities": ["1984"], "expected_entity_types": ["Book", "Person"], "question_attribute": {_attribute_example("award")}, "intent": "search", "keywords": ["author", "award"], "date_filter": null, "period_filter": null}}
 
             Query: "How many seats does Madison Square Garden have?"
-            {{"entities": ["Madison Square Garden"], "expected_entity_types": ["Venue"], "question_attribute": "capacity", "intent": "search", "keywords": ["seats", "capacity"], "date_filter": null, "period_filter": null}}
+            {{"entities": ["Madison Square Garden"], "expected_entity_types": ["Venue"], "question_attribute": {_attribute_example("capacity")}, "intent": "search", "keywords": ["seats", "capacity"], "date_filter": null, "period_filter": null}}
 
             Query: "Who directed Inception?"
-            {{"entities": ["Inception"], "expected_entity_types": ["Film", "Person"], "question_attribute": "director", "intent": "search", "keywords": ["directed"], "date_filter": null, "period_filter": null}}
+            {{"entities": ["Inception"], "expected_entity_types": ["Film", "Person"], "question_attribute": {_attribute_example("director")}, "intent": "search", "keywords": ["directed"], "date_filter": null, "period_filter": null}}
 
             Query: "What happened on the 24th of May 2024?"
-            {{"entities": [], "expected_entity_types": [], "question_attribute": null, "intent": "search", "keywords": ["happened", "events"], "date_filter": "2024-05-24", "period_filter": null}}
+            {{"entities": [], "expected_entity_types": [], "question_attribute": {_attribute_example(None)}, "intent": "search", "keywords": ["happened", "events"], "date_filter": "2024-05-24", "period_filter": null}}
 
             Query: "What did I write on March 3rd 2023?"
-            {{"entities": [], "expected_entity_types": [], "question_attribute": null, "intent": "search", "keywords": ["wrote", "notes"], "date_filter": "2023-03-03", "period_filter": null}}
+            {{"entities": [], "expected_entity_types": [], "question_attribute": {_attribute_example(None)}, "intent": "search", "keywords": ["wrote", "notes"], "date_filter": "2023-03-03", "period_filter": null}}
 
             Query: "What happened last month?"
-            {{"entities": [], "expected_entity_types": [], "question_attribute": null, "intent": "summarize", "keywords": ["happened", "events"], "date_filter": null, "period_filter": "2026-04"}}
+            {{"entities": [], "expected_entity_types": [], "question_attribute": {_attribute_example(None)}, "intent": "summarize", "keywords": ["happened", "events"], "date_filter": null, "period_filter": "2026-04"}}
 
             Query: "What did I do in April?"
-            {{"entities": [], "expected_entity_types": [], "question_attribute": null, "intent": "summarize", "keywords": ["did", "activities"], "date_filter": null, "period_filter": "2026-04"}}
+            {{"entities": [], "expected_entity_types": [], "question_attribute": {_attribute_example(None)}, "intent": "summarize", "keywords": ["did", "activities"], "date_filter": null, "period_filter": "2026-04"}}
 
             Return only the JSON object, no preamble or explanation.
             """
@@ -627,7 +646,11 @@ class LLMService:
         raw, _ = self._chat([{"role": "user", "content": prompt}], temperature=0, json_mode=True)
         if not raw:
             raise ValueError("Empty extraction result")
-        return model_output.parse(raw, QueryAnalysis, stage="query analysis", model=self.get_chat_model()).model_dump()
+        analysis = model_output.parse(raw, QueryAnalysis, stage="query analysis", model=self.get_chat_model()).model_dump()
+        if settings.QUERY_ATTRIBUTE_MODE == "list":
+            # Search and the reranker take one hint string: the attributes, in the order the question resolves them.
+            analysis["question_attribute"] = "; ".join(analysis["question_attribute"]) or None
+        return analysis
 
     async def generate(
         self,

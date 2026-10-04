@@ -300,6 +300,17 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-04, round 5 restarted before any result: llama-server's prompt cache can swap conversations.**
+  llama.cpp issue #27148 (open): with parallel slots, the host-RAM prompt cache (`--cache-ram`, on by default) and
+  `kv-unified` off, a slot can be restored with an unrelated finished conversation under concurrent load, and the reply
+  continues that conversation with no warning (`cached_tokens` reads 0). Our servers matched every condition. All five
+  round-5 pods were stopped an hour in (no result saved), their data wiped, and servers now start with `--cache-ram 0`
+  (in the server fingerprint, so served replies cached before the fix are never read). Two decisions went in with the
+  restart: the context-documents cap is removed (every gathered source is returned; a doc the reranker never scored
+  still cites no notes), and query analysis gets `QUERY_ATTRIBUTE_MODE` (`single` as before, byte-identical prompt;
+  `final`: one string, the attribute of the final answer of a chained question; `list`: every attribute in order,
+  joined into one hint for search and the reranker), tested on MuSiQue in round5-musique-a.
+
 - **2026-10-03, parallel runs: llama.cpp model servers (`--serve SLOTS`).** The in-process runtime answers one request
   at a time and leaves most of a rented GPU idle (three lanes gave about 1.3x). Experiments can now serve the model from
   llama-server with parallel slots (`tests/benchmark/model_server.py`; one server per model on a fixed port, one model

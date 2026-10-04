@@ -20,6 +20,10 @@
   "vary": {
     "MAX_LOOP_ITERATIONS": [
       8
+    ],
+    "QUERY_ATTRIBUTE_MODE": [
+      "final",
+      "list"
     ]
   },
   "also": [
@@ -28,5 +32,5 @@
       "ENABLE_THINKING": false
     }
   ],
-  "_note": "MuSiQue at 50 questions, served: the 12B baseline, 8 research steps, and Qwen 3.5 9B answering (20-question leads from round 4)."
+  "_note": "MuSiQue at 50 questions, served: the 12B baseline, 8 research steps, and Qwen 3.5 9B answering (20-question leads from round 4). Query analysis asking for the final answer's attribute, and for every attribute as a list."
 }

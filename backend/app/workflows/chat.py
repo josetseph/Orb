@@ -5,7 +5,6 @@ import time
 from collections.abc import Callable
 
 from app.core.database import AsyncSessionLocal
-from app.core.config import settings
 from app.core.log import get_logger
 from app.models.note import Note
 from app.schemas.chat import ChatSource, ChatTurn
@@ -52,14 +51,8 @@ def _dedupe_docs(docs: list[dict]) -> list[dict]:
     return deduped
 
 
-def _truncate_context(docs: list[dict], max_docs: int) -> list[dict]:
-    """Keep the highest-confidence docs; clear unverified linked_notes."""
-    if len(docs) > max_docs:
-        docs = sorted(
-            docs,
-            key=lambda d: d.get("rerank_score", 0.0),
-            reverse=True,
-        )[:max_docs]
+def _clear_unverified_links(docs: list[dict]) -> list[dict]:
+    """Every gathered doc is returned (no cap); a doc the reranker never scored cites no notes."""
     for doc in docs:
         if "rerank_score" not in doc:
             doc["linked_notes"] = []
@@ -83,9 +76,8 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         user_query: str,
         history: list[ChatTurn] | None,
         progress_callback: Callable[[str, str | None], None] | None,
-        max_context_docs: int,
     ) -> tuple[str, str, list[dict], str]:
-        """Rewrite → research-loop retrieve → dedupe/truncate.
+        """Rewrite → research-loop retrieve → dedupe.
 
         Returns ``(rewritten_query, final_answer, unique_docs, thinking)``.
         """
@@ -109,7 +101,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             )
         )
         _progress("Selecting best evidence")
-        unique_docs = _truncate_context(_dedupe_docs(all_docs), max_context_docs)
+        unique_docs = _clear_unverified_links(_dedupe_docs(all_docs))
         return rewritten_query, final_answer or "", unique_docs, thinking
 
     async def chat(
@@ -124,7 +116,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         logger.info(f"\n[Chat] Started processing query: '{user_query}'")
         rewritten_query, final_answer, unique_docs, thinking = (
             await self._retrieve_context(
-                user_query, history, progress_callback, max_context_docs=settings.CHAT_MAX_CONTEXT_DOCS
+                user_query, history, progress_callback
             )
         )
         if rewritten_query != user_query:
@@ -184,7 +176,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         load_before = model_load_clock.snapshot()
         rewritten_query, _final_answer, unique_docs, thinking = (
             await self._retrieve_context(
-                user_query, history, progress_callback, max_context_docs=12
+                user_query, history, progress_callback
             )
         )
         _log_timing("retrieve", time.perf_counter() - start_time, load_before, len(unique_docs))

@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     # Experiments: the date query analysis treats as today. Its prompt carries the date, so without this a
     # rerun on another day misses the call cache and regenerates. None = the real date.
     BENCHMARK_TODAY: str | None = None
+    # How query analysis asks for the attribute a question is about: "single" (one string, as before), "final"
+    # (one string: the attribute of the final answer of a chained question) or "list" (every attribute, in order).
+    QUERY_ATTRIBUTE_MODE: str = "single"
     # Experiment cache: every model call keyed by provider, model, exact messages and generation
     # parameters; an unchanged call is replayed from disk. Unset = off, which is the app's behaviour.
     LLM_CALL_CACHE_DIR: str | None = None
@@ -102,7 +105,6 @@ class Settings(BaseSettings):
     PROMPT_SUFFIX: str = ""
     EXTRACTION_PROMPT_SUFFIX: str = ""
     # Evidence returned with an answer: the N best docs by rerank score.
-    CHAT_MAX_CONTEXT_DOCS: int = 6
     # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the
     # embed model changes vector dimensions: an existing index is no longer valid.
     EMBED_MODEL_ID: str | None = None
