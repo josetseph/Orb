@@ -47,6 +47,13 @@ REPO = BACKEND.parent
 INDEX_STAGES = ("extract", "index")
 
 
+def label(lever: str, value) -> str:
+    """``lever=value`` for a variant's name (its results folder). A long value, such as a prompt suffix, becomes a short
+    hash: a folder name over 255 bytes cannot be created, and that variant silently never ran (round 4)."""
+    text = str(value)
+    return f"{lever}={text}" if len(text) <= 40 else f"{lever}=#{hashlib.sha1(text.encode()).hexdigest()[:8]}"
+
+
 def variants(spec: dict) -> list[dict]:
     """The baseline first, then each variant as a full lever -> value mapping with a ``name``."""
     for lever in [*spec["baseline"], *spec.get("vary", {}), *(k for combo in spec.get("also", []) for k in combo)]:
@@ -63,16 +70,16 @@ def variants(spec: dict) -> list[dict]:
         for combo in itertools.product(*vary.values()):
             levers = explicit({**spec["baseline"], **dict(zip(vary, combo))})
             if levers != base:
-                changed = [f"{k}={v}" for k, v in zip(vary, combo) if levers.get(k, BY_NAME[k].default) != base.get(k, BY_NAME[k].default)]
+                changed = [label(k, v) for k, v in zip(vary, combo) if levers.get(k, BY_NAME[k].default) != base.get(k, BY_NAME[k].default)]
                 out.append({"name": ",".join(changed), "levers": levers})
     else:
         for lever, values in vary.items():
             for value in values:
                 if base.get(lever, BY_NAME[lever].default) != value:
-                    out.append({"name": f"{lever}={value}", "levers": explicit({**base, lever: value})})
+                    out.append({"name": label(lever, value), "levers": explicit({**base, lever: value})})
     # "also": settings that only make sense together (Qwen as extractor with its thinking switched off), one variant each.
     for combo in spec.get("also", []):
-        out.append({"name": ",".join(f"{k}={v}" for k, v in combo.items()), "levers": explicit({**base, **combo})})
+        out.append({"name": ",".join(label(k, v) for k, v in combo.items()), "levers": explicit({**base, **combo})})
     return out
 
 
