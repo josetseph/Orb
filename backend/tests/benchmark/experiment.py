@@ -250,9 +250,11 @@ def main() -> None:
             if chat_path:
                 gguf[model_id] = Path(chat_path) if Path(chat_path).is_absolute() else models_dir / chat_path
 
-        def pin(provider: str | None, base_url: str | None) -> None:
-            """Pinned on the KB, which lives in the data dir: no shared manifest is touched."""
-            body = {"provider": provider, "model": args.chat_model, "ingestion_model": args.ingestion_model, "base_url": base_url}
+        def pin(provider: str | None, base_url: str | None, served: str | None = None) -> None:
+            """Pinned on the KB, which lives in the data dir: no shared manifest is touched. An endpoint needs a
+            model name, so an index build (no answering model) names the one its server serves."""
+            body = {"provider": provider, "model": args.chat_model or served, "ingestion_model": args.ingestion_model,
+                    "base_url": base_url}
             req = Request(BASE_URL + "/api/v1/kb/default/llm", method="PATCH", data=json.dumps(body).encode(),
                           headers={"content-type": "application/json"})
             try:
@@ -262,7 +264,8 @@ def main() -> None:
 
         def serve(model_id: str) -> None:
             """Each phase needs one model: extraction while ingesting, the answering model while evaluating."""
-            pin("openai_compat", model_server.ensure(model_id, gguf[model_id], args.serve, serve_ctx, serve_flash, serve_penalty))
+            pin("openai_compat", model_server.ensure(model_id, gguf[model_id], args.serve, serve_ctx, serve_flash, serve_penalty),
+                served=model_id)
 
         if args.serve:
             if (args.ingest and not args.ingestion_model) or (not args.no_eval and not args.chat_model):
