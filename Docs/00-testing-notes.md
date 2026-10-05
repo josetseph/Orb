@@ -300,6 +300,16 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-05 14:45 UTC, all pods stopped: the main account reached its reserve.** Six pods (round 4's and five for round
+  5) were billing $3.04/h; the followers that stop pods before the reserve could not act (two had exited early on a
+  stale "queue finished" marker from before a restart; this Mac's network lost DNS for RunPod's API for hours, and
+  Python could not resolve it even when curl could). The pods were stopped through the API with curl at $2.11 left;
+  stopped, they cost $0.13/h for their disks. **No round-5 result has been copied home**: every round-5 index and
+  evaluation is on the stopped pods' disks, which RunPod may delete once the credit is gone (~16 h). Round 4's last
+  run was saved: Qwen 3.5 9B extracting with the reminder, HotpotQA 0-20, F1 0.626, 45% EM, gold in index 0.85
+  (E4B 0.464 / 0.65; the 12B 0.71-0.76 on the same questions). Lessons for the harness: a follower must not trust a
+  "finished" marker older than the queue it follows, and must keep the credit check even when it cannot reach a pod.
+
 - **2026-10-05, round 4 results (in-process, A40, 3 lanes, ~41 h; reports in `Results/runpod/round4-*`).** Small samples
   (20 questions unless stated): directions to confirm at scale (round 5), not settled results.
   - *MuSiQue extraction (12B, dev 0-20).* Model-caused failures per 239 notes, after removing harness failures (storage
