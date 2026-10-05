@@ -70,28 +70,45 @@ def env() -> dict[str, str]:
     return {k: values[prefix + k] for k in names}
 
 
+def _http(method: str, url: str, body: bytes | None, headers: dict) -> tuple[int, str]:
+    """(status, body). Falls back to curl when Python cannot resolve the host: on 2026-10-05 this Mac's Python
+    lost DNS for RunPod's API for hours while curl still reached it, and the followers could not stop the pods."""
+    req = urllib.request.Request(url, method=method, data=body, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            return resp.status, resp.read().decode()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read().decode()
+    except urllib.error.URLError:
+        cmd = ["curl", "-s", "-m", "60", "-X", method, "-w", "\n%{http_code}", url]
+        for k, v in headers.items():
+            cmd += ["-H", f"{k}: {v}"]
+        if body is not None:
+            cmd += ["--data-binary", body.decode()]
+        out = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if out.returncode != 0:
+            raise
+        text, _, code = out.stdout.rpartition("\n")
+        return int(code), text
+
+
 def balance() -> tuple[float, float]:
     """(credit left in USD, what the account is spending per hour right now)."""
-    req = urllib.request.Request(
-        f"https://api.runpod.io/graphql?api_key={env()['RUNPOD_API_KEY']}", method="POST",
-        data=json.dumps({"query": "query { myself { clientBalance currentSpendPerHr } }"}).encode(),
-        headers={"Content-Type": "application/json", "User-Agent": USER_AGENT})
-    with urllib.request.urlopen(req, timeout=60) as resp:
-        me = json.load(resp)["data"]["myself"]
+    status, raw = _http("POST", f"https://api.runpod.io/graphql?api_key={env()['RUNPOD_API_KEY']}",
+                        json.dumps({"query": "query { myself { clientBalance currentSpendPerHr } }"}).encode(),
+                        {"Content-Type": "application/json", "User-Agent": USER_AGENT})
+    if status != 200:
+        raise PodError(f"RunPod balance query failed ({status}): {raw[:200]}")
+    me = json.loads(raw)["data"]["myself"]
     return float(me["clientBalance"]), float(me["currentSpendPerHr"] or 0)
 
 
 def api(method: str, path: str, body: dict | None = None) -> object:
-    req = urllib.request.Request(
-        f"{REST}{path}", method=method, data=json.dumps(body).encode() if body is not None else None,
-        headers={"Authorization": f"Bearer {env()['RUNPOD_API_KEY']}", "Content-Type": "application/json",
-                 "User-Agent": USER_AGENT},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            raw = resp.read().decode()
-    except urllib.error.HTTPError as exc:
-        raise PodError(f"RunPod {method} {path} failed ({exc.code}): {exc.read().decode()[:400]}") from exc
+    status, raw = _http(method, f"{REST}{path}", json.dumps(body).encode() if body is not None else None,
+                        {"Authorization": f"Bearer {env()['RUNPOD_API_KEY']}", "Content-Type": "application/json",
+                         "User-Agent": USER_AGENT})
+    if status >= 400:
+        raise PodError(f"RunPod {method} {path} failed ({status}): {raw[:400]}")
     return json.loads(raw) if raw.strip() else None
 
 
@@ -372,7 +389,9 @@ def follow_once(state: dict, args) -> bool:
     copy_home(endpoint)
     done = ssh(endpoint, f"cat {REMOTE}/Results/queue.done 2>/dev/null", check=False, capture=True).strip()
     if done:
-        print(f"DONE: queue finished {done}. Results in {STATE_DIR}; the pod idles until its watchdog stops it (or pod.py down).", flush=True)
+        # A finished pod is stopped, not left idling: two did for ~11 h on 2026-10-05. Results are home; the volume is kept.
+        api("POST", f"/pods/{state['id']}/stop")
+        print(f"DONE: queue finished {done}. Results in {STATE_DIR}; the pod is stopped with its volume kept.", flush=True)
         return True
     hours_left = (credit - RESERVE_USD) / spend if spend else float("inf")
     print(f"{time.strftime('%H:%M')} saved; credit ${credit:.2f}, spending ${spend:.2f}/hr, about {hours_left:.1f} h before the reserve", flush=True)
