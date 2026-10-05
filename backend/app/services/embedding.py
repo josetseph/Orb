@@ -64,7 +64,8 @@ class EmbeddingService:
 
         def model() -> str:
             paths = gguf_paths_if_present() or {}
-            return str(paths.get("embed"))
+            # The file name, not its path: each lane reaches the same file through its own folder.
+            return paths["embed"].name if paths.get("embed") else "None"
 
         return cached("embed_query", [model() if settings.LLM_CALL_CACHE_DIR else None, text],
                       lambda: self.embeddings.embed_query(text))

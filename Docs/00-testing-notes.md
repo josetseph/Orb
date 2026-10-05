@@ -300,6 +300,13 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-05, round 4 repeat check: closer, one more source found.** Two runs of one configuration after pinning the
+  date: 18 of 20 answers identical (F1 0.765 and 0.756), query analysis now replays from the cache. The rest diverged
+  at the reranker: its cache key held the reranker file's full path, and each lane reaches the shared file through its
+  own folder (`models-lane2/...` against `models-lane0/...`), so a run on another lane missed the cache and the GPU's
+  slightly different scores reordered candidates. Reranker and query-embedding cache keys now use the file name.
+  Round 5 is unaffected (one lane per pod).
+
 - **2026-10-05, round 5 restarted a third time: CPU over-subscription made storage fail.** Served pods lost 20% of HotpotQA
   notes to "Storage failed: ... Qdrant said: timed out", not to the model (only 6 of 59 failures were rejected replies).
   llama-server starts one thread per visible core (96 on these hosts) and llama-cpp-python half that, inside a ~7.6-CPU
