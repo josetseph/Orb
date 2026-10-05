@@ -2,8 +2,8 @@
   "name": "round5-retrieval",
   "dataset": "hotpotqa",
   "dev": [
-    70,
-    170
+    0,
+    100
   ],
   "baseline": {
     "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
@@ -31,5 +31,5 @@
       "EMBED_MODEL_ID": "qwen3-embed-0.6b-q8"
     }
   ],
-  "_note": "The cheap retrieval stack on 100 HotpotQA questions no round has seen: 0.6B reranker, no graph expansion, both with the 0.6B embedder."
+  "_note": "The cheap retrieval stack on all 100 HotpotQA questions in the manifest: 0.6B reranker, no graph expansion, both with the 0.6B embedder."
 }

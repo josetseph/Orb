@@ -207,7 +207,10 @@ def main() -> None:
     serve_penalty = float(overrides.get("LLAMA_REPEAT_PENALTY", 1.12))
     if args.serve:
         # Notes extract in parallel and write in submission order; a reply under load can take a long time.
+        # LLAMA_N_THREADS: the in-process embedder and reranker run on the GPU; llama-cpp-python's default (half the
+        # visible cores, 48 on a RunPod host with a ~7.6-CPU quota) throttles the container beside a model server.
         env.update(INGESTION_PIPELINE_CONCURRENCY=str(args.serve), LLM_REQUEST_TIMEOUT="7200", LLM_SERVER_GRAMMAR="true",
+                   LLAMA_N_THREADS="4",
                    LLM_SERVER_FINGERPRINT=model_server.fingerprint(serve_ctx, serve_flash, serve_penalty))
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
               "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,

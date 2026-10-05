@@ -78,6 +78,10 @@ def ensure(model_id: str, gguf: Path, slots: int, ctx_per_slot: int, flash_attn:
     time.sleep(3)
     cmd = [str(BINARY), "-m", str(gguf), "--alias", model_id, "--host", "127.0.0.1", "--port", str(port(model_id)),
            "-ngl", "999", "-np", str(slots), "-c", str(slots * ctx_per_slot), "--jinja",
+           # The model runs on the GPU; CPU threads only feed it. llama-server otherwise starts one per visible core
+           # (96 on a RunPod host with a ~7.6-CPU quota), throttling the container: Qdrant writes timed out and those
+           # notes failed to store, a harness failure that looked like rejected notes.
+           "-t", "4", "-tb", "4",
            # "auto": the reply is what the model generated. With "none" the server copies a thinking block the
            # template itself opened into the reply (Gemma 4 12B's prompt ends with an empty one), so every 12B reply
            # began with "<|channel>thought<channel|>", which the in-process runtime never returns. Trade-off: a model

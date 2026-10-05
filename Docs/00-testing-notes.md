@@ -300,6 +300,14 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-05, round 5 restarted a third time: CPU over-subscription made storage fail.** Served pods lost 20% of HotpotQA
+  notes to "Storage failed: ... Qdrant said: timed out", not to the model (only 6 of 59 failures were rejected replies).
+  llama-server starts one thread per visible core (96 on these hosts) and llama-cpp-python half that, inside a ~7.6-CPU
+  container quota: the container was throttled and Qdrant's writes passed the client's 5 s timeout. Servers now run
+  `-t 4 -tb 4` and served experiments set `LLAMA_N_THREADS=4` (the models are on the GPU; output is unchanged).
+  Also: the HotpotQA manifest holds 100 questions, so round5-retrieval's "dev 70-170" was only 30 questions; it now uses
+  all 100. Two pods had also lost part of their install to the first emergency stop and were re-provisioned.
+
 - **2026-10-04, round 5 restarted a second time: served 12B replies carried the template's empty thinking block.**
   Gemma 4 12B's chat template ends the prompt with an empty thinking block (`<|channel>thought\n<channel|>`), its way of
   switching thinking off. llama-server with `--reasoning-format none` copies that block into the reply, so every served
