@@ -70,7 +70,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 |---|---|---|---|---|
 | `ORB_PATHS_FILE` | path / `<App Support>/Orb/paths.json` | env — `paths.paths_json_location()`; also `src-tauri/src/runtime.rs` | Location of the bootstrap JSON | rarely (scratch profiles); the shell and runtime read the same default location |
 | `ORB_DATA_DIR` (`DATA_DIR`) | path / `paths.json.data_dir` → `<repo>/data` | env — `paths.resolve_data_dir()`; `Settings.DATA_DIR` default is that result | Root for `orb.db`, `kuzu/`, `qdrant/`, `meilisearch/`, `logs/`, `vaults/`, `bin/`, `firefly/`, `runtime_config.json`, `meili_master_key`, `boot-status.json`. Keep it on local disk: the runtime prints `[desktop] WARNING: data dir … cloud-synced` for iCloud/OneDrive/Dropbox/Google Drive paths | setup (`paths.json`); env only in dev |
-| `ORB_MODELS_DIR` (`MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/` (incl. `mmproj-*` vision projectors), HF snapshots (`qwen3-asr-1.7b[-hf]`, `marlin-2b`), `manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
+| `ORB_MODELS_DIR` (`MODELS_DIR`) | path / `paths.json.models_dir` → `backend/models` | env — `paths.resolve_models_dir()`; `Settings.MODELS_DIR` | Root for `gguf/` (incl. `mmproj-*` vision projectors), HF snapshots (`pyannote-community-1`, `marlin-2b`), Phonon-2 under `fermion/`, `manifest.json` | setup (`paths.json`); the runtime exports it to the multimodal-prep child |
 | `MODELS_PATH` | str / `"models"` → **overridden** to `MODELS_DIR` | `Settings` (config.py bottom, `paths.sync_settings_paths`) | Alias only | code |
 | `KUZU_DB_PATH` | read-only property, `<DATA_DIR>/kuzu/kuzu_graph` (not settable) | `Settings`; `kb_registry` default KB, `graph.GraphService` default | Default KB's Kuzu file; per-KB files are `<DATA_DIR>/kuzu/<slug>/kuzu_graph` | code |
 | `ORB_DEFAULT_VAULT` | path / none | env — `paths.resolve_default_vault_path()` **after** `paths.json.default_vault_path` | Default KB vault folder when the file has none; else `<DATA_DIR>/vaults/default` | rarely (dev) |
@@ -105,7 +105,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `EXTRACTION_CHUNK_TOKENS` | int \| None / `None` (learned, `4000` ceiling) | `Settings`, edited in Models → Local runtime — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
 | `LARGE_ATTACHMENT_TOKENS` | int / `20000` | `Settings`, edited in Models → Local runtime (`large_attachment_tokens`, ≥ 1000) — `ingestion_agent.finish_attachment` | A non-image, non-recording attachment whose extracted text has more ingestion-model tokens than this becomes a `mode="notes"` block: a model-written summary is graphed and the full text indexed for search, with no prompt ([11 §6.4](11-multimedia-enrichment.md)); recordings always become notes whatever their size; images never | runtime (`runtime_config.json`, Models → Local runtime) |
 | `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | env |
-| `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Qwen3-ASR / Marlin jobs | env |
+| `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Phonon-2 / Marlin jobs | env |
 
 ### 3.5 Embeddings axis
 
@@ -170,14 +170,13 @@ All read in `backend/app/services/local_models.py` (and `model_catalog.py` for t
 
 The chat/embed/reranker **files actually loaded** come from `MODELS_DIR/models_manifest.json` (`selection.chat_path`, `embed_path`, `reranker_path`, `embedding_dims`, ids), written by Setup — not from env. See [12](12-local-models-and-inference.md).
 
-### 3.10 Multimodal models (Qwen3-ASR / Marlin / image description)
+### 3.10 Multimodal models (Phonon-2 / Marlin / image description)
+
+Transcription (Phonon-2, English only) has no model or engine setting: fermion runs it on MLX on Apple Silicon and on its CPU engine elsewhere, with files under `MODELS_DIR/fermion` (Orb sets `FERMION_CACHE_DIR` inside its own process; it is not a user setting).
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| `MODEL_ASR_HF` / `MODEL_ASR_LOCAL` | str / `""` / `""` | `Settings`; `multimodal_models._asr_repo_and_dir` | Qwen3-ASR repo and `MODELS_DIR` folder. Empty = `asr_engine` picks per platform: `qwen3-asr-1.7b` (MLX, Apple Silicon) or `qwen3-asr-1.7b-hf` (transformers); an explicit value pins it | code |
-| `ASR_ENGINE` | `auto` \| `mlx` \| `transformers` / `auto` | `Settings`; `multimodal_models`, `multimodal_runtime` | Transcription backend; an explicit engine is never substituted | env |
-| `ASR_LANGUAGE` | str \| None / `"en"` | `Settings`; `multimodal_runtime` | Language hint; `None` lets the model detect it | env |
-| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None — `True` / `2.0` / `None` | `Settings`; `multimodal_runtime` | Speaker labels via pyannote community-1 (GPU when available, else CPU), its segmentation step, optional speaker cap | env |
+| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None — `True` / `2.0` / `None` | `Settings`; `multimodal_runtime` | Speaker labels via pyannote community-1 (GPU when available, else CPU) over Phonon-2's word timings, its segmentation step, optional speaker cap | env |
 | `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `Settings`; `multimodal_models.model_ids("marlin")` | Video understanding model (Qwen3.5-based) | code |
 | `IMAGE_DESCRIBE_MAX_PIXELS` | int / `1500000` | `Settings`; `multimedia.py` via `getattr(..., 0) or 1_500_000` | Downscale images above this many pixels before any model (local vision projector or cloud) sees them. **`0` is not "unlimited"** — it falls back to 1.5 MP | env |
 | `FORCE_QWENVL_VIDEO_READER` | str / `pyav` | `multimodal_runtime` `os.environ.setdefault` (consumed by `qwen-vl-utils`) | Video decoder backend | code (`setdefault` — env wins if pre-set) |

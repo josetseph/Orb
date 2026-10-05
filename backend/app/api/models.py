@@ -68,72 +68,74 @@ def _vision_row() -> dict:
     }
 
 
+#: CC-BY-4.0 asks for attribution wherever the weights are offered.
+PHONON_CREDIT = (
+    "Phonon-2 by FermionResearch, a quantized NVIDIA Parakeet TDT 0.6B v3 · CC BY 4.0"
+)
+
+
 def _media_rows() -> list[dict]:
-    """Qwen3-ASR and Marlin plus the vision route — what Orb runs on attachments.
+    """Phonon-2 and Marlin plus the vision route — what Orb runs on attachments.
 
     Reported read-only alongside embed/rerank so the page accounts for every
-    model on the machine, not just the chat one. Transcription additionally
-    reports which engine will serve it, since that differs by platform.
+    model on the machine, not just the chat one. Transcription also reports
+    which engine serves it, since that differs by platform.
     """
-    from app.core.config import settings
+    import platform
+
+    from app.core.paths import resolve_models_dir
     from app.services import asr_engine
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
 
     rows: list[dict] = [_vision_row()]
-    labels = {
-        "asr": ("Transcription", "Audio and video transcription"),
-        "marlin": ("Marlin", "Video understanding"),
-    }
-    for kind, (label, purpose) in labels.items():
-        try:
-            path = multimodal_model_path(kind)
-        except Exception:  # pylint: disable=broad-exception-caught
-            continue
-        row = {
-            "kind": kind,
-            "label": label,
-            "purpose": purpose,
-            "name": path.name,
-            "installed": is_hf_snapshot_ready(path),
-            "engine_note": "Qwen3.5 via transformers" if kind == "marlin" else None,
-            "hint": "not downloaded yet",
+    apple = platform.system() == "Darwin" and platform.machine() == "arm64"
+    asr_ready = asr_engine.is_phonon_ready(resolve_models_dir())
+    rows.append(
+        {
+            "kind": "asr",
+            "label": "Transcription",
+            "purpose": "Audio and video transcription (English)",
+            "name": "Phonon-2",
+            "installed": asr_ready,
+            "engine": "mlx" if apple else "cpu",
+            "engine_note": "Phonon-2 via MLX" if apple else "Phonon-2 on the CPU",
+            "credit": PHONON_CREDIT,
+            "hint": None if asr_ready else "not downloaded yet",
         }
-        if kind == "asr":
-            try:
-                choice = asr_engine.choose(path.parent, preferred_engine=settings.ASR_ENGINE)
-                row["engine"] = choice.engine
-                row["engine_note"] = (
-                    "Qwen3-ASR via MLX"
-                    if choice.engine == asr_engine.ENGINE_MLX
-                    else "Qwen3-ASR via transformers"
-                )
-                if choice.model_path is not None:
-                    row["name"] = choice.model_path.name
-                    row["installed"] = True
-            except Exception:  # pylint: disable=broad-exception-caught
-                row["engine"] = None
-        if row["installed"]:
-            row["hint"] = None
-        rows.append(row)
+    )
+    try:
+        marlin = multimodal_model_path("marlin")
+        rows.append(
+            {
+                "kind": "marlin",
+                "label": "Marlin",
+                "purpose": "Video understanding",
+                "name": marlin.name,
+                "installed": is_hf_snapshot_ready(marlin),
+                "engine_note": "Qwen3.5 via transformers",
+                "hint": None if is_hf_snapshot_ready(marlin) else "not downloaded yet",
+            }
+        )
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
     rows.append(_speakers_row())
     return rows
 
 
 def _speakers_row() -> dict:
-    """Speaker labels: pyannote turns plus, on MLX, Qwen's aligner for word timings."""
+    """Speaker labels: pyannote turns over Phonon's word timings."""
     from app.core.config import settings
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
 
     diarizer = multimodal_model_path("diarizer")
-    aligner = multimodal_model_path("aligner")
-    installed = is_hf_snapshot_ready(diarizer) and is_hf_snapshot_ready(aligner)
+    installed = is_hf_snapshot_ready(diarizer)
     return {
         "kind": "speakers",
         "label": "Speaker labels",
         "purpose": "Who said what in lectures and meetings",
-        "name": f"{diarizer.name} + {aligner.name}",
+        "name": diarizer.name,
         "installed": installed,
-        "engine_note": "off (ASR_SPEAKERS=false)" if not settings.ASR_SPEAKERS else "pyannote on CPU",
+        "engine_note": "off (ASR_SPEAKERS=false)" if not settings.ASR_SPEAKERS else "pyannote",
         "hint": None if installed else "not downloaded yet",
     }
 

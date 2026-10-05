@@ -497,7 +497,7 @@ export default function ModelsPage() {
                 key={m.kind}
                 icon={<span className={cn("dot", m.installed ? "bg-accent" : "bg-n-600")} />}
                 title={m.label}
-                description={`${m.purpose} · ${m.name}`}
+                description={m.credit ? `${m.purpose} · ${m.name} · ${m.credit}` : `${m.purpose} · ${m.name}`}
               >
                 {m.engine_note && <span className="tag tag-accent">{m.engine_note}</span>}
                 {!m.installed && (

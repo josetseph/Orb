@@ -54,12 +54,11 @@ async def setup_status():
     from app.services.ai_gate import ai_is_configured
     from app.services.local_models import gguf_paths_if_present
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
+    from app.services.multimodal_runtime import asr_engine_ready
     gguf = gguf_paths_if_present()
     local_models_ready = gguf is not None
-    multimodal_ready = all(
-        is_hf_snapshot_ready(multimodal_model_path(k))
-        for k in ("asr", "marlin")
-    )
+    # Phonon-2 is not a HF snapshot (fermion unpacks it); Marlin is.
+    multimodal_ready = asr_engine_ready() and is_hf_snapshot_ready(multimodal_model_path("marlin"))
     vault = resolve_default_vault_path()
     default_kb = kb_registry.get_kb_by_name("default")
     return {
@@ -79,7 +78,7 @@ async def setup_status():
 class DownloadModelsInput(BaseModel):
     include_multimodal: bool = True
     chat_id: str | None = None
-    # When True, skip GGUF ensure (used for background Qwen3-ASR/Marlin + projector).
+    # When True, skip GGUF ensure (used for background Phonon-2/Marlin + projector).
     multimodal_only: bool = False
 
 
@@ -93,7 +92,7 @@ async def model_catalog(chat_id: str | None = None):
 
 @router.post("/api/v1/setup/download-models")
 async def download_models(body: DownloadModelsInput | None = None):
-    """Download chat/embed/rerank GGUFs (+ Qwen3-ASR/Marlin weights and the vision projector).
+    """Download chat/embed/rerank GGUFs (+ Phonon-2/Marlin weights and the vision projector).
 
     Does not install multimodal Python deps — that is a separate step
     (``start-multimodal-services`` prepares the in-process runtime). Keeping
@@ -203,7 +202,7 @@ async def select_chat_model(body: DownloadModelsInput | None = None):
 
 @router.post("/api/v1/setup/start-multimodal-services")
 async def start_multimodal_services(install_deps: bool = Query(True)):
-    """Prepare Qwen3-ASR/Marlin for in-process load (no HTTP sidecars)."""
+    """Prepare Phonon-2/Marlin for in-process load (no HTTP sidecars)."""
     from app.services.multimodal_services import ensure_multimodal_services
 
     try:
@@ -215,12 +214,13 @@ async def start_multimodal_services(install_deps: bool = Query(True)):
 @router.get("/api/v1/setup/multimodal-status")
 async def multimodal_status():
     from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
+    from app.services.multimodal_runtime import asr_engine_ready
     from app.services.multimodal_services import services_ready
 
     return {
         "mode": "in_process",
         "models": {
-            "asr": is_hf_snapshot_ready(multimodal_model_path("asr")),
+            "asr": asr_engine_ready(),
             "marlin": is_hf_snapshot_ready(multimodal_model_path("marlin")),
         },
         "services": services_ready(),

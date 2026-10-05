@@ -1,6 +1,6 @@
 # Ingestion Pipeline
 
-**What this covers.** The end-to-end path a note takes from "saved in a vault" to "queryable knowledge": how ingestion is triggered and queued, the ingestion agent that runs it (`multimodal → extraction → storage → summarization`), the LLM extraction prompt and JSON normalisation, entity resolution against the existing graph, and exactly what gets written to Kuzu, Qdrant, Meilisearch and SQLite at each step. It also covers re-ingest cleanup, the `ingestion_tracker` counter and the button-only community (Leiden-style) recomputation and temporal digests, every config key the pipeline reads, and the failure semantics of each stage. Multimedia attachment handling (Qwen3-ASR for speech, Marlin for video, the ingestion model itself for images and PDF renders) is only summarised here; see the sibling doc for the details.
+**What this covers.** The end-to-end path a note takes from "saved in a vault" to "queryable knowledge": how ingestion is triggered and queued, the ingestion agent that runs it (`multimodal → extraction → storage → summarization`), the LLM extraction prompt and JSON normalisation, entity resolution against the existing graph, and exactly what gets written to Kuzu, Qdrant, Meilisearch and SQLite at each step. It also covers re-ingest cleanup, the `ingestion_tracker` counter and the button-only community (Leiden-style) recomputation and temporal digests, every config key the pipeline reads, and the failure semantics of each stage. Multimedia attachment handling (Phonon-2 for speech, Marlin for video, the ingestion model itself for images and PDF renders) is only summarised here; see the sibling doc for the details.
 
 **Related docs:** [Multimedia enrichment](11-multimedia-enrichment.md) · [Notes, wikilinks & vault files](09-notes-wikilinks-and-vault-files.md) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Search indexes (Qdrant/Meilisearch)](15-search-indexes-qdrant-meilisearch.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Local models & inference](12-local-models-and-inference.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [API reference](07-api-reference.md) · [Configuration reference](21-configuration-reference.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -77,7 +77,7 @@ sequenceDiagram
     WF->>DB: stage="Starting ingestion"
     WF->>AG: run_ingestion_agent(state{input, note_id, workflow=self})
     AG->>AG: multimodal_node: strip orphaned enrichment blocks, parse_attachments
-    AG->>MM: docx/xlsx → audio + video audio (Qwen3-ASR) → video visuals (Marlin) → PDFs + images (ingestion model)
+    AG->>MM: docx/xlsx → audio + video audio (Phonon-2) → video visuals (Marlin) → PDFs + images (ingestion model)
     MM-->>AG: text sections placed under their links (place_extraction)
     AG->>VLT: _persist_note_body(enriched content) if changed
     AG->>DB: stage="Extracting knowledge graph", model=<ingestion model>
@@ -169,7 +169,7 @@ Not triggers (common misconception): `POST /api/v1/notes` (create) and `PUT /api
 | Primitive | Where | Scope | Default | Effect |
 |---|---|---|---|---|
 | `IngestionWorkflow._process_semaphore = asyncio.Semaphore(settings.INGESTION_PIPELINE_CONCURRENCY)` | `ingestion.py` `__init__` | **per KB** (one workflow per `KBContext`) | 1 | Max notes of one KB past "Queued" simultaneously. Different KBs do not share it (they still serialise on model locks and `GraphService._lock` of their own graph). |
-| `multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY)` | module-level in `ingestion_agent.py` | **process-global** | 1 | Only one note at a time is inside `multimodal_node`'s body across all KBs, so Qwen3-ASR/Marlin are never loaded twice. Note the semaphore is held for the whole multimodal phase even when the note has no attachments (cheap). |
+| `multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY)` | module-level in `ingestion_agent.py` | **process-global** | 1 | Only one note at a time is inside `multimodal_node`'s body across all KBs, so Phonon-2/Marlin are never loaded twice. Note the semaphore is held for the whole multimodal phase even when the note has no attachments (cheap). |
 | `asyncio.Semaphore(4)` in `_update_neighborhoods` | per call | per note | 4 | Up to 4 entity summaries of the same note update concurrently. |
 | `_entity_locks` (`defaultdict(asyncio.Lock)` keyed `name.lower().strip()`) | per workflow | per KB | — | Two notes touching the same entity name serialise their `_update_node_summary`. Locks are never evicted (dict grows with distinct entity names). |
 | `GraphService._lock` (`threading.RLock`) | per graph | per KB | — | All Kuzu statements serialised. |
@@ -250,9 +250,9 @@ The tracker is registered **before** waiting for the semaphore so a running rebu
    |---|---|---|---|
    | 1a | `"Extracting documents"` | `None` | `extract_text_from_docx` → `[Word Extraction (<filename>)]: <text>` |
    | 1b | `"Extracting spreadsheets"` | `None` | `extract_text_from_spreadsheet` → `[Spreadsheet Extraction (<filename>)]: <text>` |
-   | 2a | `"Transcribing audio"` | `"Qwen3-ASR"` | `transcribe_audio` → `[Audio Transcript (<filename>)]: <text>` |
-   | 2b | `"Transcribing video audio"` | `"Qwen3-ASR"` | `transcribe_video_audio` → `[Video Audio Transcript (<filename>)]:\n\n<text>` (empty → nothing) |
-   | 2c (if any audio/videos) | `"Unloading speech model"` | `"Qwen3-ASR"` | `multimedia_service.unload_local_models("asr")` |
+   | 2a | `"Transcribing audio"` | `"Phonon-2"` | `transcribe_audio` → `[Audio Transcript (<filename>)]: <text>` |
+   | 2b | `"Transcribing video audio"` | `"Phonon-2"` | `transcribe_video_audio` → `[Video Audio Transcript (<filename>)]:\n\n<text>` (empty → nothing) |
+   | 2c (if any audio/videos) | `"Unloading speech model"` | `"Phonon-2"` | `multimedia_service.unload_local_models("asr")` |
    | 3a | `"Analyzing video visuals"` | `"Marlin"` | `describe_video_visual` → `[Video Visual Analysis (<filename>)]:\n\n### Visual Analysis\n**Scene:** …\n\n**Events:**\n- 0:00–0:05 — …` (empty → nothing) |
    | 3b (if any videos) | `"Unloading video model"` | `"Marlin"` | `unload_marlin()` |
    | 4a | `"Reading PDF pages and images"` | ingestion model id (or `"vision model"`) | `extract_text_from_pdf(url, progress, llm)` → `[PDF Extraction (<filename>)]: <text>` (PDF progress callbacks additionally write `"PDF: page i/N, extracting text"`, `"PDF: page i/N, describing image j/M"` / `"PDF: page i/N, describing page render"` with the model id, `"PDF: page i/N complete"`) |
@@ -522,7 +522,7 @@ Document written by `index_node`: `{node_id, name, type, isolated_contexts?: [<c
 | `multimodal_node` | `Preparing multimedia attachments`, `Extracting documents`, `Extracting spreadsheets`, `Transcribing audio`, `Transcribing video audio`, `Writing notes for <file>`, `Summarising <file>`, `Unloading speech model`, `Analyzing video visuals`, `Unloading video model`, `Reading PDF pages and images`, `PDF: page i/N, extracting text`, `PDF: page i/N, describing image j/M`, `PDF: page i/N, describing page render`, `PDF: page i/N complete`, `Describing images`, `Naming images`, `Saving extracted attachment text` |
 | agent nodes | `Extracting knowledge graph`, `Writing graph and note metadata`, `Indexing entity contexts`, `Indexing documents for search` |
 
-`processing_model` values: `Qwen3-ASR`, `Marlin`, `Embeddings`, the ingestion model id (or `vision model` / `LLM` when none is configured), else `None`.
+`processing_model` values: `Phonon-2`, `Marlin`, `Embeddings`, the ingestion model id (or `vision model` / `LLM` when none is configured), else `None`.
 
 ### 10.5 Vault
 
@@ -592,7 +592,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 **Chunking costs context, and a bigger budget costs less of it.** `merge_extractions` dedupes nodes by normalised name and concatenates their `isolated_context`, so entity *identity* survives a split and descriptions accumulate across chunks; relationships dedupe on `(source, target, type)` keeping the highest confidence. What cannot survive is anything needing two chunks at once: a relationship whose evidence spans a boundary is never stated by either side, and a pronoun whose antecedent was named in an earlier chunk cannot be resolved as the prompt requires. Splits fall on paragraph boundaries (`split_for_extraction`) to limit the damage. This is the real argument for the learned budget — at 4,000 tokens a 336k-character note is ~22 chunks and 21 boundaries; at 16,000 it is ~5 chunks and 4.
 
 | `LLM_PROVIDER` (via `ai_gate`) | `"local"` | `require_ai(kb)` derives readiness from GGUFs / keys / `LLM_BASE_URL`; `chat_is_local_only()` decides the cloud-vision fallback in `multimedia.describe_image` | Readiness is never read from a stored mode. |
-| `PDF_VISUAL_*`, `IMAGE_DESCRIBE_MAX_PIXELS`, `MODEL_ASR_*` / `ASR_*` / `MODEL_MARLIN_*`, `VIDEO_MAX_PIXELS`, `FPS*` | see [11](11-multimedia-enrichment.md) | multimedia | — |
+| `PDF_VISUAL_*`, `IMAGE_DESCRIBE_MAX_PIXELS`, `ASR_*` / `MODEL_MARLIN_*`, `VIDEO_MAX_PIXELS`, `FPS*` | see [11](11-multimedia-enrichment.md) | multimedia | — |
 
 ## 12. Interfaces with other subsystems
 
@@ -621,7 +621,7 @@ This is fewer calls *and* better output: for a 336k-character note, 22 chunks ea
 - **Provider JSON mode (`json_mode=True`; llama.cpp's generic JSON grammar on `local`) + `json_repair`**, for extraction — a well-formed object is asked for structurally, the shape is still validated by pydantic.
 - **A closed relationship vocabulary** (`RELATIONSHIP_TYPES`): the model picks from 42 listed predicates and the schema coerces anything else to `related_to`, so the graph never accumulates one edge label per note.
 - **Long notes are chunked at paragraph boundaries and merged**; truncated chunk output is split, not repaired (repair only when a chunk is already ≤ 400 tokens).
-- **One heavy model resident at a time**: multimodal phases are ordered (docs) → Qwen3-ASR → Marlin → ingestion model (PDFs, images, image titling, extraction) precisely to minimise swaps; do not interleave LLM calls inside the speech/video phases.
+- **One heavy model resident at a time**: multimodal phases are ordered (docs) → Phonon-2 → Marlin → ingestion model (PDFs, images, image titling, extraction) precisely to minimise swaps; do not interleave LLM calls inside the speech/video phases.
 - **The tracker is registered before the semaphore** so a queued note already pre-empts a running rebuild.
 - **Community and digest jobs are cooperative and pre-emptible by ingestion**; they must check the cancel events between units of work.
 - **`workflow` must be present in the agent state**; never fall back to the default-KB singleton.

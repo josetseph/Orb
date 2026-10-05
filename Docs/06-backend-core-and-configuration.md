@@ -322,10 +322,7 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 
 | Field | Type | Default | Consumer |
 |---|---|---|---|
-| `MODEL_ASR_HF` / `MODEL_ASR_LOCAL` | str | `""` / `""` | `multimodal_models._asr_repo_and_dir` — empty means `asr_engine` picks the layout per platform (`qwen3-asr-1.7b` for MLX on Apple Silicon, `qwen3-asr-1.7b-hf` for transformers); an explicit repo/dir pins it |
-| `ASR_ENGINE` | str | `"auto"` | `multimodal_models`, `multimodal_runtime` — `auto` \| `mlx` \| `transformers`; an explicit engine is never substituted |
-| `ASR_LANGUAGE` | str \| None | `"en"` | `multimodal_runtime` — `None` lets the model detect the language |
-| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None | `True` / `2.0` / `None` | `multimodal_runtime` — pyannote speaker labels on transcripts, segmentation step, optional speaker cap |
+| `ASR_SPEAKERS` / `ASR_DIARIZE_STEP` / `ASR_MAX_SPEAKERS` | bool / float / int \| None | `True` / `2.0` / `None` | `multimodal_runtime` — pyannote speaker labels on Phonon-2 transcripts (Phonon-2 itself has no settings: model and engine are fixed), segmentation step, optional speaker cap |
 | `MODEL_MARLIN_HF` / `MODEL_MARLIN_LOCAL` | str | `lunahr/Marlin-2B-ungated` / `marlin-2b` | `multimodal_models.model_ids("marlin")` → HF repo id and `MODELS_DIR/<local>` folder |
 | `IMAGE_DESCRIBE_MAX_PIXELS` | int | `1500000` | `multimedia.py` via `getattr(settings, "IMAGE_DESCRIBE_MAX_PIXELS", 0) or 1_500_000` — images are downscaled to this before any model (local projector or cloud) sees them; **`0` does not mean "full resolution"**, it falls back to 1.5 MP |
 | `MODEL_RERANKER_LOCAL` | str | `qwen3-reranker-0.6b` | `retrieval.py` (log/progress label only), overwritten from manifest by `sync_embedding_infrastructure` |
@@ -347,7 +344,7 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 |---|---|---|---|
 | `LOG_LEVEL` | str | `"INFO"` | `log.setup_logging` (`getattr(logging, LEVEL.upper(), INFO)`) |
 | `INGESTION_PIPELINE_CONCURRENCY` | int | `1` | `workflows/ingestion.py` `asyncio.Semaphore` around whole-note processing (FIFO when 1) |
-| `MULTIMEDIA_CONCURRENCY` | int | `1` | `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` around vision / Qwen3-ASR / Marlin work |
+| `MULTIMEDIA_CONCURRENCY` | int | `1` | `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` around vision / Phonon-2 / Marlin work |
 | `LARGE_ATTACHMENT_TOKENS` | int | `20000` | `ingestion_agent.finish_attachment` (read at call time) — a non-image, non-recording attachment whose extracted text is larger becomes a notes block: a summary is graphed and the full text indexed for search, with no prompt; recordings always do ([11 §6.4](11-multimedia-enrichment.md)). One of `LOCAL_RUNTIME_KEYS` (`large_attachment_tokens`, ≥ 1000 via `api/settings.LocalRuntimeSettings`), edited in Models → Local runtime |
 
 ### 5.4 Post-construction mutation of `settings`
@@ -726,7 +723,7 @@ Not gated: note CRUD, vault file ops, wikilinks graph, finance, KB management, s
 
 ## 15. `inference_device.py`
 
-Only imported by the multimodal stack (Qwen3-ASR/Marlin in `multimodal_runtime.py`), because it imports `torch` at module level (~150–200 MB RSS). Logger `InferenceDevice` → `llm.log`.
+Only imported by the multimodal stack (Marlin and the diarizer via `multimodal_runtime.py`), because it imports `torch` at module level (~150–200 MB RSS). Logger `InferenceDevice` → `llm.log`.
 
 | Function | Behaviour |
 |---|---|

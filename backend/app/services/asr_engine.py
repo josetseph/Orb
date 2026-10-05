@@ -1,227 +1,44 @@
-"""Pick and run the Qwen3-ASR transcription backend: MLX on Apple Silicon, transformers elsewhere.
+"""Speech to text with Phonon-2, and who-said-what from pyannote.
 
-Measured in the sibling local-transcription-service project on a 76-minute
-distant-mic lecture (see qwen-vs-whisper-report.md at the repo root): Qwen3-ASR
-1.7B through MLX ran at 5.6x realtime against Whisper large-v3's 2.5x, and where
-Whisper lost 103 s of speech to blank output, hit six repetition loops and
-emitted 107 duplicate segments, Qwen had none. On a hand-transcribed passage
-both scored 11.3% WER. Orb therefore ships one transcriber, Qwen3-ASR, in the
-two layouts it is published in:
+Phonon-2 is FermionResearch's quantized NVIDIA Parakeet TDT 0.6B v3: a
+164 MB download, English only, run by the ``fermion-research`` package on MLX
+(Apple Silicon) or its CPU engine (Linux, Windows, Intel Macs). It replaced
+Qwen3-ASR 1.7B in October 2026. On an M3 with a far-field lecture, scored as
+word agreement with a commercial transcript:
 
-* ``mlx`` — ``mlx-qwen3-asr`` on the Apple GPU, reading the original
-  ``Qwen/Qwen3-ASR-1.7B`` layout.
-* ``transformers`` — ``Qwen/Qwen3-ASR-1.7B-hf`` through PyTorch, for every other
-  platform (CUDA or CPU). Marlin already needs this stack.
+- 10-minute slice: 79.3% against 81.3%
+- 88-minute lecture: 73.7% against 75.5%
+- 88 minutes with word timings: 181 s against about 17 minutes
+- download: 164 MB against 4.7 GB plus a 1.8 GB aligner
 
-Engine selection: an explicit choice is never substituted. In automatic mode
-the platform picks the engine, a model on disk in that engine's layout is used,
-and only an *installed* engine is ever chosen, so a bundle the machine cannot
-run produces a precise error rather than a silent swap.
+Run-to-run noise on the slice is ~3 points, so the cost is ~2 points on long
+recordings. Phonon never looped or switched language (Qwen on auto-detect
+wrote Hindi and Chinese into English lectures), and its decoder gives
+punctuated word timings directly, so no forced aligner or punctuation repair
+is needed. Speaker labels come from the diarizer and those timings.
+
+Model files live under ``MODELS_DIR/fermion`` (fermion's own cache layout,
+pointed there with ``FERMION_CACHE_DIR`` inside this process). They are only
+ever downloaded from the Models page; transcription refuses rather than fetch.
 """
 
 from __future__ import annotations
 
-import json
-import platform
+import os
 import re
 from dataclasses import dataclass
-from importlib.util import find_spec
 from pathlib import Path
 
 from app.core.log import get_logger
 
 logger = get_logger("MultimodalRuntime")
 
-ENGINE_MLX = "mlx"
-ENGINE_TRANSFORMERS = "transformers"
-ENGINES = (ENGINE_MLX, ENGINE_TRANSFORMERS)
-
-#: Repo per engine — the same model in the layout each library reads.
-DEFAULT_REPO = {
-    ENGINE_MLX: "Qwen/Qwen3-ASR-1.7B",
-    ENGINE_TRANSFORMERS: "Qwen/Qwen3-ASR-1.7B-hf",
-}
-#: Folder name under MODELS_DIR for each engine's default.
-DEFAULT_LOCAL_DIR = {
-    ENGINE_MLX: "qwen3-asr-1.7b",
-    ENGINE_TRANSFORMERS: "qwen3-asr-1.7b-hf",
-}
-#: Word timings; speaker labels split text on them. Same aligner in the two
-#: layouts, like the ASR model itself.
-ALIGNER_REPO = {
-    ENGINE_MLX: "Qwen/Qwen3-ForcedAligner-0.6B",
-    ENGINE_TRANSFORMERS: "Qwen/Qwen3-ForcedAligner-0.6B-hf",
-}
-ALIGNER_DIR = {
-    ENGINE_MLX: "qwen3-forced-aligner-0.6b",
-    ENGINE_TRANSFORMERS: "qwen3-forced-aligner-0.6b-hf",
-}
-#: The aligner is rated for up to 5 minutes; 30 s chunks split at the
-#: quietest point are what the MLX library uses, so both engines match.
-MAX_CHUNK_SECONDS = 30.0
+#: What ``fermion.load_speech`` takes.
+PHONON_MODEL = "phonon-2"
 #: Byte-identical to the gated pyannote/speaker-diarization-community-1,
 #: without the gate: no HuggingFace account or token needed.
 DIARIZER_REPO = "pyannote-community/speaker-diarization-community-1"
 DIARIZER_DIR = "pyannote-community-1"
-
-# The MLX library wants a language name, not an ISO code; transformers takes
-# either. Unknown codes pass through.
-LANGUAGE_NAMES = {
-    "en": "English", "zh": "Chinese", "fr": "French", "de": "German",
-    "es": "Spanish", "it": "Italian", "ja": "Japanese", "ko": "Korean",
-    "pt": "Portuguese", "ru": "Russian", "ar": "Arabic",
-}
-
-
-def language_name(code: str | None) -> str | None:
-    if not code:
-        return None
-    return LANGUAGE_NAMES.get(code.lower(), code)
-
-
-@dataclass(frozen=True)
-class AsrChoice:
-    """The engine and model Orb will transcribe with, and why."""
-
-    engine: str
-    model_path: Path | None
-    repo_id: str | None
-    reason: str
-
-    @property
-    def ready(self) -> bool:
-        return self.model_path is not None
-
-
-def is_apple_silicon() -> bool:
-    return platform.system() == "Darwin" and platform.machine() == "arm64"
-
-
-def _installed(module: str) -> bool:
-    try:
-        return find_spec(module) is not None
-    except (ImportError, ValueError):
-        return False
-
-
-def engine_available(engine: str) -> bool:
-    if engine == ENGINE_MLX:
-        # mlx-qwen3-asr is Apple-Silicon only; guard the platform too so a
-        # stray install elsewhere cannot win.
-        return is_apple_silicon() and _installed("mlx_qwen3_asr")
-    return _installed("transformers")
-
-
-def is_asr_bundle(path: Path) -> bool:
-    """A Qwen3-ASR folder: HF layout whose config names the Qwen3-ASR architecture."""
-    config = path / "config.json"
-    if not path.is_dir() or not config.exists():
-        return False
-    try:
-        cfg = json.loads(config.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return False
-    names = [cfg.get("model_type", ""), *(cfg.get("architectures") or [])]
-    return any("qwen3asr" in str(n).lower().replace("_", "") for n in names)
-
-
-def detect_engine_for(path: Path) -> str | None:
-    """Which engine can read this folder.
-
-    Both layouts share a config, so the published name tells them apart: the
-    transformers conversion is the ``-hf`` repo.
-    """
-    if not is_asr_bundle(path):
-        return None
-    return ENGINE_TRANSFORMERS if path.name.lower().endswith("-hf") else ENGINE_MLX
-
-
-def _candidate_dirs(models_dir: Path) -> list[Path]:
-    """Qwen3-ASR folders already on disk, preferred naming first."""
-    names = [
-        DEFAULT_LOCAL_DIR[ENGINE_MLX],
-        DEFAULT_LOCAL_DIR[ENGINE_TRANSFORMERS],
-        "qwen3-asr-0.6b",
-        "qwen3-asr-0.6b-hf",
-    ]
-    seen: list[Path] = []
-    for name in names:
-        candidate = models_dir / name
-        if candidate.is_dir():
-            seen.append(candidate)
-    for child in sorted(models_dir.glob("*qwen3-asr*")):
-        if child.is_dir() and child not in seen:
-            seen.append(child)
-    return seen
-
-
-def choose(
-    models_dir: Path,
-    *,
-    preferred_engine: str | None = None,
-    explicit_path: Path | None = None,
-) -> AsrChoice:
-    """Decide engine + model. ``preferred_engine`` of ``None``/``auto`` means detect."""
-    requested = (preferred_engine or "auto").lower().strip()
-    if requested not in ("auto", "") and requested not in ENGINES:
-        raise ValueError(
-            f"Unknown transcription engine {requested!r}; choose from {', '.join(ENGINES)} or 'auto'."
-        )
-
-    if explicit_path is not None:
-        detected = detect_engine_for(explicit_path)
-        if detected is None:
-            raise ValueError(f"{explicit_path} is not a Qwen3-ASR model folder.")
-        engine = requested if requested in ENGINES else detected
-        if not engine_available(engine):
-            raise RuntimeError(_missing_engine_message(engine))
-        return AsrChoice(engine, explicit_path, None, "explicit model path")
-
-    # An explicit engine is never silently substituted.
-    if requested in ENGINES:
-        if not engine_available(requested):
-            raise RuntimeError(_missing_engine_message(requested))
-        for path in _candidate_dirs(models_dir):
-            if detect_engine_for(path) == requested:
-                return AsrChoice(requested, path, None, f"{requested} model on disk")
-        return AsrChoice(
-            requested, None, DEFAULT_REPO[requested], f"{requested} requested; needs download"
-        )
-
-    preference = (
-        (ENGINE_MLX, ENGINE_TRANSFORMERS)
-        if is_apple_silicon()
-        else (ENGINE_TRANSFORMERS, ENGINE_MLX)
-    )
-    for engine in preference:
-        if not engine_available(engine):
-            continue
-        for path in _candidate_dirs(models_dir):
-            if detect_engine_for(path) == engine:
-                return AsrChoice(engine, path, None, f"{path.name} on disk")
-        return AsrChoice(engine, None, DEFAULT_REPO[engine], f"platform default ({engine})")
-    # Name the engine this machine ought to use, so the error that follows
-    # points at the right package.
-    return AsrChoice(
-        preference[0], None, DEFAULT_REPO[preference[0]], "no engine installed"
-    )
-
-
-def _missing_engine_message(engine: str) -> str:
-    if engine == ENGINE_MLX:
-        if not is_apple_silicon():
-            return (
-                "The mlx transcription engine runs on Apple Silicon only. "
-                "Use the transformers engine on this machine."
-            )
-        return (
-            "The mlx transcription engine needs mlx-qwen3-asr: "
-            "pip install 'mlx-qwen3-asr>=0.4'"
-        )
-    return (
-        "The transformers transcription engine needs the multimedia extras: "
-        "pip install -r backend/requirements-multimodal.txt"
-    )
 
 
 @dataclass
@@ -234,7 +51,6 @@ class Word:
 @dataclass
 class Transcript:
     text: str
-    #: Empty unless a forced aligner ran.
     words: list[Word]
 
 
@@ -245,113 +61,95 @@ class Turn:
     speaker: str
 
 
-# A recording is transcribed in segments this long, cut at pauses. The MLX
-# library takes a whole file in one call, and the memory it holds on the GPU
-# grows with the audio: a 188-minute lecture filled 24 GB and 36 GB of swap,
-# and took several times longer than its length warranted. Bounded segments
-# keep memory flat however long the recording is.
-MLX_SEGMENT_SECONDS = 600.0
+# ── Phonon-2 ─────────────────────────────────────────────────────────────────
 
 
-def transcribe_with_mlx(
-    model_path: Path,
-    audio,
-    *,
-    language: str | None,
-    aligner_path: Path | None = None,
-    sample_rate: int = 16000,
-) -> Transcript:
-    """Transcribe mono float32 ``audio`` on the Apple GPU, segment by segment.
+def fermion_cache_dir(models_dir: Path) -> Path:
+    return models_dir / "fermion"
 
-    ``language=None`` lets the model detect it. With ``aligner_path`` the
-    library also emits one timed entry per word; the aligner strips
-    punctuation, which ``restore_punctuation`` puts back per segment. Word
-    times are shifted by each segment's offset, so they index the whole
-    recording. The library caches loaded models by path, so segments after the
-    first reuse the weights; the cache is cleared at the end, because it would
-    otherwise hold the speech model through diarization and the summary.
-    """
-    import mlx_qwen3_asr  # type: ignore
 
-    extra = {}
-    if aligner_path is not None:
-        extra = {"return_timestamps": True, "forced_aligner": str(aligner_path)}
-    segments = split_audio_into_chunks(audio, sample_rate, MLX_SEGMENT_SECONDS)
-    logger.info(
-        "Transcribing with Qwen3-ASR via MLX (%s): %.0f min in %d segment(s)",
-        model_path.name, len(audio) / sample_rate / 60, len(segments),
-    )
-    texts: list[str] = []
-    words: list[Word] = []
+def _point_fermion_at(models_dir: Path) -> None:
+    """Keep fermion's downloads with Orb's other models (its default is ~/.cache)."""
+    os.environ["FERMION_CACHE_DIR"] = str(fermion_cache_dir(models_dir))
+
+
+def _phonon_profile():
+    """``(repo, key, pin)`` for Phonon-2 as fermion publishes it."""
+    from fermion.transcribe import _resolve  # pinned fermion-research version
+
+    repo, key, pin, _local = _resolve(PHONON_MODEL)
+    return repo, key, pin
+
+
+def phonon_dir(models_dir: Path) -> Path:
+    """Where the unpacked Phonon-2 profile lives (it may not exist yet)."""
+    from fermion._speech import fetch
+
+    _point_fermion_at(models_dir)
+    repo, _key, pin = _phonon_profile()
+    return fetch.profile_dir(repo, pin["unpack_dir"])
+
+
+def is_phonon_ready(models_dir: Path) -> bool:
+    """Downloaded and unpacked. Never touches the network."""
     try:
-        for index, (chunk, offset) in enumerate(segments, start=1):
-            result = mlx_qwen3_asr.transcribe(
-                (chunk, sample_rate),
-                model=str(model_path),
-                language=language_name(language),
-                verbose=False,
-                **extra,
-            )
-            text = (getattr(result, "text", "") or "").strip()
-            part = [
-                Word(
-                    str(e.get("text") or "").strip(),
-                    float(e.get("start") or 0.0) + offset,
-                    float(e.get("end") or 0.0) + offset,
-                )
-                for e in (_as_dict(x) for x in (getattr(result, "segments", None) or []))
-                if str(e.get("text") or "").strip()
-            ]
-            restore_punctuation(part, text.split())
-            if text:
-                texts.append(text)
-            words += part
-            _clear_mlx_cache()
-            if len(segments) > 1:
-                logger.info("Transcribed segment %d/%d", index, len(segments))
-        return Transcript(" ".join(texts), words)
-    finally:
-        try:
-            from mlx_qwen3_asr.load_models import _ModelHolder  # type: ignore
-
-            _ModelHolder.clear()
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        _clear_mlx_cache()
-
-
-def _clear_mlx_cache() -> None:
-    """Give Metal back the buffers the last call used."""
-    try:
-        import mlx.core as mx  # type: ignore
-
-        mx.clear_cache()
+        d = phonon_dir(models_dir)
     except Exception:  # pylint: disable=broad-exception-caught
-        pass
+        return False  # fermion-research not installed
+    return (d / "config.json").is_file() and (d / "model.fermion").is_file()
 
 
-def _bare(token: str) -> str:
-    return "".join(ch for ch in token.lower() if ch.isalnum())
+def _unwrap(call, what: str):
+    """fermion raises SystemExit for bad input, a CLI convention; in the
+    backend that would pass ``except Exception`` and end the worker."""
+    try:
+        return call()
+    except SystemExit as exc:
+        raise RuntimeError(f"{what}: {exc}") from None
 
 
-def restore_punctuation(words: list[Word], tokens: list[str]) -> None:
-    """Give each aligned word the punctuated token it came from.
+def download_phonon(models_dir: Path) -> Path:
+    """Fetch and unpack Phonon-2 (164 MB) into MODELS_DIR/fermion; idempotent."""
+    from fermion._speech import fetch
 
-    The aligner strips punctuation; the text keeps it. The two sequences are
-    nearly identical but not always the same length: over an 86-minute lecture
-    the aligner returned 14 more words than the text had tokens, and an
-    all-or-nothing length check then dropped every full stop in the recording
-    — the note, and entity extraction after it, got one unbroken run of words.
-    Matching runs keeps the punctuation everywhere the two agree.
+    _point_fermion_at(models_dir)
+    repo, key, pin = _phonon_profile()
+    return _unwrap(lambda: fetch.ensure(repo, key, pin, quiet=True), "Phonon-2 download")
+
+
+def load_phonon(models_dir: Path):
+    """Load Phonon-2 on this machine's engine (MLX on Apple Silicon, CPU elsewhere)."""
+    if not is_phonon_ready(models_dir):
+        raise RuntimeError(
+            "Phonon-2 is not downloaded. Download the media models on the Models page."
+        )
+    import fermion
+
+    _point_fermion_at(models_dir)
+    return _unwrap(lambda: fermion.load_speech(PHONON_MODEL), "Phonon-2 load")
+
+
+def transcribe_with_phonon(speech, wav_path: str) -> Transcript:
+    """Punctuated text and word timings for a 16 kHz mono WAV.
+
+    ``truncated`` means a segment ran out of token budget and speech is
+    missing: a failure, never a short transcript passed off as complete.
     """
-    from difflib import SequenceMatcher
+    result = _unwrap(lambda: speech.transcribe_detailed(wav_path), "Phonon-2")
+    if result.truncated:
+        raise RuntimeError(
+            "Phonon-2 stopped short on part of this recording (truncated), so the "
+            "transcript would be missing speech"
+        )
+    words = [
+        Word(str(w["text"]), float(w["start"]), float(w["end"]))
+        for w in (result.words or [])
+        if result.timed
+    ]
+    return Transcript((result.text or "").strip(), words)
 
-    matcher = SequenceMatcher(
-        None, [_bare(w.word) for w in words], [_bare(t) for t in tokens], autojunk=False
-    )
-    for block in matcher.get_matching_blocks():
-        for offset in range(block.size):
-            words[block.a + offset].word = tokens[block.b + offset]
+
+# ── Speaker labels and transcript lines ──────────────────────────────────────
 
 
 def _as_dict(obj) -> dict:
@@ -502,57 +300,3 @@ def untimed(text: str) -> str:
             out.append(line)
             who_before = who if sep and who.startswith("Speaker ") else None
     return "\n\n".join(o for o in out if o.strip())
-
-
-def split_audio_into_chunks(audio, sr: int, max_chunk_sec: float = MAX_CHUNK_SECONDS):
-    """``(chunk, offset_seconds)`` pieces no longer than ``max_chunk_sec``.
-
-    Long audio is bisected at the lowest-energy half-second window in the
-    middle 60%, recursively, so cuts land in pauses rather than mid-word.
-    Ported from mlx_qwen3_asr.chunking so the transformers engine chunks the
-    same way.
-    """
-    import numpy as np
-
-    if len(audio) / sr <= max_chunk_sec:
-        return [(audio, 0.0)]
-    n = len(audio)
-    window = max(1, int(0.5 * sr))
-    best, best_rms = n // 2, float("inf")
-    for pos in range(int(n * 0.2), int(n * 0.8) - window, window // 2 or 1):
-        rms = float(np.sqrt(np.mean(audio[pos : pos + window] ** 2)))
-        if rms < best_rms:
-            best, best_rms = pos + window // 2, rms
-    if best <= 0 or best >= n:
-        best = max(1, n // 2)
-    left = split_audio_into_chunks(audio[:best], sr, max_chunk_sec)
-    right = split_audio_into_chunks(audio[best:], sr, max_chunk_sec)
-    return left + [(chunk, offset + best / sr) for chunk, offset in right]
-
-
-def align_with_transformers(processor, model, audio, sr: int, text: str, offset: float = 0.0) -> list[Word]:
-    """Word timings for ``text`` over ``audio`` from the transformers aligner.
-
-    The processor's word list drops punctuation; ``restore_punctuation`` puts
-    the text's spelling back wherever the two agree, as on the MLX path.
-    """
-    import torch
-
-    inputs, word_lists = processor.prepare_forced_aligner_inputs(
-        audio=audio, transcript=text, sampling_rate=sr
-    )
-    inputs = inputs.to(model.device, model.dtype)
-    with torch.inference_mode():
-        logits = model(**inputs).logits
-    items = processor.decode_forced_alignment(
-        logits=logits,
-        input_ids=inputs["input_ids"],
-        word_lists=word_lists,
-        timestamp_token_id=model.config.timestamp_token_id,
-    )[0]
-    words = [
-        Word(i["text"], float(i["start_time"]) + offset, float(i["end_time"]) + offset)
-        for i in items
-    ]
-    restore_punctuation(words, text.split())
-    return words

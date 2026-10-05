@@ -338,7 +338,7 @@ Re-configuration page for the bootstrap paths plus per-workspace maintenance. Th
 ## 9. Cross-page gotchas
 
 - Native `window.confirm`/`alert` are used for destructive confirmations on `/chat` and `/kb`; Storage (`/setup`) uses two-click confirmation for "Reset indexes" instead. Keep one style per page.
-- The only static model text left is the sidebar activity popover's "Chat · Qwen3-ASR · Vision via chat model" line; pages read the live configuration from `GET /models` / `GET /setup/status`.
+- The only static model text left is the sidebar activity popover's "Chat · Phonon-2 · Vision via chat model" line; pages read the live configuration from `GET /models` / `GET /setup/status`.
 - `localStorage`/`sessionStorage` keys touched by these pages: `orb_current_kb` (KB), `orb:notes-graph-controls:<kb>` (2D controls; 3D reads `textFade`), `orb:last-note-id:<kb>` (sessionStorage; written by notes-graph "Open in Notes" and the command palette, read by the editor), `orb.endpointNames` (Models page endpoint labels).
 - There are no server components; every route is a lazy client chunk behind `App.tsx`.
 

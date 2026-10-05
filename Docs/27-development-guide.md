@@ -14,7 +14,7 @@
 | Node.js 20+ | Building the Vite UI only (nothing Node ships) | `frontend/package.json` |
 | Python 3.11+ (packaged builds ship 3.12.9) | FastAPI backend + desktop runtime | Create `backend/.venv`; debug shell builds use it automatically (or set `ORB_PYTHON`) |
 | `cmake` + Xcode CLT (macOS) / build-essential (Linux) | building `llama-cpp-python` with Metal / CUDA / CPU backends | Only needed when installing or packaging llama-cpp-python |
-| `ffmpeg` | audio transcoding for Qwen3-ASR and media probing | Homebrew paths are prepended to `PATH` by the shell (`runtime.rs tool_path()`) so Finder launches find it |
+| `ffmpeg` | audio transcoding and decoding for transcription, and media probing | Homebrew paths are prepended to `PATH` by the shell (`runtime.rs tool_path()`) so Finder launches find it |
 | ~10–20 GB disk | GGUF + HF model downloads, Qdrant/Meili binaries, portable PHP | Models can live on a NAS via the setup page's models dir |
 
 No Docker, Ollama, LM Studio or database server is required. Qdrant, Meilisearch and PHP/Firefly are downloaded by `desktop_runtime.py` into `DATA_DIR` on first run. Keep `DATA_DIR` on local disk — never iCloud Drive/OneDrive/Dropbox/Google Drive (the runtime warns); only the vault may be synced.

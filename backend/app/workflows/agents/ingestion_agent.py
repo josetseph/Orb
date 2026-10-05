@@ -42,7 +42,7 @@ def _require_workflow(state: "IngestionState"):
     return wf
 
 # Heavy local model multimedia extraction is serialized by default so the
-# vision model, Qwen3-ASR, and Marlin do not compete for the same CPU/RAM budget.
+# vision model, Phonon-2, and Marlin do not compete for the same CPU/RAM budget.
 multimedia_concurrency_limit = asyncio.Semaphore(settings.MULTIMEDIA_CONCURRENCY)
 
 # Blocks appended by multimodal_node — strip before re-processing so re-ingest
@@ -1131,10 +1131,10 @@ async def multimodal_node(
         await _run_phase("Extracting spreadsheets", None, spreadsheets, "spreadsheet")
 
         # Phase 2: finish all transcription, then release the speech model.
-        await _run_phase("Transcribing audio", "Qwen3-ASR", audio_files, "audio")
-        await _run_phase("Transcribing video audio", "Qwen3-ASR", videos, "video_audio")
+        await _run_phase("Transcribing audio", "Phonon-2", audio_files, "audio")
+        await _run_phase("Transcribing video audio", "Phonon-2", videos, "video_audio")
         if audio_files or videos:
-            await _set_status("Unloading speech model", "Qwen3-ASR")
+            await _set_status("Unloading speech model", "Phonon-2")
             await asyncio.to_thread(multimedia_service.unload_local_models, "asr")
 
         # Phase 3: run Marlin only after the speech model is released.

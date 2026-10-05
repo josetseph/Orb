@@ -1,4 +1,4 @@
-"""Download Qwen3-ASR and Marlin into MODELS_DIR for local multimedia."""
+"""Download the media models into MODELS_DIR: Phonon-2, the speaker diarizer, Marlin."""
 
 from __future__ import annotations
 
@@ -16,39 +16,10 @@ from app.services import asr_engine
 logger = get_logger("MultimodalModels")
 
 
-def _asr_repo_and_dir() -> tuple[str, str]:
-    """Qwen3-ASR's repo depends on the engine this machine will actually use.
-
-    An explicit MODEL_ASR_HF still wins, so a pinned deployment is unaffected;
-    otherwise the platform default is chosen (MLX layout on Apple Silicon, the
-    ``-hf`` conversion elsewhere).
-    """
-    configured_repo = (settings.MODEL_ASR_HF or "").strip()
-    configured_dir = (settings.MODEL_ASR_LOCAL or "").strip()
-    if configured_repo and configured_dir:
-        return configured_repo, configured_dir
-
-    choice = asr_engine.choose(resolve_models_dir(), preferred_engine=settings.ASR_ENGINE)
-    if choice.model_path is not None:
-        return (
-            configured_repo or asr_engine.DEFAULT_REPO[choice.engine],
-            choice.model_path.name,
-        )
-    engine = choice.engine
-    return (
-        configured_repo or asr_engine.DEFAULT_REPO[engine],
-        configured_dir or asr_engine.DEFAULT_LOCAL_DIR[engine],
-    )
-
-
 def _hf_repo_and_dir(kind: str) -> tuple[str, str]:
-    if kind == "asr":
-        return _asr_repo_and_dir()
+    """HuggingFace snapshots only; Phonon-2 is fetched by fermion (asr_engine)."""
     if kind == "marlin":
         return settings.MODEL_MARLIN_HF, settings.MODEL_MARLIN_LOCAL
-    if kind == "aligner":
-        engine = asr_engine.choose(resolve_models_dir(), preferred_engine=settings.ASR_ENGINE).engine
-        return asr_engine.ALIGNER_REPO[engine], asr_engine.ALIGNER_DIR[engine]
     if kind == "diarizer":
         return asr_engine.DIARIZER_REPO, asr_engine.DIARIZER_DIR
     raise ValueError(f"Unknown multimodal model kind: {kind}")
@@ -127,7 +98,7 @@ def ensure_hf_snapshot(
         from huggingface_hub import snapshot_download
     except ImportError as exc:
         raise RuntimeError(
-            "huggingface_hub is required to download Qwen3-ASR/Marlin. "
+            "huggingface_hub is required to download the diarizer and Marlin. "
             "Install with: pip install huggingface_hub"
         ) from exc
 
@@ -187,23 +158,32 @@ def ensure_multimodal_models(
     on_progress=None,
 ) -> dict[str, Path]:
     """
-    Ensure Qwen3-ASR (+ Marlin) live under MODELS_DIR.
+    Ensure Phonon-2, the speaker diarizer (+ Marlin) live under MODELS_DIR.
 
     Marlin defaults to the ungated mirror ``lunahr/Marlin-2B-ungated``
     (override with MODEL_MARLIN_HF). No HF token required for that repo.
     """
     out: dict[str, Path] = {}
-    repo, _ = _hf_repo_and_dir("asr")
-    dest = multimodal_model_path("asr")
-    out["asr"] = ensure_hf_snapshot(repo, dest, on_progress=on_progress, label="asr")
+    # Phonon-2 (164 MB): fermion verifies and unpacks its own container. It is
+    # one of the on-demand media packages, so they go in first when missing.
+    from app.services.multimodal_services import ensure_multimodal_python_deps
 
-    # Speaker labels: the 30 MB pyannote pipeline plus Qwen's forced aligner
-    # (word timings) in this engine's layout.
-    for kind in ("diarizer", "aligner"):
-        repo, _ = _hf_repo_and_dir(kind)
-        out[kind] = ensure_hf_snapshot(
-            repo, multimodal_model_path(kind), on_progress=on_progress, label=kind
-        )
+    deps = ensure_multimodal_python_deps(install=True)
+    if not deps.get("ok"):
+        raise RuntimeError(f"Could not install the media packages: {deps.get('error')}")
+    if on_progress:
+        on_progress("asr", 0)
+    out["asr"] = asr_engine.download_phonon(resolve_models_dir())
+    if on_progress:
+        on_progress("asr", 100)
+
+    # Speaker labels: the 30 MB pyannote pipeline over Phonon's word timings.
+    out["diarizer"] = ensure_hf_snapshot(
+        asr_engine.DIARIZER_REPO,
+        multimodal_model_path("diarizer"),
+        on_progress=on_progress,
+        label="diarizer",
+    )
 
     if include_marlin:
         repo, _ = _hf_repo_and_dir("marlin")

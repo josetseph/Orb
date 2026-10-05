@@ -1,5 +1,7 @@
 # Plan: better transcripts and lecture notes from audio attachments
 
+> **Superseded in part (2026-10).** Transcription has since moved from Qwen3-ASR to Phonon-2 (via `fermion-research`; see `Docs/11-multimedia-enrichment.md` §5.3 and `Docs/26-decisions-and-constraints.md` B9). Phonon returns punctuated word timings itself, so the forced-aligner and punctuation-restore (`restore_punctuation`) parts of this plan no longer apply. Speaker labels, timed lines and notes blocks still work as described. The rest is kept as history.
+
 For a coding agent picking up work on Orb. Written 2026-09-21 against Orb main at `3bd480f`.
 **Phase 1 (§3) is implemented** (`10edef8`) — `restore_punctuation` and GPU diarization in `asr_engine.py`, tests in `test_asr_engine.py`. **Phase 2 (§4) is implemented** (`ba995da`), in a larger form than §4 first proposed: the owner answered §5, and the large-attachment prompt this plan was written around was removed in the same commit. §4.1 says what was built; §2 and the body of §4 are kept as the record of the starting point. Every claim about Orb names the file it lives in; verify before
 changing behaviour. Read `Docs/HANDOFF-local-llm-and-context.md` and

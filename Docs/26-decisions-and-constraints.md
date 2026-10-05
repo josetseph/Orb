@@ -49,7 +49,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B2. Exclusive residency: one heavy model at a time
 - Rejected: keeping chat + embed + rerank resident; separate processes per model.
-- Rationale: consumer machines (24 GB Metal was the reference) cannot hold Gemma 4 E4B (with its vision projector), Qwen3 embed/rerank and Qwen3-ASR/Marlin simultaneously.
+- Rationale: consumer machines (24 GB Metal was the reference) cannot hold Gemma 4 E4B (with its vision projector), Qwen3 embed/rerank and Phonon-2/Marlin simultaneously.
 - Enforced: residency manager in `local_models.py` (`_unload_peers_for_gguf`, `ensure_chat_loaded`, `ensure_embed_loaded`), `_unload_multimodal_families`, `multimodal_runtime` single-family policy; `ModelLoadClock` reports load time separately so swaps are visible in stage timings.
 
 ### B3. Chat GGUF defaults: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`, flash-attention opt-in, no fixed output cap
@@ -74,8 +74,13 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B8. Multimodal stack is one shared torch + transformers ≥ 5.7 install
 - Rejected: a second transformers major just for Marlin; separate venvs per model.
-- Rationale: Marlin (Qwen3.5 backbone) requires ≥ 5.7; Qwen3-ASR's transformers engine runs on the same stack, and its MLX engine on Apple Silicon is one extra marker-gated wheel (`mlx-qwen3-asr`), not a second stack.
+- Rationale: Marlin (Qwen3.5 backbone) requires ≥ 5.7; Phonon-2's `fermion-research` CPU engine uses the same torch, and its MLX engine on Apple Silicon is a few marker-gated wheels (`mlx`, `mlx-audio`, `mlx-lm`), not a second stack.
 - Enforced: `requirements-multimodal.txt`, `multimodal_services._MULTIMODAL_PIP`, compatibility patches in `multimodal_runtime.py`.
+
+### B9. Transcription is English-only Phonon-2, replacing Qwen3-ASR (2026-10)
+- Rejected: Qwen3-ASR 1.7B (MLX `mlx-qwen3-asr` and transformers `Qwen/Qwen3-ASR-1.7B-hf` engines) with the Qwen3 forced aligner and a punctuation-restore pass; a user-facing engine or language setting.
+- Rationale: measured on an Apple M3 24 GB with a far-field lecture, word agreement against a commercial transcript: 10-minute slice 79.3 % vs 81.3 % (run-to-run noise ~3 points), full 88 minutes 73.7 % vs 75.5 %; 88 minutes with word timings in 181 s vs about 17 minutes; download 164 MB vs 4.7 GB + a 1.8 GB aligner. On a user's 41-minute lecture the MLX path took 34 s (73× realtime), 4,157 punctuated timed words, not truncated. Phonon produced no repetition loops or other-language text, and its decoder returns punctuated word timings, so the aligner and punctuation repair go. The cost is about two points of agreement and English only.
+- Enforced: `asr_engine.py` (Phonon layer; `truncated` is a failure), `fermion-research==0.2.9` pinned in `requirements-multimodal.txt` / `_MULTIMODAL_PIP`; `MODEL_ASR_HF`, `MODEL_ASR_LOCAL`, `ASR_ENGINE`, `ASR_LANGUAGE` removed. Attribution (weights CC BY 4.0, fermion Apache 2.0) in `THIRD_PARTY_NOTICES.md` and on the Models page's Transcription row.
 
 ---
 

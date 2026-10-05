@@ -589,7 +589,7 @@ Displayed state (`buildStatus`) — first match wins:
 | `digest` (pulsing) | Building digests | `temporal_digests.running` | |
 | `idle` | Ready | otherwise | "No ingestion or community jobs running." |
 
-The row shows the dot, label and meta; clicking opens a popover with the detail text, a "Restart backend" button in the error tone (desktop only — `bridge.restartBackend`), and a static line of what runs locally (Chat · Qwen3-ASR · Vision via chat model · the current KB slug).
+The row shows the dot, label and meta; clicking opens a popover with the detail text, a "Restart backend" button in the error tone (desktop only — `bridge.restartBackend`), and a static line of what runs locally (Chat · Phonon-2 · Vision via chat model · the current KB slug).
 
 The Storage page (`/setup`) runs a second, independent poller on the same endpoint (3 s while its own rebuild runs / 15 s idle) to drive its Rebuild button state; it does not share state with the indicator.
 

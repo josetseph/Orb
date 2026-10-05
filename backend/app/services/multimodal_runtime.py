@@ -1,4 +1,4 @@
-"""In-process Qwen3-ASR and Marlin — no HTTP model sidecars.
+"""In-process Phonon-2 (speech) and Marlin (video) — no HTTP model sidecars.
 
 Loaded lazily into the API process from MODELS_DIR snapshots. Only one heavy
 family is kept resident at a time to bound memory (same idea as the old
@@ -16,6 +16,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.log import get_logger
+from app.core.paths import resolve_models_dir
 from app.services.multimodal_models import is_hf_snapshot_ready, multimodal_model_path
 
 logger = get_logger("MultimodalRuntime")
@@ -28,17 +29,20 @@ os.environ.setdefault("FPS_MAX_FRAMES", "240")
 os.environ.setdefault("FPS_MIN_FRAMES", "4")
 
 
+def asr_engine_ready() -> bool:
+    from app.services import asr_engine
+
+    return asr_engine.is_phonon_ready(resolve_models_dir())
+
+
 class MultimodalRuntime:
-    """Lazy Qwen3-ASR / Marlin loaded inside the API process."""
+    """Lazy Phonon-2 / Marlin loaded inside the API process."""
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._device: str | None = None
-        self._asr_model = None
-        self._asr_processor = None
-        self._asr_path: Path | None = None
-        self._aligner_model = None
-        self._aligner_processor = None
+        #: Phonon-2, held for a batch of recordings; ingestion unloads it after.
+        self._phonon = None
         self._marlin_model = None
 
     @property
@@ -54,23 +58,19 @@ class MultimodalRuntime:
             "mode": "in_process",
             "device": self.device,
             "models_ready": {
-                "asr": is_hf_snapshot_ready(multimodal_model_path("asr")),
+                "asr": asr_engine_ready(),
                 "marlin": is_hf_snapshot_ready(multimodal_model_path("marlin")),
             },
             "loaded": {
-                "asr": self._asr_model is not None,
+                "asr": self._phonon is not None,
                 "marlin": self._marlin_model is not None,
             },
         }
 
     def _unload_except(self, keep: str) -> None:
         changed = False
-        if keep != "asr" and self._asr_model is not None:
-            self._asr_model = None
-            self._asr_processor = None
-            self._asr_path = None
-            self._aligner_model = None
-            self._aligner_processor = None
+        if keep != "asr" and self._phonon is not None:
+            self._phonon = None
             changed = True
         if keep != "marlin" and self._marlin_model is not None:
             self._marlin_model = None
@@ -113,60 +113,31 @@ class MultimodalRuntime:
             if family is None:
                 self._unload_except("")
             elif family == "asr":
-                self._asr_model = None
-                self._asr_processor = None
-                self._asr_path = None
-                gc.collect()
+                self._unload_except("marlin")
             elif family == "marlin":
                 self._marlin_model = None
                 gc.collect()
             logger.info("Unloaded multimodal family: %s", family or "all")
             return self.status()
 
-    # ---- Transcription (Qwen3-ASR) ----------------------------------------
+    # ---- Transcription (Phonon-2) -----------------------------------------
 
-    def _load_asr(self, model_path: Path) -> None:
-        if self._asr_model is not None and self._asr_path == model_path:
-            return
-        from transformers import AutoModelForMultimodalLM, AutoProcessor
+    def _load_phonon(self):
+        """Phonon-2 on MLX (Apple Silicon) or fermion's CPU engine (elsewhere).
 
-        self._unload_ggufs()
+        ~1 GB, ~14 s to load: kept for the rest of a batch, then unloaded by
+        ingestion like the other media models.
+        """
+        if self._phonon is not None:
+            return self._phonon
+        from app.services import asr_engine
+
         self._unload_except("asr")
-        logger.info("Loading Qwen3-ASR from %s on %s", model_path, self.device)
+        logger.info("Loading Phonon-2")
         started = time.perf_counter()
-        import torch
-
-        dtype = torch.float32 if self.device == "cpu" else torch.float16
-        self._asr_model = (
-            AutoModelForMultimodalLM.from_pretrained(
-                str(model_path), dtype=dtype, low_cpu_mem_usage=True
-            )
-            .to(self.device)
-            .eval()
-        )
-        self._asr_processor = AutoProcessor.from_pretrained(str(model_path))
-        self._asr_path = model_path
+        self._phonon = asr_engine.load_phonon(resolve_models_dir())
         self._record_load("asr", started)
-        logger.info("Qwen3-ASR loaded")
-
-    def _load_aligner(self, model_path: Path) -> None:
-        """The forced aligner rides along with the ASR model (same layout, same device)."""
-        if self._aligner_model is not None:
-            return
-        from transformers import AutoProcessor
-        from transformers.models.qwen3_asr import Qwen3ASRForTokenClassification
-
-        logger.info("Loading Qwen3 forced aligner from %s", model_path)
-        started = time.perf_counter()
-        self._aligner_model = (
-            Qwen3ASRForTokenClassification.from_pretrained(
-                str(model_path), dtype=self._asr_model.dtype, low_cpu_mem_usage=True
-            )
-            .to(self.device)
-            .eval()
-        )
-        self._aligner_processor = AutoProcessor.from_pretrained(str(model_path))
-        self._record_load("aligner", started)
+        return self._phonon
 
     def _resolve_ffmpeg_bins(self) -> tuple[str | None, str | None]:
         """Locate system ``ffmpeg`` / ``ffprobe`` (PATH + common install dirs).
@@ -279,43 +250,29 @@ class MultimodalRuntime:
         return self._load_audio_mono_16k_pyav(audio_path)
 
     def transcribe_audio_path(self, audio_path: str) -> str:
-        """Transcribe with Qwen3-ASR on the engine this machine has.
+        """Transcribe English speech with Phonon-2, labelling speakers when the
+        diarizer is downloaded.
 
-        Apple Silicon runs it on the GPU through MLX and never loads the torch
-        model, so no accelerator memory is taken from the chat model; every
-        other platform goes through transformers.
+        The audio is decoded once to mono 16 kHz: Phonon reads it from a WAV
+        (its word timings come only from a file path) and the diarizer takes
+        the samples.
         """
-        from app.core.config import settings
+        import tempfile
+
+        import soundfile as sf
+
         from app.services import asr_engine
 
-        choice = asr_engine.choose(
-            multimodal_model_path("asr").parent,
-            preferred_engine=settings.ASR_ENGINE,
-        )
-        if not choice.ready:
-            raise RuntimeError(
-                f"Qwen3-ASR is not downloaded ({choice.reason}). "
-                "Download the media models on the Models page."
-            )
-        if choice.engine != asr_engine.ENGINE_MLX:
-            return self._transcribe_with_transformers(choice.model_path, audio_path)
-
-        aligner = multimodal_model_path("aligner")
-        speakers = self._diarizer_ready() and is_hf_snapshot_ready(aligner)
-        if settings.ASR_SPEAKERS and not speakers:
-            logger.info("Speaker labels skipped: aligner/diarizer not downloaded")
-        with self._lock:
-            self._unload_except("")
         audio = self._load_audio_mono_16k(audio_path)
         if audio.size == 0:
             return ""
-        transcript = asr_engine.transcribe_with_mlx(
-            choice.model_path,
-            audio,
-            language=settings.ASR_LANGUAGE,
-            aligner_path=aligner if speakers else None,
-        )
-        if not speakers or not transcript.words:
+        with tempfile.TemporaryDirectory(prefix="orb-asr-") as tmp:
+            wav = str(Path(tmp) / "audio.wav")
+            sf.write(wav, audio, 16000, subtype="PCM_16")
+            with self._lock:
+                speech = self._load_phonon()
+                transcript = asr_engine.transcribe_with_phonon(speech, wav)
+        if not transcript.words:
             return transcript.text
         # Speaker labels are the optional half: with no turns the lines are
         # still timed, just unlabelled.
@@ -348,71 +305,6 @@ class MultimodalRuntime:
             return []
         logger.info("Speaker labels: %d speakers", len({t.speaker for t in turns}))
         return turns
-
-    def _transcribe_with_transformers(self, model_path: Path, audio_path: str) -> str:
-        from app.core.config import settings
-        from app.services.asr_engine import language_name
-
-        from app.services import asr_engine
-
-        aligner = multimodal_model_path("aligner")
-        speakers = self._diarizer_ready() and is_hf_snapshot_ready(aligner)
-        if settings.ASR_SPEAKERS and not speakers:
-            logger.info("Speaker labels skipped: aligner/diarizer not downloaded")
-        with self._lock:
-            self._load_asr(model_path)
-            assert self._asr_model is not None and self._asr_processor is not None
-            audio = self._load_audio_mono_16k(audio_path)
-            if audio.size == 0:
-                return ""
-            if not speakers:
-                return self._asr_generate(audio)
-            # Same recipe as the MLX library: transcribe and align 30 s
-            # chunks, then attribute the timed words to pyannote's turns.
-            self._load_aligner(aligner)
-            texts: list[str] = []
-            words: list[asr_engine.Word] = []
-            for chunk, offset in asr_engine.split_audio_into_chunks(audio, 16000):
-                text = self._asr_generate(chunk)
-                if not text:
-                    continue
-                texts.append(text)
-                words += asr_engine.align_with_transformers(
-                    self._aligner_processor, self._aligner_model, chunk, 16000, text, offset
-                )
-            transcript = asr_engine.Transcript(" ".join(texts), words)
-            # The diarizer now runs on the accelerator too. Give it the memory
-            # the speech model and aligner hold rather than keep three models
-            # resident; a note's next recording reloads them.
-            # ponytail: unmeasured on CUDA — drop this if a card is shown to fit all three.
-            if self.device != "cpu":
-                self._unload_except("")
-            turns = self._speaker_turns(audio)
-        return asr_engine.timed_lines(transcript, turns)
-
-    def _asr_generate(self, audio) -> str:
-        """Run the loaded transformers Qwen3-ASR over one mono 16 kHz clip."""
-        from app.core.config import settings
-        from app.services.asr_engine import language_name
-
-        import torch
-
-        request = {"audio": audio, "sampling_rate": 16000}
-        if language_name(settings.ASR_LANGUAGE):
-            request["language"] = language_name(settings.ASR_LANGUAGE)
-        inputs = self._asr_processor.apply_transcription_request(**request).to(
-            self._asr_model.device, self._asr_model.dtype
-        )
-        # No fixed cap: the bound scales with the recording so a long
-        # lecture is never cut mid-sentence (speech is ~3 tokens/s).
-        seconds = audio.size / 16000
-        with torch.no_grad():
-            output_ids = self._asr_model.generate(
-                **inputs, max_new_tokens=int(seconds * 8) + 256
-            )
-        generated = output_ids[:, inputs["input_ids"].shape[1] :]
-        text = self._asr_processor.decode(generated, return_format="transcription_only")[0]
-        return (text or "").strip()
 
     # ---- Marlin -----------------------------------------------------------
 

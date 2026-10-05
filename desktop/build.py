@@ -243,6 +243,8 @@ def dist(extra: list[str]) -> None:
     # The resource map lives here, not in tauri.conf.json: tauri-build would
     # otherwise copy these multi-GB trees into target/debug on every dev build.
     resources = {f"../resources/{name}": name for name in ("backend", "frontend", "firefly")}
+    # Licence attributions for the models Orb downloads (CC BY 4.0 asks for it).
+    resources["../../THIRD_PARTY_NOTICES.md"] = "THIRD_PARTY_NOTICES.md"
     # A file, not inline JSON: on Windows the npm shim goes through cmd.exe,
     # which mangles quoted arguments.
     config = HERE / "src-tauri" / "target" / "dist-bundle.json"

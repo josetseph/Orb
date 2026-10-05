@@ -1,4 +1,4 @@
-"""Multimodal runtime readiness (in-process Qwen3-ASR / Marlin).
+"""Multimodal runtime readiness (in-process Phonon-2 / Marlin).
 
 Legacy HTTP sidecars are retired. This module verifies weights on disk and
 optionally installs torch/transformers into the *current* API interpreter so
@@ -21,7 +21,7 @@ logger = get_logger("MultimodalServices")
 
 _MULTIMODAL_PIP = [
     "torch",
-    # Marlin requires transformers>=5.7 (Qwen3.5 backbone); Qwen3-ASR ships there too.
+    # Marlin requires transformers>=5.7 (Qwen3.5 backbone).
     "transformers>=5.7.0",
     "accelerate>=1.12.0",
     "einops>=0.8.1",
@@ -35,10 +35,12 @@ _MULTIMODAL_PIP = [
     # Speaker labels on transcripts (CPU, every platform).
     "pyannote.audio>=4.0",
 ]
+# Phonon-2 transcription; on Apple Silicon it decodes on the GPU through MLX,
+# elsewhere fermion's CPU engine needs nothing more. Same markers as
+# requirements-multimodal.txt.
+_MULTIMODAL_PIP += ["fermion-research==0.2.9", "soundfile", "scipy", "zstandard"]
 if sys.platform == "darwin" and platform.machine() == "arm64":
-    # Same marker as requirements-multimodal.txt: the Apple GPU path for
-    # transcription.
-    _MULTIMODAL_PIP += ["mlx-qwen3-asr>=0.4"]
+    _MULTIMODAL_PIP += ["mlx", "mlx-audio", "mlx-lm"]
 
 
 def _deps_importable() -> tuple[bool, str | None]:
@@ -59,13 +61,22 @@ def _deps_importable() -> tuple[bool, str | None]:
         import qwen_vl_utils  # noqa: F401
         import av  # noqa: F401
 
-        # Exercise the real model entrypoints Qwen3-ASR/Marlin need. A bare
+        # Exercise the real model entrypoints Marlin needs. A bare
         # ``import transformers`` can succeed while AutoModel* fails (e.g. when
         # numpy/_core/tests was stripped from the desktop bundle).
         from transformers import (  # noqa: F401
             AutoModelForCausalLM,
             AutoModelForMultimodalLM,
         )
+
+        # Phonon-2 (installs that predate it have everything else).
+        import fermion  # noqa: F401
+        import soundfile  # noqa: F401
+        import zstandard  # noqa: F401
+
+        if sys.platform == "darwin" and platform.machine() == "arm64":
+            import mlx_audio  # noqa: F401
+            import mlx_lm  # noqa: F401
 
         return True, None
     except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -127,17 +138,20 @@ def services_ready() -> dict:
 
 def ensure_multimodal_services(*, install_deps: bool = False) -> dict:
     """Prepare in-process multimodal runtime (no HTTP processes spawned)."""
-    asr = multimodal_model_path("asr")
+    from app.core.paths import resolve_models_dir
+    from app.services import asr_engine
+
+    asr = asr_engine.fermion_cache_dir(resolve_models_dir())
     marlin = multimodal_model_path("marlin")
     models = {
-        "asr": is_hf_snapshot_ready(asr),
+        "asr": asr_engine.is_phonon_ready(resolve_models_dir()),
         "marlin": is_hf_snapshot_ready(marlin),
     }
     if not models["asr"]:
         return {
             "started": False,
             "mode": "in_process",
-            "error": "Download Qwen3-ASR on the Models page first",
+            "error": "Download the speech model (Phonon-2) on the Models page first",
             "models": models,
             "paths": {"asr": str(asr), "marlin": str(marlin)},
         }
@@ -160,7 +174,7 @@ def ensure_multimodal_services(*, install_deps: bool = False) -> dict:
         "deps": deps,
         "services": services_ready(),
         "message": (
-            "Qwen3-ASR / Marlin load in-process on demand "
+            "Phonon-2 / Marlin load in-process on demand "
             "(no sidecar HTTP services)."
         ),
     }

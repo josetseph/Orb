@@ -230,7 +230,7 @@ class MultimediaService:
                 os.remove(local_path)
 
     def transcribe_audio(self, audio_path: str) -> str:
-        """Transcribe audio via in-process Qwen3-ASR (multimodal_runtime)."""
+        """Transcribe audio via in-process Phonon-2 (multimodal_runtime)."""
         local_path = self._download_temp_file(audio_path)
         try:
             logger.info(f"Transcribing audio: {local_path}")

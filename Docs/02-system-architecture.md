@@ -8,7 +8,7 @@
 
 ## 1. One-paragraph model
 
-Orb is a **local-first personal knowledge system** delivered as a Tauri desktop app. The shell spawns one child, `python -m app.desktop_runtime`, which starts the API at once and boots the three sidecars behind it; the shell loads the UI as soon as `/health` answers. Users write Markdown notes (plus images, audio, video, PDFs) into a **vault** on disk. Saving a note triggers an **ingestion pipeline** that enriches attachments with local vision/speech models, asks an LLM to extract entities and relationships, and writes the result into an embedded **Kuzu property graph**, a **Qdrant** vector store and a **Meilisearch** keyword index. **Chat** runs a multi-hop research loop across those three stores plus graph expansion and a cross-encoder reranker, then synthesises an answer with citations. All local models (chat with its vision projector, embedding, reranking, Qwen3-ASR, Marlin) run **inside the API process**, one heavy model resident at a time. Everything is partitioned by **knowledge base (KB)**: each KB owns its own vault, graph, collections, index and Firefly III finance administration. SQLite holds only metadata.
+Orb is a **local-first personal knowledge system** delivered as a Tauri desktop app. The shell spawns one child, `python -m app.desktop_runtime`, which starts the API at once and boots the three sidecars behind it; the shell loads the UI as soon as `/health` answers. Users write Markdown notes (plus images, audio, video, PDFs) into a **vault** on disk. Saving a note triggers an **ingestion pipeline** that enriches attachments with local vision/speech models, asks an LLM to extract entities and relationships, and writes the result into an embedded **Kuzu property graph**, a **Qdrant** vector store and a **Meilisearch** keyword index. **Chat** runs a multi-hop research loop across those three stores plus graph expansion and a cross-encoder reranker, then synthesises an answer with citations. All local models (chat with its vision projector, embedding, reranking, Phonon-2, Marlin) run **inside the API process**, one heavy model resident at a time. Everything is partitioned by **knowledge base (KB)**: each KB owns its own vault, graph, collections, index and Firefly III finance administration. SQLite holds only metadata.
 
 ---
 
@@ -55,7 +55,7 @@ Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `OR
 
 Boot order in `desktop_runtime.py`: free stale listeners on the port block → start uvicorn immediately → in a background thread, Qdrant + Meilisearch (download binaries first if missing) → Firefly install/migrate/boot → multimodal readiness check. Progress is written to `DATA_DIR/boot-status.json`, exposed by `/api/v1/admin/maintenance-status` and shown in the UI's status indicator; `QdrantService` / `MeilisearchService` reconnect on use once their sidecar is listening. Details: [04-desktop-shell.md](04-desktop-shell.md).
 
-There are **no model HTTP sidecars**. Qwen3-ASR, Marlin, chat (with its vision projector), embed and rerank all load in the uvicorn process. This is a locked decision ([26](26-decisions-and-constraints.md)).
+There are **no model HTTP sidecars**. Phonon-2, Marlin, chat (with its vision projector), embed and rerank all load in the uvicorn process. This is a locked decision ([26](26-decisions-and-constraints.md)).
 
 ---
 
@@ -146,7 +146,7 @@ sequenceDiagram
   API->>API: rebuild note_links for this note
   API-->>UI: note (processing_stage = "Queued for ingestion")
   API->>AG: BackgroundTask: run agent(note_id)
-  AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF / vision projector / Qwen3-ASR / Marlin → append enrichment blocks to the .md
+  AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF / vision projector / Phonon-2 / Marlin → append enrichment blocks to the .md
   AG->>LLM: extraction node — nodes + relationships (Extraction schema, provider JSON mode, json_repair on parse; relationship_type from the closed RELATIONSHIP_TYPES vocabulary)
   AG->>IW: storage node — resolve entities by exact normalised name (Qdrant node_cores → Kuzu fallback), merge, write; prior data is never deleted on re-ingest
   IW->>QD: upsert cores / relationships / isolated contexts (embeddings via in-process GGUF)
@@ -201,7 +201,7 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 | Embeddings | llama-cpp-python GGUF, `EMBEDDING_DIMENSIONS` = 1024 | Qwen3-Embedding-0.6B | `local_models.py` via `embedding.py` |
 | Reranker | llama-cpp-python GGUF cross-encoder (yes/no logits) | Qwen3-Reranker-0.6B | `local_models.py` via `reranker.py` |
 | Image description / OCR | the ingestion chat model: a local GGUF with its `mmproj-<model stem>-*.gguf` vision projector (llama.cpp mtmd, paired by name only), or the cloud provider | same as chat | `local_models.py` (`find_mmproj`, `ensure_mmproj`) / `llm.py` |
-| Speech-to-text | Qwen3-ASR 1.7B — `mlx-qwen3-asr` on Apple Silicon, transformers elsewhere; optional pyannote speaker labels | `qwen3-asr-1.7b` / `qwen3-asr-1.7b-hf` | `asr_engine.py` via `multimodal_runtime.py` |
+| Speech-to-text | Phonon-2 (English) — `fermion-research`, MLX on Apple Silicon, CPU elsewhere; optional pyannote speaker labels | `fermion/speech/FermionResearch__Phonon-2/` | `asr_engine.py` via `multimodal_runtime.py` |
 | Video understanding | transformers (Qwen3.5 backbone) Marlin-2B | `lunahr/Marlin-2B-ungated` | `multimodal_runtime.py` |
 | Cloud alternatives | OpenAI / Gemini / Anthropic / HuggingFace / any OpenAI-compatible `LLM_BASE_URL` | – | `llm.py` |
 

@@ -57,6 +57,8 @@ export interface ModelsPageState {
       installed: boolean;
       engine?: string | null;
       engine_note?: string | null;
+      /** Licence attribution the model requires wherever it is offered. */
+      credit?: string | null;
       /** Why it is not installed and how to get it; null once present. */
       hint?: string | null;
     }>;

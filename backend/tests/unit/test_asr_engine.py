@@ -1,149 +1,111 @@
-"""Unit tests for transcription engine selection.
+"""Unit tests for transcription: Phonon-2 through fermion, and speaker labels.
 
-Rules proven in local-transcription-service: an explicit engine is never
-substituted, the platform picks the layout, a model on disk in that layout is
-used, and only an *installed* engine is ever chosen automatically.
+fermion-research is an on-demand media package (not in CI), so it is stood in
+for with a fake module; the contract tested is the one Orb relies on.
 """
+
+import sys
+import types
 
 import pytest
 
 from app.services import asr_engine as ae
-from app.services.asr_engine import ENGINE_MLX, ENGINE_TRANSFORMERS
-
-CONFIG = '{"model_type": "qwen3_asr", "architectures": ["Qwen3ASRForConditionalGeneration"]}'
 
 
-def bundle(root, name):
-    d = root / name
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "config.json").write_text(CONFIG)
-    (d / "model.safetensors").write_bytes(b"\0" * 64)
-    return d
+class FakeResult:
+    def __init__(self, *, truncated=False, timed=True):
+        self.text = "Good morning. Let's begin."
+        self.words = [
+            {"text": "Good", "start": 0.0, "end": 0.3},
+            {"text": "morning.", "start": 0.3, "end": 0.6},
+            {"text": "Let's", "start": 1.0, "end": 1.2},
+            {"text": "begin.", "start": 1.2, "end": 1.6},
+        ]
+        self.timed = timed
+        self.truncated = truncated
 
 
-@pytest.fixture()
-def apple_all(monkeypatch):
-    monkeypatch.setattr(ae, "engine_available", lambda e: True)
-    monkeypatch.setattr(ae, "is_apple_silicon", lambda: True)
+class FakeSpeech:
+    def __init__(self, result=None, exit_message=None):
+        self.result, self.exit_message, self.paths = result, exit_message, []
+
+    def transcribe_detailed(self, path):
+        self.paths.append(path)
+        if self.exit_message:
+            raise SystemExit(self.exit_message)
+        return self.result
 
 
-@pytest.fixture()
-def linux_transformers(monkeypatch):
-    monkeypatch.setattr(ae, "engine_available", lambda e: e == ENGINE_TRANSFORMERS)
-    monkeypatch.setattr(ae, "is_apple_silicon", lambda: False)
+class TestPhonon:
+    def test_words_map_onto_orbs_transcript(self):
+        t = ae.transcribe_with_phonon(FakeSpeech(FakeResult()), "a.wav")
+        assert t.text == "Good morning. Let's begin."
+        assert [(w.word, w.start, w.end) for w in t.words][:2] == [("Good", 0.0, 0.3), ("morning.", 0.3, 0.6)]
+        # Punctuated words straight from the decoder feed the line builder.
+        assert ae.timed_lines(t, []).startswith("[00:00] Good morning.")
 
+    def test_a_truncated_result_is_a_failure_not_a_short_transcript(self):
+        with pytest.raises(RuntimeError, match="truncated"):
+            ae.transcribe_with_phonon(FakeSpeech(FakeResult(truncated=True)), "a.wav")
 
-class TestDefaults:
-    def test_both_layouts_are_qwen3_asr(self):
-        assert ae.DEFAULT_REPO[ENGINE_MLX] == "Qwen/Qwen3-ASR-1.7B"
-        assert ae.DEFAULT_REPO[ENGINE_TRANSFORMERS] == "Qwen/Qwen3-ASR-1.7B-hf"
-        assert ae.DEFAULT_LOCAL_DIR[ENGINE_MLX] == "qwen3-asr-1.7b"
-        assert ae.DEFAULT_LOCAL_DIR[ENGINE_TRANSFORMERS] == "qwen3-asr-1.7b-hf"
+    def test_untimed_result_keeps_the_text_without_words(self):
+        t = ae.transcribe_with_phonon(FakeSpeech(FakeResult(timed=False)), "a.wav")
+        assert t.words == [] and t.text
 
-    def test_language_names(self):
-        assert ae.language_name("en") == "English"
-        assert ae.language_name("xx") == "xx"
-        assert ae.language_name(None) is None
+    def test_fermions_system_exit_becomes_a_runtime_error(self):
+        # SystemExit would sail past `except Exception` and end the worker.
+        with pytest.raises(RuntimeError, match="no such file"):
+            ae.transcribe_with_phonon(FakeSpeech(exit_message="a.wav: no such file"), "a.wav")
 
+    def test_load_refuses_without_downloading_when_missing(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ae, "is_phonon_ready", lambda models_dir: False)
+        called = {}
+        fake = types.ModuleType("fermion")
+        fake.load_speech = lambda *a, **k: called.setdefault("load", True)
+        monkeypatch.setitem(sys.modules, "fermion", fake)
+        with pytest.raises(RuntimeError, match="Models page"):
+            ae.load_phonon(tmp_path)
+        assert called == {}
 
-class TestFormatDetection:
-    def test_original_layout_is_mlx(self, tmp_path):
-        assert ae.detect_engine_for(bundle(tmp_path, "qwen3-asr-1.7b")) == ENGINE_MLX
+    def test_load_points_fermion_at_orbs_models_folder(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ae, "is_phonon_ready", lambda models_dir: True)
+        fake = types.ModuleType("fermion")
+        fake.load_speech = lambda model, **k: ("speech", model)
+        monkeypatch.setitem(sys.modules, "fermion", fake)
+        monkeypatch.delenv("FERMION_CACHE_DIR", raising=False)
+        assert ae.load_phonon(tmp_path) == ("speech", "phonon-2")
+        import os
 
-    def test_hf_layout_is_transformers(self, tmp_path):
-        assert ae.detect_engine_for(bundle(tmp_path, "qwen3-asr-1.7b-hf")) == ENGINE_TRANSFORMERS
+        assert os.environ["FERMION_CACHE_DIR"] == str(tmp_path / "fermion")
 
-    def test_unrelated_folder_is_neither(self, tmp_path):
-        (tmp_path / "empty").mkdir()
-        assert ae.detect_engine_for(tmp_path / "empty") is None
+    def test_load_system_exit_becomes_a_runtime_error(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(ae, "is_phonon_ready", lambda models_dir: True)
+        fake = types.ModuleType("fermion")
 
-    def test_whisper_folder_is_not_a_transcriber(self, tmp_path):
-        d = tmp_path / "whisper-large-v3"
+        def refuse(model, **k):
+            raise SystemExit("speech is unavailable: no engine")
+
+        fake.load_speech = refuse
+        monkeypatch.setitem(sys.modules, "fermion", fake)
+        with pytest.raises(RuntimeError, match="no engine"):
+            ae.load_phonon(tmp_path)
+
+    def test_ready_needs_both_model_files(self, monkeypatch, tmp_path):
+        d = tmp_path / "profile"
         d.mkdir()
-        (d / "config.json").write_text('{"model_type": "whisper"}')
-        (d / "model.safetensors").write_bytes(b"\0")
-        assert ae.detect_engine_for(d) is None
+        monkeypatch.setattr(ae, "phonon_dir", lambda models_dir: d)
+        assert not ae.is_phonon_ready(tmp_path)
+        (d / "config.json").write_text("{}")
+        assert not ae.is_phonon_ready(tmp_path)
+        (d / "model.fermion").write_bytes(b"\0")
+        assert ae.is_phonon_ready(tmp_path)
 
+    def test_not_ready_when_fermion_is_not_installed(self, monkeypatch, tmp_path):
+        def missing(models_dir):
+            raise ModuleNotFoundError("No module named 'fermion'")
 
-class TestAutoSelection:
-    def test_apple_uses_mlx_model_on_disk(self, tmp_path, apple_all):
-        bundle(tmp_path, "qwen3-asr-1.7b")
-        choice = ae.choose(tmp_path)
-        assert choice.engine == ENGINE_MLX
-        assert choice.ready is True
-
-    def test_apple_with_nothing_on_disk_downloads_mlx_layout(self, tmp_path, apple_all):
-        choice = ae.choose(tmp_path)
-        assert choice.engine == ENGINE_MLX
-        assert choice.ready is False
-        assert choice.repo_id == "Qwen/Qwen3-ASR-1.7B"
-
-    def test_apple_ignores_hf_layout_when_mlx_available(self, tmp_path, apple_all):
-        bundle(tmp_path, "qwen3-asr-1.7b-hf")
-        choice = ae.choose(tmp_path)
-        assert choice.engine == ENGINE_MLX
-        assert choice.ready is False
-
-    def test_apple_without_mlx_package_falls_back_to_transformers(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ae, "engine_available", lambda e: e == ENGINE_TRANSFORMERS)
-        monkeypatch.setattr(ae, "is_apple_silicon", lambda: True)
-        bundle(tmp_path, "qwen3-asr-1.7b-hf")
-        choice = ae.choose(tmp_path)
-        assert choice.engine == ENGINE_TRANSFORMERS
-        assert choice.ready is True
-
-    def test_other_platforms_use_transformers(self, tmp_path, linux_transformers):
-        choice = ae.choose(tmp_path)
-        assert choice.engine == ENGINE_TRANSFORMERS
-        assert choice.repo_id == "Qwen/Qwen3-ASR-1.7B-hf"
-
-    def test_smaller_model_on_disk_is_used(self, tmp_path, apple_all):
-        bundle(tmp_path, "qwen3-asr-0.6b")
-        assert ae.choose(tmp_path).model_path.name == "qwen3-asr-0.6b"
-
-
-class TestExplicitEngine:
-    def test_explicit_engine_is_never_substituted(self, tmp_path, linux_transformers):
-        with pytest.raises(RuntimeError, match="Apple Silicon only"):
-            ae.choose(tmp_path, preferred_engine=ENGINE_MLX)
-
-    def test_explicit_mlx_missing_package_names_the_install(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ae, "is_apple_silicon", lambda: True)
-        monkeypatch.setattr(ae, "engine_available", lambda e: False)
-        with pytest.raises(RuntimeError, match="pip install 'mlx-qwen3-asr"):
-            ae.choose(tmp_path, preferred_engine=ENGINE_MLX)
-
-    def test_unknown_engine_is_rejected(self, tmp_path):
-        with pytest.raises(ValueError, match="Unknown transcription engine"):
-            ae.choose(tmp_path, preferred_engine="whisper")
-
-    def test_explicit_transformers_finds_its_own_layout(self, tmp_path, apple_all):
-        bundle(tmp_path, "qwen3-asr-1.7b")
-        bundle(tmp_path, "qwen3-asr-1.7b-hf")
-        choice = ae.choose(tmp_path, preferred_engine=ENGINE_TRANSFORMERS)
-        assert choice.model_path.name == "qwen3-asr-1.7b-hf"
-
-
-class TestExplicitPath:
-    def test_explicit_path_uses_its_layout(self, tmp_path, apple_all):
-        d = bundle(tmp_path, "qwen3-asr-1.7b")
-        choice = ae.choose(tmp_path, explicit_path=d)
-        assert choice.engine == ENGINE_MLX
-        assert choice.reason == "explicit model path"
-
-    def test_non_model_path_is_rejected(self, tmp_path, apple_all):
-        (tmp_path / "nope").mkdir()
-        with pytest.raises(ValueError, match="not a Qwen3-ASR model folder"):
-            ae.choose(tmp_path, explicit_path=tmp_path / "nope")
-
-
-class TestNoEngineInstalled:
-    def test_names_the_engine_this_machine_should_use(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(ae, "engine_available", lambda e: False)
-        monkeypatch.setattr(ae, "is_apple_silicon", lambda: True)
-        choice = ae.choose(tmp_path)
-        assert choice.engine == ENGINE_MLX
-        assert choice.reason == "no engine installed"
+        monkeypatch.setattr(ae, "phonon_dir", missing)
+        assert ae.is_phonon_ready(tmp_path) is False
 
 
 class TestSpeakerLabels:
@@ -181,56 +143,6 @@ class TestSpeakerLabels:
         # Blank-line separated (as written now) reads the same as the old form.
         assert ae.untimed(text.replace("\n", "\n\n")) == "Speaker 1: Hello. Welcome.\n\nSpeaker 2: Hi."
 
-
-class TestChunking:
-    def test_short_audio_is_one_chunk(self):
-        np = pytest.importorskip("numpy")
-        audio = np.ones(16000 * 10, dtype="float32")
-        assert len(ae.split_audio_into_chunks(audio, 16000)) == 1
-
-    def test_long_audio_splits_in_the_quiet_part_with_offsets(self):
-        np = pytest.importorskip("numpy")
-        sr = 100
-        audio = np.ones(sr * 50, dtype="float32")
-        audio[sr * 24 : sr * 26] = 0.0  # a two-second pause near the middle
-        chunks = ae.split_audio_into_chunks(audio, sr, max_chunk_sec=30)
-        assert len(chunks) == 2 and chunks[0][1] == 0.0
-        assert 24 <= chunks[1][1] <= 26  # the cut lands inside the pause
-        assert sum(len(c) for c, _ in chunks) == len(audio)
-
-    def test_aligner_layout_follows_the_engine(self):
-        assert ae.ALIGNER_DIR[ENGINE_MLX] == "qwen3-forced-aligner-0.6b"
-        assert ae.ALIGNER_DIR[ENGINE_TRANSFORMERS] == "qwen3-forced-aligner-0.6b-hf"
-
-
-class TestRestorePunctuation:
-    """The aligner drops punctuation; it must come back even when counts differ."""
-
-    def _words(self, *bare):
-        return [ae.Word(w, float(i), float(i) + 0.5) for i, w in enumerate(bare)]
-
-    def test_extra_aligner_word_does_not_cost_the_punctuation(self):
-        # "uh" was heard by the aligner but is not in the text: 7 words, 6 tokens.
-        words = self._words("good", "morning", "uh", "thanks", "professor", "lets", "begin")
-        ae.restore_punctuation(words, "Good morning. Thanks, professor. Let's begin!".split())
-        assert [w.word for w in words] == ["Good", "morning.", "uh", "Thanks,", "professor.", "Let's", "begin!"]
-
-    def test_missing_aligner_word_is_handled_too(self):
-        words = self._words("good", "morning", "professor")
-        ae.restore_punctuation(words, "Good morning, dear professor.".split())
-        assert [w.word for w in words] == ["Good", "morning,", "professor."]
-
-    def test_equal_lengths_still_work_and_timings_are_untouched(self):
-        words = self._words("hello", "world")
-        ae.restore_punctuation(words, "Hello, world.".split())
-        assert [(w.word, w.start) for w in words] == [("Hello,", 0.0), ("world.", 1.0)]
-
-    def test_lines_keep_their_full_stops_after_a_mismatch(self):
-        words = self._words("good", "morning", "uh", "thanks", "professor")
-        ae.restore_punctuation(words, "Good morning. Thanks, professor.".split())
-        turns = [ae.Turn(0.0, 2.6, "A"), ae.Turn(2.9, 5.0, "B")]
-        out = ae.timed_lines(ae.Transcript("Good morning. Thanks, professor.", words), turns)
-        assert "Speaker 1: Good morning." in out and "Speaker 2: Thanks, professor." in out
 
 
 def test_diarizer_uses_the_accelerator_and_frees_it(monkeypatch):
@@ -275,44 +187,3 @@ def test_diarizer_uses_the_accelerator_and_frees_it(monkeypatch):
     turns = ae.speaker_turns(np.zeros(16000, dtype="float32"), 16000, __import__("pathlib").Path("/x"), step=2.0, max_speakers=None)
     assert [t.speaker for t in turns] == ["SPEAKER_00"]
     assert seen == {"device": "mps", "freed": True}  # device comes from the shared resolver
-
-
-def test_mlx_transcribes_in_segments_and_offsets_word_times(monkeypatch, tmp_path):
-    """A long recording goes through in bounded pieces; times index the whole file."""
-    import sys
-    import types
-
-    import numpy as np
-
-    calls = []
-
-    def transcribe(audio, **kw):
-        chunk, sr = audio
-        calls.append((len(chunk) / sr, kw["model"], kw.get("forced_aligner")))
-        n = len(calls)
-        return types.SimpleNamespace(
-            text=f"Part {n}, done.",
-            segments=[{"text": "part", "start": 1.0, "end": 1.5}, {"text": str(n), "start": 2.0, "end": 2.2},
-                      {"text": "done", "start": 3.0, "end": 3.4}],
-        )
-
-    cleared = []
-    lib = types.ModuleType("mlx_qwen3_asr")
-    lib.transcribe = transcribe
-    loaders = types.ModuleType("mlx_qwen3_asr.load_models")
-    loaders._ModelHolder = types.SimpleNamespace(clear=lambda: cleared.append(True))
-    monkeypatch.setitem(sys.modules, "mlx_qwen3_asr", lib)
-    monkeypatch.setitem(sys.modules, "mlx_qwen3_asr.load_models", loaders)
-    monkeypatch.setattr(ae, "MLX_SEGMENT_SECONDS", 10.0)
-
-    audio = np.ones(16000 * 25, dtype="float32")  # 25 s → three pieces of at most 10 s
-    out = ae.transcribe_with_mlx(tmp_path / "model", audio, language="en", aligner_path=tmp_path / "aligner")
-
-    assert len(calls) >= 3 and all(seconds <= 10.0 for seconds, _, _ in calls)
-    assert abs(sum(seconds for seconds, _, _ in calls) - 25.0) < 0.01  # nothing dropped at the cuts
-    assert {m for _, m, _ in calls} == {str(tmp_path / "model")}  # same path: the library reuses the weights
-    assert out.text.startswith("Part 1, done. Part 2, done.")
-    assert out.words[0].word == "Part" and out.words[2].word == "done."  # punctuation restored per segment
-    starts = [w.start for w in out.words if w.word == "Part"]
-    assert starts == sorted(starts) and starts[1] > 5.0  # later segments are shifted by their offset
-    assert cleared == [True]  # the library's model cache is emptied afterwards

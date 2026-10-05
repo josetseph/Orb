@@ -920,8 +920,8 @@ def start_firefly(data_dir: Path) -> None:
 
 
 def start_multimodal_prep(models_dir: Path, data_dir: Path) -> None:
-    names = ("qwen3-asr-1.7b", "qwen3-asr-1.7b-hf", "qwen3-asr-0.6b", "qwen3-asr-0.6b-hf")
-    if not any((models_dir / n).exists() for n in names):
+    # Phonon-2 unpacks under fermion/ (asr_engine.fermion_cache_dir).
+    if not (models_dir / "fermion" / "speech").exists():
         status("Multimodal models not installed yet — in-process load deferred")
         return
     status("Preparing in-process transcription / Marlin…")

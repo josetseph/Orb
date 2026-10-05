@@ -1,6 +1,6 @@
 # Data Directory Layout
 
-**What this covers.** Everything Orb writes outside the application bundle: the exact on-disk tree of `DATA_DIR` (SQLite `orb.db`, `runtime_config.json`, `meili_master_key`, per-KB Kuzu files, Qdrant and Meilisearch storage, vaults, logs, downloaded engine binaries, the embedded Firefly III PHP runtime and app), the tree of `MODELS_DIR` (GGUFs, `manifest.json` and its schema, the Qwen3-ASR/Marlin snapshots, the vision projector), the Application Support root and `paths.json`, the local download staging/cache directories, the dev fallbacks (`<repo>/data`, `backend/models`), which files are safe to delete and what each admin/reset endpoint removes, and the legacy LifeOS/LiveOS locations (no longer honoured).
+**What this covers.** Everything Orb writes outside the application bundle: the exact on-disk tree of `DATA_DIR` (SQLite `orb.db`, `runtime_config.json`, `meili_master_key`, per-KB Kuzu files, Qdrant and Meilisearch storage, vaults, logs, downloaded engine binaries, the embedded Firefly III PHP runtime and app), the tree of `MODELS_DIR` (GGUFs, `manifest.json` and its schema, the Phonon-2 (fermion), diarizer and Marlin files, the vision projector), the Application Support root and `paths.json`, the local download staging/cache directories, the dev fallbacks (`<repo>/data`, `backend/models`), which files are safe to delete and what each admin/reset endpoint removes, and the legacy LifeOS/LiveOS locations (no longer honoured).
 
 **Related docs.** [Desktop shell](04-desktop-shell.md) (who creates binaries, Firefly, logs, `paths.json` on the shell/runtime side) · [Backend core and configuration](06-backend-core-and-configuration.md) (`core/paths.py`) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Notes and vault files](09-notes-wikilinks-and-vault-files.md) · [Local models and inference](12-local-models-and-inference.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [Graph storage](14-graph-storage-kuzu.md) · [Search indexes](15-search-indexes-qdrant-meilisearch.md) · [Finance (Firefly)](17-finance-firefly.md) · [Logging](23-logging-and-observability.md) · [Configuration reference](21-configuration-reference.md) · [Packaging](05-packaging-build-and-release.md) · [Development guide](27-development-guide.md).
 
@@ -105,7 +105,7 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 | `DATA_DIR/firefly/.tmp/`, `.app-state-stash/` | `desktop_runtime.py` | during install/upgrade | Yes when no upgrade is in progress |
 | `MODELS_DIR/manifest.json` | `local_models.save_manifest` | first GGUF download / model selection | Yes (loses selection) — `gguf_paths_if_present` falls back to the pinned default filenames under `gguf/`; Setup must re-select; `runtime` section is rewritten on next load |
 | `MODELS_DIR/gguf/*.gguf` | `local_models.ensure_gguf` | Setup "Download models" | Yes — re-downloaded (multi-GB) |
-| `MODELS_DIR/qwen3-asr-1.7b/` (MLX) or `qwen3-asr-1.7b-hf/` (transformers), `marlin-2b/` | `multimodal_models.ensure_hf_snapshot` | Setup / `start-multimodal-services` | Yes — re-downloaded (Marlin may be skipped if gated) |
+| `MODELS_DIR/fermion/` (Phonon-2, via `asr_engine.download_phonon`), `pyannote-community-1/`, `marlin-2b/` (`multimodal_models.ensure_hf_snapshot`) | `multimodal_models.ensure_multimodal_models` | Models page media-models download | Yes — re-downloaded (Marlin may be skipped if gated) |
 | `MODELS_DIR/gguf/mmproj-<chat stem>-f16.gguf` | `local_models.ensure_mmproj` (the `orb-mmproj` boot thread, or Setup) | first boot with a catalog chat model selected | Yes — re-fetched at next boot; without it the local model is text-only (`describe_image` raises "no vision projector") |
 | `~/Library/Caches/Orb/model-downloads/` | `local_download_staging_dir` | first download onto a network volume | Yes — pure staging |
 | `<repo>/data/` | dev fallback `DATA_DIR` | running the backend without `paths.json`/env | Yes in dev (it is the dev instance's data) |
@@ -123,7 +123,9 @@ MODELS_DIR/                                 (e.g. ~/Library/Application Support/
 │   ├── <other catalog GGUFs>.gguf          any additional chat models downloaded (per-KB pins can only use these)
 │   ├── mmproj-<chat stem>-f16.gguf         vision projector paired to a chat GGUF by name only (find_mmproj: mmproj-<stem>-*.gguf beside it)
 │   └── <name>.gguf.partial                 in-flight download (only when MODELS_DIR is local; else staged elsewhere)
-├── qwen3-asr-1.7b/  or  qwen3-asr-1.7b-hf/  Qwen3-ASR snapshot — MLX layout on Apple Silicon, transformers layout elsewhere (asr_engine picks; MODEL_ASR_LOCAL pins)
+├── fermion/                                fermion's cache (FERMION_CACHE_DIR, set inside the API process — not a user setting)
+│   └── speech/FermionResearch__Phonon-2/model_phonon2_c4c_int6/   Phonon-2 (164 MB download): config.json, model.fermion, packed_manifest.json
+├── pyannote-community-1/                   HF snapshot of pyannote-community/speaker-diarization-community-1 (speaker labels, 30 MB)
 └── marlin-2b/                              HF snapshot of lunahr/Marlin-2B-ungated (MODEL_MARLIN_LOCAL); may be absent if gated/skipped
 ```
 

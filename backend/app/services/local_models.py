@@ -231,7 +231,7 @@ def _construct_llama(Llama, **kwargs):
 
 
 def _unload_multimodal_families() -> None:
-    """Best-effort: free Qwen3-ASR/Marlin before loading a GGUF."""
+    """Best-effort: free Phonon-2/Marlin before loading a GGUF."""
     try:
         from app.services.multimodal_runtime import multimodal_runtime
 

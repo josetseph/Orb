@@ -37,7 +37,7 @@
 Write notes the way you already do — text, voice, photos, PDFs. Orb extracts entities and relationships into a knowledge graph, indexes them for search, and answers multi-hop questions in chat. Everything runs locally through the desktop app: your vault, your models, your machine.
 
 > [!NOTE]
-> End users install the **Orb** desktop app. You do not need Docker, Ollama, or a separate model server. Local chat, embedding, reranking, Qwen3-ASR, and Marlin all load **in-process** in the API.
+> End users install the **Orb** desktop app. You do not need Docker, Ollama, or a separate model server. Local chat, embedding, reranking, Phonon-2 transcription, and Marlin all load **in-process** in the API.
 
 ---
 
@@ -56,7 +56,7 @@ On save, Orb enriches the note before graph indexing:
 
 - **PDF** — native text, plus the ingestion model reads embedded images and sparse page renders
 - **Images** — described by the model you chose for ingestion (a local GGUF through its vision projector, or a cloud endpoint), including a verbatim transcription of visible text
-- **Audio / video** — Qwen3-ASR transcription (MLX on Apple Silicon, transformers elsewhere); video also runs Marlin for visual understanding
+- **Audio / video** — Phonon-2 transcription, English only (MLX on Apple Silicon, CPU elsewhere; see `THIRD_PARTY_NOTICES.md`); video also runs Marlin for visual understanding
 - Enrichment is written into the vault markdown, then ingested into the graph
 
 ### Chat & retrieval

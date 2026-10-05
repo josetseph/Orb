@@ -145,10 +145,10 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 |---|---|---|---|---|
 | GET | `/api/v1/setup/status` | – | Paths, model readiness | [#](#get-apiv1setupstatus) |
 | GET | `/api/v1/setup/model-catalog` | – | Hardware profile + chat model options | [#](#get-apiv1setupmodel-catalog) |
-| POST | `/api/v1/setup/download-models` | – | Download GGUFs (+ Qwen3-ASR, speaker models, Marlin, vision projector) — blocking | [#](#post-apiv1setupdownload-models) |
+| POST | `/api/v1/setup/download-models` | – | Download GGUFs (+ Phonon-2, speaker diarizer, Marlin, vision projector) — blocking | [#](#post-apiv1setupdownload-models) |
 | POST | `/api/v1/setup/select-chat-model` | – | Persist model selection, resize Qdrant | [#](#post-apiv1setupselect-chat-model) |
 | POST | `/api/v1/setup/start-multimodal-services` | – | Verify/install in-process multimodal deps | [#](#post-apiv1setupstart-multimodal-services) |
-| GET | `/api/v1/setup/multimodal-status` | – | Qwen3-ASR / Marlin readiness | [#](#get-apiv1setupmultimodal-status) |
+| GET | `/api/v1/setup/multimodal-status` | – | Phonon-2 / Marlin readiness | [#](#get-apiv1setupmultimodal-status) |
 | POST | `/api/v1/setup/start-local-llm` | – | Download if needed + load chat GGUF in-process | [#](#post-apiv1setupstart-local-llm) |
 | POST | `/api/v1/setup/paths` | – | Write `paths.json`, set default vault | [#](#post-apiv1setuppaths) |
 
@@ -391,7 +391,7 @@ Body (optional, `DownloadModelsInput`): `include_multimodal: bool = true`, `chat
 
 Behaviour:
 1. If `multimodal_only`: `paths = gguf_paths_if_present() or {}` (no GGUF download). Else `ensure_chat_and_embed_models(on_progress, chat_id=chat_id)` in a thread — this **also** calls `save_selection(...)` which writes the manifest and `sync_embedding_infrastructure()` (resizes/creates Qdrant collections for the embed dims), then downloads chat, embed and reranker GGUFs via `ensure_gguf` into `MODELS_DIR/gguf` (staged on local SSD first). Failure → **500** `"GGUF download failed: …"`.
-2. If `include_multimodal or multimodal_only`: `ensure_multimodal_models(include_marlin=True, on_progress)` downloads HF snapshots for Qwen3-ASR, the pyannote diarizer, the Qwen forced aligner and Marlin under `MODELS_DIR`. Errors are captured into `multimodal_error` (not raised); a gated Marlin repo is skipped with a progress entry. On the `multimodal_only` path the selected chat model's vision projector is fetched too (`ensure_mmproj`, reported as `multimodal.vision`).
+2. If `include_multimodal or multimodal_only`: `ensure_multimodal_models(include_marlin=True, on_progress)` installs the on-demand media Python packages if fermion is missing, downloads Phonon-2 (164 MB, through fermion into `MODELS_DIR/fermion`) and HF snapshots for the pyannote diarizer and Marlin under `MODELS_DIR`. Errors are captured into `multimodal_error` (not raised); a gated Marlin repo is skipped with a progress entry. On the `multimodal_only` path the selected chat model's vision projector is fetched too (`ensure_mmproj`, reported as `multimodal.vision`).
 
 Response:
 
@@ -399,7 +399,7 @@ Response:
 {
   "status": "ok",
   "chat": "/…/gguf/chat.gguf", "embed": "/…/gguf/embed.gguf", "reranker": "/…/gguf/rerank.gguf",
-  "multimodal": {"asr": "/…", "diarizer": "/…", "aligner": "/…", "marlin": "/…", "vision": "/…/gguf/mmproj-….gguf"},
+  "multimodal": {"asr": "/…", "diarizer": "/…", "marlin": "/…", "vision": "/…/gguf/mmproj-….gguf"},
   "multimodal_error": null,
   "progress": [{"model": "chat", "percent": 42}, "… last 40 entries"],
   "warning": null
@@ -422,14 +422,14 @@ Changing the embed model invalidates existing vectors (logged warning: re-ingest
 
 #### POST /api/v1/setup/start-multimodal-services
 
-Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks the Qwen3-ASR snapshot exists (else returns `{"started": false, "mode": "in_process", "error": "Download Qwen3-ASR on the Models page first", "models": {"asr", "marlin"}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
+Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks Phonon-2 is downloaded (else returns `{"started": false, "mode": "in_process", "error": "Download the speech model (Phonon-2) on the Models page first", "models": {"asr", "marlin"}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
 
 ```json
 {"started": true, "mode": "in_process", "already_running": false,
  "models": {"asr": true, "marlin": true},
  "deps": {"ok": true, "installed": false, "error": null},
  "services": {…services_ready()…},
- "message": "Qwen3-ASR / Marlin load in-process on demand (no sidecar HTTP services)."}
+ "message": "Phonon-2 / Marlin load in-process on demand (no sidecar HTTP services)."}
 ```
 
 Any exception → **200** `{"started": false, "mode": "in_process", "error": "…"}` (not a 5xx). Not called by the frontend.
@@ -442,7 +442,7 @@ Any exception → **200** `{"started": false, "mode": "in_process", "error": "�
  "services": {"mode": "in_process", "local_models": bool, "marlin": bool, "deps_ok": bool, "deps_error": null|"…", "runtime": {…multimodal_runtime.status()…}}}
 ```
 
-`services.local_models` = deps importable **and** Qwen3-ASR ready. Importing torch/transformers for the check can take seconds the first time.
+`services.local_models` = deps importable **and** Phonon-2 ready. Importing torch/transformers for the check can take seconds the first time.
 
 #### POST /api/v1/setup/start-local-llm
 

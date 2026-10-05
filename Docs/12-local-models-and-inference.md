@@ -1,6 +1,6 @@
 # Local Models and Inference
 
-**What this covers.** Everything that runs a model *inside the FastAPI process*: the resource-aware GGUF catalog (`model_catalog.py`), the on-disk `MODELS_DIR` layout and `manifest.json`, Hugging Face download/staging flows for GGUFs and HF snapshots, the in-process `llama-cpp-python` runtime for chat / embeddings / cross-encoder reranking (`local_models.py`), the torch/transformers (or MLX) multimodal runtime for Qwen3-ASR / Marlin (`multimodal_runtime.py`, `asr_engine.py`, `multimodal_models.py`, `multimodal_services.py`), the vision projector (`mmproj-*.gguf`) that lets the chat GGUF read images, the "exactly one heavy model resident" residency manager, the Gemma 4 repetition-loop guard, embedding-dimension synchronisation with Qdrant, accelerator detection, and every `LLAMA_*` / `ORB_EMBED_*` / `ORB_RERANK_*` / `ORB_MODEL_*` environment variable. Cloud providers, prompt catalogues and the `LLMService` abstraction that *consumes* the local runtime are in [13-llm-providers-and-prompting.md](13-llm-providers-and-prompting.md).
+**What this covers.** Everything that runs a model *inside the FastAPI process*: the resource-aware GGUF catalog (`model_catalog.py`), the on-disk `MODELS_DIR` layout and `manifest.json`, Hugging Face download/staging flows for GGUFs and HF snapshots, the in-process `llama-cpp-python` runtime for chat / embeddings / cross-encoder reranking (`local_models.py`), the in-process multimodal runtime for Phonon-2 (via fermion) / Marlin (`multimodal_runtime.py`, `asr_engine.py`, `multimodal_models.py`, `multimodal_services.py`), the vision projector (`mmproj-*.gguf`) that lets the chat GGUF read images, the "exactly one heavy model resident" residency manager, the Gemma 4 repetition-loop guard, embedding-dimension synchronisation with Qdrant, accelerator detection, and every `LLAMA_*` / `ORB_EMBED_*` / `ORB_RERANK_*` / `ORB_MODEL_*` environment variable. Cloud providers, prompt catalogues and the `LLMService` abstraction that *consumes* the local runtime are in [13-llm-providers-and-prompting.md](13-llm-providers-and-prompting.md).
 
 **Related docs:** [Backend core & configuration](06-backend-core-and-configuration.md) · [API reference](07-api-reference.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Multimedia enrichment](11-multimedia-enrichment.md) · [LLM providers & prompting](13-llm-providers-and-prompting.md) · [Qdrant & Meilisearch](15-search-indexes-qdrant-meilisearch.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Desktop shell](04-desktop-shell.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Decisions & constraints](26-decisions-and-constraints.md)
 
@@ -11,14 +11,14 @@
 The local-inference layer **owns**:
 
 - The static, hand-curated catalog of downloadable GGUF models (chat, embedding, reranker), hardware profiling (RAM + accelerator), and the "which models fit this machine" recommendation logic.
-- Downloading GGUF files (and the matching `mmproj` vision projector) from Hugging Face into `MODELS_DIR/gguf/` and HF snapshot repos (Qwen3-ASR, its forced aligner, the pyannote diarizer, Marlin) into `MODELS_DIR/<local-name>/`, including NAS-safe staging on a local SSD and integrity checks.
+- Downloading GGUF files (and the matching `mmproj` vision projector) from Hugging Face into `MODELS_DIR/gguf/` and HF snapshot repos (the pyannote diarizer, Marlin) into `MODELS_DIR/<local-name>/`, Phonon-2 into `MODELS_DIR/fermion/` through fermion, including NAS-safe staging on a local SSD and integrity checks.
 - `MODELS_DIR/manifest.json`: the persisted model *selection* (chat/embed/reranker ids, embedding dims, resolved file paths) plus per-file download records and the last runtime descriptor.
-- Loading and unloading models **in the FastAPI process** via `llama-cpp-python` (`Llama(...)`) and torch/`transformers`, with a hard rule that at most one heavy model is resident at a time (chat ↔ embed ↔ reranker ↔ Qwen3-ASR ↔ Marlin).
+- Loading and unloading models **in the FastAPI process** via `llama-cpp-python` (`Llama(...)`) and torch/`transformers`, with a hard rule that at most one heavy model is resident at a time (chat ↔ embed ↔ reranker ↔ Phonon-2 ↔ Marlin).
 - Chat generation over the local GGUF exposed through an OpenAI-client-shaped shim (`LocalOpenAICompat`) so `LLMService` can treat "local" like any other provider.
 - Embedding (`LocalLlamaEmbeddings`, `EmbeddingService`) and reranking (`LocalGgufReranker`, `RerankerService`) primitives consumed by ingestion and retrieval.
 - Keeping `settings.EMBEDDING_DIMENSIONS` and **every** KB's Qdrant collections sized to the selected embed model (`sync_embedding_infrastructure`).
 - Idle unloading (default 5 minutes) and accelerator cache release.
-- Audio decoding (ffmpeg → PyAV fallback), the MLX-vs-transformers engine choice for Qwen3-ASR, speaker labelling, and the Marlin/Qwen3.5 video-decoder patch.
+- Audio decoding (ffmpeg → PyAV fallback), Phonon-2 transcription, speaker labelling, and the Marlin/Qwen3.5 video-decoder patch.
 
 It does **not** own:
 
@@ -40,8 +40,8 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/app/services/embedding.py` | Thin provider-agnostic façade over `LocalLlamaEmbeddings`; adds the Qwen3 query instruction prefix. | `EmbeddingService`, singleton `embedding_service` |
 | `backend/app/services/reranker.py` | Async façade over `local_gguf_reranker` (runs it in a thread, normalises result dicts, never raises). | `RerankerService`, singleton `reranker_service` |
 | `backend/app/services/multimodal_models.py` | HF snapshot paths under `MODELS_DIR`, readiness check, `snapshot_download` with NAS staging. | `multimodal_model_path`, `is_hf_snapshot_ready`, `ensure_hf_snapshot`, `ensure_multimodal_models` |
-| `backend/app/services/multimodal_runtime.py` | Lazy in-process Qwen3-ASR (transformers engine) / Marlin, MLX hand-off for transcription on Apple Silicon, speaker labelling, audio decoding, exclusive residency hooks. | `MultimodalRuntime`, singleton `multimodal_runtime` |
-| `backend/app/services/asr_engine.py` | Which Qwen3-ASR engine/layout this machine uses, MLX transcription, chunking, forced alignment, punctuation restore, pyannote diarization, `[MM:SS] Speaker N:` lines. | `choose`, `AsrChoice`, `DEFAULT_REPO`, `DEFAULT_LOCAL_DIR`, `ALIGNER_REPO`, `DIARIZER_REPO`, `is_asr_bundle`, `transcribe_with_mlx`, `restore_punctuation`, `speaker_turns`, `timed_lines`, `untimed` |
+| `backend/app/services/multimodal_runtime.py` | Lazy in-process Phonon-2 / Marlin, speaker labelling, audio decoding, exclusive residency hooks. | `MultimodalRuntime`, singleton `multimodal_runtime` |
+| `backend/app/services/asr_engine.py` | Phonon-2 through fermion (readiness, download, load, transcribe), pyannote diarization, `[MM:SS] Speaker N:` lines. | `PHONON_MODEL`, `DIARIZER_REPO`, `fermion_cache_dir`, `is_phonon_ready`, `download_phonon`, `load_phonon`, `transcribe_with_phonon`, `speaker_turns`, `timed_lines`, `untimed` |
 | `backend/app/services/multimodal_services.py` | "Are the torch/transformers deps importable, and optionally pip-install them into the running interpreter"; compat status payloads. | `ensure_multimodal_python_deps`, `services_ready`, `ensure_multimodal_services`, `_MULTIMODAL_PIP` |
 | `backend/app/core/inference_device.py` | torch device/dtype selection and the Qwen3.5 fast-path shim. Imports `torch` at module top — only import it lazily. | `resolve_torch_device`, `resolve_torch_dtype`, `prepare_qwen3_5_inference` |
 | `backend/app/core/paths.py` | (shared) `resolve_models_dir`, `looks_like_network_volume`, `local_download_staging_dir` used by both download paths. | see [06](06-backend-core-and-configuration.md) |
@@ -52,7 +52,7 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 | `backend/app/main.py` | Startup hook calls `sync_embedding_infrastructure()` after applying runtime-config overrides. | `startup_event` |
 | `backend/app/workflows/ingestion.py` | Consumes the model-load clock for per-note `[Timing]` lines; passes a per-KB `llm` into the agent (see §13.2). Older revisions unloaded all models after a batch drained — that block has been removed. | — |
 | `backend/requirements.txt` | `llama-cpp-python>=0.3.0`, `huggingface_hub>=0.34.0,<1.0`, `av` (video probing). | — |
-| `backend/requirements-multimodal.txt` | torch / `transformers>=5.7.0` / accelerate / einops / safetensors / librosa / pydub / timm / qwen-vl-utils / av / `pyannote.audio>=4.0`, plus `mlx-qwen3-asr>=0.4` under a `sys_platform == 'darwin' and platform_machine == 'arm64'` marker — installed on demand, mirrors `_MULTIMODAL_PIP`. | — |
+| `backend/requirements-multimodal.txt` | torch / `transformers>=5.7.0` / accelerate / einops / safetensors / librosa / pydub / timm / qwen-vl-utils / av / `pyannote.audio>=4.0` / `fermion-research==0.2.9` / soundfile / scipy / zstandard, plus mlx, mlx-audio, mlx-lm under a `sys_platform == 'darwin' and platform_machine == 'arm64'` marker — installed on demand, mirrors `_MULTIMODAL_PIP`. | — |
 | `desktop/binaries/README.md` | Operator notes on the in-process LLM and env overrides (Qdrant/Meili binaries are unrelated to this doc). | — |
 | `backend/app/desktop_runtime.py` | Sets `LLM_PROVIDER`, `EMBEDDING_PROVIDER` (`os.environ.setdefault`) and `ORB_MODELS_DIR` before running uvicorn. | — |
 | `frontend/src/app/setup/page.tsx`, `frontend/src/app/models/page.tsx` | Setup page (folders, `/setup/status`, `/setup/paths`) and the Models page, which drives `/setup/model-catalog`, `/setup/download-models`, `/setup/multimodal-status` and `/api/v1/models`. | — |
@@ -129,7 +129,7 @@ sequenceDiagram
   FE->>API: GET /setup/status (local_models_ready should now be true)
   FE->>API: POST /setup/download-models {include_multimodal:true, multimodal_only:true}
   API->>MMM: ensure_multimodal_models(include_marlin=True) (thread)
-  API-->>FE: {multimodal:{asr,diarizer,aligner,marlin,vision?}, multimodal_error?}
+  API-->>FE: {multimodal:{asr,diarizer,marlin,vision?}, multimodal_error?}
   FE->>API: GET /setup/multimodal-status
 ```
 
@@ -143,7 +143,7 @@ Key point: the frontend **never** calls `/setup/start-local-llm` or `/setup/star
 | `EmbeddingService.embed_query / embed_documents` | `LocalLlamaRuntime.embed / embed_batch` | `ensure_embed_loaded()` | embed GGUF |
 | `RerankerService.rerank` (retrieval) | `LocalGgufReranker.rerank` (in `asyncio.to_thread`) | `ensure_loaded()` | reranker GGUF |
 | `LLMService.describe_image` (provider `local`) | `LocalLlamaRuntime.describe_image` | `ensure_chat_loaded()` | chat GGUF **with** its `mmproj` projector |
-| `MultimediaService.transcribe_audio` | `multimodal_runtime.transcribe_audio_path` | `_load_asr()` (transformers engine) — the MLX engine loads and drops the weights inside the call | Qwen3-ASR (+ forced aligner when speaker labels are on) |
+| `MultimediaService.transcribe_audio` | `multimodal_runtime.transcribe_audio_path` | `_load_phonon()` — kept for the batch | Phonon-2 (+ pyannote diarizer when speaker labels are on) |
 | `MultimediaService._caption_video_with_marlin` | `multimodal_runtime.caption_video_path` | `_load_marlin()` | Marlin |
 | `POST /setup/start-local-llm` | `local_llama_runtime.load(chat, embed)` then `local_gguf_reranker.ensure_loaded()` | explicit | ends with **reranker** resident (see gotcha §10) |
 
@@ -264,8 +264,8 @@ MODELS_DIR/
 │   ├── Qwen3-Reranker-0.6B.Q4_K_M.gguf
 │   ├── mmproj-google_gemma-4-E4B-it-f16.gguf   # vision projector for the selected chat GGUF (ensure_mmproj)
 │   └── <name>.gguf.partial             # transient: in-flight download (only when not staging)
-├── qwen3-asr-1.7b/                     # Qwen/Qwen3-ASR-1.7B (MLX layout, Apple Silicon) — or qwen3-asr-1.7b-hf/ (transformers layout)
-├── qwen3-forced-aligner-0.6b/          # Qwen/Qwen3-ForcedAligner-0.6B (word timings for speaker labels; -hf variant likewise)
+├── fermion/                            # fermion's cache (FERMION_CACHE_DIR, set inside the API process)
+│   └── speech/FermionResearch__Phonon-2/model_phonon2_c4c_int6/   # Phonon-2: config.json, model.fermion, packed_manifest.json
 ├── pyannote-community-1/               # pyannote-community/speaker-diarization-community-1 (diarizer)
 └── marlin-2b/                          # settings.MODEL_MARLIN_LOCAL — lunahr/Marlin-2B-ungated
 ```
@@ -346,16 +346,15 @@ How the fields are consumed:
 
 **Progress/state reporting.** There is no background job and no status-polling endpoint for GGUF downloads. `POST /setup/download-models` is a *single long HTTP request* (minutes for a 5–18 GB file); `on_progress` events are appended to an in-memory list and only the **last 40** are returned in the response body as `"progress": [{"model": "chat", "percent": 37}, …]`. The UI shows a static "Downloading…" message and relies on the request completing; on failure it re-checks `/setup/status` because a previous run may already have left complete files. Log lines (`Downloading model … from Hugging Face…`, `Staging download on local disk → …`) are the only live progress signal.
 
-### 6.2 HF snapshots — Qwen3-ASR / aligner / diarizer / Marlin (`multimodal_models.py`)
+### 6.2 Media models — Phonon-2 / diarizer / Marlin (`multimodal_models.py`)
 
 | Kind | Repo | Dir under `MODELS_DIR` | Decided by |
 |---|---|---|---|
-| `asr` | `Qwen/Qwen3-ASR-1.7B` (MLX) or `Qwen/Qwen3-ASR-1.7B-hf` (transformers) | `qwen3-asr-1.7b` / `qwen3-asr-1.7b-hf` | `_asr_repo_and_dir`: `MODEL_ASR_HF`+`MODEL_ASR_LOCAL` when both set; else `asr_engine.choose(MODELS_DIR, ASR_ENGINE)` — a folder already on disk wins, otherwise the platform default (`mlx` on Apple Silicon with `mlx_qwen3_asr` installed, `transformers` elsewhere) |
-| `aligner` | `Qwen/Qwen3-ForcedAligner-0.6B[-hf]` | `qwen3-forced-aligner-0.6b[-hf]` | same engine as `asr` |
+| `asr` | `FermionResearch/Phonon-2` (fetched by fermion, not `snapshot_download`) | `fermion/speech/FermionResearch__Phonon-2/model_phonon2_c4c_int6` | fixed (`asr_engine.PHONON_MODEL`); readiness is `asr_engine.is_phonon_ready` (`config.json` + `model.fermion`), never the HF check below |
 | `diarizer` | `pyannote-community/speaker-diarization-community-1` | `pyannote-community-1` | fixed |
 | `marlin` | `lunahr/Marlin-2B-ungated` (`MODEL_MARLIN_HF`) | `marlin-2b` (`MODEL_MARLIN_LOCAL`) | settings |
 
-`is_hf_snapshot_ready(dest)`: directory exists AND (`config.json` or `model_index.json` or `preprocessor_config.json`) AND weights present (`rglob` of `*.safetensors|*.bin|*.pt|*.pth|*.gguf|*.onnx`, or total file size > 50 MB). Because of the final `and has_weights`, a config-less directory with weights passes, a weights-less directory never does. `asr_engine.is_asr_bundle(path)` is the stricter check the engine chooser uses: the folder's `config.json` must name a `qwen3asr` `model_type`/architecture; a folder name ending `-hf` marks the transformers layout.
+`is_hf_snapshot_ready(dest)`: directory exists AND (`config.json` or `model_index.json` or `preprocessor_config.json`) AND weights present (`rglob` of `*.safetensors|*.bin|*.pt|*.pth|*.gguf|*.onnx`, or total file size > 50 MB). Because of the final `and has_weights`, a config-less directory with weights passes, a weights-less directory never does.
 
 `ensure_hf_snapshot(repo_id, dest, *, on_progress, label)`:
 
@@ -365,7 +364,7 @@ How the fields are consumed:
 - Network-volume staging: downloads into `mkdtemp(prefix=f"{label}-", dir=staging_root)`, then wipes `dest` (removing a `.cache` dir and all children) and `copytree`/`copy2`s each child over; staging dir is removed in `finally`.
 - Re-validates with `is_hf_snapshot_ready` → `RuntimeError("Download finished but model looks incomplete")`.
 
-`ensure_multimodal_models(include_marlin=True, on_progress=None)`: `asr`, then `diarizer` and `aligner` (errors propagate), then marlin with special handling — if the exception text contains `gated`, `401` or `restricted`, it logs a warning (mentioning `MODEL_MARLIN_HF` and `HF_TOKEN`), reports `on_progress("marlin (skipped — auth)", 100)` and continues; other errors propagate. Returns `{kind: Path}` (marlin key absent when skipped).
+`ensure_multimodal_models(include_marlin=True, on_progress=None)`: first `ensure_multimodal_python_deps(install=True)` (fermion is one of the on-demand media packages; failure → `RuntimeError("Could not install the media packages: …")`), then `asr` via `asr_engine.download_phonon` (164 MB, fermion verifies and unpacks it; idempotent), then the 30 MB `diarizer` (errors propagate), then marlin with special handling — if the exception text contains `gated`, `401` or `restricted`, it logs a warning (mentioning `MODEL_MARLIN_HF` and `HF_TOKEN`), reports `on_progress("marlin (skipped — auth)", 100)` and continues; other errors propagate. Returns `{kind: Path}` (marlin key absent when skipped).
 
 **Vision projector.** `ensure_mmproj(model_id)` (`local_models.py`) derives the projector file for a catalog chat GGUF (`mmproj_hf_path`), `HEAD`s its Hugging Face URL, and downloads it to `MODELS_DIR/gguf/` when the repo publishes one (`None` otherwise). It runs from `download-models` (with the model, or on the `multimodal_only` path for the selected model) and, once per boot, from `sync_embedding_infrastructure` in the `orb-mmproj` daemon thread (§7.3).
 
@@ -373,13 +372,13 @@ How the fields are consumed:
 
 | Method & path | Body / query | Calls | Response (key fields) | Notes |
 |---|---|---|---|---|
-| `GET /api/v1/setup/status` | — | `gguf_paths_if_present`, `is_hf_snapshot_ready×2` (`asr`, `marlin`), `ai_is_configured`, `kb_registry.get_kb_by_name("default")` | `data_dir, models_dir, paths_json, default_vault_path, active_vault_path, ai_configured, local_models_ready, multimodal_ready (asr and marlin), database_backend, llm_provider` | cheap; polled by the UI after saves |
+| `GET /api/v1/setup/status` | — | `gguf_paths_if_present`, `is_hf_snapshot_ready(multimodal_model_path(k))` for `asr`, `marlin`, `ai_is_configured`, `kb_registry.get_kb_by_name("default")` | `data_dir, models_dir, paths_json, default_vault_path, active_vault_path, ai_configured, local_models_ready, multimodal_ready (asr and marlin), database_backend, llm_provider` | cheap; polled by the UI after saves |
 | `GET /api/v1/setup/model-catalog` | `?chat_id=` | `recommend_stack(chat_id)` | see §4.5 | |
-| `POST /api/v1/setup/download-models` | `{include_multimodal: bool=true, chat_id?: str, multimodal_only: bool=false}` | `ensure_chat_and_embed_models` (unless `multimodal_only`), then `ensure_multimodal_models(include_marlin=True)` when `include_multimodal or multimodal_only` | `status:"ok", chat, embed, reranker (str paths, "" if multimodal_only and none present), multimodal:{asr, diarizer, aligner, marlin: path, vision: projector path (multimodal_only only)}, multimodal_error, progress[-40:], warning` | GGUF failure → **500** `"GGUF download failed: …"`; multimodal failure is swallowed into `multimodal_error`/`warning` with 200. Does not pip-install torch. |
+| `POST /api/v1/setup/download-models` | `{include_multimodal: bool=true, chat_id?: str, multimodal_only: bool=false}` | `ensure_chat_and_embed_models` (unless `multimodal_only`), then `ensure_multimodal_models(include_marlin=True)` when `include_multimodal or multimodal_only` | `status:"ok", chat, embed, reranker (str paths, "" if multimodal_only and none present), multimodal:{asr, diarizer, marlin: path, vision: projector path (multimodal_only only)}, multimodal_error, progress[-40:], warning` | GGUF failure → **500** `"GGUF download failed: …"`; multimodal failure is swallowed into `multimodal_error`/`warning` with 200. Does not pip-install torch. |
 | `POST /api/v1/setup/select-chat-model` | `{chat_id: str}` (same model as above) | `resolve_selected_hf_paths`, `save_selection` | `status:"ok", selection:{chat_id, embed_id, reranker_id, embedding_dims}, infrastructure:{embedding_dims, embed_id, synced_kbs[], errors[]}` | 400 if `chat_id` missing. Resizes Qdrant immediately. Not used by the current UI. |
 | `POST /api/v1/setup/start-local-llm` | `{chat_id?}` | `ensure_chat_and_embed_models(None, chat_id)`, `local_llama_runtime.load(chat, embed)`, `local_gguf_reranker.ensure_loaded()`, `llm_service.provider="local"; llm_service.init_clients()`, `embedding_service.reconfigure()` | on success the dict from `LocalLlamaRuntime.load` + `reranker`, `reranker_loaded`, `reranker_error?`; on `RuntimeError` → 200 `{started:false, loaded:false, reason, accel}` | Downloads if missing (so can take minutes). Non-`RuntimeError` exceptions become 500. Not used by the current UI. |
 | `POST /api/v1/setup/start-multimodal-services` | `?install_deps=true` | `ensure_multimodal_services(install_deps)` in a thread | see §12.5 | May run `pip install` inside the API interpreter. Exceptions → 200 `{started:false, error}`. |
-| `GET /api/v1/setup/multimodal-status` | — | `is_hf_snapshot_ready×2`, `services_ready()` | `mode:"in_process", models:{asr, marlin: bool}, services:{mode, local_models (= deps ok and asr ready), marlin, deps_ok, deps_error, runtime:{device, models_ready, loaded}}` | `services_ready` imports `multimodal_runtime` which resolves the torch device lazily — it does **not** load models. |
+| `GET /api/v1/setup/multimodal-status` | — | `asr_engine_ready()` (Phonon-2), `is_hf_snapshot_ready` (Marlin), `services_ready()` | `mode:"in_process", models:{asr, marlin: bool}, services:{mode, local_models (= deps ok and asr ready), marlin, deps_ok, deps_error, runtime:{device, models_ready, loaded}}` | `services_ready` imports `multimodal_runtime` which resolves the torch device lazily — it does **not** load models. |
 | `POST /api/v1/setup/paths` | `{data_dir, models_dir, default_vault_path?}` | `save_paths_file`, `sync_settings_paths`, `reconfigure_logging`, `ensure_vault`, `kb_registry.set_vault_path` | `status, data_dir, models_dir, default_vault_path` | Changing `models_dir` takes effect immediately for all `resolve_models_dir()` callers (cache cleared) — but already-resident models are not unloaded. |
 
 Frontend wrappers (`frontend/src/lib/api.ts`): `getSetupStatus()`, `getModelCatalog(chatId?)`, `saveSetupPaths(data)`, `downloadModels(includeMultimodal, chatId?, {multimodalOnly})` (sent without a timeout), `selectChatModel(chatId)`, `getMultimodalStatus()`. Full route docs live in [07-api-reference.md](07-api-reference.md).
@@ -450,7 +449,7 @@ Public API summary:
 
 **Vision projector.** `find_mmproj(chat_gguf)` is strict: only `mmproj-<model stem>-*.gguf` beside the chat GGUF counts (a projector is architecture-specific; an unrelated one in the folder is never used). Once per boot, `sync_embedding_infrastructure()` → `_ensure_mmproj_in_background(sel)`: when the manifest's `chat_id` is a catalog id and no matching projector is on disk, `ensure_mmproj(<hf_path>)` runs in a daemon thread (`orb-mmproj`, start / finish / failure logged, never blocks startup). `_load_chat_unlocked` constructs `MTMDChatHandler` and, because llama-cpp-python otherwise binds the projector lazily on the first completion (so a wrong one used to fail *every* completion), calls `handler._init_mtmd_context(llama)` eagerly; on any exception it logs a warning and drops the handler (`chat_handler = None`, `_mmproj_path = None`) so text chat keeps working and `describe_image` raises its "no vision projector" error.
 
-Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon thread `orb-model-idle` that every 30 s calls `unload_if_idle(limit)` on both the runtime and `local_gguf_reranker`, where `limit = model_idle_seconds()` (`MODEL_IDLE_SECONDS`, default 300; `0` disables idle unload but the thread keeps looping). The multimodal runtime has **no** idle unloader — a transformers-engine Qwen3-ASR or Marlin stays resident until evicted by a GGUF load (or the ingestion agent's explicit `unload` between phases); the MLX transcription path holds nothing between calls. The old "unload everything once the ingest batch drains" block in `workflows/ingestion.py` has been removed in the current tree — models now stay resident after a note and rely on the idle watcher / eviction.
+Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon thread `orb-model-idle` that every 30 s calls `unload_if_idle(limit)` on both the runtime and `local_gguf_reranker`, where `limit = model_idle_seconds()` (`MODEL_IDLE_SECONDS`, default 300; `0` disables idle unload but the thread keeps looping). The multimodal runtime has **no** idle unloader — Phonon-2 or Marlin stays resident until evicted by a GGUF load or the ingestion agent's explicit `unload` between phases. The old "unload everything once the ingest batch drains" block in `workflows/ingestion.py` has been removed in the current tree — models now stay resident after a note and rely on the idle watcher / eviction.
 
 `release_accelerator_memory()` = `gc.collect()` + `torch.cuda.empty_cache()` + (`torch.mps.empty_cache()` only when `driver_allocated_memory() > 0`); silently skips when torch is not installed. `_close_llama_handle` calls `Llama.close()` if present.
 
@@ -577,8 +576,7 @@ There is no single "manager" class; the rule *"at most one heavy model resident"
 | `LocalLlamaRuntime.ensure_chat_loaded / load` | `local_gguf_reranker.unload()`, `multimodal_runtime.unload(None)`, its own embed |
 | `LocalLlamaRuntime.ensure_embed_loaded` | reranker, multimodal, its own chat |
 | `LocalGgufReranker.ensure_loaded` | `local_llama_runtime.unload()` (chat and embed), multimodal, its own stale handle |
-| `MultimodalRuntime._load_asr / _load_marlin` (transformers engine) | `local_llama_runtime.unload()`, `local_gguf_reranker.unload()`, the other HF family (`_unload_except`) |
-| `transcribe_audio_path` on the MLX engine | `_unload_except("")` (both HF families); GGUFs are left alone — MLX weights live and die inside the call |
+| `MultimodalRuntime._load_phonon / _load_marlin` | `local_llama_runtime.unload()`, `local_gguf_reranker.unload()`, the other HF family (`_unload_except`) |
 
 ```mermaid
 stateDiagram-v2
@@ -586,7 +584,7 @@ stateDiagram-v2
     Empty --> Chat: ensure_chat_loaded()\n(LLMService local call, describe_image)
     Empty --> Embed: ensure_embed_loaded()\n(embed / embed_batch)
     Empty --> Rerank: LocalGgufReranker.ensure_loaded()
-    Empty --> ASR: transcribe_audio_path() (transformers engine)
+    Empty --> ASR: transcribe_audio_path()
     Empty --> Marlin: caption_video_path()
 
     Chat --> Embed: embed request
@@ -625,19 +623,19 @@ Transient exception: `LocalLlamaRuntime.load()` (setup only) goes Chat → Embed
 - All llama.cpp and torch calls are synchronous; async callers must offload them: `RerankerService` → `asyncio.to_thread`; `LLMService.generate/ingestion_generate/iterative_step` → `asyncio.to_thread`; `/setup/*` → `asyncio.to_thread`. `EmbeddingService.embed_*` is **synchronous** and is called directly from ingestion coroutines (blocking the event loop for the duration of the embed batch — ingestion runs with `INGESTION_PIPELINE_CONCURRENCY=1`). The sync `chat_client` used by `LLMService._chat` (`reason`, `generate_title`, `analyze_query`, …) also blocks unless the caller offloads.
 - Generation holds `_lock` for the whole streaming loop, so a concurrent embed request waits for the chat to finish and then swaps models. Two concurrent chat requests serialise.
 - The idle watcher thread only ever calls `unload_if_idle` (takes the lock, checks age). Because `_touch()` happens at the *end* of a generation (after the stream), a long generation can be older than the idle limit at the time it finishes; the next 30 s tick then unloads it if no new request arrived.
-- **No post-ingest unload any more.** Commit `f8f527f` first moved a blanket `unload()` of chat/embed/reranker/multimodal from per-note to "once the batch drains"; the current working tree removes it entirely (comment in `workflows/ingestion.py`: "Models stay resident after a note: the idle watcher … unloads them, and loading any other model evicts them anyway. Unloading here made every single-note ingest re-read multi-GB GGUFs"). The multimodal node still explicitly unloads Qwen3-ASR / Marlin at the end of each phase (`multimedia_service.unload_local_models("asr")`, `unload_marlin()`) so the chat GGUF that follows (image description, titling, extraction) does not have to evict them.
+- **No post-ingest unload any more.** Commit `f8f527f` first moved a blanket `unload()` of chat/embed/reranker/multimodal from per-note to "once the batch drains"; the current working tree removes it entirely (comment in `workflows/ingestion.py`: "Models stay resident after a note: the idle watcher … unloads them, and loading any other model evicts them anyway. Unloading here made every single-note ingest re-read multi-GB GGUFs"). The multimodal node still explicitly unloads Phonon-2 / Marlin at the end of each phase (`multimedia_service.unload_local_models("asr")`, `unload_marlin()`) so the chat GGUF that follows (image description, titling, extraction) does not have to evict them.
 
-## 12. Multimodal runtime (Qwen3-ASR / Marlin) and the vision projector
+## 12. Multimodal runtime (Phonon-2 / Marlin) and the vision projector
 
 ### 12.1 Dependencies and readiness (`multimodal_services.py`)
 
-The base install (`requirements.txt`) does **not** include torch/transformers. `_MULTIMODAL_PIP` = `torch, transformers>=5.7.0, accelerate>=1.12.0, einops>=0.8.1, safetensors>=0.7.0, librosa>=0.11.0, pydub>=0.25.1, timm>=1.0.24, Pillow>=12.0.0, qwen-vl-utils>=0.0.14, av, pyannote.audio>=4.0`, plus `mlx-qwen3-asr>=0.4` when `sys.platform == "darwin"` and the machine is `arm64` (mirrors `requirements-multimodal.txt`; CUDA-only extras `flash-linear-attention`, `causal-conv1d` are intentionally excluded).
+The base install (`requirements.txt`) does **not** include torch/transformers. `_MULTIMODAL_PIP` = `torch, transformers>=5.7.0, accelerate>=1.12.0, einops>=0.8.1, safetensors>=0.7.0, librosa>=0.11.0, pydub>=0.25.1, timm>=1.0.24, Pillow>=12.0.0, qwen-vl-utils>=0.0.14, av, pyannote.audio>=4.0, fermion-research==0.2.9, soundfile, scipy, zstandard`, plus `mlx, mlx-audio, mlx-lm` when `sys.platform == "darwin"` and the machine is `arm64` (mirrors `requirements-multimodal.txt`; CUDA-only extras `flash-linear-attention`, `causal-conv1d` are intentionally excluded).
 
 `_deps_importable()` imports torch, transformers, librosa, pydub, PIL, checks `transformers >= 5.7` (Marlin's Qwen3.5 backbone needs `Qwen3_5ForConditionalGeneration`), imports `qwen_vl_utils`, `av`, and — importantly — `from transformers import AutoModelForCausalLM, AutoModelForMultimodalLM`, because "a bare `import transformers` can succeed while AutoModel* fails (e.g. when numpy/_core/tests was stripped from the desktop bundle)". Returns `(ok, error_string)`.
 
 `ensure_multimodal_python_deps(install=False)`: if not importable and `install=True`, runs `sys.executable -m pip install --upgrade <_MULTIMODAL_PIP>` **inside the running API interpreter's environment** (blocking, can take many minutes; no progress reporting), then re-checks. Returns `{ok, installed, error}`.
 
-`ensure_multimodal_services(install_deps=False)`: requires the Qwen3-ASR snapshot (else `{started:false, error:"Download Qwen3-ASR on the Models page first", models:{asr, marlin}, paths}`), then deps (else `{started:false, error, models, deps}`), else `{started:true, mode:"in_process", already_running:false, models, deps, services: services_ready(), message:"Qwen3-ASR / Marlin load in-process on demand (no sidecar HTTP services)."}`. Nothing is loaded into memory by this call.
+`ensure_multimodal_services(install_deps=False)`: requires Phonon-2 on disk (`is_phonon_ready`; else `{started:false, error:"Download the speech model (Phonon-2) on the Models page first", models:{asr, marlin}, paths}`), then deps (else `{started:false, error, models, deps}`), else `{started:true, mode:"in_process", already_running:false, models, deps, services: services_ready(), message:"Phonon-2 / Marlin load in-process on demand (no sidecar HTTP services)."}`. Nothing is loaded into memory by this call.
 
 `services_ready()` → `{"mode":"in_process", "local_models": deps_ok and asr_ready, "marlin": deps_ok and marlin_ready, "deps_ok", "deps_error", "runtime": multimodal_runtime.status()}` (`local_models` is the legacy key name for the old sidecar).
 
@@ -649,7 +647,7 @@ The base install (`requirements.txt`) does **not** include torch/transformers. `
 | `resolve_torch_dtype(device)` | `bfloat16` on mps/cuda, `float32` on cpu (used for **Marlin** only) |
 | `prepare_qwen3_5_inference(device)` | If not (cuda + flash-linear-attention + causal-conv1d): logs a warning (cuda) or info (mps/cpu) and sets `transformers.models.qwen3_5.modeling_qwen3_5.is_fast_path_available = True` so transformers stops nagging about CUDA-only kernels; layers still bind the pure-torch fallbacks. |
 
-Qwen3-ASR on the transformers engine uses its own rule: `float16` on mps/cuda, `float32` on cpu; the forced aligner follows the ASR model's dtype. `MultimodalRuntime.device` is resolved lazily on first access and cached for the process lifetime. The MLX engine never touches torch.
+Phonon-2 does not use these: fermion picks its own engine (MLX or CPU). `MultimodalRuntime.device` is resolved lazily on first access and cached for the process lifetime.
 
 Environment defaults set at import of `multimodal_runtime.py` (`os.environ.setdefault`, so a pre-set value wins): `FORCE_QWENVL_VIDEO_READER=pyav`, `VIDEO_MAX_PIXELS=200704`, `FPS=2.0`, `FPS_MAX_FRAMES=240`, `FPS_MIN_FRAMES=4` — these are read by `qwen-vl-utils` / Marlin's remote code for video frame sampling.
 
@@ -662,17 +660,17 @@ There is no separate vision model. `LLMService.describe_image` (doc 13 §9.13) r
 - `ensure_mmproj(model_id)` downloads a catalog model's projector (§6.2); `_ensure_mmproj_in_background(sel)` runs it once per boot in the `orb-mmproj` daemon thread when the selected catalog chat model has no projector on disk (start, result and failure are logged; startup is never blocked).
 - Images are downscaled to `IMAGE_DESCRIBE_MAX_PIXELS` (1 500 000 px) and sent as a JPEG data URL (`multimedia.image_data_url`) whichever provider answers.
 
-### 12.4 Qwen3-ASR (audio transcription)
+### 12.4 Phonon-2 (audio transcription)
+
+Transcription is **Phonon-2** (`FermionResearch/Phonon-2`, a quantized NVIDIA Parakeet TDT 0.6B v3; weights CC BY 4.0), run by the pinned `fermion-research==0.2.9` package (Apache 2.0). **English only.** fermion chooses the engine itself — MLX on Apple Silicon (needs `mlx`, `mlx-audio`, `mlx-lm`), its CPU engine (torch) on Linux, Windows and Intel Macs; Orb has no engine setting. Attribution is in the repo-root `THIRD_PARTY_NOTICES.md` (bundled into the app) and as a credit line on the Models page's Transcription row.
 
 `transcribe_audio_path(path) -> str`:
 
-1. `asr_engine.choose(MODELS_DIR, preferred_engine=settings.ASR_ENGINE)` → `AsrChoice(engine, model_path, repo_id, reason)`. `auto`: prefer `mlx` on Apple Silicon (only when `mlx_qwen3_asr` is importable), `transformers` elsewhere; a Qwen3-ASR folder already on disk for the preferred engine wins, else the platform default repo is named for download. An explicit engine that is not installed raises rather than being substituted. Not `ready` → `RuntimeError("Qwen3-ASR is not downloaded (…). Download the media models on the Models page.")`.
-2. **MLX engine:** `_unload_except("")` (both HF families), then `asr_engine.transcribe_with_mlx(model_path, audio_path, language=ASR_LANGUAGE, aligner_path=<aligner> when speaker labels are on)` → `mlx_qwen3_asr.transcribe(...)`; the weights are released with the call and `mx.clear_cache()` returns Metal buffers. No torch model is loaded, so the chat GGUF is not evicted for transcription on a Mac.
-3. **transformers engine:** under `_lock`, `_load_asr(model_path)` (`AutoModelForMultimodalLM.from_pretrained(dtype, low_cpu_mem_usage=True).to(device).eval()` + `AutoProcessor`, after `_unload_ggufs()` / `_unload_except("asr")`; load time recorded as `asr`), decode with `_load_audio_mono_16k` (system `ffmpeg`+`ffprobe` via pydub when both are found on `PATH` + `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `~/bin`; else PyAV `AudioResampler(format="flt", layout="mono", rate=16000)`), then `_asr_generate`: `processor.apply_transcription_request(audio, sampling_rate=16000[, language])` → `generate(max_new_tokens=int(seconds * 8) + 256)` → `decode(return_format="transcription_only")`. With speaker labels: `split_audio_into_chunks` (≤ 30 s, cut at the quietest half-second window in the middle 60 %), per-chunk transcription + `align_with_transformers` on the forced aligner (`_load_aligner`, `Qwen3ASRForTokenClassification`, recorded as `aligner`).
-   On the MLX engine the recording is transcribed in segments of at most `MLX_SEGMENT_SECONDS` (600 s), cut at pauses, so GPU memory stays flat for multi-hour audio; the library's model cache is cleared afterwards (`_ModelHolder.clear()`).
-4. **Speaker labels** (`ASR_SPEAKERS`, default on; requires the `aligner` and `diarizer` snapshots — else "Speaker labels skipped" at INFO and the plain, unstamped transcript): `asr_engine.speaker_turns` runs the pyannote community-1 pipeline on `mps`/`cuda` when available (else CPU) over the decoded waveform, releasing the accelerator cache afterwards; the transformers path unloads the speech model and aligner before it on a non-CPU device. Word punctuation comes back through `restore_punctuation` (sequence matching, not a length check) (segmentation step `ASR_DIARIZE_STEP`, `max_speakers=ASR_MAX_SPEAKERS`); `timed_lines` attributes words by midpoint (nearest turn in gaps) into `[MM:SS] Speaker N: …` lines, speakers numbered by first appearance; with no turns the lines are still timed, just unlabelled. `untimed` is the stamp-free, paragraph-per-speaker form the notes summariser reads (doc 11 §5.3, §6.4).
+1. Decode once with `_load_audio_mono_16k` (system `ffmpeg`+`ffprobe` via pydub when both are found on `PATH` + `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `~/bin`; else PyAV `AudioResampler(format="flt", layout="mono", rate=16000)`); empty → `""`. The samples are written to a temporary 16 kHz mono WAV for Phonon (its word timings come only from a file path) and kept in memory for the diarizer.
+2. Under `_lock`, `_load_phonon()` (after `_unload_ggufs()` / `_unload_except("asr")`; `asr_engine.load_phonon`, ~1 GB, ~14 s, recorded as `asr`) — kept for the rest of the ingestion batch and unloaded with the phase. Not downloaded → `RuntimeError("Phonon-2 is not downloaded. Download the media models on the Models page.")`; transcription never downloads. Then `asr_engine.transcribe_with_phonon(speech, wav)` → `speech.transcribe_detailed(wav)`: punctuated text plus word timings, so there is no forced aligner and no punctuation pass. `truncated` (a segment ran out of token budget) raises `RuntimeError` rather than returning a short transcript; fermion's `SystemExit` for bad input is converted to `RuntimeError` (`_unwrap`). No word timings → the plain text is returned.
+3. **Speaker labels** (`ASR_SPEAKERS`, default on; requires the `diarizer` snapshot — else "Speaker labels skipped" and timed but unlabelled lines): `asr_engine.speaker_turns` runs the pyannote community-1 pipeline on `mps`/`cuda` when available (else CPU) over the decoded waveform, releasing the accelerator cache afterwards (segmentation step `ASR_DIARIZE_STEP`, `max_speakers=ASR_MAX_SPEAKERS`); `timed_lines` attributes words by midpoint (nearest turn in gaps) into `[MM:SS] Speaker N: …` lines, speakers numbered by first appearance; with no turns the lines are still timed, just unlabelled. `untimed` is the stamp-free, paragraph-per-speaker form the notes summariser reads (doc 11 §5.3, §6.4).
 
-`unload("asr")` drops the ASR model/processor (the aligner goes with `_unload_except`).
+`unload("asr")` drops the Phonon-2 handle.
 
 ### 12.5 Marlin (video captioning)
 
@@ -684,7 +682,7 @@ There is no separate vision model. `LLMService.describe_image` (doc 13 §9.13) r
 
 ### 12.7 Multimodal memory notes
 
-- Qwen3-ASR 1.7B ≈ 1.7 B params (fp16 ≈ 3.5 GB on the transformers engine; on MLX the weights are resident only for the duration of the call), the forced aligner ≈ 0.6 B, pyannote community-1 is small and CPU-only; Marlin-2B ≈ 2 B (bf16 on Metal ≈ 4–5 GB resident). The `mmproj` projector adds roughly 1 GB to the chat GGUF's footprint. Because each HF load first calls `_unload_ggufs()`, a video-heavy ingest alternates GGUF ↔ HF loads (chat for image description/extraction, embed for vectors, ASR/Marlin for attachments). This swap cost is what the model-load clock (§13.2) makes visible; the phase order in doc 11 §7.1 keeps it to one round trip per note.
+- Phonon-2 ≈ 1 GB loaded (~14 s), held for one ingestion batch; pyannote community-1 is small (30 MB) and runs on `mps`/`cuda` when present; Marlin-2B ≈ 2 B (bf16 on Metal ≈ 4–5 GB resident). The `mmproj` projector adds roughly 1 GB to the chat GGUF's footprint. Because each HF load first calls `_unload_ggufs()`, a video-heavy ingest alternates GGUF ↔ HF loads (chat for image description/extraction, embed for vectors, Phonon-2/Marlin for attachments). This swap cost is what the model-load clock (§13.2) makes visible; the phase order in doc 11 §7.1 keeps it to one round trip per note.
 - HF weights are memory-mapped by `safetensors` with `low_cpu_mem_usage=True` so the CPU-side copy is transient; the `.to(device)` copy is what persists. Dropping the Python reference + `gc.collect()` is enough to free MPS memory when no other reference exists.
 - The multimodal runtime never unloads on idle; the ingestion agent unloads each family explicitly after its phase, otherwise a resident Marlin stays until the next GGUF request evicts it.
 
@@ -697,7 +695,7 @@ There is no separate vision model. `LLMService.describe_image` (doc 13 §9.13) r
 | Chat GGUF | `size_gb` + KV cache. With `swa_full=True` and `n_ctx=16384` Gemma 4 E4B ≈ 5.4 GB weights + ~3–4 GB KV; 12B ≈ 7.7 + ~5 GB. Source comment: "16k + swa_full fits ~24GB Metal; 32k + swa_full OOMs". |
 | Embed GGUF | 0.6 – 4.8 GB weights + small KV (`n_ctx` 8192, no generation). |
 | Reranker GGUF | 0.4 – 5 GB weights; `logits_all=True` allocates a logits buffer of `n_ctx × vocab` floats (8192 × ~152k × 4 B ≈ 5 GB **virtual**, lazily touched) — this is why `RERANK_N_CTX` matters more than it looks. |
-| Qwen3-ASR / Marlin | see §12.7 |
+| Phonon-2 / Marlin | see §12.7 |
 
 Only one of these is resident at a time (plus the ~150–200 MB of torch import overhead that `_LazyLLMService` defers until first use — see doc 13). The catalog's `usable_model_gb` (88 % of RAM on Metal/CUDA) is the budget the chat model must fit into *alone*; embed/rerank are only charged a "reserve" of half their sizes because they are never co-resident with chat.
 
@@ -738,7 +736,7 @@ These live in `local_models.py` and are covered by `backend/tests/unit/test_loca
 
 `create_chat_completion` calls `ensure_chat_loaded(self.resolve_chat_gguf(model))`; a path different from the resident one triggers a swap (`Switching chat GGUF …`). This is the mechanism behind per-KB model pinning (`kb_registry.effective_llm_config`, doc 13): a KB pinned to `gemma4-12b-q4` and another using the default E4B will swap the resident GGUF on every alternation. `model_catalog.chat_model_downloaded(opt)` / `downloaded_chat_models()` expose the same on-disk check to the KB API (`GET /api/v1/kb/{id}/llm.local_models`), and `recommend_stack` rows now carry `"downloaded": bool`.
 
-**Model-load clock.** `ModelLoadClock` (singleton `model_load_clock`) is a thread-safe accumulator of seconds and counts per `kind` (`chat`, `embed`, `rerank`, `asr`, `aligner`, `marlin`). Every `_construct_llama` site and every HF `from_pretrained` site records into it (`[ModelLoad] chat loaded in 41.3s`). `snapshot()` returns `{"seconds": {...}, "counts": {...}}`; `diff(before, after)` → `{"total_seconds", "seconds", "counts"}` restricted to kinds that grew; `describe(delta)` → `"chat×1,rerank×2"` or `"none"`. Consumers: `ChatWorkflow.chat/retrieve_for_query`, `IngestionWorkflow._log_timing` and `FireflyService.answer_finance_question`, which call `model_load_clock.snapshot()` / `ModelLoadClock.diff` / `ModelLoadClock.describe` directly (`[Timing] chat total=… model_load=… inference=… loads=… docs=N`), `FireflyService.answer_finance_question` (`finance_chat`), and `IngestionWorkflow._log_timing` (`[Timing] ingest note_id=… total= model_load= inference= loads= | multimedia=… extraction=… storage=… indexing=… chunks=N`). Purpose (docstring): "a slow disk and a slow model look identical in a bare stage timer."
+**Model-load clock.** `ModelLoadClock` (singleton `model_load_clock`) is a thread-safe accumulator of seconds and counts per `kind` (`chat`, `embed`, `rerank`, `asr`, `marlin`). Every `_construct_llama` site and every HF `from_pretrained` site records into it (`[ModelLoad] chat loaded in 41.3s`). `snapshot()` returns `{"seconds": {...}, "counts": {...}}`; `diff(before, after)` → `{"total_seconds", "seconds", "counts"}` restricted to kinds that grew; `describe(delta)` → `"chat×1,rerank×2"` or `"none"`. Consumers: `ChatWorkflow.chat/retrieve_for_query`, `IngestionWorkflow._log_timing` and `FireflyService.answer_finance_question`, which call `model_load_clock.snapshot()` / `ModelLoadClock.diff` / `ModelLoadClock.describe` directly (`[Timing] chat total=… model_load=… inference=… loads=… docs=N`), `FireflyService.answer_finance_question` (`finance_chat`), and `IngestionWorkflow._log_timing` (`[Timing] ingest note_id=… total= model_load= inference= loads= | multimedia=… extraction=… storage=… indexing=… chunks=N`). Purpose (docstring): "a slow disk and a slow model look identical in a bare stage timer."
 
 ## 14. Configuration and environment variables
 
@@ -764,7 +762,7 @@ Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS`, `EXTR
 | `MODEL_IDLE_SECONDS` | `300` | `model_idle_seconds` | idle unload for chat/embed/reranker; `0` = never |
 | `LARGE_ATTACHMENT_TOKENS` (ORB-only) | `20000` | `ingestion_agent.finish_attachment` | documents with more extracted tokens are summarised for the graph and indexed in full for search, with no prompt; recordings always are (doc 11 §6.4). UI row: "Summarize documents over (tokens)" |
 | `EXTRACTION_CHUNK_TOKENS` (ORB-only) | `4000` ceiling | `workflows/extraction_chunking.chunk_token_budget` | max input tokens per extraction chunk (doc 10) |
-| `HF_TOKEN`, `HF_HUB_*` | — | `huggingface_hub.snapshot_download` (HF snapshots only) | auth / mirrors for Qwen3-ASR / aligner / diarizer / Marlin; GGUF and projector downloads ignore them |
+| `HF_TOKEN`, `HF_HUB_*` | — | `huggingface_hub.snapshot_download` (HF snapshots only) | auth / mirrors for the diarizer / Marlin; GGUF, projector and Phonon-2 (fermion) downloads ignore them |
 | `FORCE_QWENVL_VIDEO_READER`, `VIDEO_MAX_PIXELS`, `FPS`, `FPS_MAX_FRAMES`, `FPS_MIN_FRAMES` | `pyav`, `200704`, `2.0`, `240`, `4` (setdefault) | qwen-vl-utils via Marlin | video frame sampling |
 
 Settings fields (`app/core/config.py`) touched by this layer:
@@ -776,7 +774,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | `EMBEDDING_DIMENSIONS` | `1024` | overwritten by `sync_embedding_infrastructure`; enforced on every Qdrant upsert |
 | `MODEL_RERANKER_LOCAL` | `qwen3-reranker-0.6b` | overwritten with the catalog id; label only |
 | `RERANKER_TOP_K`, `RERANKER_SCORE_THRESHOLD` | `10`, `0.05` | retrieval policy |
-| `MODEL_ASR_HF/LOCAL` (empty = per-platform default), `ASR_ENGINE` (`auto`), `ASR_LANGUAGE` (`en`), `ASR_SPEAKERS` (`True`), `ASR_DIARIZE_STEP` (`2.0`), `ASR_MAX_SPEAKERS` (`None`), `MODEL_MARLIN_HF/LOCAL` | see §6.2, §12.4 | repo ids, folder names, transcription engine and speaker-label knobs |
+| `ASR_SPEAKERS` (`True`), `ASR_DIARIZE_STEP` (`2.0`), `ASR_MAX_SPEAKERS` (`None`), `MODEL_MARLIN_HF/LOCAL` | see §6.2, §12.4 | Marlin repo/folder and speaker-label knobs (Phonon-2's model and engine are fixed) |
 | `IMAGE_DESCRIBE_MAX_PIXELS` | `1500000` | downscale threshold before any image model (local projector or cloud) |
 | `LLM_MODEL` | `local-chat` | placeholder meaning "Setup selection"; set to the chat catalog id after a download |
 | `MULTIMEDIA_CONCURRENCY` | `1` | semaphore around the multimodal node |
@@ -826,7 +824,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | Gemma 4 repetition cascade | abort stream, retry ≤ 3 with fresh sample, then `RuntimeError("LLM repetition loop persisted after 3 attempts")`. Deterministic `temperature=0` calls will repeat the same loop. |
 | Embed dims changed (model upgrade) | collections recreated (data loss), warning "re-ingest notes so vectors match"; ingest upserts with stale dims raise `ValueError`. |
 | Reranker GGUF changed | `sync_embedding_infrastructure` unloads the stale in-memory reranker; next rerank loads the new one. |
-| Multimodal deps missing | `ensure_multimodal_services` → `{started:false, error}`; transcription and Marlin raise at ingest time. Image description is unaffected — it goes through the chat GGUF's projector or the cloud provider, not torch. |
+| Multimodal deps missing | `ensure_multimodal_services` → `{started:false, error}`; transcription and Marlin raise at ingest time. Image description is unaffected — it goes through the chat GGUF's projector or the cloud provider. |
 | Chat GGUF has no matching `mmproj` | text chat works; `describe_image` raises "… has no vision projector …" and image/PDF-image attachments fail their note. The `orb-mmproj` boot thread fetches the projector for catalog models when the repo publishes one. |
 | Marlin gated / 401 | download skipped with warning; `multimodal_ready=false`; video visual analysis raises at ingest time. |
 | ffmpeg missing | PyAV decode path (bundled libs); logged at INFO. |

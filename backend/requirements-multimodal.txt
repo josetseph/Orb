@@ -1,7 +1,7 @@
-# In-process transcription (Qwen3-ASR) and Marlin (API process)
+# In-process transcription (Phonon-2) and Marlin (API process)
 # Marlin requires transformers>=5.7 (Qwen3.5) + qwen-vl-utils.
-# Qwen3-ASR on non-Apple machines uses the transformers engine in this stack.
 # Installed by Setup/supervisor via ensure_multimodal_services(install_deps=True)
+# (multimodal_services._MULTIMODAL_PIP is the list it installs; keep the two in step).
 torch
 transformers>=5.7.0
 accelerate>=1.12.0
@@ -12,12 +12,15 @@ pydub>=0.25.1
 timm>=1.0.24
 qwen-vl-utils>=0.0.14
 av
-# Speaker labels: pyannote community-1 runs on the CPU on every platform.
+# Speaker labels: pyannote community-1, on mps/cuda when there is one.
 pyannote.audio>=4.0
-# CUDA-only extras (not for macOS): flash-linear-attention, causal-conv1d
-# Apple Silicon only, via PEP 508 environment markers: pip simply skips these
-# on every other platform, so a bare install stays correct everywhere.
-#
-# Qwen3-ASR on the Apple GPU (see qwen-vs-whisper-report.md). CTranslate2 and
-# PyTorch have no Metal path; MLX transcribes at 5.6x realtime using ~6% CPU.
-mlx-qwen3-asr>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'
+# Transcription: Phonon-2 through fermion-research. Apple Silicon decodes on
+# the GPU through MLX; every other platform uses fermion's CPU engine (torch).
+fermion-research==0.2.9
+soundfile
+scipy
+zstandard
+# Apple Silicon only, via PEP 508 environment markers: pip skips these elsewhere.
+mlx; sys_platform == 'darwin' and platform_machine == 'arm64'
+mlx-audio; sys_platform == 'darwin' and platform_machine == 'arm64'
+mlx-lm; sys_platform == 'darwin' and platform_machine == 'arm64'

@@ -427,7 +427,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 - **Qwen3 reranker**: system `"Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."`, instruct `"Given a question, retrieve relevant passages that answer the question"`, ChatML with empty `<think>` (doc 12 §10).
 - **Qwen3 embedding query instruction**: `"Instruct: Given a question, retrieve relevant context.\nQuery: "` (doc 12 §9.2); documents get no instruction (`workflows/ingestion.py` comment: "Documents are embedded without any instruction prefix").
-- **Qwen3-ASR**: `language=language_name(ASR_LANGUAGE)` on both engines (`en` by default; `None` = detect), `return_format="transcription_only"` on the transformers engine; **Marlin**: `model.caption(video_path)` (remote-code prompt).
+- **Phonon-2**: no prompt or language hint (English only; `transcribe_detailed(wav)`); **Marlin**: `model.caption(video_path)` (remote-code prompt).
 
 ## 10. How to add a provider
 

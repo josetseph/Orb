@@ -104,19 +104,11 @@ class Settings(BaseSettings):
     MEILI_MASTER_KEY: str = "orb-dev-key"
     MEILI_INDEX_NAME: str = "orb_nodes"
 
-    # Transcription is Qwen3-ASR 1.7B: 5.6x realtime on Apple Silicon with no
-    # repetition loops or dropped speech on a 76-min lecture where Whisper
-    # lost 103 s. Empty means "let asr_engine pick the layout per platform".
-    MODEL_ASR_HF: str = ""
-    MODEL_ASR_LOCAL: str = ""
-    # "auto" | "mlx" | "transformers". An explicit engine is never substituted.
-    ASR_ENGINE: str = "auto"
-    # None lets the model detect the language; pinning "en" on non-English
-    # audio is a known source of invented transcripts.
-    ASR_LANGUAGE: str | None = "en"
+    # Transcription is Phonon-2 (English only; see asr_engine for the
+    # comparison with Qwen3-ASR it replaced). Its model and engine are fixed:
+    # MLX on Apple Silicon, fermion's CPU engine elsewhere.
     # Speaker labels ("Speaker 1: …") on transcripts, via pyannote community-1
-    # (on mps/cuda when there is one, else the CPU) plus Qwen's forced aligner
-    # for word timings. Measured in the sibling local-transcription-service
+    # (on mps/cuda when there is one, else the CPU) over Phonon's word timings. Measured in the sibling local-transcription-service
     # project: on the CPU the default 1.0 s segmentation step runs at 1.8x
     # realtime and 2.0 s at 3.4x, while agreeing on 95.7% of speech; 3.0 s
     # merges two speakers into one, so stop at 2.0. On mps a 10-minute slice

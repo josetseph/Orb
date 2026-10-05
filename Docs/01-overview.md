@@ -17,7 +17,7 @@ Key user-facing capabilities:
 | Area | Capability |
 |---|---|
 | Notes & vault | Real `.md` files in a per-knowledge-base vault folder (Obsidian-compatible), folders, attachments, `[[wikilinks]]` with autocomplete and disambiguation, entity highlighting in the editor, in-app voice recording |
-| Multimedia ingest | PDF text + vision on embedded images and scanned pages, image descriptions/OCR by the ingestion model (a local GGUF through its vision projector, or a cloud endpoint), audio and video transcription (Qwen3-ASR), video visual understanding (Marlin); results are appended to the note markdown |
+| Multimedia ingest | PDF text + vision on embedded images and scanned pages, image descriptions/OCR by the ingestion model (a local GGUF through its vision projector, or a cloud endpoint), audio and video transcription (Phonon-2, English), video visual understanding (Marlin); results are appended to the note markdown |
 | Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and relationships (relationship types are a closed 42-predicate vocabulary, off-list → `related_to`), optional community clustering (labelled "Leiden", implemented as a greedy cosine merge over embeddings) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
 | Chat | Multi-hop research loop combining entity lookup, keyword search (Meilisearch), vector search (Qdrant), graph expansion and a local cross-encoder reranker; persistent conversations; optional "thinking" display |
 | Knowledge bases | Multiple fully isolated KBs (separate vault, graph, vectors, keyword index, Firefly administration) switchable from the sidebar |
@@ -40,7 +40,7 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 
 1. **Desktop shell, no Docker for users.** A Tauri shell spawns `python -m app.desktop_runtime`, which supervises the local binaries and processes.
 2. **Every local model runs in-process** in the FastAPI worker, loaded from `MODELS_DIR`. No HTTP model sidecars, no Ollama/LM Studio/llama-server.
-3. **Exclusive residency.** Only one heavy model is in memory at a time (chat *or* embed *or* rerank *or* Qwen3-ASR/Marlin).
+3. **Exclusive residency.** Only one heavy model is in memory at a time (chat *or* embed *or* rerank *or* Phonon-2/Marlin).
 4. **Notes are files.** Bodies live as `.md` in a per-KB vault; SQLite stores metadata only. Attachments live in the vault too — only under `attachments/`, grouped by note folder, and notes link to them vault-root-relative.
 5. **Per-KB isolation everywhere**, including finance (one Firefly administration per KB).
 6. **Fail-closed indexing.** A Qdrant dimension mismatch during ingest raises instead of wiping a collection.
@@ -59,7 +59,7 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 | Graph | Kuzu embedded graph database | kuzu 0.11.3 |
 | Vectors | Qdrant (local binary) + qdrant-client | Qdrant v1.18.2, client 1.17.1 |
 | Keyword search | Meilisearch (local binary) + meilisearch python | Meilisearch v1.49.0, client 0.34.1 |
-| Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Marlin), Qwen3-ASR via `mlx-qwen3-asr` on Apple Silicon and transformers elsewhere; images are described by the chat GGUF through its `mmproj-*` vision projector | llama-cpp-python ≥ 0.3 |
+| Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Marlin), Phonon-2 via `fermion-research` (MLX on Apple Silicon, CPU elsewhere); images are described by the chat GGUF through its `mmproj-*` vision projector | llama-cpp-python ≥ 0.3 |
 | Cloud LLMs | openai, anthropic, google-genai, HuggingFace; structured output requested in each provider's JSON mode (llama.cpp grammar locally, prompt-only on Anthropic) and cleaned with `json-repair` | – |
 | Document parsing | PyMuPDF, Pillow, python-docx, openpyxl, `av` (media probing), ffmpeg (transcoding) | – |
 | Finance | Firefly III (Laravel) on a portable PHP 8.5 from NativePHP `php-bin` | Firefly v6.6.6, php-bin 1.2.0 |
@@ -75,7 +75,7 @@ Tauri shell ── spawns ──▶ python -m app.desktop_runtime ── boots �
                                                                         ▲                     │
 Vite/React UI (served by FastAPI at /) ── /api/v1 ──────────────────────┘                     │ in-process
 FastAPI ── per-KB KBContext ──▶ vault .md · SQLite metadata · Kuzu graph · Qdrant · Meili · Firefly
-        └── models: GGUF chat (+ vision projector)/embed/rerank · Qwen3-ASR · Marlin (one resident at a time)
+        └── models: GGUF chat (+ vision projector)/embed/rerank · Phonon-2 · Marlin (one resident at a time)
 ```
 
 Write path: note saved → attachments enriched → LLM extracts entities/relationships → graph + vectors + keyword index updated → communities recomputed after idle.

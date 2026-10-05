@@ -93,8 +93,8 @@ backend/
 │   │   ├── model_discovery.py  discover user-supplied chat GGUFs on disk (shards, depth cap)
 │   │   ├── model_formats.py    GGUF layout helpers: shards, magic bytes, name-based advisories
 │   │   ├── gguf_metadata.py    GGUF header parser (pooling_type / chat_template role hints)
-│   │   ├── asr_engine.py       Qwen3-ASR backend selection (MLX on Apple Silicon, transformers elsewhere)
-│   │   ├── multimodal_runtime.py   in-process Qwen3-ASR / Marlin loader
+│   │   ├── asr_engine.py       Phonon-2 via fermion, speaker turns, timed transcript lines
+│   │   ├── multimodal_runtime.py   in-process Phonon-2 / Marlin loader
 │   │   ├── multimodal_models.py    HF snapshot downloads into MODELS_DIR
 │   │   ├── multimodal_services.py  readiness + on-demand pip install of torch/transformers
 │   │   ├── multimedia.py       attachment discovery + PDF / image / audio / video / doc enrichment
