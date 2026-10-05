@@ -300,6 +300,38 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-05, round 4 results (in-process, A40, 3 lanes, ~41 h; reports in `Results/runpod/round4-*`).** Small samples
+  (20 questions unless stated): directions to confirm at scale (round 5), not settled results.
+  - *MuSiQue extraction (12B, dev 0-20).* Model-caused failures per 239 notes, after removing harness failures (storage
+    timeouts, a model unloaded mid-use):
+
+    | variant | fence / invalid JSON | endpoint not an entity | truncated | model-caused | gold in index | F1 |
+    |---|---|---|---|---|---|---|
+    | base | 51 | 18 | 9 | 78 | 0.45 | 0.096 |
+    | second attempt | 51 | 17 | 9 | 77 | 0.46 | 0.198 |
+    | closing endpoint reminder | 22 | 20 | 11 | 53 | 0.60 | 0.150 |
+    | JSON grammar | 0 | 30 | 10 | 40 | 0.50 | 0.251 |
+    | 1000-token chunks | 73 | 14 | 15 | 102 | 0.37 | 0.148 |
+    | entities then relationships (`task_split`) | 73 | 47 | 15 | 135+ | 0.25 | 0.097 |
+
+    The grammar halves the model's failures (fences go to zero, endpoint errors rise) but took 27 h to build; the
+    reminder cuts fences more than endpoint errors; a second attempt re-fails the same notes; smaller chunks and the
+    unconstrained two-pass mode make things worse. F1 differences are within noise at 20 questions.
+  - *MuSiQue answering over the 12B index:* E4B 0.096, 8 steps 0.154, 12B 0.171, Qwen 3.5 9B (thinking off) 0.237
+    (+3/-0 EM). The context-documents setting changed nothing (it never reached the loop; now removed).
+  - *Small extractors (HotpotQA 0-20):* E4B 0.464 F1 / gold in index 0.65; with a second attempt 0.560 / 0.72; with the
+    reminder 0.437 / 0.62. Qwen 3.5 9B with the reminder ingested 168 of 199 (163 without); its evaluation ran after the
+    sweep's naming bug was fixed, with the new code (no context cap), so its retrieval recall is not comparable.
+  - *Cheap retrieval at 50 questions (HotpotQA 20-70, full answers):* base 0.672 F1 / 56% EM; 0.6B reranker 0.622 / 50%;
+    no graph expansion 0.595 / 46%; all cheap with the 0.6B embedder 0.629 / 50%. Each loses a few questions (none
+    statistically clear): keep the 8B reranker and graph expansion until a larger sample says otherwise.
+  - *Repeat check:* see the entry above (18 of 20 identical; the reranker cache key fixed).
+  - **Product bug found:** "'NoneType' object has no attribute 'create_chat_completion'" (7 notes in the grammar build, 5
+    in the reminder build). `LocalLlamaRuntime.create_chat_completion` checks the model is loaded before taking the
+    runtime lock; when the previous call started more than `MODEL_IDLE_SECONDS` (5 min) ago, which a slow constrained
+    generation does, the idle watcher can unload the model in that gap. Slow desktop hardware can hit it too. Fix: load
+    and generate under one lock hold (or touch on the check). Served runs do not use this path.
+
 - **2026-10-05, round 4 repeat check: closer, one more source found.** Two runs of one configuration after pinning the
   date: 18 of 20 answers identical (F1 0.765 and 0.756), query analysis now replays from the cache. The rest diverged
   at the reranker: its cache key held the reranker file's full path, and each lane reaches the shared file through its
