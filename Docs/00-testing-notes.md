@@ -307,6 +307,9 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
   `-t 4 -tb 4` and served experiments set `LLAMA_N_THREADS=4` (the models are on the GPU; output is unchanged).
   Also: the HotpotQA manifest holds 100 questions, so round5-retrieval's "dev 70-170" was only 30 questions; it now uses
   all 100. Two pods had also lost part of their install to the first emergency stop and were re-provisioned.
+  Earlier rounds were touched lightly by the same timeout: 1-9 "Storage failed" notes per index in rounds 3-4 (for
+  example 5 of the 66 failures of round 4's reminder variant, 3 of 317 in the round-3 12B MuSiQue build). Their
+  acceptance counts are that much too low; no conclusion changes.
 
 - **2026-10-04, round 5 restarted a second time: served 12B replies carried the template's empty thinking block.**
   Gemma 4 12B's chat template ends the prompt with an empty thinking block (`<|channel>thought\n<channel|>`), its way of
