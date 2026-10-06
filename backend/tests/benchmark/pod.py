@@ -389,7 +389,9 @@ def follow_once(state: dict, args) -> bool:
     copy_home(endpoint)
     done = ssh(endpoint, f"cat {REMOTE}/Results/queue.done 2>/dev/null", check=False, capture=True).strip()
     if done:
-        # A finished pod is stopped, not left idling: two did for ~11 h on 2026-10-05. Results are home; the volume is kept.
+        # The queue may have finished after the copy above: copy again, so its last results are home, then stop the
+        # pod (a finished pod is not left idling: two did for ~11 h on 2026-10-05). The volume is kept.
+        copy_home(endpoint)
         api("POST", f"/pods/{state['id']}/stop")
         print(f"DONE: queue finished {done}. Results in {STATE_DIR}; the pod is stopped with its volume kept.", flush=True)
         return True
