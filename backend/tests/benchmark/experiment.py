@@ -210,7 +210,7 @@ def main() -> None:
         # LLAMA_N_THREADS: the in-process embedder and reranker run on the GPU; llama-cpp-python's default (half the
         # visible cores, 48 on a RunPod host with a ~7.6-CPU quota) throttles the container beside a model server.
         env.update(INGESTION_PIPELINE_CONCURRENCY=str(args.serve), LLM_REQUEST_TIMEOUT="7200", LLM_SERVER_GRAMMAR="true",
-                   LLAMA_N_THREADS="4",
+                   LLAMA_N_THREADS="4", LOCAL_MODELS_EXCLUSIVE="false",
                    LLM_SERVER_FINGERPRINT=model_server.fingerprint(serve_ctx, serve_flash, serve_penalty))
     record = {"name": args.name, "dataset": args.dataset, "questions": args.questions, "restore": args.restore,
               "ingest": args.ingest, "communities": args.communities, "overrides": overrides, "provider": args.provider,

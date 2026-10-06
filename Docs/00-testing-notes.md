@@ -300,6 +300,23 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-06, served evaluations broke on a model-unloading race; the evaluator hid it.** The round-5 parity evaluation
+  (served, 8 questions at a time) scored F1 0.938, against 0.765 in-process: 16 of 20 questions had failed with a
+  500 error, and `evaluate.py` averaged over the 4 that did not. Two fixes:
+  - *The race (a product bug, also behind round 4's chat-model failures).* The in-process embedder, reranker and chat
+    model each checked "loaded?" and then used the model without holding their lock across both. With models
+    exclusive (one resident at a time, for desktop RAM), one question loading the embedder unloaded the reranker
+    another was scoring with: `'NoneType' object is not callable`, after ~1,000 s of models evicting each other.
+    Now each checks and uses under one lock hold (the reranker re-checks under its lock and reloads if it vanished),
+    and the reranker releases other models before taking its own lock, so two requests cannot deadlock. A new
+    `LOCAL_MODELS_EXCLUSIVE` (default true, as on the desktop) is false in served experiments, where a 48 GB GPU holds
+    the embedder and reranker together. A desktop doing ingestion and chat at once could hit the same race.
+  - *The evaluator.* Averages are now over every question; an errored question scores 0. The sweep reports were not
+    affected (they average every row), so earlier comparison tables stand; only `evaluate.py`'s own summary was
+    inflated where a run had errors.
+  Round-5 evaluations so far are discarded and rerun; index builds were unaffected (they use only the embedder, one note
+  writing at a time).
+
 - **2026-10-05 14:45 UTC, all pods stopped: the main account reached its reserve.** Six pods (round 4's and five for round
   5) were billing $3.04/h; the followers that stop pods before the reserve could not act (two had exited early on a
   stale "queue finished" marker from before a restart; this Mac's network lost DNS for RunPod's API for hours, and

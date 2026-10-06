@@ -509,12 +509,11 @@ def calculate_metrics(results: list[EvaluationResult]) -> dict:
     if total == 0:
         return {}
 
-    valid_results = [r for r in results if r.error is None]
-    valid_count = len(valid_results)
-    error_count = total - valid_count
-
-    if valid_count == 0:
-        return {"error": "All queries failed", "error_count": error_count}
+    # A question that errored is a wrong answer, not a missing one: averaging over the rest inflated a served run
+    # with 16 of 20 errors to F1 0.94. Every average below is over all questions (an errored row scores 0).
+    valid_results = results
+    valid_count = total
+    error_count = sum(1 for r in results if r.error is not None)
 
     # Answer quality
     exact_matches = sum(1 for r in valid_results if r.exact_match)

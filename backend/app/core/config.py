@@ -124,6 +124,9 @@ class Settings(BaseSettings):
     LLAMA_BACKEND: str = "auto"  # auto | metal | cuda | vulkan | cpu
     LLAMA_N_GPU_LAYERS: int | None = None  # None = backend default (-1 = all)
     LLAMA_N_THREADS: int | None = None
+    # One heavy model resident at a time (chat, embed, rerank, multimodal), to fit desktop RAM. Off when memory
+    # allows several, e.g. experiments on a 48 GB GPU, where the embedder and reranker otherwise evict each other.
+    LOCAL_MODELS_EXCLUSIVE: bool = True
     LLAMA_REPEAT_PENALTY: float = 1.12
     LLAMA_PROMPT_RESERVE: int = 4096
     EMBED_N_CTX: int = 8192
