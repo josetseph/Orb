@@ -68,6 +68,7 @@ class QdrantService:
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
                 api_key=settings.QDRANT_API_KEY,
+                **({"timeout": settings.QDRANT_TIMEOUT} if settings.QDRANT_TIMEOUT else {}),
             )
             client.get_collections()  # the constructor never touches the network
         except Exception as exc:  # pylint: disable=broad-exception-caught

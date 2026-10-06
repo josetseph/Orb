@@ -127,6 +127,9 @@ class Settings(BaseSettings):
     # One heavy model resident at a time (chat, embed, rerank, multimodal), to fit desktop RAM. Off when memory
     # allows several, e.g. experiments on a 48 GB GPU, where the embedder and reranker otherwise evict each other.
     LOCAL_MODELS_EXCLUSIVE: bool = True
+    # Seconds Qdrant's client waits for a request (None: the client's default, 5). A busy host can exceed 5 s on an
+    # upsert, and the note then fails to store.
+    QDRANT_TIMEOUT: int | None = None
     LLAMA_REPEAT_PENALTY: float = 1.12
     LLAMA_PROMPT_RESERVE: int = 4096
     EMBED_N_CTX: int = 8192
