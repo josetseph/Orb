@@ -300,6 +300,42 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-07, round 5 results (served, five A40 pods in parallel; reports in `Results/runpod/round5-*`).** Every run
+  served its model from llama-server with 8 slots; the comparisons below are served against served. Served answering
+  scored a little below in-process on the parity set (HotpotQA 0-20: F1 0.655, 50% EM, against 0.71-0.77, 55%; 12 of 20
+  answers identical), so absolute numbers are not comparable with rounds 1-4.
+  - **MuSiQue extraction (50 questions, 526 notes, 12B, E4B answering, 5 steps):**
+
+    | extraction | notes accepted | gold in index | retrieval recall | EM | F1 |
+    |---|---|---|---|---|---|
+    | plain | 379 | 0.52 | 0.45 | 8% | 0.125 |
+    | + closing endpoint reminder | 388 | 0.56 | 0.54 | 14% | 0.198 |
+    | + reminder + JSON grammar | **436** | **0.67** | **0.64** | **18%** | **0.220** |
+
+    Paired against plain, retrieval recall gains are real for both (reminder CI +0.007 to +0.187; reminder + grammar
+    +0.092 to +0.295); answer F1 moves the same way (+6/-1 on exact match for reminder + grammar), at the edge of noise
+    with 50 questions. Served, the grammar build was not slower (24.7k s against 29.0k s). **Reminder + grammar is
+    the best extraction configuration found for long notes**: a third more gold reaches the index.
+  - **Query analysis (MuSiQue):** asking for the final answer's attribute as one string (`final`) gave F1 0.168 against
+    0.125 (+2/-0 EM) and halved the rejected query analyses (8 against 18); the list form gave 0.140 (2 rejections).
+    `final` is the one to adopt; the gain is within noise at 50 questions but every signal points the same way.
+  - **Answering:** 8 research steps changed nothing on MuSiQue (0.126). Qwen 3.5 9B (thinking off) answering: MuSiQue
+    0.132 against 0.125, HotpotQA 0.614 against 0.558 (+6/-5 EM): within noise on both; round 4's 20-question lead
+    did not hold.
+  - **HotpotQA extraction (50 questions):** the reminder does not help where extraction already works (0.520 against
+    0.558, 484 against 483 notes).
+  - **Small extractors (HotpotQA 20-70):** E4B 292/492 notes, F1 0.423; E4B with a second attempt 342 notes, 0.447;
+    **Qwen 3.5 4B with thinking off and the reminder 396 notes, gold in index 0.79 (E4B 0.73), F1 0.444**; Qwen 3.5 0.8B
+    235 notes, 0.214 (a real loss). Qwen 4B extracts more than E4B at the same answer quality; none reaches the 12B
+    (483 notes, 0.558 on the same questions).
+  - **Retrieval stack (HotpotQA, all 100 questions):** base 0.657 F1 / 50% EM; 0.6B reranker 0.625 / 50%; no graph
+    expansion 0.632 / 49%; all three cheap settings with the 0.6B embedder 0.573 / 44% (+6/-12 EM, F1 CI -0.166 to
+    -0.004: a real loss). Each cheap setting alone is within noise; together they cost. Keep the 8B reranker and graph
+    expansion.
+  - **Cost and incidents:** five A40s, about 20 h each with restarts. Lost to harness problems along the way: one set of
+    pods to the account reserve (followers blind on a DNS outage), one to a reranker race, one to CPU over-subscription;
+    each is fixed (see the entries below).
+
 - **2026-10-06, served evaluations broke on a model-unloading race; the evaluator hid it.** The round-5 parity evaluation
   (served, 8 questions at a time) scored F1 0.938, against 0.765 in-process: 16 of 20 questions had failed with a
   500 error, and `evaluate.py` averaged over the 4 that did not. Two fixes:
