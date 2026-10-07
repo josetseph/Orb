@@ -60,3 +60,14 @@ def test_an_unload_cannot_slip_between_loading_and_generating(monkeypatch):
         seen["chat_at_generation"] = False  # the old code asserted the model was still there
     t.join(5)
     assert seen["chat_at_generation"] is True
+
+
+def test_every_chat_call_renders_the_template_with_thinking_off():
+    """Qwen 3.x ignores "/no_think"; only the template's enable_thinking stops its reasoning preamble."""
+    from app.services.local_models import _ThinkingOff
+
+    seen = {}
+    handler = _ThinkingOff(lambda **kw: seen.update(kw) or "reply")
+    assert handler(llama="L", messages=[{"role": "user", "content": "hi"}], temperature=0.1) == "reply"
+    assert seen["enable_thinking"] is False
+    assert seen["llama"] == "L" and seen["temperature"] == 0.1

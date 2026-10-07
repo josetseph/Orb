@@ -1045,6 +1045,20 @@ class LocalLlamaEmbeddings:
         return self._runtime.embed_batch(texts)
 
 
+class _ThinkingOff:
+    """A chat handler that renders the model's template with thinking off.
+
+    llama-cpp-python's ``create_chat_completion`` takes no template arguments,
+    but its handlers pass extra keyword arguments on to the template.
+    """
+
+    def __init__(self, inner) -> None:
+        self.inner = inner
+
+    def __call__(self, **kwargs):
+        return self.inner(**kwargs, enable_thinking=False)
+
+
 class LocalLlamaRuntime:
     """Process-local llama-cpp-python models (chat + optional embed)."""
 
@@ -1282,6 +1296,19 @@ class LocalLlamaRuntime:
                 handler = None
         self._chat_handler = handler
         self._mmproj_path = mmproj if handler else None
+        # Whatever handler the model chats through (the vision one, or the text
+        # one built from its own template) gets enable_thinking=False for its
+        # template. Qwen 3.x ignores the "/no_think" text switch and writes long
+        # untagged reasoning before its JSON, so every strict parse failed
+        # (orb-testing round 1); Gemma 4's templates render identically with it.
+        from llama_cpp import llama_chat_format  # type: ignore
+
+        inner = (
+            self._chat.chat_handler
+            or self._chat._chat_handlers.get(self._chat.chat_format)  # pylint: disable=protected-access
+            or llama_chat_format.get_chat_completion_handler(self._chat.chat_format)
+        )
+        self._chat.chat_handler = _ThinkingOff(inner)
         model_load_clock.record("chat", time.perf_counter() - started)
         self._chat_path = Path(chat_gguf)
         self._embed = None

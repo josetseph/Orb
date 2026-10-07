@@ -35,7 +35,7 @@ This slice does **not** own (only consumes):
 | `backend/app/schemas/chat.py` | Pydantic wire schemas | `ChatTurn{role,content}`, `CreateConversationInput{title?}`, `ChatInput{query(min 1), request_id?, conversation_id?}` |
 | `backend/app/models/chat.py` | SQLAlchemy ORM models | `ChatConversation`, `ChatMessage` |
 | `backend/app/services/chat_store.py` | Async CRUD over the two tables, KB-scoped; history shaping; auto-title | `ChatStore`, `chat_store` singleton, `DEFAULT_TITLE = "New Chat"` |
-| `backend/app/workflows/chat.py` | `ChatWorkflow`: rewrite → loop → dedupe/truncate → answer + references | `ChatWorkflow.chat`, `ChatWorkflow.retrieve_for_query`, `_doc_passage`, `_dedupe_docs`, `_truncate_context` |
+| `backend/app/workflows/chat.py` | `ChatWorkflow`: rewrite → loop → dedupe → answer + references | `ChatWorkflow.chat`, `ChatWorkflow.retrieve_for_query`, `_doc_passage`, `_dedupe_docs`, `_clear_unverified_links` |
 | `backend/app/services/retrieval.py` | `RetrievalService`: iterative loop, hybrid search, graph expansion, rerank, text formatting | `RetrievalService`, `retrieval_service` (default-KB singleton; per-KB instances are built by `KBContext`) |
 | `backend/app/services/reranker.py` | Async façade over the in-process GGUF reranker; returns its rows as-is | `RerankerService.rerank`, `reranker_service` |
 | `backend/app/services/local_models.py` (reranker part) | `LocalGgufReranker` (Qwen3-Reranker yes/no logit scoring), residency rules | `local_gguf_reranker`, `reranker_gguf_path`, `_RERANK_SYSTEM`, `_RERANK_INSTRUCTION` |
@@ -85,7 +85,7 @@ sequenceDiagram
         LLM-->>RS: JSON {answer} → break, or {next_query} → continue
     end
     RS-->>WF: (final_answer | None, all_docs, thinking)
-    WF->>WF: _dedupe_docs → _truncate_context(6) — stage "Selecting best evidence"
+    WF->>WF: _dedupe_docs → _clear_unverified_links — stage "Selecting best evidence"
     WF->>CS: _extract_references (SQLite titles for linked note ids)
     WF-->>JOB: {query, rewritten_query, answer, sources, context, thinking} — stage "Formatting answer"
     JOB->>CS: add_message(assistant, answer, thinking, metadata)
@@ -215,7 +215,7 @@ The `"Gemma4"` model label is a **hard-coded string** in `chat.py`/`retrieval.py
   "rewritten_query": "<standalone query or original>",
   "answer": "<final answer>",
   "sources": [ {"id": "<note_id>", "title": "<note title>"}, ... ],   // schemas.chat.ChatSource, deduped by note id
-  "context": [ { ...candidate doc dict, see §10.1... }, ... ],   // ≤ 6 docs
+  "context": [ { ...candidate doc dict, see §10.1... }, ... ],   // every gathered doc
   "thinking": "<model chain-of-thought or null>"
 }
 ```
@@ -605,10 +605,10 @@ Return dict: `{reasoning, full_answer, can_answer, final_answer, next_query, thi
 
 ### 9.4 Answer assembly and citations (`ChatWorkflow`)
 
-1. `all_docs` → `_dedupe_docs` (key: `original_obj.name` or `note_id` or `text`; first wins) → `_truncate_context(docs, max_docs)`: if more than `max_docs` (6 for `chat`, 12 for `retrieve_for_query`), keep the top by `rerank_score` (docs lacking the key sort as 0.0); then **any doc without a `rerank_score` key gets `linked_notes = []`** ("clear unverified linked_notes"). In practice every doc from `hybrid_search` has the key, so this only bites docs injected by other means. Because `rerank_score`s come from *different* reranker passes (one per sub-query) they are not strictly comparable, but they are treated as such here.
+1. `all_docs` → `_dedupe_docs` (key: `original_obj.name` or `note_id` or `text`; first wins) → `_clear_unverified_links(docs)`: every gathered doc is kept (no cap: a cap applied here only trimmed the sources shown, since the answer is already written inside the loop); **any doc without a `rerank_score` key gets `linked_notes = []`** ("clear unverified linked_notes"). In practice every doc from `hybrid_search` has the key, so this only bites docs injected by other means. Because `rerank_score`s come from *different* reranker passes (one per sub-query) they are not strictly comparable, but they are treated as such here.
 2. `answer = final_answer or fallback message` (§6.3).
 3. `_extract_references(unique_docs) -> list[ChatSource]`: collect `linked_notes[*].id → title` across docs in order; one SQLite query `SELECT id, title FROM notes WHERE id IN (...)` overrides titles with the current note title (falls back to the graph title, then `"Untitled Note"`); dedupe by note id. Log `[Chat] Found N references for response`.
-4. The list is returned as `sources: [{id, title}]` on the result (and persisted in message `metadata.sources`); the answer text is left alone. Citations are per-note, not per-claim, and are derived purely from `REFERENCES` edges of the surviving top-6 docs — an answer can quote a fact whose source node was truncated away (no reference) or list a note whose content the LLM never saw (the note text itself is never retrieved; only node summaries are).
+4. The list is returned as `sources: [{id, title}]` on the result (and persisted in message `metadata.sources`); the answer text is left alone. Citations are per-note, not per-claim, and are derived purely from `REFERENCES` edges of the gathered docs — an answer can list a note whose content the LLM never saw (the note text itself is never retrieved; only node summaries are).
 
 The `context` list in the result is `unique_docs` (full candidate dicts). The frontend ignores it; it is stored nowhere except in `_chat_status` for async jobs (and only `context_count` goes into message metadata).
 
@@ -681,7 +681,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `TEMPORAL_DIGEST_PERIOD` | `month` | ingestion only | Granularity of the digest nodes that retrieval sees; retrieval itself has no switch |
 | KB row `llm_provider` / `llm_model` / `llm_ingestion_model` | `NULL` | `KBContext.llm` | Per-KB override of provider + chat model (working tree) |
 
-Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name variants `limit_per_name=5`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; `_dedupe_docs`/`_truncate_context` `max_docs` 6 (chat) / 12 (finance retrieval); history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `analyze_query` `lru_cache` 64 entries; `_chat_status` 200 entries / 1800 s; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
+Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name variants `limit_per_name=5`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `analyze_query` `lru_cache` 64 entries; `_chat_status` 200 entries / 1800 s; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
 
 ## 12. Function reference
 
@@ -712,10 +712,10 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 | `_dedupe_docs(docs)` | Dedupe by `original_obj.name` / `note_id` / `text`, first wins |
 | `_log_timing(kind, total, load_before, **extra)` | Emit `[Timing] kind total=… model_load=… inference=… loads=… docs=…` to `chat.log` (working tree) |
 | `_describe_loads(delta)` | `ModelLoadClock.describe` wrapper (working tree) |
-| `_truncate_context(docs, max_docs)` | Keep top `max_docs` by `rerank_score`; clear `linked_notes` on docs without a score |
+| `_clear_unverified_links(docs)` | Keep every gathered doc; clear `linked_notes` on docs without a rerank score |
 | `ChatWorkflow.__init__(retrieval=None, llm=None)` | Bind per-KB retrieval service and LLM (defaults: singletons) |
-| `ChatWorkflow._retrieve_context(user_query, history, progress_callback, max_context_docs)` | Rewrite follow-up → `retrieve_with_iterative_loop(top_k=50)` → dedupe/truncate; returns `(rewritten_query, final_answer or "", unique_docs, thinking)` |
-| `ChatWorkflow.chat(user_query, history, progress_callback)` | Full turn: retrieve (max 6 docs) → choose answer/fallback → `sources` (`ChatSource` list) → timing → result dict |
+| `ChatWorkflow._retrieve_context(user_query, history, progress_callback)` | Rewrite follow-up → `retrieve_with_iterative_loop(top_k=50)` → dedupe → clear unverified links; returns `(rewritten_query, final_answer or "", unique_docs, thinking)` |
+| `ChatWorkflow.chat(user_query, history, progress_callback)` | Full turn: retrieve (every gathered doc) → choose answer/fallback → `sources` (`ChatSource` list) → timing → result dict |
 | `ChatWorkflow.retrieve_for_query(user_query, history, progress_callback)` | Evidence only (max 12 docs), no answer; used by the finance path |
 | `ChatWorkflow._extract_references(docs)` | Unique `ChatSource(id, title)` entries from `linked_notes`, titles refreshed from SQLite `notes` |
 

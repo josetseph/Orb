@@ -11,6 +11,11 @@ from app.services import local_models as lm
 
 
 class _FakeLlama:
+    # What llama-cpp-python's Llama carries for choosing a chat handler.
+    chat_handler = None
+    chat_format = "gemma"
+    _chat_handlers: dict = {}
+
     def __init__(self, n_ctx: int):
         self._n = n_ctx
 
@@ -147,6 +152,8 @@ class TestEagerProjectorInit:
 
         chat_format = types.ModuleType("llama_cpp.llama_chat_format")
         chat_format.MTMDChatHandler = Handler
+        text_handler = object()
+        chat_format.get_chat_completion_handler = lambda fmt: text_handler
         monkeypatch.setitem(sys.modules, "llama_cpp", types.ModuleType("llama_cpp"))
         monkeypatch.setitem(sys.modules, "llama_cpp.llama_chat_format", chat_format)
         mmproj = tmp_path / "mmproj-chat-f16.gguf"
@@ -164,7 +171,9 @@ class TestEagerProjectorInit:
         rt._load_chat_unlocked(tmp_path / "chat.gguf")
 
         assert isinstance(built["chat_handler"], Handler)
-        assert rt._chat is not None and rt._chat.chat_handler is None
+        # Text chat goes through the model's own template (thinking off), not the broken projector.
+        assert rt._chat is not None and isinstance(rt._chat.chat_handler, lm._ThinkingOff)
+        assert rt._chat.chat_handler.inner is text_handler
         assert rt._chat_handler is None and rt._mmproj_path is None
         assert not rt.vision_ready
         with pytest.raises(RuntimeError, match="no vision projector"):

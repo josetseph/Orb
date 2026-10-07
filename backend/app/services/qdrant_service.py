@@ -68,6 +68,10 @@ class QdrantService:
                 host=settings.QDRANT_HOST,
                 port=settings.QDRANT_PORT,
                 api_key=settings.QDRANT_API_KEY,
+                # The client's default is 5 s. Ingestion keeps the machine busy
+                # (the models run in-process) and an upsert can take longer, so a
+                # note then failed to store (orb-testing, round 5).
+                timeout=60,
             )
             client.get_collections()  # the constructor never touches the network
         except Exception as exc:  # pylint: disable=broad-exception-caught

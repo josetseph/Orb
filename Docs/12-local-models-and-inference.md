@@ -459,7 +459,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 ## 8. Chat generation and the repetition-loop guard
 
-`create_chat_completion` → (under one hold of the runtime lock, from the residency check through generation, so the idle watcher or another model's load cannot unload the model in between) `ensure_chat_loaded()` → up to **3 attempts** of `_chat_completion_once`, each catching `RepetitionLoopError`; after 3 failures raises `RuntimeError("LLM repetition loop persisted after 3 attempts: …")` (this surfaces through `LLMService` as a normal provider error).
+Every chat completion goes through `_ThinkingOff`, a wrapper around the model's handler (its vision handler, or the text handler built from its GGUF template) that passes `enable_thinking=False` to the template: Qwen 3.x ignores the `/no_think` text switch and wrote long untagged reasoning before its JSON (orb-testing round 1), and Gemma 4's templates render identically with it. `create_chat_completion` → (under one hold of the runtime lock, from the residency check through generation, so the idle watcher or another model's load cannot unload the model in between) `ensure_chat_loaded()` → up to **3 attempts** of `_chat_completion_once`, each catching `RepetitionLoopError`; after 3 failures raises `RuntimeError("LLM repetition loop persisted after 3 attempts: …")` (this surfaces through `LLMService` as a normal provider error).
 
 `_chat_completion_once(messages, temperature, max_tokens, repeat_penalty)` under `_lock`:
 
