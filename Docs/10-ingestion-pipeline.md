@@ -530,7 +530,7 @@ Only the note's own `.md` (enriched body via `note_files.persist_note_body`, whi
 
 ### 10.6 Prompt skeletons
 
-Extraction (`_build_extraction_prompt(extraction_content)`, ~1.9k tokens of fixed text; full text in `ingestion_agent.py`):
+Extraction (`_build_extraction_prompt(extraction_content)`, ~1.9k tokens of fixed text; full text in `ingestion_agent.py`). After the note comes `_ENDPOINT_REMINDER`, one sentence restating that every relationship's `source_name`/`target_name` must be one of the reply's nodes (research round 5, MuSiQue, Gemma 4 12B: notes accepted 379 → 388 of 526, gold notes indexed 52 % → 56 %, retrieval recall 0.45 → 0.54):
 
 ```
 You are a precision knowledge extraction engine. … (CORE RULES open by naming the corpus as possibly personal notes, course material, company docs or meeting records — prompts stay source-neutral; see [13 §9.1](13-llm-providers-and-prompting.md))

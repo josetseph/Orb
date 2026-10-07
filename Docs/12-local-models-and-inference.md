@@ -459,7 +459,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 ## 8. Chat generation and the repetition-loop guard
 
-`create_chat_completion` → `ensure_chat_loaded()` → up to **3 attempts** of `_chat_completion_once`, each catching `RepetitionLoopError`; after 3 failures raises `RuntimeError("LLM repetition loop persisted after 3 attempts: …")` (this surfaces through `LLMService` as a normal provider error).
+`create_chat_completion` → (under one hold of the runtime lock, from the residency check through generation, so the idle watcher or another model's load cannot unload the model in between) `ensure_chat_loaded()` → up to **3 attempts** of `_chat_completion_once`, each catching `RepetitionLoopError`; after 3 failures raises `RuntimeError("LLM repetition loop persisted after 3 attempts: …")` (this surfaces through `LLMService` as a normal provider error).
 
 `_chat_completion_once(messages, temperature, max_tokens, repeat_penalty)` under `_lock`:
 
@@ -482,7 +482,7 @@ Prompt budgeting: before every generation the runtime estimates the prompt size 
 
 ### 9.1 Runtime primitives (`LocalLlamaRuntime.embed / embed_batch`)
 
-- `embed(text)` → `ensure_embed_loaded()` → under lock `self._embed.create_embedding(input=text)`; accepts both the OpenAI-shaped `{"data":[{"embedding":[...]}]}` and the legacy `{"embedding": [...]}` return forms; raises `RuntimeError("Unexpected embedding response…")` otherwise.
+- `embed(text)` → under one lock hold `ensure_embed_loaded()` then `self._embed.create_embedding(input=text)` (check and use together; `embed_batch` and `describe_image` do the same, and `LocalGgufReranker.rerank` scores the whole list under its lock, reloading if the model was unloaded before it got the lock; the reranker unloads its peers before taking its own lock so the lock order matches the runtime's); accepts both the OpenAI-shaped `{"data":[{"embedding":[...]}]}` and the legacy `{"embedding": [...]}` return forms; raises `RuntimeError("Unexpected embedding response…")` otherwise.
 - `embed_batch(texts)` (added in `8de5cda`, 2026-08-07): one `create_embedding(input=texts)` call for the whole list — one residency check, one lock acquisition, one llama call. **Fail-closed rule:** if `len(data) != len(texts)` it raises `RuntimeError("Unexpected batch embedding response … expected N vectors, got M")` rather than returning a shorter list, because "a length mismatch would silently mis-pair vectors with texts downstream". Empty input returns `[]` without loading anything.
 - Vectors are returned exactly as llama.cpp produces them. llama-cpp-python normalises pooled embeddings to unit length by default when `embedding=True`; Orb performs **no additional normalisation, truncation (Matryoshka) or dtype conversion**. Batch size is whatever the caller passes (ingestion batches per note / per NL-context group; see [10](10-ingestion-pipeline.md)); there is no internal chunking, so a batch whose total tokens exceed `EMBED_N_CTX` (8192) fails inside llama.cpp.
 - Dimension is a property of the GGUF (1024 / 2560 / 4096 for the three Qwen3 tiers). `LocalLlamaRuntime.load` probes it once by embedding the literal string `"dimension probe"`.

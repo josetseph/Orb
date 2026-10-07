@@ -627,11 +627,10 @@ class LLMService:
             - "entities": Complete named entities exactly as written — never split multi-word names.
             e.g. "Albert Einstein", "The Great Gatsby", "New York City", "Yale University"
 
-            - "entity_types": The types of entities the answer will involve.
+            - "expected_entity_types": The types of entities the answer will involve.
             e.g. ["Person"], ["Film", "Person"], ["Place"], ["Organization", "Person"], ["Venue"]
 
-            - "question_attribute": The specific attribute being asked about.
-            e.g. "nationality", "occupation", "director", "location", "capacity", "birth_date", "award"
+            - "question_attribute": The attribute of the final answer, as one string. For a chained question, the attribute of its last link: for "Who plays the wife of the producer of Film X in Film Y?" it is "actor"; for "What nationality was the director of Film X?" it is "nationality". Null if no attribute is asked.
 
             - "intent": One of — search / compare / summarize / explain / list
 

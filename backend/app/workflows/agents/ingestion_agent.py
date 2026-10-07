@@ -255,6 +255,17 @@ def place_extraction(content: str, src_url: str, section: str, mode: str = "") -
         return content.rstrip() + block
     return content[:line_end] + block + content[line_end:]
 
+# Closing reminder of the endpoint rule, after the note so it is read last.
+# Research round 5 (orb-testing, MuSiQue, 50 questions, Gemma 4 12B): notes
+# accepted 379 -> 388 of 526, gold notes indexed 52% -> 56%, retrieval recall
+# 0.45 -> 0.54; most rejected replies named an endpoint that was not a node.
+_ENDPOINT_REMINDER = (
+    "Before you reply, check every relationship: its source_name and target_name must each be "
+    "exactly the name of one of your nodes. Add a node for anything a relationship points to "
+    "that is not yet one."
+)
+
+
 def _build_extraction_prompt(extraction_content: str) -> str:
     """Knowledge Architect prompt for one note (or one chunk of a long note)."""
     return f"""You are a precision knowledge extraction engine. Your sole function is to decompose any input note into a fully structured knowledge graph — extracting every entity, every relationship, and generating an isolated contextual description for each entity as it exists *within the note only*.  # pylint: disable=line-too-long
@@ -395,6 +406,8 @@ Return a single JSON object structured exactly like this:
 Now apply this entire process to the following note and return only the JSON output, nothing else:
 
 {extraction_content}
+
+{_ENDPOINT_REMINDER}
 """
 
 

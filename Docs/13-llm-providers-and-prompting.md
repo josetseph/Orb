@@ -352,8 +352,8 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 - **Purpose**: retrieval planning — entities, expected entity types, question attribute, intent, keywords, date/period filters.
 - **Call**: `_chat([user prompt], temperature=0)` → `_clean_json` → `QueryAnalysis.model_validate_json`; `lru_cache(64)` per `(query, today)`; safe defaults on failure.
 - **Schema** (`QueryAnalysis`): `intent ∈ {search, summarize, compare, explain, list, recent, verify}`, `entities[]`, `keywords[]`, `expected_entity_types[]`, `question_attribute?`, `date_filter? (YYYY-MM-DD)`, `period_filter? (YYYY-MM)`.
-- **Prompt skeleton**: `"Analyze the following search query and return a structured JSON object.\n\nToday's date: {today}\n\nQUERY: \"{query}\"\n\nReturn a JSON object with these fields:\n- \"entities\": Complete named entities exactly as written — never split multi-word names. …\n- \"entity_types\" …\n- \"question_attribute\" …\n- \"intent\": One of — search / compare / summarize / explain / list\n- \"keywords\" …\n- \"date_filter\" …\n- \"period_filter\" …\n\nEXAMPLES:\n(8 query → JSON pairs, e.g. Einstein/Curie nationality, 1984 award, Madison Square Garden capacity, Inception director, 24 May 2024, March 3rd 2023, last month, in April)\n\nReturn only the JSON object, no preamble or explanation."`
-- **Model-specific**: the prompt text says `"entity_types"` while the schema field is `expected_entity_types` (the examples use the schema name); the intent list in the prose omits `recent`/`verify` that the schema allows. The two example month answers are hard-coded to `2026-04`.
+- **Prompt skeleton**: `"Analyze the following search query and return a structured JSON object.\n\nToday's date: {today}\n\nQUERY: \"{query}\"\n\nReturn a JSON object with these fields:\n- \"entities\": Complete named entities exactly as written — never split multi-word names. …\n- \"expected_entity_types\" …\n- \"question_attribute\" …\n- \"intent\": One of — search / compare / summarize / explain / list\n- \"keywords\" …\n- \"date_filter\" …\n- \"period_filter\" …\n\nEXAMPLES:\n(8 query → JSON pairs, e.g. Einstein/Curie nationality, 1984 award, Madison Square Garden capacity, Inception director, 24 May 2024, March 3rd 2023, last month, in April)\n\nReturn only the JSON object, no preamble or explanation."`
+- **Model-specific**: the prompt names the field `expected_entity_types`, as the schema does (it said `entity_types` until 2026-10; correct replies then failed strict parsing). `question_attribute` asks for the attribute of the *final* answer as one string, the last link of a chained question ("Who plays the wife of the producer of Film X in Film Y?" → `"actor"`); research round 5 (MuSiQue, 50 questions) measured F1 0.168 against 0.125 for the generic wording, with half as many rejected analyses. The intent list in the prose omits `recent`/`verify` that the schema allows. The two example month answers are hard-coded to `2026-04`.
 
 ### 9.9 Follow-up rewrite — `LLMService.rewrite_follow_up_query(history, latest_query)`
 
@@ -462,7 +462,6 @@ Gotchas:
 - `llm_service` is a lazy proxy; `isinstance` checks fail and the first attribute access (including `GET /api/v1/settings`) constructs clients.
 - If `init_clients()` raises in `PATCH /settings` (missing key) the persisted provider is already switched.
 - `_chat` flattens the message list for Gemini (system + user concatenated, assistant turns dropped) and Anthropic (system → `system=`, one user message); multi-turn history must therefore be pre-formatted into the user prompt, as retrieval already does.
-- `analyze_query` prompt/schema field-name mismatch (`entity_types` vs `expected_entity_types`) — the schema wins because the examples use the schema name.
 - The extraction prompt is an f-string: every literal `{`/`}` must be doubled.
 - `generate_title` strips all `"` characters, including ones inside the title.
 - `_chat` strips the `<think>` block from every OpenAI-shaped response, but only `_reason_step` (and so `iterative_step`) returns it; `reason()`, `generate()` and the ingestion calls discard it.
@@ -484,7 +483,7 @@ Failure modes:
 
 Discrepancies (code vs docs/comments):
 
-- `analyze_query` prose lists five intents, schema allows seven; prose says `entity_types`, schema `expected_entity_types`.
+- `analyze_query` prose lists five intents, schema allows seven.
 - `EmbeddingService.is_qwen3` staleness (doc 12 §18) affects query embeddings used by this layer's retrieval.
 - README-era mention of `OPENAI_MODEL_REASONING` was removed in `28ea18e`; no reasoning-model split remains — `reason()` uses the chat model.
 

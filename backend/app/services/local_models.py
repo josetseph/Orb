@@ -1553,6 +1553,16 @@ class LocalLlamaRuntime:
         """``response_format={"type": "json_object"}`` turns on llama.cpp's JSON
         grammar. Never pass a schema: schema-constrained sampling empties nested
         arrays on small GGUFs."""
+        # One lock hold (reentrant) from the residency check through generation:
+        # in the gap, the idle watcher (after MODEL_IDLE_SECONDS, which a slow
+        # generation can exceed) or another model's load could unload the chat
+        # model, failing with "'NoneType' object has no attribute ...".
+        with self._lock:
+            return self._create_chat_completion_locked(
+                messages, temperature, max_tokens, model, response_format
+            )
+
+    def _create_chat_completion_locked(self, messages, temperature, max_tokens, model, response_format):
         self.ensure_chat_loaded(self.resolve_chat_gguf(model))
         assert self._chat is not None
         if max_tokens is None:
@@ -1661,9 +1671,10 @@ class LocalLlamaRuntime:
             }
 
     def embed(self, text: str) -> list[float]:
-        self.ensure_embed_loaded()
-        assert self._embed is not None
+        # One lock hold from the residency check to the result: between the two,
+        # another request (the reranker loading, the idle watcher) could unload it.
         with self._lock:
+            self.ensure_embed_loaded()
             out = self._embed_unlocked(text)
             self._touch()
             return out
@@ -1672,9 +1683,8 @@ class LocalLlamaRuntime:
         """Embed many texts with one residency check, one lock, one llama call."""
         if not texts:
             return []
-        self.ensure_embed_loaded()
-        assert self._embed is not None
-        with self._lock:
+        with self._lock:  # see embed(): check and use in one hold
+            self.ensure_embed_loaded()
             out = self._embed_batch_unlocked(texts)
             self._touch()
             return out
@@ -1696,6 +1706,10 @@ class LocalLlamaRuntime:
         No cap by default: the answer may use everything the context window
         has left, so a dense screenshot is transcribed in full.
         """
+        with self._lock:  # see create_chat_completion: check and use in one hold
+            return self._describe_image_locked(image_data_url, prompt, model, max_tokens)
+
+    def _describe_image_locked(self, image_data_url, prompt, model, max_tokens) -> str:
         self.ensure_chat_loaded(self.resolve_chat_gguf(model))
         assert self._chat is not None
         if self._chat_handler is None:
@@ -1782,13 +1796,19 @@ class LocalGgufReranker:
         except ImportError as exc:
             raise RuntimeError("llama-cpp-python missing; cannot load GGUF reranker") from exc
         accel = detect_llama_backend()
+        # Exclusive: drop chat/embed + multimodal before loading the reranker.
+        # Outside this reranker's lock: the runtime takes its own lock and then
+        # this one when it unloads the reranker, so taking them in the opposite
+        # order here could deadlock two concurrent requests.
+        try:
+            local_llama_runtime.unload()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.debug("Chat/embed unload before rerank skipped: %s", exc)
+        _unload_multimodal_families()
         with self._lock:
-            # Exclusive: drop chat/embed + multimodal before loading reranker.
-            try:
-                local_llama_runtime.unload()
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                logger.debug("Chat/embed unload before rerank skipped: %s", exc)
-            _unload_multimodal_families()
+            if self._model is not None and self._path == path:
+                self._last_used = time.monotonic()
+                return  # another request loaded it meanwhile
             if self._model is not None:
                 _close_llama_handle(self._model)
                 self._model = None
@@ -1895,12 +1915,18 @@ class LocalGgufReranker:
     ) -> list[dict]:
         if not documents:
             return []
-        self.ensure_loaded()
-        scored = []
-        for i, doc in enumerate(documents):
-            scored.append(
-                {"index": i, "relevance_score": self._score_one(query, doc), "document": doc}
-            )
+        for _ in range(3):
+            self.ensure_loaded()
+            with self._lock:  # held for every score: nothing can unload the model mid-list
+                if self._model is None:
+                    continue  # unloaded between the load and the lock: load again
+                scored = [
+                    {"index": i, "relevance_score": self._score_one(query, doc), "document": doc}
+                    for i, doc in enumerate(documents)
+                ]
+                break
+        else:
+            raise RuntimeError("Reranker was unloaded three times while waiting to score")
         scored.sort(key=lambda x: x["relevance_score"], reverse=True)
         if top_n is not None:
             scored = scored[:top_n]

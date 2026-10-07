@@ -40,7 +40,9 @@ class _StubLLM:
     @staticmethod
     def _note_text(prompt: str) -> str:
         # The note is the last thing in the prompt, after the final blank line.
-        return prompt.rsplit("nothing else:\n\n", 1)[-1].strip()
+        # The note sits between the closing instruction and the endpoint reminder.
+        note = prompt.rsplit("nothing else:\n\n", 1)[-1]
+        return note.rsplit(agent._ENDPOINT_REMINDER, 1)[0].strip()
 
     async def ingestion_generate_with_meta(self, prompt: str, temperature=0.1, max_tokens=None, **kw):
         note = self._note_text(prompt)
