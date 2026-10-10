@@ -14,7 +14,8 @@ log "gpu: $(nvidia-smi --query-gpu=name,memory.total --format=csv,noheader 2>/de
 command -v nvcc >/dev/null || export PATH=/usr/local/cuda/bin:$PATH
 command -v nvcc >/dev/null || fail "no nvcc in this image: llama-cpp-python cannot be built for CUDA"
 export DEBIAN_FRONTEND=noninteractive
-command -v cmake >/dev/null && command -v rsync >/dev/null || { apt-get update -qq && apt-get install -y -qq cmake rsync build-essential >/dev/null; } || fail "apt-get"
+command -v cmake >/dev/null && command -v rsync >/dev/null || { apt-get update -qq && apt-get install -y -qq cmake rsync build-essential >/dev/null; }
+python3 -c "import ensurepip" 2>/dev/null || apt-get install -y -qq python3-venv python3-dev >/dev/null || fail "python3-venv" || fail "apt-get"
 
 [ -x .venv/bin/python ] || python3 -m venv .venv || fail "venv"
 .venv/bin/pip install -q -U pip wheel || fail "pip upgrade"
@@ -52,7 +53,7 @@ while true; do
   if [ $((NOW - BUSY)) -gt $IDLE ]; then echo "[watchdog $(date '+%F %T')] idle ${ORB_IDLE_HOURS:-3} h, stopping"; break; fi
 done
 pkill -INT -f "tests/benchmark/" ; sleep 30; pkill -f "run.py|data/bin/|llama-server" ; sync
-kill -TERM 1
+if [ -f /etc/orb-ec2 ]; then shutdown -h now; else kill -TERM 1; fi  # EC2: stop the instance; RunPod: end the container
 WATCHDOG
   chmod +x /usr/local/bin/orb-watchdog
   nohup setsid /usr/local/bin/orb-watchdog >> $ROOT/pod-watchdog.log 2>&1 < /dev/null &

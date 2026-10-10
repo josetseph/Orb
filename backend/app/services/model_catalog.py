@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from typing import Literal
 
 Role = Literal["chat", "embed", "reranker"]
-Family = Literal["gemma4", "qwen35", "qwen36", "qwen3-embed", "qwen3-rerank"]
+Family = Literal["gemma4", "granite4", "phi4", "qwen35", "qwen36", "qwen3-embed", "qwen3-rerank"]
 
 
 @dataclass(frozen=True)
@@ -81,6 +81,51 @@ CHAT_MODELS: list[ModelOption] = [
         min_ram_gb=28,
         size_gb=18.0,
         params="31B",
+    ),
+    # Round-6 extractor candidates (benchmark, served; no projector downloaded)
+    ModelOption(
+        "gemma4-12b-qat-q4",
+        "chat",
+        "gemma4",
+        "Gemma 4 12B QAT (Q4)",
+        "unsloth/gemma-4-12B-it-qat-GGUF",
+        "gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
+        min_ram_gb=10,
+        size_gb=6.7,
+        params="12B",
+    ),
+    ModelOption(
+        "gemma4-26b-a4b-qat-q4",
+        "chat",
+        "gemma4",
+        "Gemma 4 26B-A4B QAT (Q4)",
+        "unsloth/gemma-4-26B-A4B-it-qat-GGUF",
+        "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
+        min_ram_gb=18,
+        size_gb=14.3,
+        params="26B-A4B",
+    ),
+    ModelOption(
+        "granite42-8b-q4",
+        "chat",
+        "granite4",
+        "Granite 4.2 8B (Q4)",
+        "ibm-granite/granite-4.2-8b-GGUF",
+        "granite-4.2-8b-Q4_K_M.gguf",
+        min_ram_gb=8,
+        size_gb=5.4,
+        params="8B",
+    ),
+    ModelOption(
+        "phi4-14b-q4",
+        "chat",
+        "phi4",
+        "Phi-4 14B (Q4)",
+        "bartowski/phi-4-GGUF",
+        "phi-4-Q4_K_M.gguf",
+        min_ram_gb=12,
+        size_gb=9.1,
+        params="14B",
     ),
     ModelOption(
         "qwen35-0.8b-q4",

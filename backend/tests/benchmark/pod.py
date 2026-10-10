@@ -10,6 +10,7 @@
     python tests/benchmark/pod.py logs                        # follow the queue log (Ctrl-C only stops following)
     python tests/benchmark/pod.py pull                        # results + cache -> pod-state/ (restarts a stopped pod to do it)
     python tests/benchmark/pod.py down                        # pull, then delete the pod and its volume
+    python tests/benchmark/pod.py --cloud aws --name a up     # an EC2 GPU instance instead (AWS CLI credentials)
 
 Credentials come from <repo>/.env (RUNPOD_API_KEY, RUNPOD_SSH_PRIVATE_KEY, RUNPOD_SSH_PUBLIC_KEY), the second
 RunPod account also used by content-machine. The pod's own watchdog ends the container when the queue has been
@@ -18,6 +19,8 @@ the results until `down`. How it rents, reaches and tears down a pod follows con
 """
 
 from __future__ import annotations
+
+import os
 
 import argparse
 import json
@@ -54,6 +57,12 @@ class PodError(RuntimeError):
 
 
 ACCOUNT = "alt"  # set from --account / the recorded pod: "alt" reads RUNPOD_*, "main" reads MAIN_RUNPOD_*
+PROVIDER = "runpod"  # set from --cloud / the recorded pod: "runpod" or "aws" (EC2 through the AWS CLI)
+AWS_REGION = "us-east-1"  # where the account's GPU quota is
+AWS_KEY = Path.home() / ".ssh" / "orb-bench-aws.pem"
+AWS_FALLBACK_TYPES = ("g6e.2xlarge",)  # the same 48 GB L40S with more CPU, when the first type has no capacity
+AWS_RESERVE_USD = 10.0  # credit kept back: AWS reports the remaining credit with a lag of hours  # private key of the EC2 key pair "orb-bench"
+AWS_PRICE = {"g6e.xlarge": 1.861, "g6e.2xlarge": 2.242, "g5.xlarge": 1.006, "g6.xlarge": 0.805}  # on-demand $/h, us-east-1
 
 
 def env() -> dict[str, str]:
@@ -94,6 +103,14 @@ def _http(method: str, url: str, body: bytes | None, headers: dict) -> tuple[int
 
 def balance() -> tuple[float, float]:
     """(credit left in USD, what the account is spending per hour right now)."""
+    if PROVIDER == "aws":
+        # Credits from the account plan (updated with a lag of hours), spend = the orb instances running now.
+        plan = aws("freetier", "get-account-plan-state")
+        credit = float((plan.get("accountPlanRemainingCredits") or {}).get("amount") or 0)
+        running = aws("ec2", "describe-instances", "--filters", "Name=tag:Name,Values=orb-*",
+                      "Name=instance-state-name,Values=running,pending")["Reservations"]
+        spend = sum(AWS_PRICE.get(i["InstanceType"], 2.0) for r in running for i in r["Instances"])
+        return credit, spend
     status, raw = _http("POST", f"https://api.runpod.io/graphql?api_key={env()['RUNPOD_API_KEY']}",
                         json.dumps({"query": "query { myself { clientBalance currentSpendPerHr } }"}).encode(),
                         {"Content-Type": "application/json", "User-Agent": USER_AGENT})
@@ -103,7 +120,38 @@ def balance() -> tuple[float, float]:
     return float(me["clientBalance"]), float(me["currentSpendPerHr"] or 0)
 
 
+def aws(*args: str) -> object:
+    """One AWS CLI call in the pod's region, JSON back."""
+    out = subprocess.run(["aws", *args, "--region", AWS_REGION, "--output", "json"], capture_output=True, text=True,
+                         env={**os.environ, "AWS_PAGER": ""}, check=False)
+    if out.returncode != 0:
+        raise PodError(f"aws {' '.join(args[:2])} failed: {out.stderr.strip()[:300]}")
+    return json.loads(out.stdout) if out.stdout.strip() else None
+
+
+def aws_pod(method: str, path: str) -> object:
+    """RunPod's pod calls (GET / start / stop / DELETE /pods/<id>) answered for an EC2 instance."""
+    parts = path.strip("/").split("/")
+    instance = parts[1]
+    if method == "GET":
+        found = aws("ec2", "describe-instances", "--instance-ids", instance)["Reservations"][0]["Instances"][0]
+        state = found["State"]["Name"]
+        status = {"running": "RUNNING", "pending": "STARTING", "stopping": "EXITED", "stopped": "EXITED"}.get(state, "TERMINATED")
+        return {"desiredStatus": status, "publicIp": found.get("PublicIpAddress"), "portMappings": {"22": 22},
+                "machine": {"gpuTypeId": found["InstanceType"]}}
+    action = parts[2] if len(parts) > 2 else ""
+    verb = {"start": "start-instances", "stop": "stop-instances"}.get(action) if method == "POST" else "terminate-instances"
+    if verb == "terminate-instances":  # a persistent spot request would otherwise launch a replacement
+        found = aws("ec2", "describe-instances", "--instance-ids", instance)["Reservations"][0]["Instances"][0]
+        if found.get("SpotInstanceRequestId"):
+            aws("ec2", "cancel-spot-instance-requests", "--spot-instance-request-ids", found["SpotInstanceRequestId"])
+    aws("ec2", verb, "--instance-ids", instance)
+    return None
+
+
 def api(method: str, path: str, body: dict | None = None) -> object:
+    if PROVIDER == "aws":
+        return aws_pod(method, path)
     status, raw = _http(method, f"{REST}{path}", json.dumps(body).encode() if body is not None else None,
                         {"Authorization": f"Bearer {env()['RUNPOD_API_KEY']}", "Content-Type": "application/json",
                          "User-Agent": USER_AGENT})
@@ -118,6 +166,9 @@ def saved() -> dict:
         raise PodError("no pod recorded; run: pod.py up")
     state = json.loads(STATE.read_text())
     ACCOUNT = state.get("account", "alt")
+    global PROVIDER, AWS_REGION  # noqa: PLW0603
+    PROVIDER = state.get("provider", "runpod")
+    AWS_REGION = state.get("region", AWS_REGION)
     return state
 
 
@@ -148,7 +199,8 @@ def wait_ssh(pod_id: str, timeout: float = 900) -> tuple[str, int]:
 
 def ssh_args(endpoint: tuple[str, int]) -> list[str]:
     host, port = endpoint
-    return ["-i", str(Path(env()["RUNPOD_SSH_PRIVATE_KEY"]).expanduser()), "-p", str(port),
+    key = AWS_KEY if PROVIDER == "aws" else Path(env()["RUNPOD_SSH_PRIVATE_KEY"]).expanduser()
+    return ["-i", str(key), "-p", str(port),
             "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR",
             "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=30", f"root@{host}"]
 
@@ -211,9 +263,98 @@ def provision(endpoint: tuple[str, int], state: dict) -> None:
             raise PodError(f"provisioning {state_line[6:]}; the pod is still rented (pod.py down to stop billing)")
 
 
+# Root SSH with the launch key (the setup expects root, as on RunPod), /workspace on the root disk, and a marker that
+# tells the watchdog to shut the machine down (stopping it) instead of ending a container.
+AWS_USER_DATA = """#!/bin/bash
+mkdir -p /root/.ssh /workspace
+cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /root/.ssh/authorized_keys
+sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+systemctl restart ssh || systemctl restart sshd
+touch /etc/orb-ec2
+"""
+
+
+def aws_up(args) -> dict:
+    """Launch an EC2 GPU instance (on-demand) with the NVIDIA-driver Deep Learning Base AMI; returns the pod state."""
+    if not AWS_KEY.is_file():
+        material = aws("ec2", "create-key-pair", "--key-name", "orb-bench", "--key-type", "ed25519")["KeyMaterial"]
+        AWS_KEY.write_text(material)
+        AWS_KEY.chmod(0o600)
+    groups = aws("ec2", "describe-security-groups", "--filters", "Name=group-name,Values=orb-bench-ssh")["SecurityGroups"]
+    if groups:
+        group = groups[0]["GroupId"]
+    else:
+        group = aws("ec2", "create-security-group", "--group-name", "orb-bench-ssh",
+                    "--description", "SSH to Orb benchmark instances (key only)")["GroupId"]
+        # Key-only SSH from anywhere: the laptop's address changes, and a follower that loses SSH loses the results.
+        aws("ec2", "authorize-security-group-ingress", "--group-id", group, "--protocol", "tcp", "--port", "22",
+            "--cidr", "0.0.0.0/0")
+    # Stop when the credits are spent: this instance's hours cap is what the credit left over the reserve buys
+    # once the other recorded AWS instances' remaining hours are counted (the reported credit lags by hours).
+    rate = AWS_PRICE.get(args.instance_type, 2.0)
+    credit, _ = balance()
+    committed = 0.0
+    for other in REPO.glob("pod*.json"):
+        o = json.loads(other.read_text())
+        if o.get("provider") == "aws":
+            committed += o["rate"] * max(0.0, o["max_hours"] - (time.time() - o["created"]) / 3600)
+    hours = round(min(args.max_hours, (credit - AWS_RESERVE_USD - committed) / rate), 2)
+    if hours < 1:
+        raise PodError(f"credit ${credit:.2f}, ${committed:.2f} committed: not launching with under an hour left")
+    image = aws("ssm", "get-parameter", "--name",
+                "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id")["Parameter"]["Value"]
+    root = aws("ec2", "describe-images", "--image-ids", image)["Images"][0]["RootDeviceName"]
+    # GPU capacity runs out zone by zone: try each zone of the default VPC, then the next instance type.
+    subnets = aws("ec2", "describe-subnets", "--filters", "Name=default-for-az,Values=true")["Subnets"]
+    launched, tried = None, []
+    for kind in dict.fromkeys([args.instance_type, *AWS_FALLBACK_TYPES]):
+        for subnet in sorted(subnets, key=lambda s: s["AvailabilityZone"]):
+            try:
+                launched = aws(
+                    "ec2", "run-instances", "--image-id", image, "--instance-type", kind, "--count", "1",
+                    "--subnet-id", subnet["SubnetId"], "--key-name", "orb-bench", "--security-group-ids", group,
+                    "--user-data", AWS_USER_DATA, "--instance-initiated-shutdown-behavior", "stop",
+                    "--block-device-mappings", f"DeviceName={root},Ebs={{VolumeSize={args.volume_gb},VolumeType=gp3,DeleteOnTermination=true}}",
+                    "--tag-specifications", f"ResourceType=instance,Tags=[{{Key=Name,Value=orb-{NAME or 'benchmark'}}}]",
+                    *(["--instance-market-options", "MarketType=spot,SpotOptions={SpotInstanceType=persistent,"
+                       "InstanceInterruptionBehavior=stop}"] if args.spot else []))
+                break
+            except PodError as exc:
+                if not any(k in str(exc) for k in ("InsufficientInstanceCapacity", "Unsupported", "capacity-not-available")):
+                    raise
+                tried.append(f"{kind}@{subnet['AvailabilityZone']}")
+        if launched:
+            if kind != args.instance_type:
+                rate = AWS_PRICE.get(kind, 2.0)
+                hours = round(min(hours, (credit - AWS_RESERVE_USD - committed) / rate), 2)
+            args.instance_type = kind
+            break
+    if not launched:
+        raise PodError(f"no GPU capacity in {AWS_REGION} right now (tried {', '.join(tried)}); try again later")
+    instance = launched["Instances"][0]["InstanceId"]
+    print(f"  launched {instance} ({args.instance_type}, about ${rate:.2f}/hr on-demand, {AWS_REGION}); credit ${credit:.2f}, "
+          f"${committed:.2f} already committed to other instances: it stops itself after {hours} h at the latest.", flush=True)
+    return {"id": instance, "provider": "aws", "region": AWS_REGION, "account": ACCOUNT, "created": time.time(),
+            "rate": rate, "credit_at_start": credit, "max_hours": hours, "idle_hours": args.idle_hours}
+
+
 def cmd_up(args) -> None:
     if STATE.is_file():
         raise PodError(f"a pod is already recorded in {STATE}; use it, or pod.py down first")
+    if PROVIDER == "aws":
+        state = aws_up(args)
+        STATE.write_text(json.dumps(state, indent=2))
+        try:
+            endpoint = wait_ssh(state["id"])
+            push_code(endpoint)
+            if args.restore:
+                restore(endpoint)
+            provision(endpoint, state)
+        except BaseException:
+            print("\n  setup did not finish. The instance is still running and billing: pod.py status / pod.py down", file=sys.stderr)
+            raise
+        print("  ready. Start work with: pod.py run live-check sweeps/<spec>.json ...")
+        return
     cfg = env()
     body = {
         "name": f"orb-{NAME or 'benchmark'}", "imageName": args.image, "gpuTypeIds": args.gpu or GPU_TYPES,
@@ -420,7 +561,7 @@ def cmd_down(args) -> None:
 
 
 def main() -> None:
-    global ACCOUNT, STATE, STATE_DIR, NAME  # noqa: PLW0603
+    global ACCOUNT, STATE, STATE_DIR, NAME, PROVIDER  # noqa: PLW0603
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     up = sub.add_parser("up")
@@ -429,6 +570,9 @@ def main() -> None:
     up.add_argument("--volume-gb", type=int, default=80, help="persistent /workspace: models, indexes, cache, results")
     up.add_argument("--max-hours", type=float, default=48, help="the pod stops itself after this long, whatever it is doing")
     up.add_argument("--idle-hours", type=float, default=3, help="...or after this long with no queue running")
+    up.add_argument("--spot", action="store_true", help="AWS only: a persistent spot instance that stops (keeping its disk) when "
+                    "AWS reclaims it; spend is still budgeted at the on-demand price")
+    up.add_argument("--instance-type", default="g6e.xlarge", help="AWS only: EC2 instance type (g6e.xlarge = one 48 GB L40S)")
     up.add_argument("--restore", action="store_true", help=f"put {STATE_DIR.name}/ (results + model-call cache) onto the new pod")
     run = sub.add_parser("run")
     run.add_argument("items", nargs="+", help='"live-check" or sweep spec paths relative to backend/')
@@ -440,8 +584,10 @@ def main() -> None:
     down.add_argument("--no-pull", action="store_true")
     ap.add_argument("--account", choices=["alt", "main"], default="alt", help="which RunPod account's keys to use for `up`")
     ap.add_argument("--name", default="", help="run several pods at once: each name has its own record and home folder")
+    ap.add_argument("--cloud", choices=["runpod", "aws"], default="runpod", help="where `up` rents (later commands follow the record)")
     args = ap.parse_args()
     ACCOUNT = args.account
+    PROVIDER = args.cloud
     if args.name:
         NAME = args.name
         STATE, STATE_DIR = REPO / f"pod-{NAME}.json", REPO / f"pod-state-{NAME}"

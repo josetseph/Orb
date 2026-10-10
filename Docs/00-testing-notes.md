@@ -300,6 +300,17 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-10, benchmarks move to AWS credits; round 6 specs.** `pod.py --cloud aws` rents EC2 GPU instances
+  through the AWS CLI. The default is g6e.xlarge, one 48 GB L40S at about $1.86 an hour, falling back to g6e.2xlarge
+  in each zone when capacity runs out. Instances use the Deep Learning base AMI with root login for the harness. They
+  stop themselves at the cap, so the disk is kept. `--spot` asks for a persistent spot request that stops when AWS
+  reclaims the instance, and `down` cancels the request. Each instance's time cap comes from the plan's remaining
+  credit, less a $10 reserve and the hours already committed to other instances, priced on demand. The account's
+  quota is 8 vCPUs on demand plus 8 on spot, which is two g6e.xlarge of each. GCP's quota requests were denied
+  automatically, and Azure for Students has no usable GPU. Round 6 tests four extractor candidates on the round-5
+  extraction setup (the reminder plus the JSON grammar, served): Gemma 4 12B QAT, Gemma 4 26B-A4B QAT, Granite 4.2 8B
+  and Phi-4 14B. Each runs on MuSiQue 0-50 and HotpotQA 20-70, one instance per candidate. The 12B on the same setup
+  runs as the HotpotQA comparison; on MuSiQue the comparison is `round5-musique-b`.
 - **2026-10-07, round 5 results (served, five A40 pods in parallel; reports in `Results/runpod/round5-*`).** Every run
   served its model from llama-server with 8 slots; the comparisons below are served against served. Served answering
   scored a little below in-process on the parity set (HotpotQA 0-20: F1 0.655, 50% EM, against 0.71-0.77, 55%; 12 of 20
