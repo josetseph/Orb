@@ -320,7 +320,8 @@ def aws_up(args) -> dict:
                        "InstanceInterruptionBehavior=stop}"] if args.spot else []))
                 break
             except PodError as exc:
-                if not any(k in str(exc) for k in ("InsufficientInstanceCapacity", "Unsupported", "capacity-not-available")):
+                if not any(k in str(exc) for k in ("InsufficientInstanceCapacity", "Unsupported", "capacity-not-available", "VcpuLimitExceeded",
+                                                   "MaxSpotInstanceCountExceeded")):
                     raise
                 tried.append(f"{kind}@{subnet['AvailabilityZone']}")
         if launched:
@@ -561,7 +562,7 @@ def cmd_down(args) -> None:
 
 
 def main() -> None:
-    global ACCOUNT, STATE, STATE_DIR, NAME, PROVIDER  # noqa: PLW0603
+    global ACCOUNT, STATE, STATE_DIR, NAME, PROVIDER, HOME_STATE  # noqa: PLW0603
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     up = sub.add_parser("up")
@@ -573,7 +574,8 @@ def main() -> None:
     up.add_argument("--spot", action="store_true", help="AWS only: a persistent spot instance that stops (keeping its disk) when "
                     "AWS reclaims it; spend is still budgeted at the on-demand price")
     up.add_argument("--instance-type", default="g6e.xlarge", help="AWS only: EC2 instance type (g6e.xlarge = one 48 GB L40S)")
-    up.add_argument("--restore", action="store_true", help=f"put {STATE_DIR.name}/ (results + model-call cache) onto the new pod")
+    up.add_argument("--restore", nargs="?", const=True, metavar="DIR",
+                    help=f"put {STATE_DIR.name}/ (or DIR, e.g. pod-state-musique-b) - results + model-call cache - onto the new pod")
     run = sub.add_parser("run")
     run.add_argument("items", nargs="+", help='"live-check" or sweep spec paths relative to backend/')
     for name in ("setup", "status", "logs", "pull"):
@@ -588,6 +590,8 @@ def main() -> None:
     args = ap.parse_args()
     ACCOUNT = args.account
     PROVIDER = args.cloud
+    if isinstance(getattr(args, "restore", None), str):
+        HOME_STATE = REPO / args.restore
     if args.name:
         NAME = args.name
         STATE, STATE_DIR = REPO / f"pod-{NAME}.json", REPO / f"pod-state-{NAME}"

@@ -44,7 +44,7 @@ if ! pgrep -f orb-watchdog >/dev/null; then
   cat > /usr/local/bin/orb-watchdog <<'WATCHDOG'
 #!/usr/bin/env bash
 ROOT=/workspace/orb
-HARD=$(( ${ORB_MAX_HOURS:-48} * 3600 )); IDLE=$(( ${ORB_IDLE_HOURS:-3} * 3600 ))
+HARD=$(awk "BEGIN{print int(${ORB_MAX_HOURS:-48} * 3600)}"); IDLE=$(awk "BEGIN{print int(${ORB_IDLE_HOURS:-3} * 3600)}")  # hours may be fractional
 START=$(date +%s); BUSY=$START
 while true; do
   sleep 60; NOW=$(date +%s)

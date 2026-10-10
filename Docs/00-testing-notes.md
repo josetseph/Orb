@@ -300,6 +300,20 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-10, the pod watchdog never enforced its caps; raw passages beside the graph.** The pod watchdog
+  computed `$(( ORB_MAX_HOURS * 3600 ))` in bash, and `max_hours` is a float (`3.0`, or a budget like `15.37`). Bash
+  rejected it, so neither the hard cap nor the idle stop ever fired, on RunPod either. Followers and credit stops are
+  what ended the pods there. The cap is now computed with awk. Re-running setup on a live pod also exposed a second
+  problem: `pkill -f orb-watchdog` over ssh matched its own shell first, so the old watchdog survived. Bash then read
+  the rewritten script at stale offsets. To replace a watchdog, kill it by PID. The AWS smoke test (`live-check`
+  on a g6e.xlarge L40S) passed all four steps. us-east-1 then had no g6e capacity, spot or on-demand, and the other
+  regions have a zero GPU quota. Launchers retry every 10 minutes, and `awstest` was re-capped to 16 h and reused.
+  Retrieval only ever saw extracted items; a note's own text was never searchable, and a note whose extraction
+  failed left nothing at all. With `INDEX_RAW_PASSAGES`, each note's text is split into passages: paragraphs
+  packed up to `RAW_PASSAGE_CHARS`, 1500 by default. They are embedded into `<contexts>_passages` before extraction,
+  so a failed note stays findable. Retrieval adds them as `passage` candidates in the same rerank, named
+  `<title> (passage n)` so they never merge with an entity of the same name. `round6-passages-musique` runs this on
+  round5-musique-b's setup, restored from its cache so extraction replays, with passages off as the control.
 - **2026-10-10, benchmarks move to AWS credits; round 6 specs.** `pod.py --cloud aws` rents EC2 GPU instances
   through the AWS CLI. The default is g6e.xlarge, one 48 GB L40S at about $1.86 an hour, falling back to g6e.2xlarge
   in each zone when capacity runs out. Instances use the Deep Learning base AMI with root login for the harness. They

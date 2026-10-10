@@ -47,6 +47,7 @@ class QdrantService:
         self._col_contexts = (
             col_contexts or settings.QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS
         )
+        self._col_passages = f"{self._col_contexts}_passages"  # INDEX_RAW_PASSAGES only
         self._client: QdrantClient | None = None
         self._retry_at = 0.0
         self._connect()
@@ -1122,6 +1123,45 @@ class QdrantService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[Qdrant] node_ids_for_note failed: {exc}")
         return out
+
+    def replace_note_passages(self, note_id: str, title: str, texts: list[str], vectors: list[list[float]]) -> None:
+        """Store a note's own text as passages, replacing what an earlier ingest of it stored. Raises on failure."""
+        client = self.client
+        if client is None:
+            raise RuntimeError("Qdrant unavailable: note passages not stored")
+        if not client.collection_exists(self._col_passages):
+            client.create_collection(
+                self._col_passages,
+                vectors_config=VectorParams(size=int(settings.EMBEDDING_DIMENSIONS) or 1024, distance=Distance.COSINE),
+            )
+        client.delete(
+            collection_name=self._col_passages,
+            points_selector=FilterSelector(
+                filter=Filter(must=[FieldCondition(key="note_id", match=MatchValue(value=note_id))])
+            ),
+        )
+        client.upsert(
+            collection_name=self._col_passages,
+            points=[
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=self._prepare_vector(vec) or vec,
+                    payload={"note_id": note_id, "title": title, "index": i, "content": text},
+                )
+                for i, (text, vec) in enumerate(zip(texts, vectors))
+            ],
+        )
+
+    def search_passages(self, query_vector: list[float], limit: int, min_score: float) -> list[dict[str, Any]]:
+        """Passage payloads above ``min_score``, best first; [] before any passage was stored."""
+        client = self.client
+        if client is None or not client.collection_exists(self._col_passages):
+            return []
+        result = client.query_points(
+            collection_name=self._col_passages, query=query_vector, limit=limit,
+            score_threshold=min_score, with_payload=True,
+        )
+        return [{**(p.payload or {}), "score": p.score} for p in result.points]
 
     def delete_note_contexts(self, note_id: str) -> None:
         """Drop every context this note contributed, on every node."""

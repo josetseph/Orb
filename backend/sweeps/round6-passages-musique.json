@@ -1,0 +1,28 @@
+{
+  "name": "round6-passages-musique",
+  "dataset": "musique",
+  "dev": [
+    0,
+    50
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": true,
+    "EXTRACTION_PROMPT_SUFFIX": "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one.",
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "MAX_LOOP_ITERATIONS": 5,
+    "INDEX_RAW_PASSAGES": true
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "INDEX_RAW_PASSAGES": [
+      false
+    ]
+  },
+  "_note": "Each note's own text indexed as passages beside the graph, on round5-musique-b's best setup (12B, reminder, grammar). Restored from pod-state-musique-b, so extraction replays from the cache; the False variant is the control replay."
+}

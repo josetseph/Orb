@@ -45,6 +45,7 @@ LEVERS = (
     Lever("EXTRACTION_CHUNK_TOKENS", "extract", "set", None, (1000, 2000, 4000), "note size above which extraction splits; unset = learned per model"),
     Lever("LLAMA_N_CTX", "extract", "set", 16384, (8192, 16384, 32768), "local context window: memory against how much fits in one call"),
     Lever("EMBED_MODEL_ID", "index", "set", None, ("qwen3-embed-0.6b-q8", "qwen3-embed-4b-q4"), "embedding model; changes vector dimensions"),
+    Lever("INDEX_RAW_PASSAGES", "index", "set", False, (False, True), "also index each note's own text as passages, reranked beside the graph"),
     Lever("communities", "index", "flag", False, (False, True), "build community summaries (one model call per cluster)"),
     Lever("RERANK_MODEL_ID", "retrieve", "set", None, ("qwen3-rerank-0.6b-q4", "qwen3-rerank-4b-q4"), "reranker loaded on every search"),
     Lever("RERANKER_TOP_K", "retrieve", "set", 10, (5, 10, 20), "candidates kept after reranking"),

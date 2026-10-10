@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # Appended to the last user message of chat-side / ingestion calls; empty = nothing. Qwen 3.x reads "/no_think".
     PROMPT_SUFFIX: str = ""
     EXTRACTION_PROMPT_SUFFIX: str = ""
+    # Also embed each note's own text (paragraphs grouped up to RAW_PASSAGE_CHARS) into a passages
+    # collection, searched beside the graph and reranked with it; written before extraction, so a note
+    # whose extraction fails is still findable.
+    INDEX_RAW_PASSAGES: bool = False
+    RAW_PASSAGE_CHARS: int = 1500
     # Evidence returned with an answer: the N best docs by rerank score.
     # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the
     # embed model changes vector dimensions: an existing index is no longer valid.

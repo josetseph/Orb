@@ -70,6 +70,22 @@ def cancel_ingestion(kb_id: str, note_id: str) -> bool:
     return True
 
 
+def split_passages(text: str, max_chars: int) -> list[str]:
+    """Paragraphs (blank-line separated) packed in order into passages of up to ``max_chars``.
+
+    ponytail: a paragraph longer than max_chars stays one passage; split by sentence if long notes need it.
+    """
+    passages: list[str] = []
+    for para in (p.strip() for p in text.split("\n\n")):
+        if not para:
+            continue
+        if passages and len(passages[-1]) + 2 + len(para) <= max_chars:
+            passages[-1] += "\n\n" + para
+        else:
+            passages.append(para)
+    return passages
+
+
 class IngestionWorkflow:
     """Orchestrates full ingestion: LLM extraction → graph → embeddings → communities."""
 
@@ -223,6 +239,8 @@ class IngestionWorkflow:
             t_start = time.perf_counter()
             load_before = model_load_clock.snapshot()
             try:
+                if settings.INDEX_RAW_PASSAGES:
+                    await asyncio.to_thread(self._store_passages, note_id, note_input)
                 saved = checkpoint.activate(self.kb_id, note_id)
                 if saved:
                     logger.info(f"[Ingestion] resuming note_id={note_id}: {saved} model call(s) replay from disk")
@@ -282,6 +300,13 @@ class IngestionWorkflow:
                 # (MODEL_IDLE_SECONDS in Settings, default 5 min) unloads them, and
                 # loading any other model evicts them anyway. Unloading here
                 # made every single-note ingest re-read multi-GB GGUFs.
+
+    def _store_passages(self, note_id: str, note_input: NoteInput) -> None:
+        """The note's own text, as passages searchable beside the graph (INDEX_RAW_PASSAGES)."""
+        passages = split_passages(note_input.content or "", settings.RAW_PASSAGE_CHARS)
+        if passages:
+            title = (note_input.title or "").strip() or passages[0][:60]
+            self._qdrant.replace_note_passages(note_id, title, passages, embedding_service.embed_documents(passages))
 
     @staticmethod
     def _log_timing(note_id: str, total: float, load_before: dict, final_state: dict) -> None:

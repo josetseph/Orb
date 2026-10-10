@@ -1322,6 +1322,24 @@ class RetrievalService:
                 }
             )
 
+        # C. The notes' own text (INDEX_RAW_PASSAGES): reranked with the graph's candidates.
+        # ponytail: no date filter on passages; add note_created_at to their payload if dated queries need it.
+        if settings.INDEX_RAW_PASSAGES:
+            for hit in await asyncio.to_thread(
+                self._qdrant.search_passages, full_vector, 500, settings.VECTOR_PRE_RERANK_THRESHOLD
+            ):
+                # A distinct name: docs are merged by name, and a note's title is often an entity's.
+                name = f"{hit['title']} (passage {hit['index'] + 1})"
+                candidates.append(
+                    {
+                        "text": hit["content"],
+                        "_rerank_text": hit["content"],
+                        "type": "passage",
+                        "original_obj": {"name": name, "node_id": hit["note_id"], "summary": hit["content"]},
+                        "linked_notes": [{"id": hit["note_id"], "title": hit["title"]}],
+                    }
+                )
+
         logger.info(
             f"  [Retrieval] Prepared {len(candidates)} candidates "
             f"({len(entity_nodes)} entity + {len(vector_nodes)} vector)"
