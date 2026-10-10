@@ -300,6 +300,15 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-10, image-launched pods read their disk lazily; Granite 4.2 8B extracts poorly.** A volume restored
+  from an AMI fetches each block from S3 on first read. On `r6-granite`, the E4B GGUF came from the image and had
+  never been read, so llama-server could not load it within its 15-minute start, and the HotpotQA questions never
+  ran (report "not run"). Granite's own GGUF was downloaded fresh, so its index built normally. Image boots now read
+  every GGUF once in the background. Granite with the reminder and the grammar ingested 374 of 492 HotpotQA notes
+  (76%); the 12B got 483 of 492 in round 5. On MuSiQue it ingested 10 of the first 53 notes (19%). Its failures
+  are genuine model failures: nodes that are not objects, and relationships naming entities it never listed. The
+  grammar is plain JSON, not our schema. The MuSiQue build was stopped to save about $15 and to free the spot
+  quota for Phi-4; only the HotpotQA questions are re-run.
 - **2026-10-10, round 6's first 26B-A4B queue failed in 6 minutes: an unknown model had no server port.**
   `model_server.port` is a model's index in `levers.LOCAL_CHAT`, and the four new candidates were only in the
   catalogue. Both runs died before ingesting and cost about $1. They are appended to the tuple now: append only,
