@@ -300,6 +300,12 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-10, round 6's first 26B-A4B queue failed in 6 minutes: an unknown model had no server port.**
+  `model_server.port` is a model's index in `levers.LOCAL_CHAT`, and the four new candidates were only in the
+  catalogue. Both runs died before ingesting and cost about $1. They are appended to the tuple now: append only,
+  since the index is the port. The stopped instance could not restart, because its zone had no capacity and a
+  stopped instance stays in its zone. It was terminated and relaunched from `ami-0476714364254fc97`, an image of
+  the set-up `awstest` (`pod.py up --ami`). That brings a new pod up in minutes instead of about 35.
 - **2026-10-10, the pod watchdog never enforced its caps; raw passages beside the graph.** The pod watchdog
   computed `$(( ORB_MAX_HOURS * 3600 ))` in bash, and `max_hours` is a float (`3.0`, or a budget like `15.37`). Bash
   rejected it, so neither the hard cap nor the idle stop ever fired, on RunPod either. Followers and credit stops are

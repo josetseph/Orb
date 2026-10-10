@@ -17,7 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 STAGES = ("extract", "index", "retrieve", "loop", "answer")
-LOCAL_CHAT = ("gemma4-e2b-q4", "gemma4-e4b-q4", "gemma4-12b-q4", "qwen35-0.8b-q4", "qwen35-2b-q4", "qwen35-4b-q4", "qwen35-9b-q4")
+LOCAL_CHAT = ("gemma4-e2b-q4", "gemma4-e4b-q4", "gemma4-12b-q4", "qwen35-0.8b-q4", "qwen35-2b-q4", "qwen35-4b-q4", "qwen35-9b-q4",
+              "gemma4-12b-qat-q4", "gemma4-26b-a4b-qat-q4", "granite42-8b-q4", "phi4-14b-q4")  # append only: index = server port
 
 
 @dataclass(frozen=True)
