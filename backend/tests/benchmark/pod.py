@@ -271,6 +271,7 @@ cp /home/ubuntu/.ssh/authorized_keys /root/.ssh/authorized_keys && chmod 600 /ro
 sed -i 's/^#\\?PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
 systemctl restart ssh || systemctl restart sshd
 touch /etc/orb-ec2
+rm -f /workspace/orb/Results/queue.* /workspace/orb/pod-watchdog.log  # an image of a used pod: not its queue
 """
 
 
@@ -301,7 +302,7 @@ def aws_up(args) -> dict:
     hours = round(min(args.max_hours, (credit - AWS_RESERVE_USD - committed) / rate), 2)
     if hours < 1:
         raise PodError(f"credit ${credit:.2f}, ${committed:.2f} committed: not launching with under an hour left")
-    image = aws("ssm", "get-parameter", "--name",
+    image = args.ami or aws("ssm", "get-parameter", "--name",
                 "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-ubuntu-24.04/latest/ami-id")["Parameter"]["Value"]
     root = aws("ec2", "describe-images", "--image-ids", image)["Images"][0]["RootDeviceName"]
     # GPU capacity runs out zone by zone: try each zone of the default VPC, then the next instance type.
@@ -573,6 +574,7 @@ def main() -> None:
     up.add_argument("--idle-hours", type=float, default=3, help="...or after this long with no queue running")
     up.add_argument("--spot", action="store_true", help="AWS only: a persistent spot instance that stops (keeping its disk) when "
                     "AWS reclaims it; spend is still budgeted at the on-demand price")
+    up.add_argument("--ami", help="AWS only: boot from this image (an image of a set-up pod skips the ~35 min build)")
     up.add_argument("--instance-type", default="g6e.xlarge", help="AWS only: EC2 instance type (g6e.xlarge = one 48 GB L40S)")
     up.add_argument("--restore", nargs="?", const=True, metavar="DIR",
                     help=f"put {STATE_DIR.name}/ (or DIR, e.g. pod-state-musique-b) - results + model-call cache - onto the new pod")
