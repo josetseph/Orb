@@ -46,3 +46,40 @@ def test_one_at_a_time_is_unchanged(monkeypatch):
 
     asyncio.run(main())
     assert peak == 1
+
+
+def test_a_note_that_fails_before_its_slot_is_marked_failed(monkeypatch):
+    """A status write that fails while queued (SQLite "database is locked") left the note "processing" forever."""
+    import app.workflows.ingestion as ingestion
+    from app.schemas.extraction import NoteInput
+
+    events: list[str] = []
+
+    class Tracker:
+        async def begin_ingestion(self, kb_id):
+            events.append("begin")
+
+        async def end_ingestion(self, kb_id):
+            events.append("end")
+
+    async def locked(self, note_id, stage, model=None):
+        raise RuntimeError("database is locked")
+
+    async def mark_failed(self, note_id, reason=None):
+        events.append(f"failed: {reason}")
+
+    monkeypatch.setattr(ingestion, "_tracker", Tracker())
+    monkeypatch.setattr(IngestionWorkflow, "_update_note_processing_status", locked)
+    monkeypatch.setattr(IngestionWorkflow, "_mark_note_failed", mark_failed)
+
+    async def main():
+        wf = IngestionWorkflow()
+        try:
+            await wf.process_note(NoteInput(content="x"), "n1")
+        except RuntimeError:
+            pass
+        return wf
+
+    wf = asyncio.run(main())
+    assert events[0] == "begin" and events[1] == "end" and events[2].startswith("failed")
+    assert wf._write_turn == 1  # its ticket is released, so later notes are not held back

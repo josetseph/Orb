@@ -300,6 +300,16 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-11, a note stuck "processing" for 2 h: SQLite gave up on a lock, before the failure handling.**
+  With 24 notes in flight, one note's first status write ("Queued for ingestion") hit `database is locked`.
+  sqlite3 waits only 5 s for a write lock by default. The exception came before the pipeline slot, so the note
+  was never marked failed, and the ingestion tracker it had joined was never released. The harness polled the
+  note for 2 h and `/benchmark/idle` could never turn true. The pod watchdog caught it as "no progress for 20
+  minutes" (491 of 492 notes). Fixes: SQLite now waits up to 30 s (`connect_args timeout`), and a failure
+  before the slot ends the tracker entry and marks the note failed, so it is counted
+  (`test_a_note_that_fails_before_its_slot_is_marked_failed`). This applies to the product too: concurrent
+  ingestion can hit the same lock. The 12B QAT HotpotQA build was restarted. Its extraction replies are cached,
+  so the rebuild replays them.
 - **2026-10-11, round 6: raw passages lift MuSiQue answers; Phi-4 is best on HotpotQA and worst on MuSiQue.**
   `round6-passages-musique` used round5-musique-b's setup restored from its cache. Passages on: F1 0.273, EM 24%,
   recall 0.557, gold in index 0.578, 410/526 notes. Passages off: F1 0.227, EM 18%, recall 0.640, gold 0.677,

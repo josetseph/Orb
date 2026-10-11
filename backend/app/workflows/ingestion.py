@@ -208,9 +208,16 @@ class IngestionWorkflow:
         # Register with the tracker BEFORE the semaphore so a running rebuild is
         # told to yield as soon as a note is queued, not only when it starts.
         await _tracker.begin_ingestion(self.kb_id)
-        await self._update_note_processing_status(
-            note_id, "Queued for ingestion", None
-        )
+        try:
+            await self._update_note_processing_status(
+                note_id, "Queued for ingestion", None
+            )
+        except Exception as exc:
+            # Before the slot, so neither the failure mark nor the tracker release below runs: do both here,
+            # or the note reads "processing" forever and ingestion never drains.
+            await _tracker.end_ingestion(kb_id=self.kb_id)
+            await self._mark_note_failed(note_id, reason=_failure_reason(exc))
+            raise
 
         # Wait for a pipeline slot.  Without this cap, sending 990 notes at once
         # spawns 990 concurrent coroutines that all hit the DB pool simultaneously.
