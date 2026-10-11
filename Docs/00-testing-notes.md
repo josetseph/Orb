@@ -300,6 +300,14 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-11, round 6: Gemma 4 26B-A4B QAT extracts as well as the 12B on HotpotQA, 2.5x faster on MuSiQue,
+  with fewer notes.** Same setup as the 12B (reminder plus grammar, served, E4B answering). HotpotQA 20-70:
+  473/492 notes, gold in index 0.98, recall 0.93, F1 0.488, EM 36%, built in 4944 s. The 12B in round 5 got
+  483/492, 0.98, 0.92, F1 0.558, EM 46% in 6599 s. With the same answering model and the same retrieval, the F1
+  gap is likely noise. MuSiQue 0-50: 374/526 notes (71%), gold in index 0.55, recall 0.50, F1 0.208, EM 18%, built
+  in 9928 s. round5-musique-b got 436/526 (83%), 0.67, 0.64, F1 0.220, EM 18% in 24697 s. Only 4B parameters are
+  active, so it extracts fast, but the file is 14 GB against the 12B's 7.7 GB, so it is not the smaller model goal
+  2 asks for. Reports in `Results/aws/round6-moe26-*`.
 - **2026-10-10, image-launched pods read their disk lazily; Granite 4.2 8B extracts poorly.** A volume restored
   from an AMI fetches each block from S3 on first read. On `r6-granite`, the E4B GGUF came from the image and had
   never been read, so llama-server could not load it within its 15-minute start, and the HotpotQA questions never
