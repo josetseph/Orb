@@ -308,7 +308,9 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
   (76%); the 12B got 483 of 492 in round 5. On MuSiQue it ingested 10 of the first 53 notes (19%). Its failures
   are genuine model failures: nodes that are not objects, and relationships naming entities it never listed. The
   grammar is plain JSON, not our schema. The MuSiQue build was stopped to save about $15 and to free the spot
-  quota for Phi-4; only the HotpotQA questions are re-run.
+  quota for Phi-4; only the HotpotQA questions are re-run. Result: answer F1 0.527, EM 38%, retrieval recall 0.79, gold in index
+  0.85, against the 12B's 0.558, 46%, 0.92 and 0.98 (round5-hotpot base). The index built in 3915 s against 6599 s.
+  Granite is out as an extractor (`Results/aws/round6-granite-hotpot`).
 - **2026-10-10, round 6's first 26B-A4B queue failed in 6 minutes: an unknown model had no server port.**
   `model_server.port` is a model's index in `levers.LOCAL_CHAT`, and the four new candidates were only in the
   catalogue. Both runs died before ingesting and cost about $1. They are appended to the tuple now: append only,
