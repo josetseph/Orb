@@ -300,6 +300,19 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-11, the 12B QAT is worse on MuSiQue; the oracles say where the errors are.** `round6-qat12-musique`:
+  369/526 notes, gold in index 0.52, recall 0.47, F1 0.152, EM 12%. The 12B on the same setup
+  (round5-musique-b) got 436/526, 0.67, 0.64, F1 0.220, EM 18%. So QAT wins HotpotQA (0.681 against 0.527) and
+  loses MuSiQue, where it rejects more notes (30% against 17%). Neither result holds as a general extractor
+  verdict at 50 questions. Oracle runs (E4B, one step, no retrieval):
+  HotpotQA from the gold notes, F1 0.718, EM 54%, 6 s/question.
+  HotpotQA from all 10 notes, F1 0.667, EM 52%, 8 s/question.
+  MuSiQue from all its notes, F1 0.339, EM 28%, 18 s/question.
+  On HotpotQA the best pipeline (QAT, 0.681) is near the answering ceiling. On MuSiQue, reading every note of the
+  question beats every retrieval pipeline so far (best 0.273 with passages), at 1/30 of the time: retrieval is
+  the weak stage there. Round 7's first HotpotQA index failed for the same reason as `r6-granite`: the 12B GGUF
+  from the image loaded too slowly. That pod booted before the parallel pre-read existed. The spec is re-queued;
+  finished runs are skipped.
 - **2026-10-11, round 7 plan: what the RAG research suggests, tested one at a time.** Three research documents
   (in the main repo) agree on one rule: fix the measured weak stage. Retrieval fixes are cheapest: keyword plus
   vector search, a reranker, and context on each chunk. Graphs help multi-hop questions and hurt on questions
