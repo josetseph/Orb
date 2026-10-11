@@ -273,8 +273,9 @@ systemctl restart ssh || systemctl restart sshd
 touch /etc/orb-ec2
 rm -f /workspace/orb/Results/queue.* /workspace/orb/pod-watchdog.log  # an image of a used pod: not its queue
 # A volume restored from an image fetches each block from S3 on first read: an unread GGUF loaded so slowly that
-# llama-server missed its 15-minute start (r6-granite). Read them all once, now, in the background.
-[ -d /workspace/orb/models/gguf ] && nohup sh -c 'cat /workspace/orb/models/gguf/*.gguf > /dev/null' >/dev/null 2>&1 &
+# llama-server missed its 15-minute start (r6-granite). Read them all once, now, in the background, side by side:
+# one after another, E4B still came after the 15 minutes (r7-hotpot).
+for f in /workspace/orb/models/gguf/*.gguf; do nohup cat "$f" > /dev/null 2>&1 & done
 """
 
 
