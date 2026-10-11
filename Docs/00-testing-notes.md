@@ -300,6 +300,15 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-11, round 6: Gemma 4 12B QAT beats the 12B as an extractor on HotpotQA.** `round6-qat12-hotpot`
+  ran both on the same setup (reminder plus grammar, served, E4B answering). QAT: 486/492 notes, gold in
+  index 1.00, recall 0.96, F1 0.681, EM 54%, built in 5522 s. Standard 12B Q4_K_M: 485/492, 1.00, 0.96, F1 0.527,
+  EM 38%, built in 5647 s. The difference is +9/-1 EM, with the answer_f1 CI -0.248 to -0.070 against QAT: real,
+  even at 50 questions. Retrieval is identical, so the gain is in what the extracted contexts say, which the
+  answering model reads. The QAT file is also smaller (6.7 GB against 7.7 GB). The 12B on this setup is also
+  0.03 below round 5's run without the grammar (0.558), which is within noise. MuSiQue for QAT is running.
+  `watch_pods.py` moved into `tests/benchmark/`: the scratch copy was lost when the laptop restarted (the pod
+  kept running).
 - **2026-10-11, a note stuck "processing" for 2 h: SQLite gave up on a lock, before the failure handling.**
   With 24 notes in flight, one note's first status write ("Queued for ingestion") hit `database is locked`.
   sqlite3 waits only 5 s for a write lock by default. The exception came before the pipeline slot, so the note
