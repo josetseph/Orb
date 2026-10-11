@@ -401,6 +401,8 @@ def restore(endpoint: tuple[str, int]) -> None:
     untar = subprocess.run(["ssh", *ssh_args(endpoint), f"tar --no-same-owner -xzf - -C {REMOTE}"], stdin=tar.stdout, check=False)
     if untar.returncode != 0 or tar.wait() not in (0, 1):  # 1: a file grew while read (a follower saving beside us)
         raise PodError("restoring the saved state onto the pod failed")
+    # Not the old pod's queue state: a restored queue.done would read as "finished" and the watchdog would stop this pod.
+    ssh(endpoint, f"rm -f {REMOTE}/Results/queue.*")
     print(f"  restored {HOME_STATE} onto the pod", flush=True)
 
 

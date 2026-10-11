@@ -50,6 +50,9 @@ while true; do
   sleep 60; NOW=$(date +%s)
   [ -f $ROOT/Results/queue.pid ] && kill -0 "$(cat $ROOT/Results/queue.pid)" 2>/dev/null && BUSY=$NOW
   if [ $((NOW - START)) -gt $HARD ]; then echo "[watchdog $(date '+%F %T')] ${ORB_MAX_HOURS:-48} h cap reached, stopping"; break; fi
+  # Stop 15 min after the queue finishes: the home follower copies results first, but must not be the only stop
+  # (a 2.5 h network outage at home left r6-phi4 idle and billing). The volume stays; `pod.py pull` restarts it.
+  if [ -f $ROOT/Results/queue.done ] && [ $((NOW - $(stat -c %Y $ROOT/Results/queue.done))) -gt 900 ]; then echo "[watchdog $(date '+%F %T')] queue finished 15 min ago, stopping"; break; fi
   if [ $((NOW - BUSY)) -gt $IDLE ]; then echo "[watchdog $(date '+%F %T')] idle ${ORB_IDLE_HOURS:-3} h, stopping"; break; fi
 done
 pkill -INT -f "tests/benchmark/" ; sleep 30; pkill -f "run.py|data/bin/|llama-server" ; sync

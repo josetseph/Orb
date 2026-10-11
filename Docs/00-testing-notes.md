@@ -300,6 +300,24 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-11, round 6: raw passages lift MuSiQue answers; Phi-4 is best on HotpotQA and worst on MuSiQue.**
+  `round6-passages-musique` used round5-musique-b's setup restored from its cache. Passages on: F1 0.273, EM 24%,
+  recall 0.557, gold in index 0.578, 410/526 notes. Passages off: F1 0.227, EM 18%, recall 0.640, gold 0.677,
+  438/526 notes, which reproduces round 5's 0.220. The difference is +1/-4 EM, within noise at 50 questions, and
+  the best MuSiQue answers so far. Both indexes lost notes only to model failures, with no storage failures in
+  either. The 28-note gap comes from extraction calls that missed the cache and were re-asked, so it is reply
+  variance, not passage writes. Under concurrent ingestion some prompts depend on graph state at that moment,
+  so a replay is not fully cached. Recall by note is lower with passages, yet answers are better: the passage text
+  helps the answer more than it moves note-level recall. Worth a larger sample. Phi-4 14B (reminder plus grammar,
+  served): on HotpotQA, 456/492 notes, gold in index 0.93, recall 0.88, F1 0.601, EM 46%, built in 4386 s, the best
+  HotpotQA F1 of any extractor. On MuSiQue, 367/526 (70%), gold 0.53, recall 0.435, F1 0.119, EM 8%, built in
+  6352 s, the worst. It is not the 12B's equal across both. Two reliability fixes. Phi-4 finished at 05:42 while
+  home had no network from 05:12 to 07:53, so the follower could not stop it, and it billed idle for about 2.3 h.
+  The pod watchdog now stops a pod 15 minutes after `queue.done`; the volume stays, and `pod.py pull` restarts
+  it. `--restore` now drops the old pod's `Results/queue.*`, since a restored `queue.done` would trigger that stop
+  at once. Installing the new watchdog on `awstest` by extracting it with sed took the wrong range: provision's
+  checks re-ran and then died on a syntax error, with no harm done. The correct script (cut between the
+  heredoc markers) runs with a 14 h cap.
 - **2026-10-11, round 6: Gemma 4 26B-A4B QAT extracts as well as the 12B on HotpotQA, 2.5x faster on MuSiQue,
   with fewer notes.** Same setup as the 12B (reminder plus grammar, served, E4B answering). HotpotQA 20-70:
   473/492 notes, gold in index 0.98, recall 0.93, F1 0.488, EM 36%, built in 4944 s. The 12B in round 5 got
