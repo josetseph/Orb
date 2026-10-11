@@ -2,7 +2,7 @@
 
 Usage (from backend/): .venv/bin/python -u tests/benchmark/watch_pods.py <pod name> ...
 
-Trouble: backend crashes (500s, NoneType), storage failures, a dead queue, no progress for 20 minutes,
+Trouble: backend crashes (500s, NoneType), storage failures, a dead queue, no progress for 40 minutes,
 extraction rejecting >70% of the latest notes, a pod that stopped before its queue finished, or credit
 under $8. Network errors are retried, never reported. Pods still being set up (no queue yet) are skipped.
 """
@@ -87,8 +87,8 @@ while True:
         progress = (info["log"], info.get("notes_done"), c.get("chat_ok"), c.get("ingested"), c.get("model"))
         stalls[name] = stalls.get(name, 0) + 1 if last.get(name) == progress and info["alive"] else 0
         last[name] = progress
-        if stalls[name] >= 2:
-            problem(name, "no progress for 20 minutes", info)
+        if stalls[name] >= 4:  # one MuSiQue question can take 20 minutes (the reranker, on long notes)
+            problem(name, "no progress for 40 minutes", info)
     try:
         credit, spend = P.balance()
         if credit < 8:
