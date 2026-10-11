@@ -87,6 +87,14 @@ def _thinking_switch(ingestion: bool) -> bool | None:
     return settings.EXTRACTION_ENABLE_THINKING if ingestion else settings.ENABLE_THINKING
 
 
+
+def edges_order(docs: list[dict]) -> list[dict]:
+    """Best evidence at both ends, weakest in the middle (CONTEXT_ORDER=edges): ranks 1, 3, 5, ... from the top,
+    then ..., 6, 4, 2 back to the bottom. Search results and graph neighbours are reranked separately, so the
+    whole set is ranked by rerank score first (stable: unscored docs keep their order)."""
+    ranked = sorted(docs, key=lambda d: d.get("rerank_score", 0.0), reverse=True)
+    return ranked[0::2] + ranked[1::2][::-1]
+
 class _ResearchStep(BaseModel):
     """One turn of the iterative research loop, exactly as the prompt specifies it."""
 
@@ -731,6 +739,8 @@ class LLMService:
         # ── Build current search block ────────────────────────────────────────
         current_block = ""
         if search_query and docs:
+            if settings.CONTEXT_ORDER == "edges":
+                docs = edges_order(docs)
             context_lines = []
             for doc in docs:
                 text = (doc.get("text") or "").strip()

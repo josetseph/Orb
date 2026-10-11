@@ -1152,6 +1152,18 @@ class QdrantService:
             ],
         )
 
+    def get_note_passages(self, note_ids: list[str]) -> list[dict[str, Any]]:
+        """Every stored passage of these notes (payloads); [] before any passage was stored."""
+        client = self.client
+        if client is None or not note_ids or not client.collection_exists(self._col_passages):
+            return []
+        points, _ = client.scroll(
+            collection_name=self._col_passages,
+            scroll_filter=Filter(must=[FieldCondition(key="note_id", match=MatchAny(any=list(note_ids)))]),
+            limit=10000, with_payload=True, with_vectors=False,
+        )
+        return [p.payload or {} for p in points]
+
     def search_passages(self, query_vector: list[float], limit: int, min_score: float) -> list[dict[str, Any]]:
         """Passage payloads above ``min_score``, best first; [] before any passage was stored."""
         client = self.client

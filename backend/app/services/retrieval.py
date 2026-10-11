@@ -1325,9 +1325,17 @@ class RetrievalService:
         # C. The notes' own text (INDEX_RAW_PASSAGES): reranked with the graph's candidates.
         # ponytail: no date filter on passages; add note_created_at to their payload if dated queries need it.
         if settings.INDEX_RAW_PASSAGES:
-            for hit in await asyncio.to_thread(
+            passage_hits = await asyncio.to_thread(
                 self._qdrant.search_passages, full_vector, 500, settings.VECTOR_PRE_RERANK_THRESHOLD
-            ):
+            )
+            if settings.PASSAGE_KEYWORD_SEARCH:
+                # Keyword hits join the vector hits; the reranker scores the union, so no fusion weights to tune.
+                seen = {(h["note_id"], h["index"]) for h in passage_hits}
+                for h in await asyncio.to_thread(self._meili.search_passages, query, 50):
+                    if (h["note_id"], h["index"]) not in seen:
+                        seen.add((h["note_id"], h["index"]))
+                        passage_hits.append(h)
+            for hit in passage_hits:
                 # A distinct name: docs are merged by name, and a note's title is often an entity's.
                 name = f"{hit['title']} (passage {hit['index'] + 1})"
                 candidates.append(
@@ -1513,6 +1521,35 @@ class RetrievalService:
 
         return candidates
 
+    def _ppr_passages(self, selected: list[dict], surfaced_names: set[str]) -> list[dict]:
+        """Passages of the notes a Personalized PageRank walk from ``selected`` reaches best (PPR_EXPANSION)."""
+        from app.services.pagerank import personalized_pagerank
+
+        seeds: dict[str, float] = {}
+        for doc in selected:
+            node = doc.get("original_obj") or {}
+            nid = node.get("node_id") or node.get("id")  # a passage hit's is its note's id
+            if nid:
+                seeds[nid] = seeds.get(nid, 0.0) + max(float(doc.get("rerank_score") or 0.0), 1e-6)
+        if not seeds:
+            return []
+        edges, notes = self._graph.walk_edges()
+        ranks = personalized_pagerank(edges, seeds, damping=settings.PPR_DAMPING)
+        seeded_notes = {nid for nid in seeds if nid in notes}  # already in context
+        best = sorted((n for n in notes if n in ranks and n not in seeded_notes), key=lambda n: ranks[n], reverse=True)
+        best = best[: settings.PPR_TOP_NOTES]
+        docs = []
+        for p in self._qdrant.get_note_passages(best):
+            name = f"{p['title']} (passage {p['index'] + 1})"
+            if name in surfaced_names:
+                continue
+            docs.append({
+                "text": p["content"], "_rerank_text": p["content"], "type": "ppr_passage",
+                "original_obj": {"name": name, "node_id": p["note_id"], "summary": p["content"]},
+                "linked_notes": [{"id": p["note_id"], "title": p["title"]}],
+            })
+        return docs
+
     async def search_with_expansion(
         self,
         query: str,
@@ -1538,6 +1575,10 @@ class RetrievalService:
             progress("Expanding graph neighbors", None)
             expanded = await self._expand_relevant_neighbors(selected, query, surfaced_names)
             logger.info(f"  [IterLoop] Graph expansion: {len(expanded)} neighbors")
+            if settings.PPR_EXPANSION and settings.INDEX_RAW_PASSAGES:
+                walked = await asyncio.to_thread(self._ppr_passages, selected, surfaced_names)
+                logger.info(f"  [IterLoop] PageRank walk: {len(walked)} passages")
+                expanded += walked
             if expanded:
                 progress("Reranking graph neighbors", settings.MODEL_RERANKER_LOCAL)
                 expanded = await self._apply_reranker_logging(
@@ -1606,7 +1647,8 @@ class RetrievalService:
         accumulated_steps: list[dict] = []
         all_docs: list[dict] = []
         surfaced_names: set[str] = set()
-        current_query: str | None = None
+        # FIRST_SEARCH_IS_QUESTION: the first step reads the question's own results instead of only planning a query.
+        current_query: str | None = query if settings.FIRST_SEARCH_IS_QUESTION else None
         tried_queries: list[str] = []
 
         for iteration in range(settings.MAX_LOOP_ITERATIONS):

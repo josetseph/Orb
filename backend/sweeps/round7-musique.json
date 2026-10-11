@@ -1,0 +1,43 @@
+{
+  "name": "round7-musique",
+  "dataset": "musique",
+  "dev": [
+    0,
+    50
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": true,
+    "EXTRACTION_PROMPT_SUFFIX": "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one.",
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "MAX_LOOP_ITERATIONS": 5,
+    "INDEX_RAW_PASSAGES": true
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "INDEX_RAW_PASSAGES": [
+      false
+    ],
+    "PPR_EXPANSION": [
+      true
+    ],
+    "CONTEXT_ORDER": [
+      "edges"
+    ],
+    "FIRST_SEARCH_IS_QUESTION": [
+      true
+    ]
+  },
+  "also": [
+    {
+      "PASSAGE_KEYWORD_SEARCH": true,
+      "PASSAGE_TITLE_HEADER": true
+    }
+  ],
+  "_note": "Retrieval strategies on round6-passages-musique's setup (its two index snapshots are reused): passages off, PageRank expansion, best evidence at both ends, the question as the first search, and keyword search plus title headers on passages (one new index; title headers matter for MuSiQue's long notes)."
+}

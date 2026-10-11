@@ -313,7 +313,11 @@ class IngestionWorkflow:
         passages = split_passages(note_input.content or "", settings.RAW_PASSAGE_CHARS)
         if passages:
             title = (note_input.title or "").strip() or passages[0][:60]
+            if settings.PASSAGE_TITLE_HEADER:
+                passages = [f"{title}\n\n{p}" for p in passages]
             self._qdrant.replace_note_passages(note_id, title, passages, embedding_service.embed_documents(passages))
+            if settings.PASSAGE_KEYWORD_SEARCH:
+                self._meili.replace_note_passages(note_id, title, passages)
 
     @staticmethod
     def _log_timing(note_id: str, total: float, load_before: dict, final_state: dict) -> None:

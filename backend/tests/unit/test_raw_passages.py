@@ -27,3 +27,5 @@ def test_passages_replace_per_note_and_search(monkeypatch):
     hits = svc.search_passages([1.0, 0.0], 10, 0.5)
     assert [(h["note_id"], h["index"], h["content"]) for h in hits] == [("n1", 0, "p0"), ("n1", 1, "p1")]
     assert hits[0]["title"] == "Ed Wood"
+    assert sorted(p["content"] for p in svc.get_note_passages(["n1"])) == ["p0", "p1"]
+    assert svc.get_note_passages(["nope"]) == []

@@ -69,6 +69,9 @@ class EvaluationResult:
     # Replay inputs: every rerank candidate + loop step, and the evidence the answer cited
     trace: list = field(default_factory=list)
     context: list = field(default_factory=list)
+    # Whether a research step committed to an answer (can_answer); False when the loop ran out and returned its
+    # last finding, or returned nothing. On questions whose notes are not in the index, this is the hallucination rate.
+    answered: bool = False
 
     # Error tracking
     error: Optional[str] = None
@@ -302,6 +305,7 @@ def result_row(r: "EvaluationResult") -> dict:
         "error": r.error,
         "context": r.context,
         "trace": r.trace,
+        "answered": r.answered,
     }
 
 
@@ -437,6 +441,7 @@ async def evaluate_single(
         response, note_title_map
     )
     result.trace = response.get("trace") or []
+    result.answered = any(e.get("kind") == "step" and e.get("can_answer") for e in result.trace)
     result.context = [
         {"name": (d.get("original_obj") or {}).get("name", ""), "text": d.get("text", "")}
         for d in response.get("context", [])

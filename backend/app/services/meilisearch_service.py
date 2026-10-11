@@ -165,6 +165,44 @@ class MeilisearchService:
             hits.append({"score": score, "payload": document})
         return hits
 
+    # ── Note passages (INDEX_RAW_PASSAGES with PASSAGE_KEYWORD_SEARCH) ──────────
+    @property
+    def _passages_name(self) -> str:
+        return f"{self.index_name}_passages"
+
+    def replace_note_passages(self, note_id: str, title: str, texts: list[str]) -> None:
+        """A note's passages for keyword search, replacing an earlier ingest's. Raises on failure."""
+        if not self.client:
+            raise RuntimeError("Meilisearch unavailable: note passages not stored")
+        try:
+            self.client.get_index(self._passages_name)
+        except MeilisearchApiError:
+            task = self.client.create_index(self._passages_name, {"primaryKey": "id"})
+            self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
+            task = self.client.index(self._passages_name).update_settings(
+                {"searchableAttributes": ["title", "content"], "filterableAttributes": ["note_id"]}
+            )
+            self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
+        idx = self.client.index(self._passages_name)
+        task = idx.delete_documents(filter=f'note_id = "{note_id}"')
+        self.client.wait_for_task(task.task_uid, timeout_in_ms=30000)
+        docs = [{"id": f"{note_id}_{i}", "note_id": note_id, "title": title, "index": i, "content": text}
+                for i, text in enumerate(texts)]
+        task = idx.add_documents(docs, primary_key="id")
+        done = self.client.wait_for_task(task.task_uid, timeout_in_ms=30000)
+        if getattr(done, "status", "succeeded") != "succeeded":
+            raise RuntimeError(f"Meilisearch passage indexing {done.status}: {getattr(done, 'error', '')}")
+
+    def search_passages(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Passage documents for ``query``, best first; [] before any passage was stored."""
+        if not self.client:
+            return []
+        try:
+            self.client.get_index(self._passages_name)
+        except MeilisearchApiError:
+            return []
+        return self.client.index(self._passages_name).search(query, {"limit": limit}).get("hits", [])
+
     def index_node(  # pylint: disable=too-many-arguments,too-many-positional-arguments
         self,
         node_id: str,

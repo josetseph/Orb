@@ -764,6 +764,16 @@ class GraphService:
             ORDER BY name
             """
 
+    def walk_edges(self) -> tuple[list[tuple[str, str]], set[str]]:
+        """Every entity-entity relationship and every note-entity reference as id pairs, and the note ids
+        among them (PPR_EXPANSION)."""
+        rels = self.execute_query("MATCH (a:Node)-[:SEMANTIC_REL]->(b:Node) RETURN a.id AS src, b.id AS dst") or []
+        refs = self.execute_query(
+            "MATCH (n:Node)-[:REFERENCES]->(e:Node) WHERE n.kind = 'note' RETURN n.id AS src, e.id AS dst"
+        ) or []
+        edges = [(r["src"], r["dst"]) for r in rels + refs if r.get("src") and r.get("dst")]
+        return edges, {r["src"] for r in refs if r.get("src")}
+
     def get_related_nodes(
         self,
         node_name: str,

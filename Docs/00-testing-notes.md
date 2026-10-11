@@ -300,6 +300,26 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-11, round 7 plan: what the RAG research suggests, tested one at a time.** Three research documents
+  (in the main repo) agree on one rule: fix the measured weak stage. Retrieval fixes are cheapest: keyword plus
+  vector search, a reranker, and context on each chunk. Graphs help multi-hop questions and hurt on questions
+  with no answer. Measure each stage, including answering from the gold evidence. Built behind switches, all off
+  by default:
+  `oracle.py` with `--evaluator oracle-gold|oracle-all` answers in one step from the question's gold notes (the
+  answering ceiling) or from all its notes (long context instead of retrieval), with no index.
+  `PASSAGE_KEYWORD_SEARCH` puts passages in Meilisearch too; their hits join the vector hits in the rerank, so no
+  fusion weights.
+  `PASSAGE_TITLE_HEADER` prefixes every passage with its note's title: contextual retrieval without an LLM call.
+  It matters for MuSiQue's long notes (up to 67 KB, about 45 passages).
+  `CONTEXT_ORDER=edges` puts the best evidence at both ends.
+  `FIRST_SEARCH_IS_QUESTION` searches the question itself first, so a one-search question takes one step.
+  `PPR_EXPANSION` runs HippoRAG 2's walk: Personalized PageRank seeded with the search's entities and passage
+  notes (by rerank score), over entity relationships and note references, adding the passages of the 5
+  best-reached unseen notes to the expansion rerank. Today's expansion goes 1 hop, reranker-scored. Its
+  docstring says an LLM selects neighbours, but none does.
+  A sweep spec's `absent: [a, b]` asks questions whose notes are not in the index. Result rows now carry
+  `answered` (a step committed to an answer), so on absent questions it is the hallucination rate.
+  Specs `round7-*`: 12B extraction, reminder plus grammar, round 6's MuSiQue snapshots reused.
 - **2026-10-11, round 6: Gemma 4 12B QAT beats the 12B as an extractor on HotpotQA.** `round6-qat12-hotpot`
   ran both on the same setup (reminder plus grammar, served, E4B answering). QAT: 486/492 notes, gold in
   index 1.00, recall 0.96, F1 0.681, EM 54%, built in 5522 s. Standard 12B Q4_K_M: 485/492, 1.00, 0.96, F1 0.527,

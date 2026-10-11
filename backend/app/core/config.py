@@ -109,6 +109,23 @@ class Settings(BaseSettings):
     # whose extraction fails is still findable.
     INDEX_RAW_PASSAGES: bool = False
     RAW_PASSAGE_CHARS: int = 1500
+    # With INDEX_RAW_PASSAGES: also index passages for keyword (BM25) search, their hits joining the vector hits
+    # in the rerank; and prefix every passage with its note's title, so a passage deep in a long note still says
+    # what it is about (contextual retrieval without an LLM call).
+    PASSAGE_KEYWORD_SEARCH: bool = False
+    PASSAGE_TITLE_HEADER: bool = False
+    # Order of the evidence handed to the answering model: "rank" (best first) or "edges" (best at both ends,
+    # weakest in the middle, where long-context models read least carefully).
+    CONTEXT_ORDER: str = "rank"
+    # Search the question itself first, so a question one search answers needs one step, instead of a first step
+    # that only plans a query without evidence.
+    FIRST_SEARCH_IS_QUESTION: bool = False
+    # HippoRAG 2's walk (needs INDEX_RAW_PASSAGES): seed Personalized PageRank with the search's results (entities,
+    # and the notes of passage hits, weighted by rerank score), walk entity relationships and note references, and
+    # add the passages of the PPR_TOP_NOTES best-reached notes not yet surfaced to the expansion rerank.
+    PPR_EXPANSION: bool = False
+    PPR_TOP_NOTES: int = 5
+    PPR_DAMPING: float = 0.5
     # Evidence returned with an answer: the N best docs by rerank score.
     # Catalogue ids that override the RAM-tier pick (None = pick by RAM). Changing the
     # embed model changes vector dimensions: an existing index is no longer valid.

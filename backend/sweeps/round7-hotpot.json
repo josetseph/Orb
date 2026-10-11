@@ -1,0 +1,39 @@
+{
+  "name": "round7-hotpot",
+  "dataset": "hotpotqa",
+  "dev": [
+    20,
+    70
+  ],
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "EXTRACTION_JSON_CONSTRAINED": true,
+    "EXTRACTION_PROMPT_SUFFIX": "Before you reply, check every relationship: its source_name and target_name must each be exactly the name of one of your nodes. Add a node for anything a relationship points to that is not yet one.",
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-12b-q4",
+    "INDEX_RAW_PASSAGES": true
+  },
+  "evaluator": "full",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 8,
+  "vary": {
+    "INDEX_RAW_PASSAGES": [
+      false
+    ],
+    "PASSAGE_KEYWORD_SEARCH": [
+      true
+    ],
+    "PPR_EXPANSION": [
+      true
+    ],
+    "CONTEXT_ORDER": [
+      "edges"
+    ],
+    "FIRST_SEARCH_IS_QUESTION": [
+      true
+    ]
+  },
+  "_note": "Retrieval strategies on HotpotQA (12B extraction, reminder plus grammar). Title headers are skipped: these notes are one short paragraph."
+}

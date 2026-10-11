@@ -180,8 +180,10 @@ def ensure_index(variant: dict, spec: dict, plan: bool, lane: int = 0) -> str:
 
 def evaluate(variant: dict, spec: dict, label: str, offset: int, questions: int, plan: bool, lane: int = 0) -> Path:
     run_name = f"{spec['name']}/{variant['name']}/{label}"
+    oracle = spec.get("evaluator", "full").startswith("oracle")  # reads the notes directly: no index
     args = ["--dataset", spec["dataset"], "--offset", str(offset), "--questions", str(questions),
-            "--restore", index_name(variant["levers"], spec), "--download", "--evaluator", spec.get("evaluator", "full"),
+            *([] if oracle else ["--restore", index_name(variant["levers"], spec)]),
+            "--download", "--evaluator", spec.get("evaluator", "full"),
             *lever_args({k: v for k, v in variant["levers"].items() if k != "communities"})]
     experiment(run_name, args, result_file(spec, run_name), plan, lane)
     return result_file(spec, run_name)
@@ -205,7 +207,8 @@ def run_rung(pool, field, alive, spec, label, offset, n, plan) -> list[tuple[str
 
     def group(members):
         def work(lane):
-            ensure_index(members[0], spec, plan, lane)
+            if not spec.get("evaluator", "full").startswith("oracle"):
+                ensure_index(members[0], spec, plan, lane)
             return [(v["name"], evaluate(v, spec, label, offset, n, plan, lane)) for v in members]
         return work
 
@@ -238,6 +241,18 @@ def run_spec(spec: dict, pool, plan: bool) -> None:
         final = survivors([(n, score(result_file(spec, f"{spec['name']}/{n}/r{rungs[-1]}"), metric)) for n in alive], spec.get("keep", 0.5))
         rows = run_rung(pool, field, final, spec, "holdout", h0, h1 - h0, plan)
         report += table(f"Held-out questions {h0} to {h1} (never used to choose)", rows, spec)
+    if spec.get("absent"):
+        # Questions whose notes are not in the index (outside "dev"): every answer is invented, so the share
+        # answered is the hallucination rate; a refusal (the loop never committing) is the right outcome.
+        a0, a1 = spec["absent"]
+        rows = run_rung(pool, field, alive, spec, "absent", a0, a1 - a0, plan)
+        report += [f"\n## Absent: questions {a0} to {a1}, whose notes are not in the index (lower answered is better)\n",
+                   "| variant | answered | s / question |", "|---|---|---|"]
+        for name, path in rows:
+            res = json.loads(path.read_text())["results"] if path.is_file() else []
+            n = len(res) or 1
+            report.append(f"| {name} | {sum(bool(r.get('answered')) for r in res) / n:.0%} | "
+                          f"{sum(r['total_time_ms'] for r in res) / n / 1000:.0f} |" if res else f"| {name} | not run | |")
     if not plan:
         out = REPO / "Results" / spec["name"] / "report.md"
         out.parent.mkdir(parents=True, exist_ok=True)

@@ -127,8 +127,9 @@ def main() -> None:
     ap.add_argument("--dataset", choices=["hotpotqa", "musique"])
     ap.add_argument("--questions", type=int, help="N questions (and, with --ingest, only their notes)")
     ap.add_argument("--offset", type=int, default=0, help="...starting at this question (held-out slices)")
-    ap.add_argument("--evaluator", choices=["full", "retrieval"], default="full",
-                    help="full = the whole loop with an answering model; retrieval = search-and-expand only, against the gold notes")
+    ap.add_argument("--evaluator", choices=["full", "retrieval", "oracle-gold", "oracle-all"], default="full",
+                    help="full = the whole loop with an answering model; retrieval = search-and-expand only, against the gold notes; "
+                         "oracle-gold / oracle-all = one answering step over the question's gold notes / all its notes, no index")
     ap.add_argument("--queries-from", nargs="*", default=[], metavar="RESULTS.json",
                     help="retrieval evaluator: also run the follow-up queries these past runs recorded")
     ap.add_argument("--no-cache", action="store_true", help="do not replay unchanged model calls from <repo>/llm-cache")
@@ -310,7 +311,10 @@ def main() -> None:
             run([sys.executable, "tests/benchmark/synthesis.py", args.synthesis_from, "--base-url", BASE_URL,
                  "--output", str(out / "synthesis.json")], env)
         elif not args.no_eval:
-            if args.evaluator == "retrieval":
+            if args.evaluator.startswith("oracle"):
+                cmd = [sys.executable, "tests/benchmark/oracle.py", "--dataset", args.dataset, "--base-url", BASE_URL,
+                       "--mode", args.evaluator.removeprefix("oracle-"), "--output", str(out / f"{args.dataset}.json")]
+            elif args.evaluator == "retrieval":
                 cmd = [sys.executable, "tests/benchmark/retrieval_eval.py", "--dataset", args.dataset, "--base-url", BASE_URL,
                        "--output", str(out / "retrieval.json"), "--queries-from", *args.queries_from]
             else:

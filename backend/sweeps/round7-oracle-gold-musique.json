@@ -1,0 +1,19 @@
+{
+  "name": "round7-oracle-gold-musique",
+  "dataset": "musique",
+  "dev": [
+    0,
+    50
+  ],
+  "evaluator": "oracle-gold",
+  "metric": "answer_f1",
+  "design": "one-at-a-time",
+  "serve": 4,
+  "baseline": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "chat_model": "gemma4-e4b-q4",
+    "LLAMA_N_CTX": 32768
+  },
+  "_note": "One answering step (E4B) over the question's gold notes: no index, no retrieval."
+}
