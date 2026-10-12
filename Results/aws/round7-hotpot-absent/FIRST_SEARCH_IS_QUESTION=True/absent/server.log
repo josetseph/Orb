@@ -1,0 +1,55 @@
+[run] DATA_DIR=/workspace/orb/data
+Qdrant not reachable yet (retrying on use): [Errno 111] Connection refused
+/workspace/orb/backend/.venv/lib/python3.12/site-packages/qdrant_client/qdrant_remote.py:288: UserWarning: Failed to obtain server version. Unable to check client-server compatibility. Set check_compatibility=False to skip version check.
+  show_warning(
+Meilisearch not reachable yet (retrying on use): MeilisearchCommunicationError, HTTPConnectionPool(host='127.0.0.1', port=7700): Max retries exceeded with url: /health (Caused by NewConnectionError("HTTPConnection(host='127.0.0.1', port=7700): Failed to establish a new connection: [Errno 111] Connection refused"))
+[run] Starting Qdrant
+[run] Starting Meilisearch
+[run] Starting API on http://127.0.0.1:8000
+INFO: Logging initialized at level INFO | Logs dir: /workspace/orb/data/logs
+INFO: Started server process [202924]
+INFO: Waiting for application startup.
+INFO: Application startup: Orb API online
+INFO: Database schema ensured (create_all)
+INFO: Application startup complete.
+INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: Store migration v1 for KB 'default': 0 descriptions scrubbed, 0 note names filled
+INFO: 127.0.0.1:58922 - "GET /health HTTP/1.1" 200
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8102
+WARNING: Keychain unavailable, credentials are session-only: No recommended backend was available. Install a recommended 3rd party backend package; or, install the keyrings.alt package if you want to use the non-recommended backends. See https://pypi.org/project/keyring for details.
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:58932 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: Primary LLM Provider: LOCAL
+INFO: Initializing in-process llama-cpp-python (backend=cuda, model=local-chat)
+INFO: Ingestion LLM: shared with main (LOCAL)
+INFO: 127.0.0.1:58942 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:58956 - "GET /api/v1/models HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:58960 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:58976 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:58980 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:58988 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [KBRegistry] LLM override for 'default' → provider=openai_compat model=gemma4-e4b-q4 ingestion=gemma4-12b-q4
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8101
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:59002 - "PATCH /api/v1/kb/default/llm HTTP/1.1" 200
+INFO: 127.0.0.1:59008 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: 127.0.0.1:59024 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:59040 - "GET /api/v1/notes HTTP/1.1" 200
+INFO: 127.0.0.1:59044 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: 127.0.0.1:59054 - "GET /api/v1/notes HTTP/1.1" 200
+INFO: Shutting down
+INFO: Waiting for application shutdown.
+INFO: Application shutdown complete.
+INFO: Finished server process [202924]

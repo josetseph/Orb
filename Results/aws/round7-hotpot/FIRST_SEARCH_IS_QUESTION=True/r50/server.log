@@ -1,0 +1,2447 @@
+[run] DATA_DIR=/workspace/orb/data
+Qdrant not reachable yet (retrying on use): [Errno 111] Connection refused
+/workspace/orb/backend/.venv/lib/python3.12/site-packages/qdrant_client/qdrant_remote.py:288: UserWarning: Failed to obtain server version. Unable to check client-server compatibility. Set check_compatibility=False to skip version check.
+  show_warning(
+Meilisearch not reachable yet (retrying on use): MeilisearchCommunicationError, HTTPConnectionPool(host='127.0.0.1', port=7700): Max retries exceeded with url: /health (Caused by NewConnectionError("HTTPConnection(host='127.0.0.1', port=7700): Failed to establish a new connection: [Errno 111] Connection refused"))
+[run] Starting Qdrant
+[run] Starting Meilisearch
+[run] Starting API on http://127.0.0.1:8000
+INFO: Logging initialized at level INFO | Logs dir: /workspace/orb/data/logs
+INFO: Started server process [214839]
+INFO: Waiting for application startup.
+INFO: Application startup: Orb API online
+INFO: Database schema ensured (create_all)
+INFO: Application startup complete.
+INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: Store migration v1 for KB 'default': 0 descriptions scrubbed, 0 note names filled
+INFO: 127.0.0.1:55758 - "GET /health HTTP/1.1" 200
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8102
+WARNING: Keychain unavailable, credentials are session-only: No recommended backend was available. Install a recommended 3rd party backend package; or, install the keyrings.alt package if you want to use the non-recommended backends. See https://pypi.org/project/keyring for details.
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:55766 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: Primary LLM Provider: LOCAL
+INFO: Initializing in-process llama-cpp-python (backend=cuda, model=local-chat)
+INFO: Ingestion LLM: shared with main (LOCAL)
+INFO: 127.0.0.1:55782 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:55790 - "GET /api/v1/models HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:55798 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:55804 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:55816 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:55832 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [KBRegistry] LLM override for 'default' → provider=openai_compat model=gemma4-e4b-q4 ingestion=gemma4-12b-q4
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8101
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:55846 - "PATCH /api/v1/kb/default/llm HTTP/1.1" 200
+INFO: 127.0.0.1:55850 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: 127.0.0.1:55852 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:55858 - "GET /api/v1/notes HTTP/1.1" 200
+INFO: RetrievalService initialized
+INFO: 
+[Chat] Started processing query: 'Which other Mexican Formula One race car driver has held the podium besides the Force India driver born in 1990?'
+INFO: [Chat 16667457] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Which other Mexican Formula One race car driver has held the podium besides the Force India driver born in 1990?'
+======================================================================
+INFO: [Chat 16667457] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'This singer of A Rather Blustery Day also voiced what hedgehog?'
+INFO: [Chat 83837a14] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='This singer of A Rather Blustery Day also voiced what hedgehog?'
+======================================================================
+INFO: [Chat 83837a14] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Aside from the Apple Remote, what other device can control the program Apple Remote was originally designed to interact with?'
+INFO: [Chat 044482f9] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Aside from the Apple Remote, what other device can control the program Apple Remote was originally designed to interact with?'
+======================================================================
+INFO: [Chat 044482f9] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Which performance act has a higher instrument to person ratio, Badly Drawn Boy or Wolf Alice? '
+INFO: [Chat 0cdb19f6] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Which performance act has a higher instrument to person ratio, Badly Drawn Boy or Wolf Alice?'
+======================================================================
+INFO: [Chat 0cdb19f6] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who was the writer of These Boots Are Made for Walkin' and who died in 2007?'
+INFO: [Chat 4b6e9f03] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who was the writer of These Boots Are Made for Walkin' and who died in 2007?'
+======================================================================
+INFO: [Chat 4b6e9f03] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'The 2011–12 VCU Rams men's basketball team, led by third year head coach Shaka Smart, represented Virginia Commonwealth University which was founded in what year?'
+INFO: [Chat ee8a17cb] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='The 2011–12 VCU Rams men's basketball team, led by third year head coach Shaka Smart, represented Virginia Commonwealth University which was founded in what year?'
+======================================================================
+INFO: [Chat ee8a17cb] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'What was the father of Kasper Schmeichel voted to be by the IFFHS in 1992?'
+INFO: [Chat ea56ac2a] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='What was the father of Kasper Schmeichel voted to be by the IFFHS in 1992?'
+======================================================================
+INFO: [Chat ea56ac2a] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Are both Dictyosperma, and Huernia described as a genus?'
+INFO: [Chat 0a069483] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Are both Dictyosperma, and Huernia described as a genus?'
+======================================================================
+INFO: [Chat 0a069483] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='alternative control device'
+INFO: [Chat 044482f9] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Aside from the Apple Remote, what other device can control the program Apple Remote was originally designed to interact with?'
+INFO: [Chat 044482f9] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Aside from the Apple Remote, what other device can control the program Apple Remote was originally designed to interact with?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Apple Remote'], Expected Types: ['device'], Attribute: alternative control device
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 158 (threshold=0.45)
+INFO:   [Qdrant] 62 unique nodes after dedup (from 158 raw hits)
+INFO:   [IterLoop] question_attribute='classification'
+INFO: [Chat 0a069483] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Are both Dictyosperma, and Huernia described as a genus?'
+INFO: [Chat 0a069483] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Are both Dictyosperma, and Huernia described as a genus?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: compare, Entities: ['Dictyosperma', 'Huernia'], Expected Types: ['genus'], Attribute: classification
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 33 (threshold=0.45)
+INFO:   [Qdrant] 16 unique nodes after dedup (from 33 raw hits)
+INFO:   [IterLoop] question_attribute='voice_role'
+INFO: [Chat 83837a14] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='This singer of A Rather Blustery Day also voiced what hedgehog?'
+INFO: [Chat 83837a14] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='This singer of A Rather Blustery Day also voiced what hedgehog?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['A Rather Blustery Day'], Expected Types: ['song'], Attribute: voice_role
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 30 (threshold=0.45)
+INFO:   [Qdrant] 14 unique nodes after dedup (from 30 raw hits)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [IterLoop] question_attribute='podium'
+INFO: [Chat 16667457] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Which other Mexican Formula One race car driver has held the podium besides the Force India driver born in 1990?'
+INFO: [Chat 16667457] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Which other Mexican Formula One race car driver has held the podium besides the Force India driver born in 1990?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [IterLoop] question_attribute='instrument to person ratio'
+INFO: [Chat 0cdb19f6] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Which performance act has a higher instrument to person ratio, Badly Drawn Boy or Wolf Alice?'
+INFO: [Chat 0cdb19f6] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Which performance act has a higher instrument to person ratio, Badly Drawn Boy or Wolf Alice?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.17s
+INFO:   [Entity] Found 5 nodes by name: ['Botanical Profile of Dictyosperma', 'dictyosperma album', 'The Genus Huernia', 'huernia', 'dictyosperma']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 16 hits
+INFO:   [LLM Analysis] Intent: list, Entities: ['Force India'], Expected Types: ['organization', 'person'], Attribute: podium
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [LLM Analysis] Intent: compare, Entities: ['Badly Drawn Boy', 'Wolf Alice'], Expected Types: ['musical group'], Attribute: instrument to person ratio
+ERROR: Query analysis failed: query analysis: question_attribute: Input should be a valid string (1 problem(s))
+INFO:   [⏱️ Timing] Total query embedding: 0.01s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 65 (threshold=0.45)
+INFO:   [Qdrant] 23 unique nodes after dedup (from 65 raw hits)
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 49 (threshold=0.45)
+INFO:   [Qdrant] 20 unique nodes after dedup (from 49 raw hits)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [IterLoop] question_attribute=None
+INFO: [Chat 4b6e9f03] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query="Who was the writer of These Boots Are Made for Walkin' and who died in 2007?"
+INFO: [Chat 4b6e9f03] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Who was the writer of These Boots Are Made for Walkin' and who died in 2007?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [IterLoop] question_attribute='award'
+INFO: [Chat ea56ac2a] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='What was the father of Kasper Schmeichel voted to be by the IFFHS in 1992?'
+INFO: [Chat ea56ac2a] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='What was the father of Kasper Schmeichel voted to be by the IFFHS in 1992?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [IterLoop] question_attribute='founding_year'
+INFO: [Chat ee8a17cb] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query="The 2011–12 VCU Rams men's basketball team, led by third year head coach Shaka Smart, represented Virginia Commonwealth University which was founded in what year?"
+INFO: [Chat ee8a17cb] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='The 2011–12 VCU Rams men's basketball team, led by third year head coach Shaka Smart, represented Virginia Commonwealth University which was founded in what year?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Kasper Schmeichel', 'IFFHS'], Expected Types: ['person', 'organization'], Attribute: award
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.32s
+INFO:   [Entity] Found 2 nodes by name: ['A Rather Blustery Day Song Details', 'a rather blustery day']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 14 hits
+ERROR: Query analysis failed: query analysis: question_attribute: Input should be a valid string (1 problem(s))
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 68 (threshold=0.45)
+INFO:   [Qdrant] 30 unique nodes after dedup (from 68 raw hits)
+INFO:   [LLM Analysis] Intent: search, Entities: ['VCU Rams', 'Shaka Smart', 'Virginia Commonwealth University'], Expected Types: ['organization', 'person', 'organization'], Attribute: founding_year
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 103 (threshold=0.45)
+INFO:   [Qdrant] 43 unique nodes after dedup (from 103 raw hits)
+INFO:   [LLM Analysis] Intent: search, Entities: [], Expected Types: [], Attribute: None
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 58 (threshold=0.45)
+INFO:   [Qdrant] 23 unique nodes after dedup (from 58 raw hits)
+INFO:   [Meili] 35 raw Meili hits
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [Meili] No BM25 keyword hits.
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.88s
+INFO:   [Entity] Found 5 nodes by name: ['History and Usage of the Apple Remote', 'apple remote desktop', 'apple remote', 'original apple remote', 'Overview of Apple Remote Desktop']
+INFO:   [Vector] Using Qdrant multi-collection search with 62 hits
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.22s
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 23 hits
+INFO:   [Vector] Found 1 name variants from vector results: [('Overview of the Ferocactus Genus', 'ferocactus')]
+INFO:   [Vector] Found 13 semantically similar nodes: ['eastern and southern africa', 'apocynaceae', '1810', 'hoodia', 'asclepiadoideae', 'palm family', 'stapelia', 'justin heurnius', 'mascarene islands', 'archontophoenix', 'princess palm', 'ferocactus', 'Overview of the Ferocactus Genus']
+INFO:   [Retrieval] Found 72 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 25.55s (105 entity + 13 vector nodes)
+INFO:   [Vector] Found 15 name variants from vector results: [('Biography and Career of Jim Cummings', 'jim cummings'), ('Winnie the Pooh and the Blustery Day Production Details', 'pooh'), ('the house at pooh corner', 'pooh'), ('hip hip pooh-ray!', 'pooh'), ('winnie the pooh', 'pooh'), ('narrowcast', 'cast'), ('castaldius', 'cast'), ('podcast', 'cast'), ('dirleton castle', 'cast'), ('My Fair Lady Broadway Cast Recording Release and Success', 'cast'), ('Biography of Voice Actress Kate Higgins', 'kate higgins'), ("2010–11 VCU Rams Men's Basketball Team Season", '2010'), ("2010–11 vcu rams men's basketball team", '2010'), ("2010 caa men's basketball tournament", '2010'), ('2010 college basketball invitational', '2010')]
+INFO:   [Vector] Found 28 semantically similar nodes: ['jim cummings', 'robert & richard sherman', 'sonic the hedgehog', 'miles "tails" prower', 'pooh', 'dr. robotnik', 'cast', 'december 20, 1968', 'winnie the pooh and the blustery day', 'tasmanian devil', 'kate higgins', 'sterling holloway', '2010', 'Biography and Career of Jim Cummings', 'Winnie the Pooh and the Blustery Day Production Details', 'the house at pooh corner', 'hip hip pooh-ray!', 'winnie the pooh', 'narrowcast', 'castaldius', 'podcast', 'dirleton castle', 'My Fair Lady Broadway Cast Recording Release and Success', 'Biography of Voice Actress Kate Higgins', "2010–11 VCU Rams Men's Basketball Team Season", "2010–11 vcu rams men's basketball team", "2010 caa men's basketball tournament", '2010 college basketball invitational']
+INFO:   [Retrieval] Found 79 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 26.42s (102 entity + 28 vector nodes)
+INFO:   [Vector] Found 29 name variants from vector results: [('Siri Remote Release and Compatibility', 'siri remote'), ('Front Row Software Overview', 'front row'), ('angiosperms', 'ios'), ('damien gerard studios', 'ios'), ('Functionality and Applications of Remote Controls', 'remote control'), ('dedicated remote controller', 'remote control'), ('the wb television network', 'network'), ('dos only networks', 'network'), ('cartoon network', 'network'), ('rainforest action network', 'network'), ('Universal Remote Functionality and Variations', 'universal remote'), ('Rising Star (France) Television Series', 'television'), ('spelling television', 'television'), ('anime television adaptation', 'television'), ('anime television series', 'television'), ('london weekend television', 'television'), ('Overview of Apple Watch Development and Generations', 'apple'), ('apple watch edition', 'apple'), ('NetSupport Manager Software Overview', 'netsupport manager'), ('lionel legacy engines', 'lionel'), ('Lionel Trainmaster Command Control (TMCC) System Overview', 'lionel'), ('apple watch series 1', 'apple watch'), ('apple watch hermès', 'apple watch'), ('apple watch series 2', 'apple watch'), ('2012 ncaa division i fbs football season', '2012'), ("2012–13 VCU Rams Men's Basketball Team Season Overview", '2012'), ("2012 caa men's basketball championship", '2012'), ('october 1, 2012', '2012'), ('april 16, 2012', '2012')]
+INFO:   [Vector] Found 88 semantically similar nodes: ['apple tv', 'siri remote', 'macintosh computers', 'apple inc.', 'macintosh tv', 'front row', 'isight imac g5', 'tv tuner expansion boards', 'october 2005', 'powercd drive', 'nameless ir remotes', 'apple tv 4k', 'apple keynote address', 'vcr remote', 'ios', 'remote control', 'march 14, 2002', 'dvd player', 'television set', 'network', 'october 26, 2015', 'universal remote', 'tim cook', '4th generation apple tv', 'control codes', 'user', 'consumer electronics devices', 'teachers', 'apple network assistant', 'electronic device', 'television', 'mid- and high-end universal remotes', 'macintosh', 'home appliance', 'keyboard function keys', 'siri', 'mac os control', 'apple', 'computer administrators', 'remote (client) computer/device', 'lionchief plus', 'android', '10-foot user interface', 'command base', 'track interface unit', 'narrowcast', 'kodi', 'low-end universal remotes', 'digital light processing projector', 'windows media center', 'iphoto', 'local (control) computer/device', 'lionchief', 'windows mobile', 'netsupport manager', 'itunes', 'lionel', 'apple watch', '2012', 'Siri Remote Release and Compatibility', 'Front Row Software Overview', 'angiosperms', 'damien gerard studios', 'Functionality and Applications of Remote Controls', 'dedicated remote controller', 'the wb television network', 'dos only networks', 'cartoon network', 'rainforest action network', 'Universal Remote Functionality and Variations', 'Rising Star (France) Television Series', 'spelling television', 'anime television adaptation', 'anime television series', 'london weekend television', 'Overview of Apple Watch Development and Generations', 'apple watch edition', 'NetSupport Manager Software Overview', 'lionel legacy engines', 'Lionel Trainmaster Command Control (TMCC) System Overview', 'apple watch series 1', 'apple watch hermès', 'apple watch series 2', '2012 ncaa division i fbs football season', "2012–13 VCU Rams Men's Basketball Team Season Overview", "2012 caa men's basketball championship", 'october 1, 2012', 'april 16, 2012']
+INFO:   [Retrieval] Found 25 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 26.64s (5 entity + 88 vector nodes)
+INFO:   [Vector] Found 27 name variants from vector results: [("Nancy Sinatra's Debut Album Boots", 'nancy sinatra'), ('Biography of Nancy Sinatra', 'nancy sinatra'), ("Analysis of 'These Boots Are Made for Walkin''", "these boots are made for walkin'"), ('justin boots', 'boots'), ("KMFDM's Boots EP Release", 'boots'), ('u.s. army ranger', 'u.s.'), ('u.s. steel plant', 'u.s.'), ('u.s. representative', 'u.s.'), ('toyota motor sales, u.s.a., inc. (tms)', 'u.s.'), ('u.s. country singles charts', 'u.s.'), ('march 7, 1966', '1966'), ('october 20, 1966', '1966'), ('Kon Kan Synthpop Project Overview', 'kon kan'), ("Kon Kan's Song 'Puss N' Boots/These Boots (Are Made for Walkin')'", 'kon kan'), ('The Twenty-fifth Anniversary Anthology by The Fixx', 'the twenty-fifth anniversary anthology'), ('1990-1991', '1991'), ('june 1991', '1991'), ('1991 census', '1991'), ('1985-1991', '1991'), ('1988-1991', '1991'), ('billboard hot 100 singles chart', 'billboard hot 100'), ('united states merchant marine', 'united states'), ('united states senate', 'united states'), ('The President Pro Tempore of the United States Senate', 'united states'), ('president pro tempore of the united states senate', 'united states'), ('united states west coast', 'united states'), ('1920s to mid-1960s', '1960s')]
+INFO:   [Vector] Found 49 semantically similar nodes: ['nancy sinatra', "these boots are made for walkin'", 'january 22, 1966', 'boots', "when pigs fly: songs you thought you'd never hear", 'u.s.', '1966', "puss n' boots/these boots are made for walkin'", 'kon kan', 'move to move', 'the twenty-fifth anniversary anthology', 'juno award', 'billy strange', '1991', 'stevie nicks', 'wine wine wine', 'i fought the law (but the law won)', 'the greatest cowboy of them all', 'billboard hot 100', 'uk singles chart', 'united states', '1960s', "Nancy Sinatra's Debut Album Boots", 'Biography of Nancy Sinatra', "Analysis of 'These Boots Are Made for Walkin''", 'justin boots', "KMFDM's Boots EP Release", 'u.s. army ranger', 'u.s. steel plant', 'u.s. representative', 'toyota motor sales, u.s.a., inc. (tms)', 'u.s. country singles charts', 'march 7, 1966', 'october 20, 1966', 'Kon Kan Synthpop Project Overview', "Kon Kan's Song 'Puss N' Boots/These Boots (Are Made for Walkin')'", 'The Twenty-fifth Anniversary Anthology by The Fixx', '1990-1991', 'june 1991', '1991 census', '1985-1991', '1988-1991', 'billboard hot 100 singles chart', 'united states merchant marine', 'united states senate', 'The President Pro Tempore of the United States Senate', 'president pro tempore of the united states senate', 'united states west coast', '1920s to mid-1960s']
+INFO:   [Retrieval] Found 120 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 25.98s (100 entity + 49 vector nodes)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 26.28s
+INFO:   [Entity] Found 4 nodes by name: ['Force India VJM04 Formula One Racing Car', 'force india vjm04', 'sahara force india f1 team', 'force india']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 23 hits
+INFO:   [Retrieval] Prepared 18 candidates (105 entity + 13 vector)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 26.13s
+INFO:   [Entity] Found 7 nodes by name: ["IFFHS World's Best Goalkeeper Award", "iffhs world's best goalkeeper", 'iffhs', 'international federation of football history & statistics (iffhs)', "iffhs world's best club coach", 'Profile of Kasper Schmeichel', "IFFHS World's Best Club Coach Award"]
+INFO:   [Keyword] Added 35 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 30 hits
+INFO:   [Retrieval] Prepared 16 candidates (102 entity + 28 vector)
+INFO:   [Retrieval] Prepared 69 candidates (5 entity + 88 vector)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 26.28s
+INFO:   [Entity] Found 7 nodes by name: ['Wolf Alice Band Overview', 'wolf alice', 'badly drawn boy', 'Badly Drawn Boy Discography and Career History', "Badly Drawn Boy's 'Silent Sigh'", "Badly Drawn Boy's 'Something to Talk About'", 'Biography of Damon Michael Gough (Badly Drawn Boy)']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 20 hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 26.06s
+INFO:   [Entity] Found 21 nodes by name: ["2012–13 vcu rams men's basketball team", "2009–10 vcu rams men's basketball team", "2010–11 VCU Rams Men's Basketball Team Season", "2015–16 VCU Rams Men's Basketball Team", "2004–05 vcu rams men's basketball team", 'virginia commonwealth university', "2009–10 VCU Rams Men's Basketball Team Season Overview", 'History and Structure of Virginia Commonwealth University', "2011–12 vcu rams men's basketball team", "2014–15 VCU Rams Men's Basketball Team Season", "2014–15 vcu rams men's basketball team", 'shaka smart', "1995–96 VCU Rams Men's Basketball Team", "2013–14 VCU Rams Men's Basketball Team Season Overview", "2013–14 vcu rams men's basketball team", "2011–12 VCU Rams Men's Basketball Team Season", "2010–11 vcu rams men's basketball team", "2015–16 vcu rams men's basketball team", "2004–05 VCU Rams Men's Basketball Team Season Summary", "2012–13 VCU Rams Men's Basketball Team Season Overview", "1995–96 vcu rams men's basketball team"]
+INFO: Loading reranker GGUF (exclusive): /workspace/orb/models/gguf/Qwen3-Reranker-8B.Q4_K_M.gguf
+INFO: [ModelLoad] rerank loaded in 1.3s
+INFO:   [GraphExpand] Evaluating 35 1-hop relationship(s):
+INFO:     [0] # Huernia
+
+The genus Huernia (family Apocynaceae, subfamily  (passage 1) --[REFERENCES]--> apocynaceae
+INFO:     [1] # Huernia
+
+The genus Huernia (family Apocynaceae, subfamily  (passage 1) --[REFERENCES]--> asclepiadoideae
+INFO:     [2] # Huernia
+
+The genus Huernia (family Apocynaceae, subfamily  (passage 1) --[REFERENCES]--> eastern and southern africa
+INFO:     [3] # Huernia
+
+The genus Huernia (family Apocynaceae, subfamily  (passage 1) --[REFERENCES]--> justin heurnius
+INFO:     [4] # Huernia
+
+The genus Huernia (family Apocynaceae, subfamily  (passage 1) --[REFERENCES]--> south african cape
+INFO:     [5] # Huernia
+
+The genus Huernia (family Apocynaceae, subfamily  (passage 1) --[REFERENCES]--> stapelia
+INFO:     [6] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> archontophoenix
+INFO:     [7] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> crownshaft
+INFO:     [8] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> hurricane palm
+INFO:     [9] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> indian ocean
+INFO:     [10] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> mauritius
+INFO:     [11] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> princess palm
+INFO:     [12] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> rodrigues
+INFO:     [13] # Dictyosperma
+
+Dictyosperma is a monotypic genus of floweri (passage 1) --[REFERENCES]--> réunion
+INFO:     [14] Botanical Profile of Dictyosperma --[REFERENCES]--> dictyosperma
+INFO:     [15] closely related to and resembles Archontophoenix
+INFO:     [16] The Genus Huernia --[REFERENCES]--> huernia
+INFO:     [17] is a member of the family Apocynaceae
+INFO:     [18] is a member of the subfamily Asclepiadoideae
+INFO:     [19] consists of succulents from Eastern and Southern Africa
+INFO:     [20] the name is in honour of Justin Heurnius
+INFO:     [21] is closely related to the genus Stapelia
+INFO:     [22] The Genus Huernia --[REFERENCES]--> 1810
+INFO:     [23] Botanical Profile of Dictyosperma --[REFERENCES]--> dictyosperma album
+INFO:     [24] has a crownshaft at the top of the trunk
+INFO:     [25] commonly called hurricane palm
+INFO:     [26] commonly called princess palm
+INFO:     [27] The Genus Huernia --[REFERENCES]--> hoodia
+INFO:     [28] Botanical Profile of Dictyosperma --[REFERENCES]--> palm family
+INFO:     [29] The Genus Huernia --[REFERENCES]--> flies
+INFO:     [30] Botanical Profile of Dictyosperma --[REFERENCES]--> mascarene islands
+INFO:     [31] located in the Indian Ocean
+INFO:     [32] includes Mauritius
+INFO:     [33] includes Rodrigues
+INFO:     [34] includes Réunion
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 16 candidates (top score: 0.9870)
+INFO:   [Reranker] Ranked 16 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=7, neighbor=0, community=0
+INFO:     1. [passage] # A Rather Blustery Day
+
+"A Rather Blustery Day" is a whimsi (passage 1) (rerank=0.9870)
+INFO:     2. [vector_match] jim cummings (rerank=0.9082)
+INFO:     3. [vector_match] pooh (rerank=0.5817)
+INFO:     4. [vector_match] dr. robotnik (rerank=0.4233)
+INFO:     5. [entity_match] a rather blustery day (rerank=0.3278)
+INFO:     6. [vector_match] kate higgins (rerank=0.2594)
+INFO:     7. [passage] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) (rerank=0.2516)
+INFO:     8. [vector_match] winnie the pooh and the blustery day (rerank=0.2404)
+INFO:     9. [vector_match] tasmanian devil (rerank=0.1000)
+INFO:     10. [vector_match] sonic the hedgehog (rerank=0.0747)
+INFO:   [⏱️ Timing] Total: 47.82s (Embed: 0.00s | Retrieval: 26.42s | Rerank: 21.37s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 83837a14] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 84 1-hop relationship(s):
+INFO:     [0] # A Rather Blustery Day
+
+"A Rather Blustery Day" is a whimsi (passage 1) --[REFERENCES]--> robert & richard sherman
+INFO:     [1] # A Rather Blustery Day
+
+"A Rather Blustery Day" is a whimsi (passage 1) --[REFERENCES]--> walt disney
+INFO:     [2] A Rather Blustery Day Song Details --[REFERENCES]--> jim cummings
+INFO:     [3] Biography and Career of Jim Cummings --[REFERENCES]--> jim cummings
+INFO:     [4] provided voice work for Aladdin
+INFO:     [5] provided voice work for Antz
+INFO:     [6] provided voice-over work for Baldur's Gate
+INFO:     [7] provided voice work for Balto
+INFO:     [8] voices the title character
+INFO:     [9] performed in numerous Disney animations
+INFO:     [10] performed in numerous DreamWorks animations
+INFO:     [11] provided voice-over work for Fallout
+INFO:     [12] provided voice-over work for Icewind Dale
+INFO:     [13] provided voice-over work for Mass Effect 2
+INFO:     [14] voices the character
+INFO:     [15] provided voice work for Shrek
+INFO:     [16] provided voice-over work for Splatterhouse
+INFO:     [17] provided voice work for The Lion King
+INFO:     [18] provided voice work for The Princess and the Frog
+INFO:     [19] provided voice work for The Road to El Dorado
+INFO:     [20] voices the character
+INFO:     [21] voices the character
+INFO:     [22] A Rather Blustery Day Song Details --[REFERENCES]--> pooh
+INFO:     [23] Analysis of 'Hip Hip Pooh-Ray!' Song --[REFERENCES]--> pooh
+INFO:     [24] The Rain Rain Rain Came Down Down Down Song Analysis --[REFERENCES]--> pooh
+INFO:     [25] hailed as a hero in the song
+INFO:     [26] saving Piglet's life
+INFO:     [27] provided the voice of Pooh
+INFO:     [28] Biography and Career of Jim Cummings --[REFERENCES]--> dr. robotnik
+INFO:     [29] A Rather Blustery Day Song Details --[REFERENCES]--> a rather blustery day
+INFO:     [30] written by Robert & Richard Sherman
+INFO:     [31] Biography of Voice Actress Kate Higgins --[REFERENCES]--> kate higgins
+INFO:     [32] voices Kate, Stinky and Lilly in the Alpha and Omega sequels
+INFO:     [33] was born in Charlottesville
+INFO:     [34] voiced C.C. in Code Geass
+INFO:     [35] voiced Saber in the original Fate/stay Night
+INFO:     [36] has major voice roles in English-language adaptations of Japanese anime
+INFO:     [37] is best known as the voice of Sakura Haruno in Naruto
+INFO:     [38] became the voice of Ami Mizuno / Sailor Mercury in the Viz English dub of Sailor Moon in 2014
+INFO:     [39] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> aladdin
+INFO:     [40] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> antz
+INFO:     [41] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> baldur's gate
+INFO:     [42] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> balto
+INFO:     [43] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> darkwing duck
+INFO:     [44] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> disney
+INFO:     [45] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> dreamworks
+INFO:     [46] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> fallout
+INFO:     [47] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> icewind dale
+INFO:     [48] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> mass effect 2
+INFO:     [49] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> pete
+INFO:     [50] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> shrek
+INFO:     [51] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> splatterhouse
+INFO:     [52] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> the lion king
+INFO:     [53] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> the princess and the frog
+INFO:     [54] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> the road to el dorado
+INFO:     [55] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> tigger
+INFO:     [56] # Jim Cummings
+
+James Jonah Cummings (born November 3, 1952) (passage 1) --[REFERENCES]--> winnie the pooh
+INFO:     [57] A Rather Blustery Day Song Details --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [58] Analysis of 'Hip Hip Pooh-Ray!' Song --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [59] Heffalumps and Woozles Song Details --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [60] The House That Jack Built (1967 Film) Overview --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [61] The Rain Rain Rain Came Down Down Down Song Analysis --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [62] The Song 'Little Black Rain Cloud' in Winnie the Pooh Films --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [63] Winnie the Pooh and the Blustery Day Production Details --[REFERENCES]--> winnie the pooh and the blustery day
+INFO:     [64] losing to Winnie the Pooh and the Blustery Day
+INFO:     [65] released by
+INFO:     [66] released on
+INFO:     [67] is a song from the film featurette
+INFO:     [68] is a song from the film
+INFO:     [69] has an instrumental version played in it
+INFO:     [70] music was written by
+INFO:     [71] music was written by
+INFO:     [72] released as a double feature with
+INFO:     [73] is based on chapters from
+INFO:     [74] included in the amalgamation of three featurettes
+INFO:     [75] included in the amalgamation of three featurettes
+INFO:     [76] is a narrative song from the film featurette
+INFO:     [77] is a Walt Disney musical film featurette
+INFO:     [78] is a Walt Disney musical film featurette
+INFO:     [79] was produced by
+INFO:     [80] is based on chapters from
+INFO:     [81] Biography and Career of Jim Cummings --[REFERENCES]--> tasmanian devil
+INFO:     [82] Biography and Career of Jim Cummings --[REFERENCES]--> sonic the hedgehog
+INFO:     [83] Biography of Voice Actress Kate Higgins --[REFERENCES]--> sonic the hedgehog
+INFO:   [Retrieval] Prepared 30 candidates (100 entity + 49 vector)
+INFO:   [Vector] Found 10 name variants from vector results: [('Profile of Sergio Pérez', 'sergio pérez'), ('northwestern mexico', 'mexico'), ('2009 Singapore Grand Prix Overview', 'grand prix'), ('japanese grand prix', 'grand prix'), ('formula one world championship', 'formula one'), ('Mexican Formula One Drivers', 'formula one'), ('2014 formula one season', 'formula one'), ('2009 formula one season', 'formula one'), ('Biography of Eduardo Troconis', 'eduardo troconis'), ('Biography of Michael James Lewis', 'michael james lewis')]
+INFO:   [Vector] Found 30 semantically similar nodes: ['sergio pérez', 'sergio pérez mendoza', 'mexico', 'pedro rodríguez', 'podium', 'grand prix', 'formula one', 'paul di resta', 'adrian sutil', 'eduardo troconis', 'mexican formula three international', 'fernando alonso', '26 january 1990', '2011 formula one season', 'nico rosberg', 'michael james lewis', 'timo glock', 'lewis hamilton', '2009 singapore grand prix', '2014 bahrain grand prix', 'Profile of Sergio Pérez', 'northwestern mexico', '2009 Singapore Grand Prix Overview', 'japanese grand prix', 'formula one world championship', 'Mexican Formula One Drivers', '2014 formula one season', '2009 formula one season', 'Biography of Eduardo Troconis', 'Biography of Michael James Lewis']
+INFO:   [Retrieval] Found 93 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 47.75s (104 entity + 30 vector nodes)
+INFO:   [Vector] Found 14 name variants from vector results: [('Biography of Peter Schmeichel', 'peter schmeichel'), ('Biography of Kasper Hvidt', 'kasper hvidt'), ('2009 colorado buffaloes football team', 'football'), ('2015 Colorado Buffaloes Football Team Season Overview', 'football'), ('2014 ncaa division i fbs football season', 'football'), ('2009 Big 12 Conference Football Season', 'football'), ('2009 ncaa division i fbs football season', 'football'), ('Biography of Isaak Hassler', 'isaak hassler'), ('Biography and Achievements of Pelé', 'pelé'), ('lionheart (1987 film)', '1987'), ('1987 season', '1987'), ('august 1987', '1987'), ('Production Details of Lionheart (1987 film)', '1987'), ('1987 Pittsburgh Steelers Season and Noll-Glanville Interaction', '1987')]
+INFO:   [Vector] Found 41 semantically similar nodes: ['peter schmeichel', 'kasper peter schmeichel', "world's best goalkeeper", '5 november 1986', 'denmark', 'denmark national team', 'uefa euro 1992', '18 november 1963', 'goalkeeper of the year', 'march 20, 2009', 'kasper hvidt', "2008 european men's handball championship", 'leicester city', 'football', '1999 uefa champions league', 'world player of the century', 'manuel neuer', 'richard møller nielsen', 'danish football association', 'isaak hassler', 'pelé', 'thierry omeyer', 'international federation of football history & statistics', 'experts from different continents', 'manchester united', '1987', 'copenhagen', 'Biography of Peter Schmeichel', 'Biography of Kasper Hvidt', '2009 colorado buffaloes football team', '2015 Colorado Buffaloes Football Team Season Overview', '2014 ncaa division i fbs football season', '2009 Big 12 Conference Football Season', '2009 ncaa division i fbs football season', 'Biography of Isaak Hassler', 'Biography and Achievements of Pelé', 'lionheart (1987 film)', '1987 season', 'august 1987', 'Production Details of Lionheart (1987 film)', '1987 Pittsburgh Steelers Season and Noll-Glanville Interaction']
+INFO:   [Retrieval] Found 33 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 47.61s (42 entity + 41 vector nodes)
+INFO:   [Vector] Found 22 name variants from vector results: [('The Hour of Bewilderbeast Album Details', 'the hour of bewilderbeast'), ('1996–1997', '1997'), ('the oxford dictionary of nursery rhymes, 2nd ed. of 1997', '1997'), ('1997 las vegas 500k', '1997'), ('1997 to 1999', '1997'), ('february 23, 1997', '1997'), ("Menomena's Album Under an Hour", 'under an hour'), ('2057 b.s (2000 a.d)', '2000'), ('2000 to 2003', '2000'), ('gadek et al. 2000', '2000'), ('2000-2004', '2000'), ('2000-2002', '2000'), ('20 june 1937 – 13 september 2010', '2010'), ("2010–11 VCU Rams Men's Basketball Team Season", '2010'), ("2010–11 vcu rams men's basketball team", '2010'), ('april 2010', '2010'), ('february 12, 2010', '2010'), ("2012–13 VCU Rams Men's Basketball Team Season Overview", '2012'), ("2012 caa men's basketball championship", '2012'), ('october 1, 2012', '2012'), ('april 16, 2012', '2012'), ('january 11, 2012', '2012')]
+INFO:   [Vector] Found 40 semantically similar nodes: ['damon gough', 'the hour of bewilderbeast', 'damon michael gough', 'xl recordings', '1997', 'north london', 'something to talk about', 'joff oddie', 'about a boy (soundtrack)', 'once around the block', 'ellie rowsell', 'silent sigh', 'under an hour', 'joel amey', 'theo ellis', '2000', '2010', '2012', 'The Hour of Bewilderbeast Album Details', '1996–1997', 'the oxford dictionary of nursery rhymes, 2nd ed. of 1997', '1997 las vegas 500k', '1997 to 1999', 'february 23, 1997', "Menomena's Album Under an Hour", '2057 b.s (2000 a.d)', '2000 to 2003', 'gadek et al. 2000', '2000-2004', '2000-2002', '20 june 1937 – 13 september 2010', "2010–11 VCU Rams Men's Basketball Team Season", "2010–11 vcu rams men's basketball team", 'april 2010', 'february 12, 2010', "2012–13 VCU Rams Men's Basketball Team Season Overview", "2012 caa men's basketball championship", 'october 1, 2012', 'april 16, 2012', 'january 11, 2012']
+INFO:   [Retrieval] Found 109 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 47.77s (107 entity + 40 vector nodes)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 69 candidates (top score: 0.9965)
+INFO:   [Reranker] Ranked 69 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=6, neighbor=0, community=0
+INFO:     1. [entity_match] apple remote (rerank=0.9965)
+INFO:     2. [vector_match] front row (rerank=0.9733)
+INFO:     3. [passage] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) (rerank=0.9629)
+INFO:     4. [passage] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) (rerank=0.9000)
+INFO:     5. [vector_match] isight imac g5 (rerank=0.8814)
+INFO:     6. [vector_match] powercd drive (rerank=0.8032)
+INFO:     7. [passage] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) (rerank=0.8000)
+INFO:     8. [vector_match] keyboard function keys (rerank=0.7941)
+INFO:     9. [vector_match] apple tv (rerank=0.7186)
+INFO:     10. [vector_match] macintosh computers (rerank=0.6384)
+INFO:   [⏱️ Timing] Total: 48.15s (Embed: 0.00s | Retrieval: 26.64s | Rerank: 21.48s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 044482f9] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 60 1-hop relationship(s):
+INFO:     [0] Front Row Software Overview --[REFERENCES]--> apple remote
+INFO:     [1] History and Usage of the Apple Remote --[REFERENCES]--> apple remote
+INFO:     [2] released by Apple Inc.
+INFO:     [3] released in or after October 2005
+INFO:     [4] replaced with the Siri Remote in the fourth generation
+INFO:     [5] through a 10-foot user interface
+INFO:     [6] Front Row Software Overview --[REFERENCES]--> front row
+INFO:     [7] History and Usage of the Apple Remote --[REFERENCES]--> front row
+INFO:     [8] navigating from a computer
+INFO:     [9] navigating from the Internet
+INFO:     [10] software relies on iPhoto
+INFO:     [11] software relies on iTunes
+INFO:     [12] similar to Kodi
+INFO:     [13] removed and discontinued in Mac OS X 10.7
+INFO:     [14] software for Macintosh computers
+INFO:     [15] viewing music
+INFO:     [16] first version was released October 2005
+INFO:     [17] navigating from an optical disc
+INFO:     [18] viewing photos
+INFO:     [19] viewing podcasts
+INFO:     [20] viewing video
+INFO:     [21] similar to Windows Media Center
+INFO:     [22] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> 10-foot user interface
+INFO:     [23] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> apple
+INFO:     [24] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> computer
+INFO:     [25] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> internet
+INFO:     [26] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> iphoto
+INFO:     [27] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> itunes
+INFO:     [28] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> kodi
+INFO:     [29] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> mac os x 10.7
+INFO:     [30] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> macintosh
+INFO:     [31] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> music
+INFO:     [32] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> october 2005
+INFO:     [33] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> optical disc
+INFO:     [34] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> photos
+INFO:     [35] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> podcasts
+INFO:     [36] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> video
+INFO:     [37] # Front Row (software)
+
+Front Row is a discontinued media ce (passage 1) --[REFERENCES]--> windows media center
+INFO:     [38] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) --[REFERENCES]--> apple inc.
+INFO:     [39] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) --[REFERENCES]--> macintosh tv
+INFO:     [40] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) --[REFERENCES]--> nameless ir remotes
+INFO:     [41] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) --[REFERENCES]--> october 2005
+INFO:     [42] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) --[REFERENCES]--> siri remote
+INFO:     [43] # Apple Remote
+
+The Apple Remote is a remote control device  (passage 1) --[REFERENCES]--> tv tuner expansion boards
+INFO:     [44] History and Usage of the Apple Remote --[REFERENCES]--> isight imac g5
+INFO:     [45] History and Usage of the Apple Remote --[REFERENCES]--> powercd drive
+INFO:     [46] produced for products such as the PowerCD drive
+INFO:     [47] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> 4th generation apple tv
+INFO:     [48] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> apple inc.
+INFO:     [49] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> apple keynote address
+INFO:     [50] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> apple tv 4k
+INFO:     [51] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> october 26, 2015
+INFO:     [52] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> original apple remote
+INFO:     [53] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> siri
+INFO:     [54] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> siri remote
+INFO:     [55] # Siri Remote
+
+The Siri Remote is a remote control device re (passage 1) --[REFERENCES]--> tim cook
+INFO:     [56] Front Row Software Overview --[REFERENCES]--> keyboard function keys
+INFO:     [57] Front Row Software Overview --[REFERENCES]--> apple tv
+INFO:     [58] History and Usage of the Apple Remote --[REFERENCES]--> apple tv
+INFO:     [59] History and Usage of the Apple Remote --[REFERENCES]--> macintosh computers
+INFO:   [Vector] Found 14 name variants from vector results: [('colonial athletic association (caa)', 'colonial athletic association'), ('atlantic 10 conference (a10)', 'atlantic 10 conference'), ('Orlando: A Biography by Virginia Woolf', 'virginia'), ('virginia woolf society of great britain', 'virginia'), ('biography of virginia woolf', 'virginia'), ('2015 Colorado Buffaloes Football Team Season Overview', '2015'), ('17 september 2015', '2015'), ('ons mid 2015 estimates', '2015'), ('october 26, 2015', '2015'), ('charlie (2015)', '2015'), ('november 10, 1968', '1968'), ('december 20, 1968', '1968'), ('april 22, 1968', '1968'), ('1968 film', '1968')]
+INFO:   [Vector] Found 38 semantically similar nodes: ['richmond', '1838', 'drexel', "2012 caa men's basketball championship", 'richmond professional institute', "2012–13 ncaa division i men's basketball season", "2010–11 ncaa division i men's basketball season", 'medical college of virginia', 'will wade', 'sonny smith', 'hampden–sydney college', 'colonial athletic association', "2013–14 ncaa division i men's basketball season", 'jeff capel iii', 'atlantic 10 conference', 'stuart c. siegel center', 'florida state', 'virginia', '2015', "2015–16 ncaa division i men's basketball season", 'virginia general assembly', '1968', "2014–15 ncaa division i men's basketball season", '1854', 'colonial athletic association (caa)', 'atlantic 10 conference (a10)', 'Orlando: A Biography by Virginia Woolf', 'virginia woolf society of great britain', 'biography of virginia woolf', '2015 Colorado Buffaloes Football Team Season Overview', '17 september 2015', 'ons mid 2015 estimates', 'october 26, 2015', 'charlie (2015)', 'november 10, 1968', 'december 20, 1968', 'april 22, 1968', '1968 film']
+INFO:   [Retrieval] Found 90 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 47.64s (118 entity + 38 vector nodes)
+INFO:   [GraphExpand] Ranked 35 neighbours → kept top 10 (scores: ['0.9840', '0.9577', '0.9569', '0.9300', '0.9264', '0.9219', '0.9206', '0.9102', '0.9097', '0.9086'])
+INFO:   [GraphExpand] Added 4 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 4 neighbors
+INFO: [Chat 0a069483] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 30 candidates (top score: 0.9980)
+INFO:   [Reranker] Ranked 30 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=3, neighbor=0, community=0
+INFO:     1. [entity_match] lee hazlewood (rerank=0.9980)
+INFO:     2. [passage] # These Boots Are Made for Walkin'
+
+"These Boots Are Made fo (passage 1) (rerank=0.9962)
+INFO:     3. [passage] # Lee Hazlewood
+
+Barton Lee Hazlewood (July 9, 1929 – August (passage 1) (rerank=0.9396)
+INFO:     4. [vector_match] these boots are made for walkin' (rerank=0.9367)
+INFO:     5. [vector_match] nancy sinatra (rerank=0.6148)
+INFO:     6. [passage] # Nancy Sinatra
+
+Nancy Sandra Sinatra (born June 8, 1940) is (passage 1) (rerank=0.5969)
+INFO:     7. [vector_match] 1960s (rerank=0.5575)
+INFO:     8. [passage] # Boots (EP)
+
+Boots is an EP by KMFDM, featuring a cover of  (passage 1) (rerank=0.2937)
+INFO:     9. [passage] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) (rerank=0.2009)
+INFO:     10. [passage] # Boots (album)
+
+Boots is a 1966 debut studio album by Nancy (passage 1) (rerank=0.1642)
+INFO:   [⏱️ Timing] Total: 47.75s (Embed: 0.00s | Retrieval: 25.98s | Rerank: 0.15s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 4b6e9f03] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 52 1-hop relationship(s):
+INFO:     [0] Analysis of 'These Boots Are Made for Walkin'' --[REFERENCES]--> lee hazlewood
+INFO:     [1] Biography of Lee Hazlewood --[REFERENCES]--> lee hazlewood
+INFO:     [2] Nancy Sinatra's Debut Album Boots --[REFERENCES]--> lee hazlewood
+INFO:     [3] was produced by Lee Hazlewood
+INFO:     [4] worked with guitarist Duane Eddy
+INFO:     [5] work occurred during the late 1950s
+INFO:     [6] # These Boots Are Made for Walkin'
+
+"These Boots Are Made fo (passage 1) --[REFERENCES]--> billboard hot 100
+INFO:     [7] # These Boots Are Made for Walkin'
+
+"These Boots Are Made fo (passage 1) --[REFERENCES]--> january 22, 1966
+INFO:     [8] # These Boots Are Made for Walkin'
+
+"These Boots Are Made fo (passage 1) --[REFERENCES]--> uk singles chart
+INFO:     [9] # These Boots Are Made for Walkin'
+
+"These Boots Are Made fo (passage 1) --[REFERENCES]--> united states
+INFO:     [10] # Lee Hazlewood
+
+Barton Lee Hazlewood (July 9, 1929 – August (passage 1) --[REFERENCES]--> duane eddy
+INFO:     [11] # Lee Hazlewood
+
+Barton Lee Hazlewood (July 9, 1929 – August (passage 1) --[REFERENCES]--> late 1950s
+INFO:     [12] hit from 1966
+INFO:     [13] Analysis of 'These Boots Are Made for Walkin'' --[REFERENCES]--> these boots are made for walkin'
+INFO:     [14] Biography of Nancy Sinatra --[REFERENCES]--> these boots are made for walkin'
+INFO:     [15] KMFDM's Boots EP Release --[REFERENCES]--> these boots are made for walkin'
+INFO:     [16] Nancy Sinatra's Debut Album Boots --[REFERENCES]--> these boots are made for walkin'
+INFO:     [17] The Twenty-fifth Anniversary Anthology by The Fixx --[REFERENCES]--> these boots are made for walkin'
+INFO:     [18] reached No. 1 in the Billboard Hot 100
+INFO:     [19] features a cover of the song
+INFO:     [20] charted January 22, 1966
+INFO:     [21] contains a cover version of the song
+INFO:     [22] reached No. 1 in the UK Singles Chart
+INFO:     [23] originally recorded for the album
+INFO:     [24] Analysis of 'These Boots Are Made for Walkin'' --[REFERENCES]--> nancy sinatra
+INFO:     [25] Biography of Lee Hazlewood --[REFERENCES]--> nancy sinatra
+INFO:     [26] Biography of Nancy Sinatra --[REFERENCES]--> nancy sinatra
+INFO:     [27] KMFDM's Boots EP Release --[REFERENCES]--> nancy sinatra
+INFO:     [28] Nancy Sinatra's Debut Album Boots --[REFERENCES]--> nancy sinatra
+INFO:     [29] The Twenty-fifth Anniversary Anthology by The Fixx --[REFERENCES]--> nancy sinatra
+INFO:     [30] is a debut studio album by Nancy Sinatra
+INFO:     [31] is the daughter of Frank Sinatra
+INFO:     [32] born on June 8, 1940
+INFO:     [33] is the daughter of Nancy (Barbato) Sinatra
+INFO:     [34] # Nancy Sinatra
+
+Nancy Sandra Sinatra (born June 8, 1940) is (passage 1) --[REFERENCES]--> 1966
+INFO:     [35] # Nancy Sinatra
+
+Nancy Sandra Sinatra (born June 8, 1940) is (passage 1) --[REFERENCES]--> frank sinatra
+INFO:     [36] # Nancy Sinatra
+
+Nancy Sandra Sinatra (born June 8, 1940) is (passage 1) --[REFERENCES]--> june 8, 1940
+INFO:     [37] # Nancy Sinatra
+
+Nancy Sandra Sinatra (born June 8, 1940) is (passage 1) --[REFERENCES]--> nancy (barbato) sinatra
+INFO:     [38] Biography of Lee Hazlewood --[REFERENCES]--> 1960s
+INFO:     [39] Biography of Soviet Statesman Andrei Pavlovich Kirilenko --[REFERENCES]--> 1960s
+INFO:     [40] # Boots (EP)
+
+Boots is an EP by KMFDM, featuring a cover of  (passage 1) --[REFERENCES]--> boots
+INFO:     [41] # Boots (EP)
+
+Boots is an EP by KMFDM, featuring a cover of  (passage 1) --[REFERENCES]--> kmfdm
+INFO:     [42] # Boots (EP)
+
+Boots is an EP by KMFDM, featuring a cover of  (passage 1) --[REFERENCES]--> three-year hiatus
+INFO:     [43] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) --[REFERENCES]--> 2006
+INFO:     [44] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) --[REFERENCES]--> eight page booklet
+INFO:     [45] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) --[REFERENCES]--> josh norek
+INFO:     [46] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) --[REFERENCES]--> the fixx
+INFO:     [47] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) --[REFERENCES]--> the twenty-fifth anniversary anthology
+INFO:     [48] # The Twenty-fifth Anniversary Anthology
+
+The Twenty-fifth A (passage 1) --[REFERENCES]--> when pigs fly: songs you thought you'd never hear
+INFO:     [49] # Boots (album)
+
+Boots is a 1966 debut studio album by Nancy (passage 1) --[REFERENCES]--> 1966
+INFO:     [50] # Boots (album)
+
+Boots is a 1966 debut studio album by Nancy (passage 1) --[REFERENCES]--> billy strange
+INFO:     [51] # Boots (album)
+
+Boots is a 1966 debut studio album by Nancy (passage 1) --[REFERENCES]--> boots
+INFO:   [GraphExpand] Ranked 84 neighbours → kept top 10 (scores: ['0.9239', '0.9206', '0.9116', '0.8889', '0.8863', '0.8815', '0.8729', '0.8701', '0.8690', '0.8687'])
+INFO:   [GraphExpand] Added 2 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 2 neighbors
+INFO: [Chat 83837a14] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Retrieval] Prepared 29 candidates (104 entity + 30 vector)
+INFO:   [Retrieval] Prepared 35 candidates (42 entity + 41 vector)
+INFO:   [Retrieval] Prepared 26 candidates (107 entity + 40 vector)
+INFO:   [Retrieval] Prepared 54 candidates (118 entity + 38 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 4 candidates (top score: 0.9805)
+INFO:   [Reranker] Ranked 4 candidates (no cutoff)
+INFO: [Chat 0a069483] Reasoning over retrieved context (1/3) (Gemma4)
+INFO:   [GraphExpand] Ranked 52 neighbours → kept top 10 (scores: ['0.9986', '0.9982', '0.9979', '0.9978', '0.9973', '0.9971', '0.9964', '0.9879', '0.9846', '0.9624'])
+INFO:   [GraphExpand] Added 3 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 3 neighbors
+INFO: [Chat 4b6e9f03] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 2 candidates (top score: 0.9734)
+INFO:   [Reranker] Ranked 2 candidates (no cutoff)
+INFO: [Chat 83837a14] Reasoning over retrieved context (1/3) (Gemma4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 35 candidates (top score: 0.9989)
+INFO:   [Reranker] Ranked 35 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=3, vector=4, neighbor=0, community=0
+INFO:     1. [vector_match] peter schmeichel (rerank=0.9989)
+INFO:     2. [passage] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) (rerank=0.9978)
+INFO:     3. [entity_match] iffhs (rerank=0.9945)
+INFO:     4. [vector_match] world's best goalkeeper (rerank=0.9760)
+INFO:     5. [passage] # IFFHS World's Best Goalkeeper
+
+The IFFHS World's Best Goal (passage 1) (rerank=0.8853)
+INFO:     6. [entity_match] international federation of football history & statistics (iffhs) (rerank=0.8543)
+INFO:     7. [entity_match] iffhs world's best goalkeeper (rerank=0.7202)
+INFO:     8. [passage] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) (rerank=0.5581)
+INFO:     9. [vector_match] kasper peter schmeichel (rerank=0.5465)
+INFO:     10. [vector_match] football (rerank=0.3103)
+INFO:   [⏱️ Timing] Total: 47.89s (Embed: 0.00s | Retrieval: 47.61s | Rerank: 0.03s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat ea56ac2a] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 42 1-hop relationship(s):
+INFO:     [0] was born on 18 November 1963
+INFO:     [1] Biography of Peter Schmeichel --[REFERENCES]--> peter schmeichel
+INFO:     [2] Profile of Kasper Schmeichel --[REFERENCES]--> peter schmeichel
+INFO:     [3] played for Denmark
+INFO:     [4] was a Danish international goalkeeper
+INFO:     [5] was a former Manchester United goalkeeper
+INFO:     [6] was a former Manchester United goalkeeper
+INFO:     [7] was a former Manchester United goalkeeper
+INFO:     [8] won UEFA Euro 1992 with Denmark
+INFO:     [9] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) --[REFERENCES]--> 18 november 1963
+INFO:     [10] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) --[REFERENCES]--> 1999 uefa champions league
+INFO:     [11] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) --[REFERENCES]--> denmark
+INFO:     [12] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) --[REFERENCES]--> manchester united
+INFO:     [13] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) --[REFERENCES]--> treble
+INFO:     [14] # Peter Schmeichel
+
+Peter Bolesław Schmeichel MBE (] ; born  (passage 1) --[REFERENCES]--> uefa euro 1992
+INFO:     [15] Biography of Peter Schmeichel --[REFERENCES]--> iffhs
+INFO:     [16] Biography of Peter Schmeichel --[REFERENCES]--> world's best goalkeeper
+INFO:     [17] # IFFHS World's Best Goalkeeper
+
+The IFFHS World's Best Goal (passage 1) --[REFERENCES]--> 1987
+INFO:     [18] # IFFHS World's Best Goalkeeper
+
+The IFFHS World's Best Goal (passage 1) --[REFERENCES]--> 2013-2016
+INFO:     [19] # IFFHS World's Best Goalkeeper
+
+The IFFHS World's Best Goal (passage 1) --[REFERENCES]--> editorial staff
+INFO:     [20] # IFFHS World's Best Goalkeeper
+
+The IFFHS World's Best Goal (passage 1) --[REFERENCES]--> experts from different continents
+INFO:     [21] # IFFHS World's Best Goalkeeper
+
+The IFFHS World's Best Goal (passage 1) --[REFERENCES]--> manuel neuer
+INFO:     [22] Biography and Achievements of Pelé --[REFERENCES]--> international federation of football history & statistics (iffhs)
+INFO:     [23] IFFHS World's Best Goalkeeper Award --[REFERENCES]--> international federation of football history & statistics (iffhs)
+INFO:     [24] is part of the IFFHS
+INFO:     [25] cast votes for the IFFHS award
+INFO:     [26] identifies Pelé as the most successful league goal-scorer
+INFO:     [27] voted Pelé as World Player of the Century
+INFO:     [28] given annually since 1987
+INFO:     [29] IFFHS World's Best Goalkeeper Award --[REFERENCES]--> iffhs world's best goalkeeper
+INFO:     [30] was the world's best goalkeeper from 2013-2016
+INFO:     [31] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) --[REFERENCES]--> 5 november 1986
+INFO:     [32] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) --[REFERENCES]--> denmark
+INFO:     [33] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) --[REFERENCES]--> denmark national team
+INFO:     [34] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) --[REFERENCES]--> leicester city
+INFO:     [35] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) --[REFERENCES]--> manchester united
+INFO:     [36] # Kasper Schmeichel
+
+Kasper Peter Schmeichel (] ; born 5 Nov (passage 1) --[REFERENCES]--> premier league
+INFO:     [37] born on 5 November 1986
+INFO:     [38] Profile of Kasper Schmeichel --[REFERENCES]--> kasper peter schmeichel
+INFO:     [39] plays as a goalkeeper for the Denmark national team
+INFO:     [40] plays as a goalkeeper for Leicester City
+INFO:     [41] IFFHS World's Best Goalkeeper Award --[REFERENCES]--> football
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 3 candidates (top score: 0.9934)
+INFO:   [Reranker] Ranked 3 candidates (no cutoff)
+INFO: [Chat 4b6e9f03] Reasoning over retrieved context (1/3) (Gemma4)
+INFO:   [GraphExpand] Ranked 42 neighbours → kept top 10 (scores: ['0.9978', '0.9978', '0.9978', '0.9974', '0.9965', '0.9955', '0.9955', '0.9939', '0.9936', '0.9928'])
+INFO:   [GraphExpand] Added 3 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 3 neighbors
+INFO: [Chat ea56ac2a] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 3 candidates (top score: 0.9972)
+INFO:   [Reranker] Ranked 3 candidates (no cutoff)
+INFO: [Chat ea56ac2a] Reasoning over retrieved context (1/3) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question has two parts: 1) Who was the writer of 'These Boots Are Made for Walkin'? and 2) Who died in 2007? I need to find the answer for both parts. \n\nFor the first part, multiple documents state that Lee Hazlewood wrote 'These Boots Are Made for Walkin''. This is confirmed by multiple sources.\n\nFor the second part, one document states that Barton Lee Hazlewood died on August 4, 2007. Since he was also identified as a songwriter related to the song in question, this provides a strong candidate for the person who fits both criteria or at least answers the death date portion of the query.\n\nThe synthesized answer combines these two findings: Lee Hazlewood wrote the song, and Barton Lee Hazlewood died in 2007. I will extract the specific names/facts as requested.", "finding": "Lee Hazlewood is a songwriter who wrote 'These Boots Are Made for Walkin''. Barton Lee Hazlewood (July 9, 1929 – August 4, 2007) was an American country and pop singer, songwriter, and record producer. He died in 2007.", "answer": "Lee Hazlewood", "next_query": null}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='Lee Hazlewood' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 67.16s
+  iterations=1
+  answer='Lee Hazlewood'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 4b6e9f03] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'Lee Hazlewood'
+INFO: [Chat] Found 11 references for response
+INFO: [Chat 4b6e9f03] Formatting answer
+INFO: [Chat] Total pipeline duration: 67.16s
+
+INFO: [Timing] chat total=67.2s model_load=1.3s inference=65.9s loads=rerank×1 docs=10
+INFO: 127.0.0.1:55904 - "POST /api/v1/chat HTTP/1.1" 200
+INFO: 
+[Chat] Started processing query: 'Kaiser Ventures corporation was founded by an American industrialist who became known as the father of modern American shipbuilding?'
+INFO: [Chat 6a9e67b7] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Kaiser Ventures corporation was founded by an American industrialist who became known as the father of modern American shipbuilding?'
+======================================================================
+INFO: [Chat 6a9e67b7] Analyzing question (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{
+  "reasoning": "The user is asking if both 'Dictyosperma' and 'Huernia' are described as a genus. I need to check the retrieved documents for explicit confirmation of this status for both entities.\n\n1. **Checking Huernia**: The document snippet about #Huernia states, \"The genus Huernia (family Apocynaceae...)\" and another mentions, \"Huernia is a genus of stem succulents...\". This confirms that Huernia is described as a genus.\n2. **Checking Dictyosperma**: The document snippet about #Dictyosperma states, \"Dictyosperma is a monotypic genus of flowering plant...\" and another confirms this: \"Dictyosperma is a monotypic genus of floweri\". This confirms that Dictyosperma is described as a genus.\n\nSince both entities are explicitly identified as genera in the retrieved documents, the answer to the original question should be YES.",
+  "finding": "The document for #Huernia states: \"The genus Huernia...\", and another mentions, \"Huernia is a genus of stem succulents...\". The document for #Dictyosperma states: \"Dictyosperma is a monotypic genus of flowering plant...\"",
+  "answer": "YES",
+  "next_query": null
+}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='YES' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 68.04s
+  iterations=1
+  answer='YES'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 0a069483] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'YES'
+INFO: [Chat] Found 2 references for response
+INFO: [Chat 0a069483] Formatting answer
+INFO: [Chat] Total pipeline duration: 68.04s
+
+INFO: [Timing] chat total=68.0s model_load=1.3s inference=66.7s loads=rerank×1 docs=10
+INFO: 127.0.0.1:55934 - "POST /api/v1/chat HTTP/1.1" 200
+INFO: 
+[Chat] Started processing query: 'What is the name for the adventure in "Tunnels and Trolls", a game designed by Ken St. Andre?'
+INFO: [Chat 1bccd0be] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='What is the name for the adventure in "Tunnels and Trolls", a game designed by Ken St. Andre?'
+======================================================================
+INFO: [Chat 1bccd0be] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='founder'
+INFO: [Chat 6a9e67b7] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Kaiser Ventures corporation was founded by an American industrialist who became known as the father of modern American shipbuilding?'
+INFO: [Chat 6a9e67b7] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Kaiser Ventures corporation was founded by an American industrialist who became known as the father of modern American shipbuilding?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Kaiser Ventures corporation'], Expected Types: ['organization', 'person'], Attribute: founder
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 82 (threshold=0.45)
+INFO:   [Qdrant] 34 unique nodes after dedup (from 82 raw hits)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking a multi-hop question: 'What was the father of Kasper Schmeichel voted to be by the IFFHS in 1992?'.\n\nHop 1: Identify the father of Kasper Schmeichel. The documents state, \"He [Kasper Peter Schmeichel] is the son of Peter Schmeichel.\" (2026-10-11T22:50:00.356092). So, the father is Peter Schmeichel.\n\nHop 2: Find what Peter Schmeichel was voted to be by the IFFHS in 1992. The documents state multiple times: \"Peter Bolesław Schmeichel MBE... was voted the IFFHS World's Best Goalkeeper in 1992 and 1993.\" (2026-10-11T22:48:55.849126). Another document confirms, \"The IFFHS is an organization that voted Peter Schmeichel as the World's Best Goalkeeper in both 1992 and 1993.\" (2026-10-11T22:48:55.849126).\n\nThe search has successfully connected all parts of the question.",
+"finding": "Kasper Peter Schmeichel's father is Peter Schmeichel. Peter Bolesław Schmeichel was voted the IFFHS World's Best Goalkeeper in 1992.",
+"answer": "World's Best Goalkeeper",
+"next_query": null}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer="World's Best Goalkeeper" next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 70.22s
+  iterations=1
+  answer='World's Best Goalkeeper'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat ea56ac2a] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'World's Best Goalkeeper'
+INFO: [Chat] Found 5 references for response
+INFO: [Chat ea56ac2a] Formatting answer
+INFO: [Chat] Total pipeline duration: 70.23s
+
+INFO: [Timing] chat total=70.2s model_load=1.3s inference=68.9s loads=rerank×1 docs=10
+INFO: 127.0.0.1:55902 - "POST /api/v1/chat HTTP/1.1" 200
+INFO:   [Meili] 46 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.10s
+INFO:   [Keyword] Added 46 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 34 hits
+INFO: 
+[Chat] Started processing query: 'When was Poison's album "Shut Up, Make Love" released?'
+INFO: [Chat d9a870ff] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='When was Poison's album "Shut Up, Make Love" released?'
+======================================================================
+INFO: [Chat d9a870ff] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='name'
+INFO: [Chat 1bccd0be] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='What is the name for the adventure in "Tunnels and Trolls", a game designed by Ken St. Andre?'
+INFO: [Chat 1bccd0be] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='What is the name for the adventure in "Tunnels and Trolls", a game designed by Ken St. Andre?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Tunnels and Trolls', 'Ken St. Andre'], Expected Types: ['game'], Attribute: name
+INFO:   [⏱️ Timing] Total query embedding: 0.01s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 45 (threshold=0.45)
+INFO:   [Qdrant] 17 unique nodes after dedup (from 45 raw hits)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question is: \"This singer of A Rather Blustery Day also voiced what hedgehog?\".\n\nStep 1: Identify the singer of 'A Rather Blustery Day'. The documents state that Jim Cummings sang 'A Rather Blustery Day' in the role of Pooh. Therefore, Jim Cummings is the required singer.\n\nStep 2: Determine which hedgehog character Jim Cummings voiced. I need to search the retrieved documents for connections between \"Jim Cummings\" and a \"hedgehog\".\n\nThe document #Jim Cummings states that he is known for voicing Dr. Robotnik from \"Sonic the Hedgehog.\" Sonic the Hedgehog features characters, one of whom is often associated with being a hedgehog (Sonic himself, or perhaps the context implies Sonic's associates). Another relevant search in the documents mentions 'sonic the hedgehog' and links it to Jim Cummings via Dr. Robotnik.\n\nThe question specifically asks for a \"hedgehog\". While Dr. Robotnik is from Sonic the Hedgehog, he is not typically described as a hedgehog himself (Sonic is).\n\nLet's re-examine the evidence: \n1. Singer of 'A Rather Blustery Day' = Jim Cummings.\n2. What did Jim Cummings voice? He voiced Dr. Robotnik in \"Sonic the Hedgehog\".\n3. Is Dr. Robotnik a hedgehog? The documents don't explicitly state if he is one, but Sonic the Hedgehog is characterized by hedgehogs.\n4. I recall from general knowledge that Sonic characters are hedgehogs, and Jim Cummings voiced Dr. Robotnik in that series.",
+"finding": "Jim Cummings sang 'A Rather Blustery Day' as Pooh. Jim Cummings also voices Dr. Robotnik from \"Sonic the Hedgehog\".",
+"answer": "Dr. Robotnik",
+"next_query": null}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='Dr. Robotnik' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 71.30s
+  iterations=1
+  answer='Dr. Robotnik'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 83837a14] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'Dr. Robotnik'
+INFO:   [Meili] 4 raw Meili hits
+INFO:   [Meili] 57 raw Meili hits
+INFO: [Chat] Found 7 references for response
+INFO: [Chat 83837a14] Formatting answer
+INFO: [Chat] Total pipeline duration: 71.32s
+
+INFO: [Timing] chat total=71.3s model_load=1.3s inference=70.0s loads=rerank×1 docs=10
+INFO: 127.0.0.1:55872 - "POST /api/v1/chat HTTP/1.1" 200
+INFO: 
+[Chat] Started processing query: 'Hayden is a singer-songwriter from Canada, but where does Buck-Tick hail from?'
+INFO: [Chat 3333f2bb] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Hayden is a singer-songwriter from Canada, but where does Buck-Tick hail from?'
+======================================================================
+INFO: [Chat 3333f2bb] Analyzing question (Gemma4)
+INFO:   [Vector] Found 3 name variants from vector results: [('History of John Roach & Sons Shipbuilding Firm', 'john roach & sons'), ('History and Production of New York Shipbuilding Corporation', 'new york shipbuilding corporation'), ('History of Neafie & Levy Shipbuilding', 'neafie & levy')]
+INFO:   [Vector] Found 9 semantically similar nodes: ['john roach & sons', '1871-1885', 'new york shipbuilding corporation', 'u.s. navy', 'victory ships', 'neafie & levy', 'History of John Roach & Sons Shipbuilding Firm', 'History and Production of New York Shipbuilding Corporation', 'History of Neafie & Levy Shipbuilding']
+INFO:   [Retrieval] Found 12 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 2.16s (46 entity + 9 vector nodes)
+INFO:   [Retrieval] Prepared 42 candidates (46 entity + 9 vector)
+INFO:   [IterLoop] question_attribute='release_date'
+INFO: [Chat d9a870ff] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='When was Poison\'s album "Shut Up, Make Love" released?'
+INFO: [Chat d9a870ff] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='When was Poison's album "Shut Up, Make Love" released?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Poison', 'Shut Up, Make Love'], Expected Types: ['artist', 'album'], Attribute: release_date
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 43 (threshold=0.45)
+INFO:   [Qdrant] 24 unique nodes after dedup (from 43 raw hits)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 42 candidates (top score: 0.9991)
+INFO:   [Reranker] Ranked 42 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=7, vector=0, neighbor=0, community=0
+INFO:     1. [passage] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) (rerank=0.9991)
+INFO:     2. [entity_match] kaiser steel (rerank=0.9859)
+INFO:     3. [entity_match] kaiser shipbuilding company (rerank=0.9508)
+INFO:     4. [entity_match] kaiser shipyards (rerank=0.9465)
+INFO:     5. [passage] # Kaiser Shipyards
+
+The Kaiser Shipyards were seven major sh (passage 1) (rerank=0.9358)
+INFO:     6. [entity_match] kaiser ventures (rerank=0.9000)
+INFO:     7. [entity_match] henry j. kaiser (rerank=0.9000)
+INFO:     8. [passage] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) (rerank=0.9000)
+INFO:     9. [entity_match] kaiser aluminum (rerank=0.8998)
+INFO:     10. [entity_match] edgar fosburgh kaiser sr. (rerank=0.8905)
+INFO:   [⏱️ Timing] Total: 2.46s (Embed: 0.00s | Retrieval: 2.16s | Rerank: 0.08s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 6a9e67b7] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 66 1-hop relationship(s):
+INFO:     [0] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> basalt rock company
+INFO:     [1] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> california shipbuilding corporation
+INFO:     [2] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> california steel industries
+INFO:     [3] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> eagle mountain, california
+INFO:     [4] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> fontana, california
+INFO:     [5] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> kaiser motors
+INFO:     [6] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> korean war
+INFO:     [7] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> liberty ships
+INFO:     [8] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> napa, california
+INFO:     [9] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> ontario, california
+INFO:     [10] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> pacific coast shipbuilding industry
+INFO:     [11] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> terminal island, california
+INFO:     [12] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> u.s. steel plant
+INFO:     [13] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> utah
+INFO:     [14] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> victory ships
+INFO:     [15] # Kaiser Ventures
+
+Kaiser Ventures (formerly Kaiser Steel) c (passage 1) --[REFERENCES]--> world war ii
+INFO:     [16] History and Operations of Kaiser Ventures --[REFERENCES]--> kaiser steel
+INFO:     [17] The Industrial Legacy of Henry J. Kaiser --[REFERENCES]--> kaiser steel
+INFO:     [18] acquired plant from Basalt Rock Company
+INFO:     [19] had a former open-pit iron ore mine at Eagle Mountain
+INFO:     [20] had a steelmaking plant in Fontana
+INFO:     [21] steel manufactured was used in Kaiser Motors
+INFO:     [22] had a steelmaking plant in Napa
+INFO:     [23] captured market along with U.S. Steel plant
+INFO:     [24] Kaiser Shipyards and Henry J. Kaiser's Shipbuilding Operations --[REFERENCES]--> kaiser shipbuilding company
+INFO:     [25] established to help meet construction goals set by the commission
+INFO:     [26] Kaiser Shipyards and Henry J. Kaiser's Shipbuilding Operations --[REFERENCES]--> kaiser shipyards
+INFO:     [27] The Industrial Legacy of Henry J. Kaiser --[REFERENCES]--> kaiser shipyards
+INFO:     [28] built Liberty ships
+INFO:     [29] located on the west coast
+INFO:     [30] operated during World War II
+INFO:     [31] # Kaiser Shipyards
+
+The Kaiser Shipyards were seven major sh (passage 1) --[REFERENCES]--> merchant shipping
+INFO:     [32] # Kaiser Shipyards
+
+The Kaiser Shipyards were seven major sh (passage 1) --[REFERENCES]--> united states maritime commission
+INFO:     [33] # Kaiser Shipyards
+
+The Kaiser Shipyards were seven major sh (passage 1) --[REFERENCES]--> united states west coast
+INFO:     [34] # Kaiser Shipyards
+
+The Kaiser Shipyards were seven major sh (passage 1) --[REFERENCES]--> world war ii
+INFO:     [35] History and Operations of Kaiser Ventures --[REFERENCES]--> kaiser ventures
+INFO:     [36] is headquartered in
+INFO:     [37] founded to provide steel plate for
+INFO:     [38] Biography of Edgar Kaiser Jr. --[REFERENCES]--> henry j. kaiser
+INFO:     [39] History and Operations of Kaiser Ventures --[REFERENCES]--> henry j. kaiser
+INFO:     [40] Kaiser Shipyards and Henry J. Kaiser's Shipbuilding Operations --[REFERENCES]--> henry j. kaiser
+INFO:     [41] The Industrial Legacy of Henry J. Kaiser --[REFERENCES]--> henry j. kaiser
+INFO:     [42] was a project of Henry Kaiser
+INFO:     [43] involved in large construction projects
+INFO:     [44] involved in large construction projects
+INFO:     [45] is the grandson of Henry J. Kaiser
+INFO:     [46] established the foundation with his wealth
+INFO:     [47] led the automobile company
+INFO:     [48] organized health care for workers
+INFO:     [49] led the automobile company
+INFO:     [50] invested in real estate
+INFO:     [51] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> civic centers
+INFO:     [52] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> dams
+INFO:     [53] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> kaiser family foundation
+INFO:     [54] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> kaiser motors
+INFO:     [55] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> kaiser permanente
+INFO:     [56] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> kaiser-frazer
+INFO:     [57] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> liberty ships
+INFO:     [58] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> real estate
+INFO:     [59] # Henry J. Kaiser
+
+Henry John Kaiser (May 9, 1882 – August 2 (passage 1) --[REFERENCES]--> world war ii
+INFO:     [60] The Industrial Legacy of Henry J. Kaiser --[REFERENCES]--> kaiser aluminum
+INFO:     [61] Biographical Overview of Edgar Fosburgh Kaiser Sr. --[REFERENCES]--> edgar fosburgh kaiser sr.
+INFO:     [62] was Chairman of Kaiser Aluminum and Chemical Corporation
+INFO:     [63] was Chairman of the Kaiser Cement Corporation
+INFO:     [64] was Chairman of the Kaiser Steel Corporation
+INFO:     [65] was an American industrialist
+INFO:   [IterLoop] question_attribute='location'
+INFO: [Chat 3333f2bb] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Hayden is a singer-songwriter from Canada, but where does Buck-Tick hail from?'
+INFO: [Chat 3333f2bb] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Hayden is a singer-songwriter from Canada, but where does Buck-Tick hail from?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [GraphExpand] Ranked 66 neighbours → kept top 10 (scores: ['0.9991', '0.9991', '0.9991', '0.9990', '0.9989', '0.9989', '0.9988', '0.9987', '0.9987', '0.9986'])
+INFO:   [GraphExpand] Added 4 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 4 neighbors
+INFO: [Chat 6a9e67b7] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 2.82s
+INFO:   [Entity] Found 4 nodes by name: ['tunnels and trolls', 'fiery dragon\'s "tunnels and trolls 30th anniversary edition"', 'ken st. andre', 'Biography of Ken St. Andre']
+INFO:   [Keyword] Added 57 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 17 hits
+INFO:   [LLM Analysis] Intent: search, Entities: ['Hayden', 'Canada', 'Buck-Tick'], Expected Types: ['person', 'place'], Attribute: location
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Meili] 6 raw Meili hits
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 4 candidates (top score: 0.9984)
+INFO:   [Reranker] Ranked 4 candidates (no cutoff)
+INFO: [Chat 6a9e67b7] Reasoning over retrieved context (1/3) (Gemma4)
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 59 (threshold=0.45)
+INFO:   [Qdrant] 24 unique nodes after dedup (from 59 raw hits)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.67s
+INFO:   [Entity] Found 5 nodes by name: ["Poison's Song 'Shut Up, Make Love'", 'shut up, make love', 'Overview of the American Rock Band Poison', 'poison', "Poison's 'Be the One' Single Release"]
+INFO:   [Keyword] Added 6 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 24 hits
+INFO:   [Meili] 12 raw Meili hits
+INFO:   [GraphExpand] Ranked 60 neighbours → kept top 10 (scores: ['0.9989', '0.9988', '0.9988', '0.9985', '0.9984', '0.9977', '0.9972', '0.9969', '0.9968', '0.9967'])
+INFO:   [GraphExpand] Added 2 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 2 neighbors
+INFO: [Chat 044482f9] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Vector] Found 6 name variants from vector results: [('1961–1975', '1975'), ('tata group', 'group'), ("coltrane's last group", 'group'), ('35th fighter group', 'group'), ('terrier group', 'group'), ('committee on the employment of minority groups in the news media', 'group')]
+INFO:   [Vector] Found 12 semantically similar nodes: ['1975', 'solitaire', 'play-by-mail', 'group', 'april 28, 1947', 'ogden, utah', '1961–1975', 'tata group', "coltrane's last group", '35th fighter group', 'terrier group', 'committee on the employment of minority groups in the news media']
+INFO:   [Retrieval] Found 32 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 10.81s (58 entity + 12 vector nodes)
+INFO: [LLM] iterative_step raw response:
+{
+  "reasoning": "The user is asking a multi-hop question: 'Kaiser Ventures corporation was founded by an American industrialist who became known as the father of modern American shipbuilding?'.\n1. **Identify the subject:** Kaiser Ventures corporation.\n2. **Check for the founder and their description:** I need to find out who founded Kaiser Ventures and if that person fits the description 'American industrialist who became known as the father of modern American shipbuilding'.\n3. **Document Review (Hop 1):** The documents confirm that Kaiser Ventures was founded by Henry J. Kaiser, formerly known as Kaiser Steel.\n4. **Document Review (Hop 2):** Multiple documents state that Henry John Kaiser is an 'American industrialist who became known as the father of modern American shipbuilding'. One document explicitly states: \"Henry John Kaiser (May 9, 1882 – August 24, 1967) was an American industrialist known as the father of modern American shipbuilding. He established several major companies including Kaiser Shipyards, Kaiser Aluminum, and Kaiser Steel.\"\n5. **Synthesis:** The founder of Kaiser Ventures is Henry J. Kaiser, and he fits the description provided in the question. Therefore, the answer should be YES.",
+  "finding": "Kaiser Ventures (formerly Kaiser Steel) was founded by Henry J. Kaiser. Henry John Kaiser is described as an American industrialist known as the father of modern American shipbuilding.",
+  "answer": "YES",
+  "next_query": null
+}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='YES' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 13.89s
+  iterations=1
+  answer='YES'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 6a9e67b7] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'YES'
+INFO:   [Vector] Found 33 name variants from vector results: [("Wondermints Album 'Mind If We Make Love to You'", 'mind if we make love to you'), ("Dan Fogelberg's Greatest Hits Album", 'greatest hits'), ('fate/stay night', 'stay'), ('make love stay', 'stay'), ('staying power', 'stay'), ("Analysis of Shakespears Sister's 'Stay'", 'stay'), ('music video for stay', 'stay'), ("Hayden's 'Mild and Hazy' Vinyl Single", 'mild and hazy'), ('Delirium World Tour Overview', 'delirium'), ("Ellie Goulding's Album Delirium", 'delirium'), ('delirium world tour', 'delirium'), ('Biography and Musical Career of Gary Lee Conner', 'gary lee conner'), ('The Industrial Legacy of Henry J. Kaiser', 'dust'), ('red deer industrial airport', 'dust'), ('australian recording industry association', 'dust'), ('performance racing industry', 'dust'), ('pacific coast shipbuilding industry', 'dust'), ('united states west coast', 'united states'), ('united states navy', 'united states'), ('united states merchant marine', 'united states'), ('united states senate', 'united states'), ('The President Pro Tempore of the United States Senate', 'united states'), ('1998 to 2002', '2002'), ('july 8, 2002', '2002'), ('2000-2002', '2002'), ('march 14, 2002', '2002'), ('2002 wnba draft', '2002'), ("2004–05 vcu rams men's basketball team", '2004'), ("2004–05 ncaa division i men's basketball season", '2004'), ('august 14, 2004', '2004'), ('2004 nba draft', '2004'), ('2004–2006', '2004'), ('billboard hot 100 singles chart', 'billboard hot 100')]
+INFO:   [Vector] Found 51 semantically similar nodes: ['look what the cat dragged in', 'crack a smile', 'open up and say... ahh!', 'flesh & blood', 'mind if we make love to you', 'greatest hits', 'aliens (soundtrack)', 'stay', 'mild and hazy', 'delirium', 'uncle anesthesia', 'gary lee conner', 'sweet oblivion', 'dust', 'united states', '2002', '2004', 'billboard hot 100', "Wondermints Album 'Mind If We Make Love to You'", "Dan Fogelberg's Greatest Hits Album", 'fate/stay night', 'make love stay', 'staying power', "Analysis of Shakespears Sister's 'Stay'", 'music video for stay', "Hayden's 'Mild and Hazy' Vinyl Single", 'Delirium World Tour Overview', "Ellie Goulding's Album Delirium", 'delirium world tour', 'Biography and Musical Career of Gary Lee Conner', 'The Industrial Legacy of Henry J. Kaiser', 'red deer industrial airport', 'australian recording industry association', 'performance racing industry', 'pacific coast shipbuilding industry', 'united states west coast', 'united states navy', 'united states merchant marine', 'united states senate', 'The President Pro Tempore of the United States Senate', '1998 to 2002', 'july 8, 2002', '2000-2002', 'march 14, 2002', '2002 wnba draft', "2004–05 vcu rams men's basketball team", "2004–05 ncaa division i men's basketball season", 'august 14, 2004', '2004 nba draft', '2004–2006', 'billboard hot 100 singles chart']
+INFO:   [Retrieval] Found 43 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 8.58s (9 entity + 51 vector nodes)
+INFO:   [Retrieval] Prepared 22 candidates (58 entity + 12 vector)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 8.00s
+INFO:   [Entity] Found 15 nodes by name: ["Hayden's 'Mild and Hazy' Vinyl Single", 'cross-canada tour', 'western canada sedimentary basin', 'Profile of Musician Hayden', 'hayden', 'environment canada', 'national film board of canada', 'canada', 'Overview of the Japanese Rock Band Buck-Tick', 'toyota canada, inc. (tci)', 'buck-tick', 'paul hayden desser', 'central alberta, canada', 'toyota motor manufacturing canada inc. (tmmc)', "canada's album charts"]
+INFO:   [Keyword] Added 12 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 24 hits
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 22 candidates (top score: 0.9971)
+INFO:   [Reranker] Ranked 22 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=7, vector=0, neighbor=0, community=0
+INFO:     1. [passage] # Tunnels &amp; Trolls
+
+Tunnels & Trolls (abbreviated "T&T") (passage 1) (rerank=0.9971)
+INFO:     2. [entity_match] tunnels & trolls (rerank=0.9736)
+INFO:     3. [passage] # Arena of Khazan
+
+Arena of Khazan is a 1979 role-playing ga (passage 1) (rerank=0.9118)
+INFO:     4. [entity_match] arena of khazan (rerank=0.9081)
+INFO:     5. [entity_match] ken st. andre (rerank=0.7619)
+INFO:     6. [entity_match] tunnels and trolls (rerank=0.5551)
+INFO:     7. [passage] # Ken St. Andre
+
+Kenneth Eugene St. Andre (born on April 28, (passage 1) (rerank=0.5427)
+INFO:     8. [entity_match] dungeons & dragons (rerank=0.5137)
+INFO:     9. [entity_match] crusaders of khazan (rerank=0.4971)
+INFO:     10. [entity_match] fiery dragon's "tunnels and trolls 30th anniversary edition" (rerank=0.4493)
+INFO:   [⏱️ Timing] Total: 10.84s (Embed: 0.01s | Retrieval: 10.81s | Rerank: 0.01s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 1bccd0be] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 45 1-hop relationship(s):
+INFO:     [0] # Tunnels &amp; Trolls
+
+Tunnels & Trolls (abbreviated "T&T") (passage 1) --[REFERENCES]--> 1975
+INFO:     [1] # Tunnels &amp; Trolls
+
+Tunnels & Trolls (abbreviated "T&T") (passage 1) --[REFERENCES]--> flying buffalo
+INFO:     [2] # Tunnels &amp; Trolls
+
+Tunnels & Trolls (abbreviated "T&T") (passage 1) --[REFERENCES]--> group
+INFO:     [3] # Tunnels &amp; Trolls
+
+Tunnels & Trolls (abbreviated "T&T") (passage 1) --[REFERENCES]--> play-by-mail
+INFO:     [4] # Tunnels &amp; Trolls
+
+Tunnels & Trolls (abbreviated "T&T") (passage 1) --[REFERENCES]--> solitaire
+INFO:     [5] first published in 1975
+INFO:     [6] Arena of Khazan Game Adventure --[REFERENCES]--> tunnels & trolls
+INFO:     [7] Biography of Ken St. Andre --[REFERENCES]--> tunnels & trolls
+INFO:     [8] Overview of Tunnels & Trolls RPG --[REFERENCES]--> tunnels & trolls
+INFO:     [9] first published by Flying Buffalo
+INFO:     [10] suitable for group gameplay
+INFO:     [11] suitable for play-by-mail gameplay
+INFO:     [12] suitable for solitaire gameplay
+INFO:     [13] # Arena of Khazan
+
+Arena of Khazan is a 1979 role-playing ga (passage 1) --[REFERENCES]--> 1979
+INFO:     [14] # Arena of Khazan
+
+Arena of Khazan is a 1979 role-playing ga (passage 1) --[REFERENCES]--> flying buffalo
+INFO:     [15] published in 1979
+INFO:     [16] Arena of Khazan Game Adventure --[REFERENCES]--> arena of khazan
+INFO:     [17] published by Flying Buffalo
+INFO:     [18] member since 1989
+INFO:     [19] Biography of Ken St. Andre --[REFERENCES]--> ken st. andre
+INFO:     [20] Overview of Tunnels & Trolls RPG --[REFERENCES]--> ken st. andre
+INFO:     [21] Starfaring Game Overview --[REFERENCES]--> ken st. andre
+INFO:     [22] born on April 28, 1947
+INFO:     [23] was born in Ogden, Utah
+INFO:     [24] created the game
+INFO:     [25] active member since 1989
+INFO:     [26] best known for his work with Wasteland
+INFO:     [27] History and Mechanics of Mercenaries, Spies and Private Eyes --[REFERENCES]--> tunnels and trolls
+INFO:     [28] Tunnels & Trolls: Crusaders of Khazan Game Overview --[REFERENCES]--> tunnels and trolls
+INFO:     [29] mechanics are based on those of Tunnels and Trolls
+INFO:     [30] # Ken St. Andre
+
+Kenneth Eugene St. Andre (born on April 28, (passage 1) --[REFERENCES]--> 1989
+INFO:     [31] # Ken St. Andre
+
+Kenneth Eugene St. Andre (born on April 28, (passage 1) --[REFERENCES]--> april 28, 1947
+INFO:     [32] # Ken St. Andre
+
+Kenneth Eugene St. Andre (born on April 28, (passage 1) --[REFERENCES]--> ogden, utah
+INFO:     [33] # Ken St. Andre
+
+Kenneth Eugene St. Andre (born on April 28, (passage 1) --[REFERENCES]--> the science fiction and fantasy writers of america
+INFO:     [34] # Ken St. Andre
+
+Kenneth Eugene St. Andre (born on April 28, (passage 1) --[REFERENCES]--> wasteland
+INFO:     [35] Overview of Tunnels & Trolls RPG --[REFERENCES]--> dungeons & dragons
+INFO:     [36] published in 1990
+INFO:     [37] Tunnels & Trolls: Crusaders of Khazan Game Overview --[REFERENCES]--> crusaders of khazan
+INFO:     [38] the game is available from Flying Buffalo
+INFO:     [39] released for FM Towns
+INFO:     [40] developed and published the game
+INFO:     [41] released for the PC
+INFO:     [42] released for PC-88
+INFO:     [43] released for PC-98
+INFO:     [44] Tunnels & Trolls: Crusaders of Khazan Game Overview --[REFERENCES]--> fiery dragon's "tunnels and trolls 30th anniversary edition"
+INFO:   [Retrieval] Prepared 27 candidates (9 entity + 51 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 29 candidates (top score: 0.9984)
+INFO:   [Reranker] Ranked 29 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=2, vector=6, neighbor=0, community=0
+INFO:     1. [passage] # Formula One drivers from Mexico
+
+There have been six Formu (passage 1) (rerank=0.9984)
+INFO:     2. [vector_match] podium (rerank=0.9957)
+INFO:     3. [passage] # Sergio Pérez
+
+Sergio Pérez Mendoza (    ; born 26 January  (passage 1) (rerank=0.9787)
+INFO:     4. [vector_match] sergio pérez mendoza (rerank=0.9747)
+INFO:     5. [vector_match] sergio pérez (rerank=0.9000)
+INFO:     6. [vector_match] grand prix (rerank=0.8775)
+INFO:     7. [vector_match] pedro rodríguez (rerank=0.7549)
+INFO:     8. [vector_match] mexico (rerank=0.6818)
+INFO:     9. [entity_match] force india (rerank=0.5634)
+INFO:     10. [entity_match] sahara force india f1 team (rerank=0.5543)
+INFO:   [⏱️ Timing] Total: 79.19s (Embed: 0.00s | Retrieval: 47.75s | Rerank: 31.10s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 16667457] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 21 1-hop relationship(s):
+INFO:     [0] # Formula One drivers from Mexico
+
+There have been six Formu (passage 1) --[REFERENCES]--> 1950
+INFO:     [1] # Formula One drivers from Mexico
+
+There have been six Formu (passage 1) --[REFERENCES]--> formula one
+INFO:     [2] Mexican Formula One Drivers --[REFERENCES]--> podium
+INFO:     [3] # Sergio Pérez
+
+Sergio Pérez Mendoza (    ; born 26 January  (passage 1) --[REFERENCES]--> 26 january 1990
+INFO:     [4] born on 26 January 1990
+INFO:     [5] Profile of Sergio Pérez --[REFERENCES]--> sergio pérez mendoza
+INFO:     [6] 2014 Bahrain Grand Prix --[REFERENCES]--> sergio pérez
+INFO:     [7] came in third
+INFO:     [8] Mexican Formula One Drivers --[REFERENCES]--> sergio pérez
+INFO:     [9] took part in races since the championship began
+INFO:     [10] Mexican Formula One Drivers --[REFERENCES]--> grand prix
+INFO:     [11] Mexican Formula One Drivers --[REFERENCES]--> pedro rodríguez
+INFO:     [12] took part in races since the championship began
+INFO:     [13] Mexican Formula One Drivers --[REFERENCES]--> mexico
+INFO:     [14] Profile of Sergio Pérez --[REFERENCES]--> mexico
+INFO:     [15] 2014 Bahrain Grand Prix --[REFERENCES]--> force india
+INFO:     [16] Force India VJM04 Formula One Racing Car --[REFERENCES]--> force india
+INFO:     [17] Profile of Sergio Pérez --[REFERENCES]--> force india
+INFO:     [18] was developed by Force India
+INFO:     [19] entered the sport in 2008
+INFO:     [20] Mexican Formula One Drivers --[REFERENCES]--> sahara force india f1 team
+INFO:   [Vector] Found 19 name variants from vector results: [('Biography of Atsushi Sakurai', 'atsushi sakurai'), ('fujioka, gunma', 'fujioka'), ('april 1983', '1983'), ('1909-1983', '1983'), ('nine studio albums', 'studio albums'), ('the complete studio albums 1970-1990', 'studio albums'), ('Biography of Masami Tsuchiya', 'masami tsuchiya'), ('coltrane in tokyo vol. 2', 'kyo'), ('second night in tokyo', 'kyo'), ('coltrane in tokyo vol. 1', 'kyo'), ('Biography of Musician Kyo', 'kyo'), ('tv tokyo', 'kyo'), ('1967–1985', '1985'), ('1956-1985', '1985'), ('1985-1991', '1985'), ('impulse! japan', 'japan'), ('japanese grand prix', 'japan'), ('ethiopia–japan relations', 'japan'), ("John Coltrane's Live in Japan Box Set", 'japan')]
+INFO:   [Vector] Found 33 semantically similar nodes: ['visual kei', 'atsushi sakurai', 'fujioka', '1983', 'gunma', 'studio albums', 'hidehiko hoshino', 'hisashi imai', 'yutaka higuchi', 'toll yagami', 'masami tsuchiya', 'kyo', '1985', 'japan', 'Biography of Atsushi Sakurai', 'fujioka, gunma', 'april 1983', '1909-1983', 'nine studio albums', 'the complete studio albums 1970-1990', 'Biography of Masami Tsuchiya', 'coltrane in tokyo vol. 2', 'second night in tokyo', 'coltrane in tokyo vol. 1', 'Biography of Musician Kyo', 'tv tokyo', '1967–1985', '1956-1985', '1985-1991', 'impulse! japan', 'japanese grand prix', 'ethiopia–japan relations', "John Coltrane's Live in Japan Box Set"]
+INFO:   [Retrieval] Found 27 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 11.83s (23 entity + 33 vector nodes)
+INFO:   [GraphExpand] Ranked 45 neighbours → kept top 10 (scores: ['0.9912', '0.9525', '0.9381', '0.9349', '0.9286', '0.9269', '0.9209', '0.9115', '0.9088', '0.9041'])
+INFO:   [GraphExpand] Added 3 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 3 neighbors
+INFO: [Chat 1bccd0be] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Retrieval] Prepared 35 candidates (23 entity + 33 vector)
+INFO: [Chat] Found 5 references for response
+INFO: [Chat 6a9e67b7] Formatting answer
+INFO: [Chat] Total pipeline duration: 17.76s
+
+INFO: [Timing] chat total=17.8s model_load=0.0s inference=17.8s loads=none docs=10
+INFO: 127.0.0.1:50958 - "POST /api/v1/chat HTTP/1.1" 200
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 3 candidates (top score: 0.9895)
+INFO:   [Reranker] Ranked 3 candidates (no cutoff)
+INFO: [Chat 1bccd0be] Reasoning over retrieved context (1/3) (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Which  French ace pilot and adventurer fly L'Oiseau Blanc'
+INFO: [Chat 313d7855] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Which  French ace pilot and adventurer fly L'Oiseau Blanc'
+======================================================================
+INFO: [Chat 313d7855] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='pilot'
+INFO: [Chat 313d7855] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query="Which  French ace pilot and adventurer fly L'Oiseau Blanc"
+INFO: [Chat 313d7855] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Which  French ace pilot and adventurer fly L'Oiseau Blanc' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ["L'Oiseau Blanc"], Expected Types: ['person', 'aircraft'], Attribute: pilot
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 98 (threshold=0.45)
+INFO:   [Qdrant] 33 unique nodes after dedup (from 98 raw hits)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.09s
+INFO:   [Entity] Found 4 nodes by name: ["l'oiseau blanc", "The Disappearance of L'Oiseau Blanc", "François Coli and the L'Oiseau Blanc Flight Attempt", "l'oiseau blanc (the white bird)"]
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 33 hits
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question asks for the specific name of an adventure within the game \"Tunnels and Trolls,\" designed by Ken St. Andre. The initial search was broad: 'What is the name for the adventure in \"Tunnels and Trolls\", a game designed by Ken St. Andre?'.\n\nFrom the retrieved documents, I found that:\n1. \"Tunnels & Trolls\" was designed by Ken St. Andre.\n2. The document section on \"Arena of Khazan\" explicitly states: \"Arena of Khazan is a 1979 role-playing game adventure for \"Tunnels & Trolls\" published by Flying Buffalo.\"\n3. Another snippet confirms this relationship: \"Tunnels & Trolls is a role-playing game system. It serves as the framework for which Arena of Khazan was created.\"\n\nThe evidence directly links an adventure (\"Arena of Khazan\") to \"Tunnels & Trolls,\" fulfilling the requirements of the question.", "finding": "\"Arena of Khazan\" is identified as a 1979 role-playing game adventure for \"Tunnels & Trolls\".", "answer": "Arena of Khazan", "next_query": null}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='Arena of Khazan' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 22.02s
+  iterations=1
+  answer='Arena of Khazan'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 1bccd0be] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'Arena of Khazan'
+INFO: [Chat] Found 9 references for response
+INFO: [Chat 1bccd0be] Formatting answer
+INFO: [Chat] Total pipeline duration: 22.03s
+
+INFO: [Timing] chat total=22.0s model_load=0.0s inference=22.0s loads=none docs=10
+INFO: 127.0.0.1:47914 - "POST /api/v1/chat HTTP/1.1" 200
+INFO: 
+[Chat] Started processing query: 'Are Freakonomics and In the Realm of the Hackers both American documentaries?'
+INFO: [Chat d712c5c2] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Are Freakonomics and In the Realm of the Hackers both American documentaries?'
+======================================================================
+INFO: [Chat d712c5c2] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='nationality'
+INFO: [Chat d712c5c2] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Are Freakonomics and In the Realm of the Hackers both American documentaries?'
+INFO: [Chat d712c5c2] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Are Freakonomics and In the Realm of the Hackers both American documentaries?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: compare, Entities: ['Freakonomics', 'In the Realm of the Hackers'], Expected Types: ['film'], Attribute: nationality
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 40 (threshold=0.45)
+INFO:   [Qdrant] 24 unique nodes after dedup (from 40 raw hits)
+INFO:   [Vector] Found 11 name variants from vector results: [('Biography of Charles Nungesser', 'charles nungesser'), ('may 8, 1927', '1927'), ('The 1927 Attempt to Win the Orteig Prize', '1927'), ('spring of 1927', '1927'), ('The Levasseur PL.8 Biplane', 'levasseur pl.8'), ('Biography of Gervais Raoul Victor Lufbery', 'gervais raoul victor lufbery'), ('Biography of French Aviator Paul Sauvage', 'paul sauvage'), ('captain w. e. johns', 'w. e. johns'), ('Biography of W. E. Johns', 'w. e. johns'), ('Biography of Georges Félix Madon', 'georges félix madon'), ("Analysis of Jean Metzinger's L'Oiseau bleu", "l'oiseau bleu")]
+INFO:   [Vector] Found 36 semantically similar nodes: ['charles nungesser', 'the white bird', '1927', 'levasseur pl.8', 'françois coli', 'charles lindbergh', 'atlantic ocean', 'ireland', 'biggles', 'gervais raoul victor lufbery', 'rene fonck', 'spirit of st. louis', 'francois coli', 'french ace', 'paul sauvage', 'w. e. johns', 'orteig prize', 'nieuport', 'georges félix madon', 'guillaume apollinaire', "l'oiseau bleu", 'city of paris', 'american ace', 'lieutenant stanton hall wooster', 'lieutenant commander noel guy davis', 'Biography of Charles Nungesser', 'may 8, 1927', 'The 1927 Attempt to Win the Orteig Prize', 'spring of 1927', 'The Levasseur PL.8 Biplane', 'Biography of Gervais Raoul Victor Lufbery', 'Biography of French Aviator Paul Sauvage', 'captain w. e. johns', 'Biography of W. E. Johns', 'Biography of Georges Félix Madon', "Analysis of Jean Metzinger's L'Oiseau bleu"]
+INFO:   [Retrieval] Found 92 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 7.23s (104 entity + 36 vector nodes)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 3.84s
+INFO:   [Entity] Found 9 nodes by name: ['In the Realm of the Hackers Documentary', 'freakonomics: the movie', 'freakonomics: a rogue economist explores the hidden side of everything', 'Freakonomics Radio Overview', 'freakonomics', 'in the realm of the hackers', 'freakonomics radio', 'Freakonomics: The Movie Overview', 'freakonomics blog']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 24 hits
+INFO:   [Retrieval] Prepared 41 candidates (104 entity + 36 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 54 candidates (top score: 0.9992)
+INFO:   [Reranker] Ranked 54 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=3, vector=4, neighbor=0, community=0
+INFO:     1. [passage] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) (rerank=0.9992)
+INFO:     2. [passage] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) (rerank=0.9973)
+INFO:     3. [entity_match] virginia commonwealth university (rerank=0.9659)
+INFO:     4. [entity_match] 2011–12 vcu rams men's basketball team (rerank=0.9510)
+INFO:     5. [vector_match] richmond professional institute (rerank=0.8879)
+INFO:     6. [vector_match] 1838 (rerank=0.8631)
+INFO:     7. [vector_match] medical college of virginia (rerank=0.7363)
+INFO:     8. [vector_match] hampden–sydney college (rerank=0.6115)
+INFO:     9. [passage] # 2010–11 VCU Rams men's basketball team (passage 2) (rerank=0.4602)
+INFO:     10. [entity_match] shaka smart (rerank=0.4366)
+INFO:   [⏱️ Timing] Total: 93.58s (Embed: 0.00s | Retrieval: 47.64s | Rerank: 45.73s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat ee8a17cb] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 92 1-hop relationship(s):
+INFO:     [0] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> 15–3 conference record
+INFO:     [1] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> 1984–85
+INFO:     [2] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> 2011–12 ncaa division i men's basketball season
+INFO:     [3] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> 2012 caa men's basketball championship
+INFO:     [4] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> caa regular season standings
+INFO:     [5] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> drexel
+INFO:     [6] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> final four
+INFO:     [7] # 2011–12 VCU Rams men's basketball team
+
+The 2011–12 VCU Ra (passage 1) --[REFERENCES]--> ncaa tournament
+INFO:     [8] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> 1854
+INFO:     [9] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> 1917
+INFO:     [10] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> 1968
+INFO:     [11] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> 2015
+INFO:     [12] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> richmond
+INFO:     [13] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> vcu health system
+INFO:     [14] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> virginia
+INFO:     [15] # Virginia Commonwealth University
+
+Virginia Commonwealth Un (passage 1) --[REFERENCES]--> virginia general assembly
+INFO:     [16] 1995–96 VCU Rams Men's Basketball Team --[REFERENCES]--> virginia commonwealth university
+INFO:     [17] represented the university
+INFO:     [18] 2004–05 VCU Rams Men's Basketball Team Season Summary --[REFERENCES]--> virginia commonwealth university
+INFO:     [19] represented the university
+INFO:     [20] 2009–10 VCU Rams Men's Basketball Team Season Overview --[REFERENCES]--> virginia commonwealth university
+INFO:     [21] represented the university
+INFO:     [22] 2010–11 VCU Rams Men's Basketball Team Season --[REFERENCES]--> virginia commonwealth university
+INFO:     [23] represented the university
+INFO:     [24] 2011–12 VCU Rams Men's Basketball Team Season --[REFERENCES]--> virginia commonwealth university
+INFO:     [25] 2012–13 VCU Rams Men's Basketball Team Season Overview --[REFERENCES]--> virginia commonwealth university
+INFO:     [26] represented the university
+INFO:     [27] 2013–14 VCU Rams Men's Basketball Team Season Overview --[REFERENCES]--> virginia commonwealth university
+INFO:     [28] represented the university
+INFO:     [29] 2014–15 VCU Rams Men's Basketball Team Season --[REFERENCES]--> virginia commonwealth university
+INFO:     [30] represented the university
+INFO:     [31] had more than 31,000 students in 2015
+INFO:     [32] 2015–16 VCU Rams Men's Basketball Team --[REFERENCES]--> virginia commonwealth university
+INFO:     [33] represented Virginia Commonwealth University
+INFO:     [34] History and Structure of Virginia Commonwealth University --[REFERENCES]--> virginia commonwealth university
+INFO:     [35] first season in the conference
+INFO:     [36] previously played in the conference
+INFO:     [37] is located in Richmond
+INFO:     [38] supports the university's health care education, research and patient care mission
+INFO:     [39] created Virginia Commonwealth University
+INFO:     [40] finished as regular season runners-up with this record
+INFO:     [41] first season since 1984–85 that the Rams consecutively qualified for the NCAA Tournament
+INFO:     [42] 2011–12 VCU Rams Men's Basketball Team Season --[REFERENCES]--> 2011–12 vcu rams men's basketball team
+INFO:     [43] represented the team during the season
+INFO:     [44] winning the championship
+INFO:     [45] expected to finish lower in the standings
+INFO:     [46] came off a season marked by a run to the Final Four
+INFO:     [47] earned their 11th ever berth into the tournament
+INFO:     [48] founded in 1917
+INFO:     [49] History and Structure of Virginia Commonwealth University --[REFERENCES]--> richmond professional institute
+INFO:     [50] merged MCV with the Richmond Professional Institute
+INFO:     [51] History and Geography of Marion, South Australia --[REFERENCES]--> 1838
+INFO:     [52] History and Structure of Virginia Commonwealth University --[REFERENCES]--> 1838
+INFO:     [53] founded in 1838
+INFO:     [54] became the Medical College of Virginia in 1854
+INFO:     [55] History and Structure of Virginia Commonwealth University --[REFERENCES]--> medical college of virginia
+INFO:     [56] merged MCV with the Richmond Professional Institute
+INFO:     [57] History and Structure of Virginia Commonwealth University --[REFERENCES]--> hampden–sydney college
+INFO:     [58] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> 2010–11 ncaa division i men's basketball season
+INFO:     [59] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> 2010–11 vcu rams men's basketball team
+INFO:     [60] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> 2011 caa men's basketball tournament
+INFO:     [61] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> 2011 ncaa men's division i basketball tournament
+INFO:     [62] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> butler
+INFO:     [63] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> cinderella runs
+INFO:     [64] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> colonial athletic association
+INFO:     [65] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> elite eight
+INFO:     [66] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> espn/usa today coaches poll
+INFO:     [67] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> final four
+INFO:     [68] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> florida state
+INFO:     [69] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> georgetown
+INFO:     [70] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> kansas
+INFO:     [71] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> old dominion
+INFO:     [72] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> purdue
+INFO:     [73] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> southern california
+INFO:     [74] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> stuart c. siegel center
+INFO:     [75] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> sweet sixteen
+INFO:     [76] # 2010–11 VCU Rams men's basketball team (passage 2) --[REFERENCES]--> the first four
+INFO:     [77] 2009–10 VCU Rams Men's Basketball Team Season Overview --[REFERENCES]--> shaka smart
+INFO:     [78] was the head coach of the team
+INFO:     [79] 2010–11 VCU Rams Men's Basketball Team Season --[REFERENCES]--> shaka smart
+INFO:     [80] led the team as head coach
+INFO:     [81] 2011–12 VCU Rams Men's Basketball Team Season --[REFERENCES]--> shaka smart
+INFO:     [82] 2012–13 VCU Rams Men's Basketball Team Season Overview --[REFERENCES]--> shaka smart
+INFO:     [83] led the team as head coach
+INFO:     [84] 2013–14 VCU Rams Men's Basketball Team Season Overview --[REFERENCES]--> shaka smart
+INFO:     [85] led the team as head coach
+INFO:     [86] 2014–15 VCU Rams Men's Basketball Team Season --[REFERENCES]--> shaka smart
+INFO:     [87] led the team as head coach
+INFO:     [88] 2015–16 VCU Rams Men's Basketball Team --[REFERENCES]--> shaka smart
+INFO:     [89] was the former head coach
+INFO:     [90] resigned from VCU for the vacancy at Texas
+INFO:     [91] Wade replaced former head coach, Shaka Smart
+INFO:   [Vector] Found 10 name variants from vector results: [('russian hackers', 'hackers'), ('Analysis of the 1995 Film Hackers', 'hackers'), ('computer hackers', 'hackers'), ('The Career and Filmography of Heidi Ewing', 'heidi ewing'), ('Profile of Robin Goldstein', 'robin goldstein'), ('northern australia', 'australia'), ('australian built production sedans', 'australia'), ('History and Geography of Marion, South Australia', 'australia'), ('australian lightweight title', 'australia'), ('central australia', 'australia')]
+INFO:   [Vector] Found 29 semantically similar nodes: ['kevin anderson', 'hackers', 'hacker manifesto', 'the realm', 'underground', 'tribeca film festival', 'us naval research laboratory', 'high school hackers', 'heidi ewing', 'iain softley', 'jonny lee miller', 'fisher stevens', 'renoly santiago', 'jesse bradford', 'lorraine bracco', 'matthew lillard', 'angelina jolie', 'robin goldstein', 'australia', 'russian hackers', 'Analysis of the 1995 Film Hackers', 'computer hackers', 'The Career and Filmography of Heidi Ewing', 'Profile of Robin Goldstein', 'northern australia', 'australian built production sedans', 'History and Geography of Marion, South Australia', 'australian lightweight title', 'central australia']
+INFO:   [Retrieval] Found 73 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 8.55s (109 entity + 29 vector nodes)
+INFO:   [Retrieval] Prepared 29 candidates (109 entity + 29 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 26 candidates (top score: 0.9632)
+INFO:   [Reranker] Ranked 26 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=2, vector=5, neighbor=0, community=0
+INFO:     1. [entity_match] wolf alice (rerank=0.9632)
+INFO:     2. [passage] # Wolf Alice
+
+Wolf Alice are a four-piece alternative rock b (passage 1) (rerank=0.9560)
+INFO:     3. [entity_match] badly drawn boy (rerank=0.9108)
+INFO:     4. [vector_match] damon michael gough (rerank=0.7190)
+INFO:     5. [vector_match] damon gough (rerank=0.6515)
+INFO:     6. [passage] # Badly Drawn Boy
+
+Damon Michael Gough (born 2 October 1969, (passage 1) (rerank=0.5806)
+INFO:     7. [vector_match] ellie rowsell (rerank=0.2596)
+INFO:     8. [vector_match] joff oddie (rerank=0.1698)
+INFO:     9. [passage] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) (rerank=0.1268)
+INFO:     10. [vector_match] 2010 (rerank=0.1196)
+INFO:   [⏱️ Timing] Total: 100.56s (Embed: 0.01s | Retrieval: 47.77s | Rerank: 52.47s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 0cdb19f6] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 67 1-hop relationship(s):
+INFO:     [0] Wolf Alice Band Overview --[REFERENCES]--> wolf alice
+INFO:     [1] is a member of Wolf Alice
+INFO:     [2] is from North London
+INFO:     [3] is a member of Wolf Alice
+INFO:     [4] # Wolf Alice
+
+Wolf Alice are a four-piece alternative rock b (passage 1) --[REFERENCES]--> 2012
+INFO:     [5] # Wolf Alice
+
+Wolf Alice are a four-piece alternative rock b (passage 1) --[REFERENCES]--> joel amey
+INFO:     [6] # Wolf Alice
+
+Wolf Alice are a four-piece alternative rock b (passage 1) --[REFERENCES]--> north london
+INFO:     [7] # Wolf Alice
+
+Wolf Alice are a four-piece alternative rock b (passage 1) --[REFERENCES]--> theo ellis
+INFO:     [8] About a Boy (film) Production and Adaptation Details --[REFERENCES]--> badly drawn boy
+INFO:     [9] About a Boy Soundtrack Album Details --[REFERENCES]--> badly drawn boy
+INFO:     [10] Badly Drawn Boy Discography and Career History --[REFERENCES]--> badly drawn boy
+INFO:     [11] Badly Drawn Boy's 'Silent Sigh' --[REFERENCES]--> badly drawn boy
+INFO:     [12] Badly Drawn Boy's 'Something to Talk About' --[REFERENCES]--> badly drawn boy
+INFO:     [13] Biography of Damon Michael Gough (Badly Drawn Boy) --[REFERENCES]--> badly drawn boy
+INFO:     [14] Menomena's Album Under an Hour --[REFERENCES]--> badly drawn boy
+INFO:     [15] Professional Profile of Tom Rothrock --[REFERENCES]--> badly drawn boy
+INFO:     [16] The Hour of Bewilderbeast Album Details --[REFERENCES]--> badly drawn boy
+INFO:     [17] provided the soundtrack for About a Boy
+INFO:     [18] provided music for the film
+INFO:     [19] is the artist of the album
+INFO:     [20] released the single in 1999
+INFO:     [21] joined the likes of others on the album
+INFO:     [22] is a single by Badly Drawn Boy
+INFO:     [23] is a song by Badly Drawn Boy
+INFO:     [24] is the artist of the debut studio album
+INFO:     [25] has worked with
+INFO:     [26] released first EP and several singles
+INFO:     [27] considered to be along the lines of Badly Drawn Boy's soundtrack for About a Boy
+INFO:     [28] born on 2 October 1969
+INFO:     [29] Biography of Damon Michael Gough (Badly Drawn Boy) --[REFERENCES]--> damon michael gough
+INFO:     [30] born in Dunstable, Bedfordshire
+INFO:     [31] is an English singer-songwriter
+INFO:     [32] is an indie singer-songwriter
+INFO:     [33] is a multi-instrumentalist
+INFO:     [34] Badly Drawn Boy Discography and Career History --[REFERENCES]--> damon gough
+INFO:     [35] The Hour of Bewilderbeast Album Details --[REFERENCES]--> damon gough
+INFO:     [36] asked to score the film being made for the book
+INFO:     [37] asked Gough to score the film for his book
+INFO:     [38] wrote, produced, and played several instruments on the album
+INFO:     [39] started the label with Andy Votel
+INFO:     [40] # Badly Drawn Boy
+
+Damon Michael Gough (born 2 October 1969, (passage 1) --[REFERENCES]--> 2 october 1969
+INFO:     [41] # Badly Drawn Boy
+
+Damon Michael Gough (born 2 October 1969, (passage 1) --[REFERENCES]--> dunstable, bedfordshire
+INFO:     [42] # Badly Drawn Boy
+
+Damon Michael Gough (born 2 October 1969, (passage 1) --[REFERENCES]--> english
+INFO:     [43] # Badly Drawn Boy
+
+Damon Michael Gough (born 2 October 1969, (passage 1) --[REFERENCES]--> indie singer-songwriter
+INFO:     [44] # Badly Drawn Boy
+
+Damon Michael Gough (born 2 October 1969, (passage 1) --[REFERENCES]--> multi-instrumentalist
+INFO:     [45] member since 2012
+INFO:     [46] Wolf Alice Band Overview --[REFERENCES]--> ellie rowsell
+INFO:     [47] member since 2012
+INFO:     [48] Wolf Alice Band Overview --[REFERENCES]--> joff oddie
+INFO:     [49] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> 2000 mercury prize
+INFO:     [50] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> 26 june 2000
+INFO:     [51] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> alfie
+INFO:     [52] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> doves
+INFO:     [53] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> september 2011
+INFO:     [54] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> the hour of bewilderbeast
+INFO:     [55] # The Hour of Bewilderbeast
+
+The Hour of Bewilderbeast is th (passage 1) --[REFERENCES]--> united kingdom
+INFO:     [56] Biography of Voice Actress Kate Higgins --[REFERENCES]--> 2010
+INFO:     [57] Halcyon Album Overview --[REFERENCES]--> 2010
+INFO:     [58] History and Classification of the Russian Toy Breed --[REFERENCES]--> 2010
+INFO:     [59] History and Ownership of Lewis's Department Stores --[REFERENCES]--> 2010
+INFO:     [60] Overview of the Charlotte Hornets --[REFERENCES]--> 2010
+INFO:     [61] Wolf Alice Band Overview --[REFERENCES]--> 2010
+INFO:     [62] operated from 1856 to 2010
+INFO:     [63] released in 2010
+INFO:     [64] acquired controlling interest in 2010
+INFO:     [65] closed in 2010
+INFO:     [66] allowed to compete in AKC companion events since 2010
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 2 candidates (top score: 0.9989)
+INFO:   [Reranker] Ranked 2 candidates (no cutoff)
+INFO: [Chat 044482f9] Reasoning over retrieved context (1/3) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question asks for another device, besides the Apple Remote, that could control the program Apple Remote was originally designed to interact with. \n\nStep 1: Identify the program Apple Remote was originally designed to interact with.\nThe search results indicate that 'Front Row' is the media program that the Apple Remote was originally designed for. \n\nStep 2: Search for other devices capable of controlling Front Row.\nThe document detailing '# Front Row (software)' states: \"The software relies on iTunes and iPhoto and is controlled by an Apple Remote or the keyboard function keys.\" Another source mentions: 'An Apple Remote is one of the devices used to control the Front Row application.'\n\nStep 3: Finalize the answer.\nThe evidence explicitly names 'keyboard function keys' as another method for controlling Front Row, besides the Apple Remote.", "finding": "Front Row was a discontinued media center software application. It was controlled by an Apple Remote or the keyboard function keys. The Apple Remote was originally designed to interact with Front Row media program on the iSight iMac G5.", "answer": "keyboard function keys", "next_query": null}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='keyboard function keys' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 110.47s
+  iterations=1
+  answer='keyboard function keys'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 044482f9] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'keyboard function keys'
+INFO: [Chat] Found 3 references for response
+INFO: [Chat 044482f9] Formatting answer
+INFO: [Chat] Total pipeline duration: 110.47s
+
+INFO: [Timing] chat total=110.5s model_load=1.3s inference=109.2s loads=rerank×1 docs=10
+INFO: 127.0.0.1:55874 - "POST /api/v1/chat HTTP/1.1" 200
+INFO: 
+[Chat] Started processing query: 'Which band, Letters to Cleo or Screaming Trees, had more members?'
+INFO: [Chat e7ee2a2b] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Which band, Letters to Cleo or Screaming Trees, had more members?'
+======================================================================
+INFO: [Chat e7ee2a2b] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='number of members'
+INFO: [Chat e7ee2a2b] Retrieval loop 1/3
+INFO:   [IterLoop] Iteration 1/3 | current_query='Which band, Letters to Cleo or Screaming Trees, had more members?'
+INFO: [Chat e7ee2a2b] Searching knowledge base (1/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Which band, Letters to Cleo or Screaming Trees, had more members?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: compare, Entities: ['Letters to Cleo', 'Screaming Trees'], Expected Types: ['organization'], Attribute: number of members
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 96 (threshold=0.45)
+INFO:   [Qdrant] 39 unique nodes after dedup (from 96 raw hits)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.07s
+INFO:   [Entity] Found 8 nodes by name: ['screaming trees', 'Beat Happening/Screaming Trees Collaboration', 'History and Composition of Screaming Trees', 'Letters to Cleo Band Overview', 'letters to cleo', 'beat happening/screaming trees', 'Screaming Trees Recording History', 'Screaming Trees Discography Overview']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 39 hits
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 27 candidates (top score: 0.9989)
+INFO:   [Reranker] Ranked 27 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=6, vector=1, neighbor=0, community=0
+INFO:     1. [passage] # Shut Up, Make Love
+
+"Shut Up, Make Love" is a song by Amer (passage 1) (rerank=0.9989)
+INFO:     2. [entity_match] shut up, make love (rerank=0.9961)
+INFO:     3. [entity_match] crack a smile...and more! (rerank=0.9761)
+INFO:     4. [passage] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) (rerank=0.8209)
+INFO:     5. [entity_match] poison (rerank=0.7764)
+INFO:     6. [entity_match] 2000 (rerank=0.6673)
+INFO:     7. [entity_match] be the one (rerank=0.3893)
+INFO:     8. [passage] # Poison (American band)
+
+Poison is an American rock band th (passage 1) (rerank=0.3320)
+INFO:     9. [entity_match] blues saraceno (rerank=0.1155)
+INFO:     10. [vector_match] crack a smile (rerank=0.1000)
+INFO:   [⏱️ Timing] Total: 41.40s (Embed: 0.00s | Retrieval: 8.58s | Rerank: 29.22s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat d9a870ff] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 50 1-hop relationship(s):
+INFO:     [0] # Shut Up, Make Love
+
+"Shut Up, Make Love" is a song by Amer (passage 1) --[REFERENCES]--> march 14, 2000
+INFO:     [1] # Shut Up, Make Love
+
+"Shut Up, Make Love" is a song by Amer (passage 1) --[REFERENCES]--> the billboard 200
+INFO:     [2] Poison's 'Be the One' Single Release --[REFERENCES]--> shut up, make love
+INFO:     [3] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> shut up, make love
+INFO:     [4] included as a b-side on the single/sampler
+INFO:     [5] Poison's 'Be the One' Single Release --[REFERENCES]--> crack a smile...and more!
+INFO:     [6] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> crack a smile...and more!
+INFO:     [7] unplugged bonus track from the album
+INFO:     [8] unplugged bonus track from the album
+INFO:     [9] unplugged bonus track from the album
+INFO:     [10] charting at #131 on The Billboard 200
+INFO:     [11] unplugged bonus track from the album
+INFO:     [12] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) --[REFERENCES]--> every rose has its thorn
+INFO:     [13] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) --[REFERENCES]--> february 2000
+INFO:     [14] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) --[REFERENCES]--> single/sampler
+INFO:     [15] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) --[REFERENCES]--> something to believe in
+INFO:     [16] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) --[REFERENCES]--> talk dirty to me
+INFO:     [17] # Be the One (Poison song)
+
+"Be the One" is a power ballad b (passage 1) --[REFERENCES]--> your mama don't dance
+INFO:     [18] Overview of the American Rock Band Poison --[REFERENCES]--> poison
+INFO:     [19] Poison's 'Be the One' Single Release --[REFERENCES]--> poison
+INFO:     [20] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> poison
+INFO:     [21] Professional Profile of Tom Rothrock --[REFERENCES]--> poison
+INFO:     [22] charted ten singles to the Top 40 of the Billboard Hot 100
+INFO:     [23] third consecutive multi-platinum selling album
+INFO:     [24] breakthrough debut album released in 1986
+INFO:     [25] second album which became the most successful album
+INFO:     [26] has worked with
+INFO:     [27] is an American band
+INFO:     [28] is an American band
+INFO:     [29] Badly Drawn Boy Discography and Career History --[REFERENCES]--> 2000
+INFO:     [30] History and Evolution of the Subway 400 NASCAR Race --[REFERENCES]--> 2000
+INFO:     [31] History and Operations of No. 2 Squadron RAAF --[REFERENCES]--> 2000
+INFO:     [32] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> 2000
+INFO:     [33] Trinidad and Tobago League Cup Overview --[REFERENCES]--> 2000
+INFO:     [34] called this in 2000
+INFO:     [35] re-formed in 2000
+INFO:     [36] inaugurated in 2000
+INFO:     [37] Poison's 'Be the One' Single Release --[REFERENCES]--> be the one
+INFO:     [38] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> be the one
+INFO:     [39] song featured on the single/sampler
+INFO:     [40] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> 1986
+INFO:     [41] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> billboard hot 100
+INFO:     [42] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> every rose has its thorn
+INFO:     [43] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> flesh & blood
+INFO:     [44] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> look what the cat dragged in
+INFO:     [45] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> open up and say... ahh!
+INFO:     [46] # Poison (American band)
+
+Poison is an American rock band th (passage 1) --[REFERENCES]--> united states
+INFO:     [47] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> blues saraceno
+INFO:     [48] Poison's Song 'Shut Up, Make Love' --[REFERENCES]--> crack a smile
+INFO:     [49] released on March 14, 2000
+INFO:   [Vector] Found 23 name variants from vector results: [('nine studio albums', 'studio albums'), ('the complete studio albums 1970-1990', 'studio albums'), ('psychedelic rock', 'psychedelic'), ('Biography and Musical Career of Gary Lee Conner', 'gary lee conner'), ('brad epstein', 'eps'), ('billboard hot 100 singles chart', 'singles'), ('aria singles chart', 'singles'), ('aria dance singles chart', 'singles'), ('uk singles chart', 'singles'), ('u.s. country singles charts', 'singles'), ('1984–85', '1984'), ('History and Dissolution of Mad Season', 'mad season'), ('Biography and Musical Career of Van Conner', 'van conner'), ('The Industrial Legacy of Henry J. Kaiser', 'dust'), ('red deer industrial airport', 'dust'), ('australian recording industry association', 'dust'), ('society for industrial and organizational psychology', 'dust'), ('malayalam cinema industry', 'dust'), ('boston patriots', 'boston'), ('borough of boston', 'boston'), ('boston district', 'boston'), ('Geography and Demographics of Boston, Lincolnshire', 'boston'), ('boston celtics', 'boston')]
+INFO:   [Vector] Found 57 semantically similar nodes: ['grunge', 'kay hanley', 'june 25, 2000', 'stacy jones', 'here & now', 'scott riebling', 'greg mckenna', 'studio albums', 'aurora gory alice', 'psychedelic', 'massachusetts', 'ellensburg, washington', 'gary lee conner', 'mark pickerel', 'compilation albums', 'tom polce', 'eps', 'alice in chains', 'compilations', 'singles', 'michael eisenstein', 'change has come', 'pearl jam', 'hard rock', 'something about today', '1984', 'mad season', 'van conner', 'uncle anesthesia', 'dust', 'sweet oblivion', 'boston', 'epic records', 'sub pop', 'nine studio albums', 'the complete studio albums 1970-1990', 'psychedelic rock', 'Biography and Musical Career of Gary Lee Conner', 'brad epstein', 'billboard hot 100 singles chart', 'aria singles chart', 'aria dance singles chart', 'uk singles chart', 'u.s. country singles charts', '1984–85', 'History and Dissolution of Mad Season', 'Biography and Musical Career of Van Conner', 'The Industrial Legacy of Henry J. Kaiser', 'red deer industrial airport', 'australian recording industry association', 'society for industrial and organizational psychology', 'malayalam cinema industry', 'boston patriots', 'borough of boston', 'boston district', 'Geography and Demographics of Boston, Lincolnshire', 'boston celtics']
+INFO:   [Retrieval] Found 101 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 8.21s (107 entity + 57 vector nodes)
+INFO:   [Retrieval] Prepared 46 candidates (107 entity + 57 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 46 candidates (top score: 0.9925)
+INFO:   [Reranker] Ranked 46 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=2, vector=5, neighbor=0, community=0
+INFO:     1. [passage] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) (rerank=0.9925)
+INFO:     2. [entity_match] letters to cleo (rerank=0.9922)
+INFO:     3. [passage] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) (rerank=0.9709)
+INFO:     4. [entity_match] screaming trees (rerank=0.9108)
+INFO:     5. [vector_match] stacy jones (rerank=0.2876)
+INFO:     6. [passage] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) (rerank=0.2795)
+INFO:     7. [vector_match] michael eisenstein (rerank=0.1855)
+INFO:     8. [vector_match] kay hanley (rerank=0.1839)
+INFO:     9. [vector_match] scott riebling (rerank=0.1812)
+INFO:     10. [vector_match] greg mckenna (rerank=0.1313)
+INFO:   [⏱️ Timing] Total: 8.22s (Embed: 0.00s | Retrieval: 8.21s | Rerank: 0.00s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat e7ee2a2b] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 75 1-hop relationship(s):
+INFO:     [0] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) --[REFERENCES]--> 1994
+INFO:     [1] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) --[REFERENCES]--> aurora gory alice
+INFO:     [2] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) --[REFERENCES]--> boston
+INFO:     [3] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) --[REFERENCES]--> here & now
+INFO:     [4] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) --[REFERENCES]--> massachusetts
+INFO:     [5] # Letters to Cleo
+
+Letters to Cleo are an alternative rock b (passage 1) --[REFERENCES]--> tom polce
+INFO:     [6] Letters to Cleo Band Overview --[REFERENCES]--> letters to cleo
+INFO:     [7] full-length debut album 'Aurora Gory Alice'
+INFO:     [8] is from Boston
+INFO:     [9] best known for the single 'Here & Now'
+INFO:     [10] joined the band later
+INFO:     [11] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> 1985
+INFO:     [12] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> barrett martin
+INFO:     [13] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> compilations
+INFO:     [14] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> ellensburg, washington
+INFO:     [15] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> eps
+INFO:     [16] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> gary lee conner
+INFO:     [17] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> grunge
+INFO:     [18] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> hard rock
+INFO:     [19] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> mark lanegan
+INFO:     [20] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> mark pickerel
+INFO:     [21] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> psychedelic
+INFO:     [22] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> studio albums
+INFO:     [23] # Screaming Trees
+
+Screaming Trees was an American rock band (passage 1) --[REFERENCES]--> van conner
+INFO:     [24] co-founded in 1984
+INFO:     [25] formed in 1985
+INFO:     [26] Beat Happening/Screaming Trees Collaboration --[REFERENCES]--> screaming trees
+INFO:     [27] Biography and Musical Career of Gary Lee Conner --[REFERENCES]--> screaming trees
+INFO:     [28] Biography and Musical Career of Van Conner --[REFERENCES]--> screaming trees
+INFO:     [29] History and Composition of Screaming Trees --[REFERENCES]--> screaming trees
+INFO:     [30] History and Dissolution of Mad Season --[REFERENCES]--> screaming trees
+INFO:     [31] Jamboree Album Analysis --[REFERENCES]--> screaming trees
+INFO:     [32] Screaming Trees Discography Overview --[REFERENCES]--> screaming trees
+INFO:     [33] Screaming Trees Recording History --[REFERENCES]--> screaming trees
+INFO:     [34] The American Rock Band Truly --[REFERENCES]--> screaming trees
+INFO:     [35] replaced Mark Pickerel in the band
+INFO:     [36] is a collaboration involving Screaming Trees
+INFO:     [37] recorded by the Screaming Trees
+INFO:     [38] consists of three compilation albums
+INFO:     [39] released three compilations
+INFO:     [40] album by the Screaming Trees
+INFO:     [41] is based in Ellensburg, Washington
+INFO:     [42] is based in Ellensburg, Washington
+INFO:     [43] is based in Ellensburg, Washington
+INFO:     [44] moved to Epic Records
+INFO:     [45] released five EPs
+INFO:     [46] consists of five extended plays (EP)
+INFO:     [47] co-founded Screaming Trees
+INFO:     [48] widely associated with grunge
+INFO:     [49] sound incorporated hard rock
+INFO:     [50] announced breakup on June 25, 2000
+INFO:     [51] formed by members of Screaming Trees
+INFO:     [52] co-founded Screaming Trees
+INFO:     [53] original drummer of the band
+INFO:     [54] sound incorporated psychedelic elements
+INFO:     [55] Seattle-based band
+INFO:     [56] consists of six singles
+INFO:     [57] does not include any solo material recorded by the individual members
+INFO:     [58] EP by the Screaming Trees
+INFO:     [59] consists of seven studio albums
+INFO:     [60] consists of seven studio albums
+INFO:     [61] album by the Screaming Trees
+INFO:     [62] album by the Screaming Trees
+INFO:     [63] co-founded the band Screaming Trees
+INFO:     [64] Letters to Cleo Band Overview --[REFERENCES]--> stacy jones
+INFO:     [65] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) --[REFERENCES]--> compilation albums
+INFO:     [66] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) --[REFERENCES]--> ellensburg, washington
+INFO:     [67] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) --[REFERENCES]--> extended plays (ep)
+INFO:     [68] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) --[REFERENCES]--> singles
+INFO:     [69] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) --[REFERENCES]--> solo material
+INFO:     [70] # Screaming Trees discography
+
+The discography of Screaming  (passage 1) --[REFERENCES]--> studio albums
+INFO:     [71] Letters to Cleo Band Overview --[REFERENCES]--> michael eisenstein
+INFO:     [72] Letters to Cleo Band Overview --[REFERENCES]--> kay hanley
+INFO:     [73] Letters to Cleo Band Overview --[REFERENCES]--> scott riebling
+INFO:     [74] Letters to Cleo Band Overview --[REFERENCES]--> greg mckenna
+INFO:   [GraphExpand] Ranked 21 neighbours → kept top 10 (scores: ['0.9987', '0.9954', '0.9559', '0.9000', '0.9000', '0.9000', '0.9000', '0.9000', '0.8988', '0.8759'])
+INFO:   [GraphExpand] Added 3 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 3 neighbors
+INFO: [Chat 16667457] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [GraphExpand] Ranked 75 neighbours → kept top 10 (scores: ['0.9936', '0.9877', '0.9827', '0.9789', '0.9605', '0.9586', '0.9576', '0.9575', '0.9521', '0.9463'])
+INFO:   [GraphExpand] Added 2 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 2 neighbors
+INFO: [Chat e7ee2a2b] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 2 candidates (top score: 0.9324)
+INFO:   [Reranker] Ranked 2 candidates (no cutoff)
+INFO: [Chat e7ee2a2b] Reasoning over retrieved context (1/3) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{
+  "reasoning": "The user wants to compare the number of members between two bands: Letters to Cleo and Screaming Trees. I need to find the total membership count for each band from the retrieved documents.\n\nFor Letters to Cleo, one document lists the members as: Kay Hanley, Greg McKenna, Michael Eisenstein, Stacy Jones, Scott Riebling, and later, Tom Polce. Counting these names yields 6 individuals mentioned in relation to their core lineup/members (5 initial + 1 later addition).\n\nFor Screaming Trees, the documents mention several founding members (Mark Lanegan, Gary Lee Conner, Van Conner, Mark Pickerel) and subsequent changes (Pickerel replaced by Barrett Martin). However, no definitive list or total count of members is provided. The search results describe their formation and key personnel shifts but do not give a total membership number.\n\nTherefore, I have information for Letters to Cleo but lack the necessary data to calculate the comparison accurately for Screaming Trees.",
+  "finding": "Letters to Cleo's members listed are: Kay Hanley, Greg McKenna, Michael Eisenstein, Stacy Jones, Scott Riebling, and Tom Polce. For Screaming Trees, founding members mentioned include Mark Lanegan, Gary Lee Conner, Van Conner, and Mark Pickerel, with later personnel changes noted.",
+  "answer": null,
+  "next_query": "Screaming Trees band lineup size"
+}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Screaming Trees band lineup size'
+INFO: [Chat e7ee2a2b] Retrieval loop 2/3
+INFO:   [IterLoop] Iteration 2/3 | current_query='Screaming Trees band lineup size'
+INFO: [Chat e7ee2a2b] Searching knowledge base (2/3) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Screaming Trees band lineup size' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Screaming Trees'], Expected Types: ['organization'], Attribute: lineup size
+INFO: Loading embed GGUF in-process (exclusive, n_ctx=8192): /workspace/orb/models/gguf/Qwen3-Embedding-8B-Q4_K_M.gguf
+INFO: [ModelLoad] embed loaded in 1.7s
+INFO:   [⏱️ Timing] Total query embedding: 1.82s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 95 (threshold=0.45)
+INFO:   [Qdrant] 34 unique nodes after dedup (from 95 raw hits)
+INFO:   [Meili] 37 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.06s
+INFO:   [Entity] Found 6 nodes by name: ['beat happening/screaming trees', 'screaming trees', 'Beat Happening/Screaming Trees Collaboration', 'History and Composition of Screaming Trees', 'Screaming Trees Recording History', 'Screaming Trees Discography Overview']
+INFO:   [Keyword] Added 37 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 34 hits
+INFO:   [Vector] Found 4 semantically similar nodes: ['alice in chains', 'pearl jam', 'layne staley', 'hiro yamamoto']
+INFO:   [Retrieval] Found 18 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 1.24s (41 entity + 4 vector nodes)
+INFO:   [Retrieval] Prepared 42 candidates (41 entity + 4 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 35 candidates (top score: 0.9992)
+INFO:   [Reranker] Ranked 35 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=4, vector=3, neighbor=0, community=0
+INFO:     1. [passage] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) (rerank=0.9992)
+INFO:     2. [entity_match] buck-tick (rerank=0.9896)
+INFO:     3. [vector_match] fujioka (rerank=0.9891)
+INFO:     4. [vector_match] atsushi sakurai (rerank=0.9348)
+INFO:     5. [vector_match] gunma (rerank=0.9112)
+INFO:     6. [passage] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) (rerank=0.7881)
+INFO:     7. [entity_match] hayden (rerank=0.6108)
+INFO:     8. [entity_match] canada (rerank=0.3741)
+INFO:     9. [entity_match] thornhill, ontario (rerank=0.2496)
+INFO:     10. [passage] # Hayden (musician)
+
+Paul Hayden Desser (born February 12, 1 (passage 1) (rerank=0.2277)
+INFO:   [⏱️ Timing] Total: 56.29s (Embed: 0.00s | Retrieval: 11.83s | Rerank: 44.41s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 3333f2bb] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 75 1-hop relationship(s):
+INFO:     [0] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> 1983
+INFO:     [1] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> 1985
+INFO:     [2] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> hidehiko hoshino
+INFO:     [3] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> hisashi imai
+INFO:     [4] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> studio albums
+INFO:     [5] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> toll yagami
+INFO:     [6] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> visual kei
+INFO:     [7] # Buck-Tick
+
+Buck-Tick (stylized as BUCK-TICK) is a Japanese (passage 1) --[REFERENCES]--> yutaka higuchi
+INFO:     [8] formed in 1983
+INFO:     [9] Biography of Atsushi Sakurai --[REFERENCES]--> buck-tick
+INFO:     [10] Biography of Masami Tsuchiya --[REFERENCES]--> buck-tick
+INFO:     [11] Biography of Musician Kyo --[REFERENCES]--> buck-tick
+INFO:     [12] Overview of the Japanese Rock Band Buck-Tick --[REFERENCES]--> buck-tick
+INFO:     [13] is a member of Buck-Tick on guitar
+INFO:     [14] is a member of Buck-Tick
+INFO:     [15] worked with Buck-Tick
+INFO:     [16] released 20 studio albums
+INFO:     [17] is a member of Buck-Tick on drums
+INFO:     [18] credited as one of the founders of visual kei
+INFO:     [19] is a member of Buck-Tick on bass
+INFO:     [20] Overview of the Japanese Rock Band Buck-Tick --[REFERENCES]--> fujioka
+INFO:     [21] member since 1985
+INFO:     [22] Biography of Atsushi Sakurai --[REFERENCES]--> atsushi sakurai
+INFO:     [23] Biography of Musician Kyo --[REFERENCES]--> atsushi sakurai
+INFO:     [24] Overview of the Japanese Rock Band Buck-Tick --[REFERENCES]--> atsushi sakurai
+INFO:     [25] released the solo album Ai no Wakusei in 2004
+INFO:     [26] was born in Fujioka, Gunma
+INFO:     [27] inspired to become a musician by seeing a picture of Atsushi Sakurai
+INFO:     [28] born on March 7, 1966
+INFO:     [29] was a member of Schwein
+INFO:     [30] formed a solo project called The Mortal in 2015
+INFO:     [31] Overview of the Japanese Rock Band Buck-Tick --[REFERENCES]--> gunma
+INFO:     [32] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> ai no wakusei
+INFO:     [33] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> fujioka, gunma
+INFO:     [34] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> hisashi imai
+INFO:     [35] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> kmfdm
+INFO:     [36] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> march 7, 1966
+INFO:     [37] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> raymond watts
+INFO:     [38] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> sascha konietzko
+INFO:     [39] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> schwein
+INFO:     [40] # Atsushi Sakurai
+
+Atsushi Sakurai (櫻井 敦司 , Sakurai Atsushi  (passage 1) --[REFERENCES]--> the mortal
+INFO:     [41] Hayden's 'Mild and Hazy' Vinyl Single --[REFERENCES]--> hayden
+INFO:     [42] Profile of Musician Hayden --[REFERENCES]--> hayden
+INFO:     [43] Skyscraper National Park Album Details --[REFERENCES]--> hayden
+INFO:     [44] Hayden's cross-Canada tour
+INFO:     [45] is Hayden's own label
+INFO:     [46] is a single by Hayden
+INFO:     [47] records as Hayden
+INFO:     [48] is the third album by Hayden
+INFO:     [49] Biography and Career of Stanley Coren --[REFERENCES]--> canada
+INFO:     [50] Biography and Historical Context of Dewey Beard (Iron Hail) --[REFERENCES]--> canada
+INFO:     [51] Botanical Profile of Silene menziesii --[REFERENCES]--> canada
+INFO:     [52] Grantley Adams International Airport Overview --[REFERENCES]--> canada
+INFO:     [53] Hailstorm Alley Geography and Characteristics --[REFERENCES]--> canada
+INFO:     [54] Kon Kan Synthpop Project Overview --[REFERENCES]--> canada
+INFO:     [55] Kon Kan's Song 'Puss N' Boots/These Boots (Are Made for Walkin')' --[REFERENCES]--> canada
+INFO:     [56] Profile of Musician Hayden --[REFERENCES]--> canada
+INFO:     [57] Skyscraper National Park Album Details --[REFERENCES]--> canada
+INFO:     [58] The Life and Activism of Louise Bryant --[REFERENCES]--> canada
+INFO:     [59] is a province in Canada
+INFO:     [60] regarded as the hailstorm capital of Canada
+INFO:     [61] tour across Canada
+INFO:     [62] has direct service to Canada
+INFO:     [63] released in Canada
+INFO:     [64] is a Canadian project
+INFO:     [65] stories appeared in newspapers across Canada
+INFO:     [66] is a Canadian singer-songwriter
+INFO:     [67] peaked at #61 in native Canada
+INFO:     [68] media coverage broadcast in Canada
+INFO:     [69] followed Sitting Bull into exile in Canada
+INFO:     [70] includes the western half of Canada
+INFO:     [71] Profile of Musician Hayden --[REFERENCES]--> thornhill, ontario
+INFO:     [72] is from Thornhill, Ontario
+INFO:     [73] # Hayden (musician)
+
+Paul Hayden Desser (born February 12, 1 (passage 1) --[REFERENCES]--> february 12, 1971
+INFO:     [74] # Hayden (musician)
+
+Paul Hayden Desser (born February 12, 1 (passage 1) --[REFERENCES]--> paul hayden desser
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 41 candidates (top score: 0.9988)
+INFO:   [Reranker] Ranked 41 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=2, vector=4, neighbor=0, community=0
+INFO:     1. [vector_match] charles nungesser (rerank=0.9988)
+INFO:     2. [passage] # Charles Nungesser
+
+Charles Eugène Jules Marie Nungesser, M (passage 1) (rerank=0.9976)
+INFO:     3. [entity_match] l'oiseau blanc (rerank=0.9969)
+INFO:     4. [vector_match] françois coli (rerank=0.9622)
+INFO:     5. [entity_match] l'oiseau blanc (the white bird) (rerank=0.9486)
+INFO:     6. [vector_match] atlantic ocean (rerank=0.9179)
+INFO:     7. [passage] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) (rerank=0.9000)
+INFO:     8. [passage] # François Coli
+
+François Coli (June 5, 1881 – presumably on (passage 1) (rerank=0.8846)
+INFO:     9. [vector_match] orteig prize (rerank=0.8174)
+INFO:     10. [passage] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) (rerank=0.8096)
+INFO:   [⏱️ Timing] Total: 51.81s (Embed: 0.00s | Retrieval: 7.23s | Rerank: 44.56s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 313d7855] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 66 1-hop relationship(s):
+INFO:     [0] Biography of Charles Nungesser --[REFERENCES]--> charles nungesser
+INFO:     [1] François Coli and the L'Oiseau Blanc Flight Attempt --[REFERENCES]--> charles nungesser
+INFO:     [2] The 1927 Attempt to Win the Orteig Prize --[REFERENCES]--> charles nungesser
+INFO:     [3] The Disappearance of L'Oiseau Blanc --[REFERENCES]--> charles nungesser
+INFO:     [4] The Levasseur PL.8 Biplane --[REFERENCES]--> charles nungesser
+INFO:     [5] best remembered as a rival of Charles Lindbergh
+INFO:     [6] was a French ace pilot
+INFO:     [7] his navigator Francois Coli
+INFO:     [8] specifically built for the pilot
+INFO:     [9] held the MC distinction
+INFO:     [10] achieved victories during World War I
+INFO:     [11] # Charles Nungesser
+
+Charles Eugène Jules Marie Nungesser, M (passage 1) --[REFERENCES]--> charles lindbergh
+INFO:     [12] # Charles Nungesser
+
+Charles Eugène Jules Marie Nungesser, M (passage 1) --[REFERENCES]--> france
+INFO:     [13] # Charles Nungesser
+
+Charles Eugène Jules Marie Nungesser, M (passage 1) --[REFERENCES]--> mc
+INFO:     [14] # Charles Nungesser
+
+Charles Eugène Jules Marie Nungesser, M (passage 1) --[REFERENCES]--> world war i
+INFO:     [15] disappeared in 1927
+INFO:     [16] took off on 8 May 1927
+INFO:     [17] François Coli and the L'Oiseau Blanc Flight Attempt --[REFERENCES]--> l'oiseau blanc
+INFO:     [18] The Disappearance of L'Oiseau Blanc --[REFERENCES]--> l'oiseau blanc
+INFO:     [19] was last seen over Ireland
+INFO:     [20] was a Levasseur PL.8 biplane
+INFO:     [21] attempted flight to New York City
+INFO:     [22] took off from Paris
+INFO:     [23] is also known as
+INFO:     [24] François Coli and the L'Oiseau Blanc Flight Attempt --[REFERENCES]--> françois coli
+INFO:     [25] The Disappearance of L'Oiseau Blanc --[REFERENCES]--> françois coli
+INFO:     [26] The Levasseur PL.8 Biplane --[REFERENCES]--> françois coli
+INFO:     [27] is a French pilot
+INFO:     [28] born on June 5, 1881
+INFO:     [29] specifically built for the pilot
+INFO:     [30] presumably died on or after May 8, 1927
+INFO:     [31] The Levasseur PL.8 Biplane --[REFERENCES]--> l'oiseau blanc (the white bird)
+INFO:     [32] first example of the type built
+INFO:     [33] François Coli and the L'Oiseau Blanc Flight Attempt --[REFERENCES]--> atlantic ocean
+INFO:     [34] The 1927 Attempt to Win the Orteig Prize --[REFERENCES]--> atlantic ocean
+INFO:     [35] made an attempt to fly the Atlantic Ocean
+INFO:     [36] made an attempt to fly the Atlantic Ocean
+INFO:     [37] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> 1927
+INFO:     [38] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> 8 may 1927
+INFO:     [39] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> charles lindbergh
+INFO:     [40] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> ireland
+INFO:     [41] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> levasseur pl.8
+INFO:     [42] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> new york city
+INFO:     [43] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> paris
+INFO:     [44] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> spirit of st. louis
+INFO:     [45] # L'Oiseau Blanc
+
+L'Oiseau Blanc (commonly known in the Engl (passage 1) --[REFERENCES]--> the white bird
+INFO:     [46] # François Coli
+
+François Coli (June 5, 1881 – presumably on (passage 1) --[REFERENCES]--> france
+INFO:     [47] # François Coli
+
+François Coli (June 5, 1881 – presumably on (passage 1) --[REFERENCES]--> june 5, 1881
+INFO:     [48] # François Coli
+
+François Coli (June 5, 1881 – presumably on (passage 1) --[REFERENCES]--> may 8, 1927
+INFO:     [49] The 1927 Attempt to Win the Orteig Prize --[REFERENCES]--> orteig prize
+INFO:     [50] The Disappearance of L'Oiseau Blanc --[REFERENCES]--> orteig prize
+INFO:     [51] The Levasseur PL.8 Biplane --[REFERENCES]--> orteig prize
+INFO:     [52] claimed the prize
+INFO:     [53] competitors for the prize
+INFO:     [54] competitors for the prize
+INFO:     [55] trying to win the Orteig Prize
+INFO:     [56] trying to win the Orteig Prize
+INFO:     [57] offered the Orteig Prize
+INFO:     [58] competitors for the prize
+INFO:     [59] competitors for the prize
+INFO:     [60] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) --[REFERENCES]--> 1920s
+INFO:     [61] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) --[REFERENCES]--> 1927
+INFO:     [62] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) --[REFERENCES]--> france
+INFO:     [63] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) --[REFERENCES]--> levasseur
+INFO:     [64] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) --[REFERENCES]--> levasseur pl.4
+INFO:     [65] # Levasseur PL.8
+
+The Levasseur PL.8 was a single engine, tw (passage 1) --[REFERENCES]--> levasseur pl.8

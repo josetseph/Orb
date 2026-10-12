@@ -1,0 +1,863 @@
+{
+  "timestamp": "2026-10-11T17:41:25.971943",
+  "dataset": "hotpotqa",
+  "mode": "oracle-gold",
+  "num_tests": 50,
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-8b-q4",
+      "reranker_id": "qwen3-rerank-8b-q4",
+      "embedding_dims": 4096,
+      "chat_path": "gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "embed_path": "gguf/Qwen3-Embedding-8B-Q4_K_M.gguf",
+      "reranker_path": "gguf/Qwen3-Reranker-8B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "EXTRACTION_MODE": "auto",
+      "PROMPT_SUFFIX": "",
+      "EXTRACTION_PROMPT_SUFFIX": "",
+      "JSON_CONSTRAINED_DECODING": true,
+      "EXTRACTION_JSON_CONSTRAINED": true,
+      "LLAMA_FLASH_ATTN": false,
+      "QUERY_ATTRIBUTE_MODE": "single",
+      "ENABLE_THINKING": null,
+      "EXTRACTION_ENABLE_THINKING": null,
+      "EXTRACTION_ATTEMPTS": 1,
+      "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+      "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+      "LLAMA_N_CTX": 32768,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-8b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-8b-q4",
+      "INDEX_RAW_PASSAGES": false,
+      "RAW_PASSAGE_CHARS": 1500,
+      "PASSAGE_KEYWORD_SEARCH": false,
+      "PASSAGE_TITLE_HEADER": false,
+      "CONTEXT_ORDER": "rank",
+      "FIRST_SEARCH_IS_QUESTION": false,
+      "PPR_EXPANSION": false,
+      "PPR_TOP_NOTES": 5,
+      "PPR_DAMPING": 0.5
+    }
+  },
+  "metrics": {
+    "answer_exact_match": 0.54,
+    "answer_f1": 0.7178073434626164,
+    "error_count": 0
+  },
+  "results": [
+    {
+      "test_id": "5ae7a8175542993210983ed8",
+      "question": "Which other Mexican Formula One race car driver has held the podium besides the Force India driver born in 1990?",
+      "expected_answer": "Pedro Rodr\u00edguez",
+      "evidence_notes": [
+        "Sergio P\u00e9rez.md",
+        "Formula One drivers from Mexico.md"
+      ],
+      "actual_answer": "Pedro Rodr\u00edguez",
+      "error": null,
+      "total_time_ms": 12135.570683999958,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ae6050f55429929b0807a5e",
+      "question": "This singer of A Rather Blustery Day also voiced what hedgehog?",
+      "expected_answer": "Sonic",
+      "evidence_notes": [
+        "Jim Cummings.md",
+        "A Rather Blustery Day.md"
+      ],
+      "actual_answer": "Jim Cummings sang \"A Rather Blustery Day\" as \"Pooh\". Document #1 shows Jim Cummings voiced Winnie the Pooh, among other roles like Dr. Robotnik and Tigger.",
+      "error": null,
+      "total_time_ms": 10412.262089000023,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "5adddccd5542997dc7907069",
+      "question": "Aside from the Apple Remote, what other device can control the program Apple Remote was originally designed to interact with?",
+      "expected_answer": "keyboard function keys",
+      "evidence_notes": [
+        "Apple Remote.md",
+        "Front Row _software_.md"
+      ],
+      "actual_answer": "the keyboard function keys",
+      "error": null,
+      "total_time_ms": 8930.349935000095,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.8571428571428571
+    },
+    {
+      "test_id": "5ae2070a5542994d89d5b313",
+      "question": "Which performance act has a higher instrument to person ratio, Badly Drawn Boy or Wolf Alice? ",
+      "expected_answer": "Badly Drawn Boy",
+      "evidence_notes": [
+        "Wolf Alice.md",
+        "Badly Drawn Boy.md"
+      ],
+      "actual_answer": "Wolf Alice is a four-piece band. Badly Drawn Boy is described as a multi-instrumentalist singer-songwriter.",
+      "error": null,
+      "total_time_ms": 7930.862175000129,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.33333333333333337
+    },
+    {
+      "test_id": "5ae22b8d554299234fd0440f",
+      "question": "What was the father of Kasper Schmeichel voted to be by the IFFHS in 1992?",
+      "expected_answer": "World's Best Goalkeeper",
+      "evidence_notes": [
+        "Peter Schmeichel.md",
+        "Kasper Schmeichel.md"
+      ],
+      "actual_answer": "IFFHS World's Best Goalkeeper",
+      "error": null,
+      "total_time_ms": 6205.7791429999725,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.8571428571428571
+    },
+    {
+      "test_id": "5a722b8655429971e9dc9329",
+      "question": "Who was the writer of These Boots Are Made for Walkin' and who died in 2007?",
+      "expected_answer": "Barton Lee Hazlewood",
+      "evidence_notes": [
+        "These Boots Are Made for Walkin_.md",
+        "Lee Hazlewood.md"
+      ],
+      "actual_answer": "Lee Hazlewood",
+      "error": null,
+      "total_time_ms": 6192.475704999879,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": false,
+      "answer_f1": 0.8
+    },
+    {
+      "test_id": "5adf37a95542995ec70e8f97",
+      "question": "The 2011\u201312 VCU Rams men's basketball team, led by third year head coach Shaka Smart, represented Virginia Commonwealth University which was founded in what year?",
+      "expected_answer": "1838",
+      "evidence_notes": [
+        "Virginia Commonwealth University.md",
+        "2011_12 VCU Rams men_s basketball team.md"
+      ],
+      "actual_answer": "1838",
+      "error": null,
+      "total_time_ms": 5688.081297000053,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5abd259d55429924427fcf1a",
+      "question": "Are both Dictyosperma, and Huernia described as a genus?",
+      "expected_answer": "yes",
+      "evidence_notes": [
+        "Dictyosperma.md",
+        "Huernia.md"
+      ],
+      "actual_answer": "YES",
+      "error": null,
+      "total_time_ms": 5564.324268000064,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a828c8355429966c78a6a50",
+      "question": "Kaiser Ventures corporation was founded by an American industrialist who became known as the father of modern American shipbuilding?",
+      "expected_answer": "Henry J. Kaiser",
+      "evidence_notes": [
+        "Kaiser Ventures.md",
+        "Henry J_ Kaiser.md"
+      ],
+      "actual_answer": "Henry J. Kaiser",
+      "error": null,
+      "total_time_ms": 6503.0174650000845,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a8a3e745542996c9b8d5e70",
+      "question": "What is the name for the adventure in \"Tunnels and Trolls\", a game designed by Ken St. Andre?",
+      "expected_answer": "Arena of Khazan",
+      "evidence_notes": [
+        "Tunnels _amp_ Trolls.md",
+        "Arena of Khazan.md"
+      ],
+      "actual_answer": "Arena of Khazan",
+      "error": null,
+      "total_time_ms": 4593.9709320000475,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ac23ff0554299636651994d",
+      "question": "When was Poison's album \"Shut Up, Make Love\" released?",
+      "expected_answer": "2000",
+      "evidence_notes": [
+        "Poison _American band_.md",
+        "Shut Up_ Make Love.md"
+      ],
+      "actual_answer": "\"Shut Up, Make Love\" is a song by American rock band Poison; released in 2000, it was the first single presented to radio stations from their 2000 \"Crack a Smile...and More! \" album. \"Crack a Smile\" is Poison's fifth studio album, released on March 14, 2000.",
+      "error": null,
+      "total_time_ms": 7628.219071999865,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.04347826086956522
+    },
+    {
+      "test_id": "5ae4a3265542995ad6573de5",
+      "question": "Hayden is a singer-songwriter from Canada, but where does Buck-Tick hail from?",
+      "expected_answer": "Fujioka, Gunma",
+      "evidence_notes": [
+        "Hayden _musician_.md",
+        "Buck-Tick.md"
+      ],
+      "actual_answer": "Fujioka, Gunma",
+      "error": null,
+      "total_time_ms": 4401.306022999961,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ae0361155429925eb1afc2c",
+      "question": "Which  French ace pilot and adventurer fly L'Oiseau Blanc",
+      "expected_answer": "Charles Eug\u00e8ne",
+      "evidence_notes": [
+        "Charles Nungesser.md",
+        "L_Oiseau Blanc.md"
+      ],
+      "actual_answer": "Charles Nungesser",
+      "error": null,
+      "total_time_ms": 6459.4928639999125,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.5
+    },
+    {
+      "test_id": "5abc0a5d5542993f40c73c64",
+      "question": "Are Freakonomics and In the Realm of the Hackers both American documentaries?",
+      "expected_answer": "no",
+      "evidence_notes": [
+        "In the Realm of the Hackers.md",
+        "Freakonomics _film_.md"
+      ],
+      "actual_answer": "NO",
+      "error": null,
+      "total_time_ms": 5381.404599000007,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a7cc50e554299452d57ba3e",
+      "question": "Which band, Letters to Cleo or Screaming Trees, had more members?",
+      "expected_answer": "Letters to Cleo",
+      "evidence_notes": [
+        "Letters to Cleo.md",
+        "Screaming Trees.md"
+      ],
+      "actual_answer": "Letters to Cleo",
+      "error": null,
+      "total_time_ms": 7987.804477999816,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5abf63f15542997ec76fd3ea",
+      "question": "Alexander Kerensky was defeated and destroyed by the Bolsheviks in the course of a civil war that ended when ?",
+      "expected_answer": "October 1922",
+      "evidence_notes": [
+        "Socialist Revolutionary Party.md",
+        "Russian Civil War.md"
+      ],
+      "actual_answer": "October 1922",
+      "error": null,
+      "total_time_ms": 5648.397183999805,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a8ef2a75542995a26add583",
+      "question": "Seven Brief Lessons on Physics was written by an Italian physicist that has worked in France since what year?",
+      "expected_answer": "2000",
+      "evidence_notes": [
+        "Carlo Rovelli.md",
+        "Seven Brief Lessons on Physics.md"
+      ],
+      "actual_answer": "since 2000",
+      "error": null,
+      "total_time_ms": 4871.575591999999,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.6666666666666666
+    },
+    {
+      "test_id": "5a80721b554299485f5985ef",
+      "question": "The Livesey Hal War Memorial commemorates the fallen of which war, that had over 60 million casualties?",
+      "expected_answer": "World War II",
+      "evidence_notes": [
+        "Livesey Hall War Memorial.md",
+        "World War II casualties.md"
+      ],
+      "actual_answer": "World War II",
+      "error": null,
+      "total_time_ms": 6104.269654999825,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ab51dae5542991779162d82",
+      "question": "Are both Elko Regional Airport and Gerald R. Ford International Airport located in Michigan?",
+      "expected_answer": "no",
+      "evidence_notes": [
+        "Elko Regional Airport.md",
+        "Gerald R_ Ford International Airport.md"
+      ],
+      "actual_answer": "NO",
+      "error": null,
+      "total_time_ms": 6314.275603000169,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a7571135542992d0ec05f98",
+      "question": "Ralph Hefferline was a psychology professor at a university that is located in what city?",
+      "expected_answer": "New York City",
+      "evidence_notes": [
+        "Ralph Hefferline.md",
+        "Columbia University.md"
+      ],
+      "actual_answer": "New York City",
+      "error": null,
+      "total_time_ms": 4125.546669999949,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a7a0e1e5542990783324e1a",
+      "question": "Which dog's ancestors include Gordon and Irish Setters: the Manchester Terrier or the Scotch Collie?",
+      "expected_answer": "Scotch Collie",
+      "evidence_notes": [
+        "Manchester Terrier.md",
+        "Scotch Collie.md"
+      ],
+      "actual_answer": "Scotch Collie",
+      "error": null,
+      "total_time_ms": 3229.7580779998043,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a74106b55429979e288289e",
+      "question": "Where is the company that Sachin Warrier worked for as a software engineer headquartered? ",
+      "expected_answer": "Mumbai",
+      "evidence_notes": [
+        "Sachin Warrier.md",
+        "Tata Consultancy Services.md"
+      ],
+      "actual_answer": "Mumbai, Maharashtra",
+      "error": null,
+      "total_time_ms": 5360.265910999942,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.6666666666666666
+    },
+    {
+      "test_id": "5a79311755429970f5fffe67",
+      "question": "A Japanese manga series based on a 16 year old high school student Ichitaka Seto, is written and illustrated by someone born in what year?",
+      "expected_answer": "1962",
+      "evidence_notes": [
+        "Masakazu Katsura.md",
+        "I_quot_s.md"
+      ],
+      "actual_answer": "1962",
+      "error": null,
+      "total_time_ms": 5004.256811999994,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ab2d3df554299194fa9352c",
+      "question": "The battle in which Giuseppe Arimondi lost his life secured what for Ethiopia?",
+      "expected_answer": "sovereignty",
+      "evidence_notes": [
+        "Battle of Adwa.md",
+        "Giuseppe Arimondi.md"
+      ],
+      "actual_answer": "Ethiopian sovereignty",
+      "error": null,
+      "total_time_ms": 5776.537407999967,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.6666666666666666
+    },
+    {
+      "test_id": "5a760ab65542994ccc918697",
+      "question": "Alfred Balk served as the secretary of the Committee on the Employment of Minority Groups in the News Media under which United States Vice President?",
+      "expected_answer": "Nelson Rockefeller",
+      "evidence_notes": [
+        "Nelson Rockefeller.md",
+        "Alfred Balk.md"
+      ],
+      "actual_answer": "Nelson Rockefeller",
+      "error": null,
+      "total_time_ms": 8471.520199999986,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a7d54165542995f4f402256",
+      "question": "A medieval fortress in Dirleton, East Lothian, Scotland borders on the south side of what coastal area?",
+      "expected_answer": "Yellowcraig",
+      "evidence_notes": [
+        "Yellowcraigs.md",
+        "Dirleton Castle.md"
+      ],
+      "actual_answer": "Yellowcraigs",
+      "error": null,
+      "total_time_ms": 4421.901095000067,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "5ab859a955429934fafe6d7b",
+      "question": "Who is the writer of this song that was inspired by words on a tombstone and was the first track on the box set Back to Mono?",
+      "expected_answer": "Phil Spector",
+      "evidence_notes": [
+        "Back to Mono _1958_1969_.md",
+        "To Know Him Is to Love Him.md"
+      ],
+      "actual_answer": "Phil Spector",
+      "error": null,
+      "total_time_ms": 8695.74220200002,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5add61d65542995b365fab21",
+      "question": "What type of forum did a former Soviet statesman initiate?",
+      "expected_answer": "Organizations could come together to address global issues",
+      "evidence_notes": [
+        "World Summit of Nobel Peace Laureates.md",
+        "Mikhail Gorbachev.md"
+      ],
+      "actual_answer": "World Summit of Nobel Peace Laureates",
+      "error": null,
+      "total_time_ms": 4864.851101000113,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "5a8e068b5542995085b37384",
+      "question": "Are Ferocactus and Silene both types of plant?",
+      "expected_answer": "yes",
+      "evidence_notes": [
+        "Silene.md",
+        "Ferocactus.md"
+      ],
+      "actual_answer": "YES",
+      "error": null,
+      "total_time_ms": 4394.67328600017,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5abbf698554299114383a0b5",
+      "question": "Which British first-generation jet-powered medium bomber was used in the South West Pacific theatre of World War II?",
+      "expected_answer": "English Electric Canberra",
+      "evidence_notes": [
+        "No_ 2 Squadron RAAF.md",
+        "English Electric Canberra.md"
+      ],
+      "actual_answer": "English Electric Canberra",
+      "error": null,
+      "total_time_ms": 10132.76243900009,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a8e1027554299653c1aa15f",
+      "question": "Which year and which conference was the 14th season for this conference as part of the NCAA Division that the Colorado Buffaloes played in with a record of 2-6 in conference play?",
+      "expected_answer": "2009 Big 12 Conference",
+      "evidence_notes": [
+        "2009 Colorado Buffaloes football team.md",
+        "2009 Big 12 Conference football season.md"
+      ],
+      "actual_answer": "2009 and Big 12",
+      "error": null,
+      "total_time_ms": 8245.921277999969,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": false,
+      "answer_f1": 0.75
+    },
+    {
+      "test_id": "5ab84bf555429916710eb01f",
+      "question": "In 1991 Euromarch\u00e9 was bought by a chain that operated how any hypermarkets at the end of 2016?",
+      "expected_answer": "1,462",
+      "evidence_notes": [
+        "Carrefour.md",
+        "Euromarch\u00e9.md"
+      ],
+      "actual_answer": "hypermarket chain",
+      "error": null,
+      "total_time_ms": 5698.363387999962,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "5a77724455429972597f153e",
+      "question": "What race track in the midwest hosts a 500 mile race eavery May?",
+      "expected_answer": "Indianapolis Motor Speedway",
+      "evidence_notes": [
+        "Indianapolis Motor Speedway.md",
+        "1957 Indianapolis 500.md"
+      ],
+      "actual_answer": "Indianapolis Motor Speedway",
+      "error": null,
+      "total_time_ms": 3270.569372999944,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a87c13f5542996e4f30890c",
+      "question": "In what city did the \"Prince of tenors\" star in a film based on an opera by Giacomo Puccini?",
+      "expected_answer": "Rome",
+      "evidence_notes": [
+        "Franco Corelli.md",
+        "Tosca _1956 film_.md"
+      ],
+      "actual_answer": "Rome",
+      "error": null,
+      "total_time_ms": 7554.582522999908,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ab96ab755429970cfb8eacd",
+      "question": "Ellie Goulding worked with what other writers on her third studio album, Delirium?",
+      "expected_answer": "Max Martin, Savan Kotecha and Ilya Salmanzadeh",
+      "evidence_notes": [
+        "On My Mind _Ellie Goulding song_.md",
+        "Delirium _Ellie Goulding album_.md"
+      ],
+      "actual_answer": "The song \"On My Mind\" from the album Delirium was written by Goulding, Max Martin, Savan Kotecha and Ilya Salmanzadeh.",
+      "error": null,
+      "total_time_ms": 7465.431588999991,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.5185185185185185
+    },
+    {
+      "test_id": "5a8a43eb5542996c9b8d5e82",
+      "question": "Which Australian city founded in 1838 contains a boarding school opened by a Prime Minister of Australia and named after a school in London of the same name.",
+      "expected_answer": "Marion, South Australia",
+      "evidence_notes": [
+        "Marion_ South Australia.md",
+        "Westminster School_ Adelaide.md"
+      ],
+      "actual_answer": "Adelaide",
+      "error": null,
+      "total_time_ms": 8590.20968499999,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "5ae73acb5542991e8301cc07",
+      "question": "D1NZ is a series based on what oversteering technique?",
+      "expected_answer": "Drifting",
+      "evidence_notes": [
+        "Drifting _motorsport_.md",
+        "D1NZ.md"
+      ],
+      "actual_answer": "D1NZ is a production car drifting series in New Zealand. Drifting is a driving technique where the driver intentionally oversteers, with loss of traction... This often involves opposite lock or counter-steering.",
+      "error": null,
+      "total_time_ms": 3427.160323999942,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.0625
+    },
+    {
+      "test_id": "5a7320565542991f9a20c61d",
+      "question": "who is younger Keith Bostic or Jerry Glanville ?",
+      "expected_answer": "Keith Bostic",
+      "evidence_notes": [
+        "Jerry Glanville.md",
+        "Keith Bostic _American football_.md"
+      ],
+      "actual_answer": "Keith Bostic",
+      "error": null,
+      "total_time_ms": 5861.787598999854,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5ae32e125542991a06ce9946",
+      "question": "According to the 2001 census, what was the population of the city in which Kirton End is located?",
+      "expected_answer": "35,124",
+      "evidence_notes": [
+        "Boston_ Lincolnshire.md",
+        "Kirton End.md"
+      ],
+      "actual_answer": "35,124",
+      "error": null,
+      "total_time_ms": 5593.491939999922,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5adc53f75542996e6852530a",
+      "question": "Are both Cypress and Ajuga genera?",
+      "expected_answer": "no",
+      "evidence_notes": [
+        "Ajuga.md",
+        "Cypress.md"
+      ],
+      "actual_answer": "Ajuga is explicitly identified as a genus in the document: \"Ajuga... is a genus of 40 species\". The document about Cypress classifies it by family (\"belongs to the family Cupressaceae\"), but does not explicitly state that 'Cypress' refers to a genus.",
+      "error": null,
+      "total_time_ms": 6581.27189899983,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "5a8b20335542996c9b8d5fb3",
+      "question": "What distinction is held by the former NBA player who was a member of the Charlotte Hornets during their 1992-93 season and was head coach for the WNBA team Charlotte Sting?",
+      "expected_answer": "shortest player ever to play in the National Basketball Association",
+      "evidence_notes": [
+        "1992_93 Charlotte Hornets season.md",
+        "Muggsy Bogues.md"
+      ],
+      "actual_answer": "Muggsy Bogues played for the Charlotte Hornets and served as head coach of the Charlotte Sting. Document #1 confirms that Muggsy Bogues was on the team during or around the time frame (he was a prominent player).",
+      "error": null,
+      "total_time_ms": 8662.864134000074,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0851063829787234
+    },
+    {
+      "test_id": "5a85fb085542994775f606de",
+      "question": "What is the name of the executive producer of the film that has a score composed by Jerry Goldsmith?",
+      "expected_answer": "Ronald Shusett",
+      "evidence_notes": [
+        "Alien _soundtrack_.md",
+        "Alien _film_.md"
+      ],
+      "actual_answer": "Ronald Shusett",
+      "error": null,
+      "total_time_ms": 4187.1526179998,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a7be2595542997c3ec972ac",
+      "question": "Who was born earlier, Emma Bull or Virginia Woolf?",
+      "expected_answer": "Adeline Virginia Woolf",
+      "evidence_notes": [
+        "Emma Bull.md",
+        "Virginia Woolf.md"
+      ],
+      "actual_answer": "Virginia Woolf",
+      "error": null,
+      "total_time_ms": 5202.114229000017,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": false,
+      "answer_f1": 0.8
+    },
+    {
+      "test_id": "5a77152355429966f1a36c2e",
+      "question": "What was the Roud Folk Song Index of the nursery rhyme inspiring What Are Little Girls Made Of?",
+      "expected_answer": "821",
+      "evidence_notes": [
+        "What Are Little Boys Made Of_.md",
+        "What Are Little Girls Made Of_.md"
+      ],
+      "actual_answer": "821",
+      "error": null,
+      "total_time_ms": 6046.867012000121,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a8f4c8d554299458435d5a3",
+      "question": "Scott Parkin has been a vocal critic of Exxonmobil and another corporation that has operations in how many countries ?",
+      "expected_answer": "more than 70 countries",
+      "evidence_notes": [
+        "Scott Parkin.md",
+        "Halliburton.md"
+      ],
+      "actual_answer": "Scott Parkin has been a vocal critic of Exxonmobil and Halliburton. The Halliburton Company has operations in more than 70 countries.",
+      "error": null,
+      "total_time_ms": 8592.170729999907,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.32
+    },
+    {
+      "test_id": "5a80840f554299485f59863b",
+      "question": "What WB supernatrual drama series was Jawbreaker star Rose Mcgowan best known for being in?",
+      "expected_answer": "Charmed",
+      "evidence_notes": [
+        "Rose McGowan.md",
+        "Jawbreaker _film_.md"
+      ],
+      "actual_answer": "\"Charmed\"",
+      "error": null,
+      "total_time_ms": 4240.084818000014,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5a8361b65542992ef85e22a0",
+      "question": "Vince Phillips held a junior welterweight title by an organization recognized by what larger Hall of Fame?",
+      "expected_answer": "International Boxing Hall of Fame",
+      "evidence_notes": [
+        "Vince Phillips.md",
+        "International Boxing Federation.md"
+      ],
+      "actual_answer": "International Boxing Hall of Fame (IBHOF)",
+      "error": null,
+      "total_time_ms": 4590.950286999941,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.9090909090909091
+    },
+    {
+      "test_id": "5ae7ba7a5542993210983f12",
+      "question": "What is the name of the singer who's song was released as the lead single from the album \"Confessions\", and that had popular song stuck behind for eight consecutive weeks?",
+      "expected_answer": "Usher",
+      "evidence_notes": [
+        "I Don_t Wanna Know.md",
+        "Yeah_ _Usher song_.md"
+      ],
+      "actual_answer": "\"Yeah!\" by Usher was released as the lead single from Usher's fourth studio album \"Confessions\" (2004). Document #1 mentions that \"I Don't Wanna Know\" stuck for eight consecutive weeks behind the Usher singles \"Yeah\" and \"Burn\".",
+      "error": null,
+      "total_time_ms": 10631.661398000006,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.05405405405405406
+    },
+    {
+      "test_id": "5ac2acff55429921a00ab02b",
+      "question": "who is the younger brother of The episode guest stars of The Hard Easy ",
+      "expected_answer": "Bill Murray",
+      "evidence_notes": [
+        "Brian Doyle-Murray.md",
+        "The Hard Easy _Adventure Time_.md"
+      ],
+      "actual_answer": "Bill Murray",
+      "error": null,
+      "total_time_ms": 9583.692076000034,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "5aba7cfe554299232ef4a2fd",
+      "question": "The 2017\u201318 Wigan Athletic F.C. season will be a year in which the team competes in the league cup known as what for sponsorship reasons?",
+      "expected_answer": "Carabao Cup",
+      "evidence_notes": [
+        "2017_18 Wigan Athletic F_C_ season.md",
+        "EFL Cup.md"
+      ],
+      "actual_answer": "Carabao Cup",
+      "error": null,
+      "total_time_ms": 6056.605798999954,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    }
+  ]
+}

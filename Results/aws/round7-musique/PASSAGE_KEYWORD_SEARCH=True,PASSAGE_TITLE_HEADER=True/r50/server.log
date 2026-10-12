@@ -1,0 +1,3071 @@
+[run] DATA_DIR=/workspace/orb/data
+Qdrant not reachable yet (retrying on use): [Errno 111] Connection refused
+/workspace/orb/backend/.venv/lib/python3.12/site-packages/qdrant_client/qdrant_remote.py:288: UserWarning: Failed to obtain server version. Unable to check client-server compatibility. Set check_compatibility=False to skip version check.
+  show_warning(
+Meilisearch not reachable yet (retrying on use): MeilisearchCommunicationError, HTTPConnectionPool(host='127.0.0.1', port=7700): Max retries exceeded with url: /health (Caused by NewConnectionError("HTTPConnection(host='127.0.0.1', port=7700): Failed to establish a new connection: [Errno 111] Connection refused"))
+[run] Starting Qdrant
+[run] Starting Meilisearch
+[run] Starting API on http://127.0.0.1:8000
+INFO: Logging initialized at level INFO | Logs dir: /workspace/orb/data/logs
+INFO: Started server process [803516]
+INFO: Waiting for application startup.
+INFO: Application startup: Orb API online
+INFO: Database schema ensured (create_all)
+INFO: Application startup complete.
+INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: Store migration v1 for KB 'default': 0 descriptions scrubbed, 0 note names filled
+INFO: 127.0.0.1:56290 - "GET /health HTTP/1.1" 200
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8102
+WARNING: Keychain unavailable, credentials are session-only: No recommended backend was available. Install a recommended 3rd party backend package; or, install the keyrings.alt package if you want to use the non-recommended backends. See https://pypi.org/project/keyring for details.
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:56292 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: Primary LLM Provider: LOCAL
+INFO: Initializing in-process llama-cpp-python (backend=cuda, model=local-chat)
+INFO: Ingestion LLM: shared with main (LOCAL)
+INFO: 127.0.0.1:56300 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:36222 - "GET /api/v1/models HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:36230 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:36244 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:36246 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:36252 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [KBRegistry] LLM override for 'default' → provider=openai_compat model=gemma4-e4b-q4 ingestion=gemma4-12b-q4
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8101
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:55016 - "PATCH /api/v1/kb/default/llm HTTP/1.1" 200
+INFO: 127.0.0.1:55024 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: 127.0.0.1:55026 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:55028 - "GET /api/v1/notes HTTP/1.1" 200
+INFO: RetrievalService initialized
+INFO: 
+[Chat] Started processing query: 'Who plays the wife of the producer of Here Comes the Boom in Grown Ups?'
+INFO: [Chat ff72637a] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who plays the wife of the producer of Here Comes the Boom in Grown Ups?'
+======================================================================
+INFO: [Chat ff72637a] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'What was the person who provided evidence to suggest the existence of the neutron a participant of?'
+INFO: [Chat 2c4f8269] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='What was the person who provided evidence to suggest the existence of the neutron a participant of?'
+======================================================================
+INFO: [Chat 2c4f8269] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'In which borough was Callum McManaman born?'
+INFO: [Chat eb2befc6] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='In which borough was Callum McManaman born?'
+======================================================================
+INFO: [Chat eb2befc6] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent Francisco Bojado's birthplace is located?'
+INFO: [Chat 9ae43383] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent Francisco Bojado's birthplace is located?'
+======================================================================
+INFO: [Chat 9ae43383] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who is the child of the cast member of Green Ice?'
+INFO: [Chat dcec2668] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who is the child of the cast member of Green Ice?'
+======================================================================
+INFO: [Chat dcec2668] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'How many times did plague occur in the birthplace of La Silvia's composer?'
+INFO: [Chat c7ce260e] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='How many times did plague occur in the birthplace of La Silvia's composer?'
+======================================================================
+INFO: [Chat c7ce260e] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'When was the last time Peter Till's sports team beat the winner of the 1894-95 FA Cup?'
+INFO: [Chat d41f737a] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='When was the last time Peter Till's sports team beat the winner of the 1894-95 FA Cup?'
+======================================================================
+INFO: [Chat d41f737a] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who is the spouse of the actor who played hannibal smith in the a team?'
+INFO: [Chat 392b3632] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who is the spouse of the actor who played hannibal smith in the a team?'
+======================================================================
+INFO: [Chat 392b3632] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='participant'
+INFO: [Chat 2c4f8269] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 2c4f8269] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='child'
+INFO: [Chat dcec2668] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat dcec2668] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='location'
+INFO: [Chat eb2befc6] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat eb2befc6] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='plague_occurrence'
+INFO: [Chat c7ce260e] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat c7ce260e] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='spouse'
+INFO: [Chat 392b3632] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 392b3632] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='actor'
+INFO: [Chat ff72637a] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat ff72637a] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='birthplace'
+INFO: [Chat 9ae43383] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 9ae43383] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='last_match_date'
+INFO: [Chat d41f737a] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat d41f737a] Reasoning over retrieved context (1/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user wants to find the birthplace borough of a specific individual, Callum McManaman. I need to perform a direct search to locate biographical information for him.", "finding": null, "answer": null, "next_query": "Callum McManaman birth location"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Callum McManaman birth location'
+INFO: [Chat eb2befc6] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='Callum McManaman birth location'
+INFO: [Chat eb2befc6] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Callum McManaman birth location' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking for a multi-hop answer. \nHop 1: Identify the actor who played 'Hannibal Smith' in 'A Team'.\nHop 2: Find the spouse of that identified actor.\nI need to start by finding the actor.", "finding": null, "answer": null, "next_query": "actor who played Hannibal Smith in A Team"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='actor who played Hannibal Smith in A Team'
+INFO: [Chat 392b3632] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='actor who played Hannibal Smith in A Team'
+INFO: [Chat 392b3632] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='actor who played Hannibal Smith in A Team' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question is multi-hop and requires identifying a person based on two pieces of information: (1) providing evidence for the neutron's existence, and (2) being a participant in an event or context that needs to be identified first. Since no preceding context is provided, I must start by searching for key figures associated with the discovery or early experimental evidence of the neutron.", "finding": null, "answer": null, "next_query": "who provided evidence for the existence of the neutron"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='who provided evidence for the existence of the neutron'
+INFO: [Chat 2c4f8269] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='who provided evidence for the existence of the neutron'
+INFO: [Chat 2c4f8269] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='who provided evidence for the existence of the neutron' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking a multi-hop question that requires several pieces of information:\n1. Identify the composer whose music La Silvia's creator composed (This assumes 'La Silvia' refers to something associated with an individual, and we need their composer).\n2. Determine the birthplace of that specific composer.\n3. Find out how many times plague occurred in that geographical location.",
+"finding": null,
+"answer": null,
+"next_query": "Who is La Silvia?"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Who is La Silvia?'
+INFO: [Chat c7ce260e] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='Who is La Silvia?'
+INFO: [Chat c7ce260e] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Who is La Silvia?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Callum McManaman'], Expected Types: ['person'], Attribute: birth location
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 39 (threshold=0.45)
+INFO:   [Qdrant] 20 unique nodes after dedup (from 39 raw hits)
+INFO:   [Meili] 10 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.90s
+INFO:   [Entity] Found 1 nodes by name: ['Career Profile of Callum McManaman']
+INFO:   [Keyword] Added 10 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 20 hits
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking a multi-hop question: 'Who is the child of the cast member of Green Ice?'. To answer this, I need to perform several steps:\n1. Identify what 'Green Ice' refers to (a TV show, movie, or other media). \n2. List the cast members of that production.\n3. For each cast member, find information about their children.\n4. Select the name of one such child as the final answer.\nSince I do not know what 'Green Ice' is, the first step must be to identify this entity.", "finding": null, "answer": null, "next_query": "What is Green Ice (TV show or movie)?"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='What is Green Ice (TV show or movie)?'
+INFO: [Chat dcec2668] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='What is Green Ice (TV show or movie)?'
+INFO: [Chat dcec2668] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='What is Green Ice (TV show or movie)?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: [], Expected Types: ['person'], Attribute: provider
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] No hits above similarity threshold.
+INFO:   [LLM Analysis] Intent: search, Entities: ['Hannibal Smith', 'A Team'], Expected Types: ['person', 'film'], Attribute: actor
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 10 (threshold=0.45)
+INFO:   [Qdrant] 5 unique nodes after dedup (from 10 raw hits)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.12s
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Qdrant returned no hits
+INFO:   [Retrieval] Found 56 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 5.69s (100 entity + 0 vector nodes)
+INFO:   [Meili] 100 raw Meili hits
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking for an actor's name who plays a specific character in the movie 'Grown Ups'. The character is defined as 'the wife of the producer of Here Comes the Boom'. This requires multiple steps: 1) Identify the producer(s) of 'Here Comes the Boom'. 2) Determine if any of these producers have a known spouse. 3) Check if that spouse (or a related individual, though likely the actual spouse is intended) appears in 'Grown Ups' and who plays them. The initial step must focus on identifying the producer(s) mentioned.", "finding": null, "answer": null, "next_query": "who produced the movie Here Comes the Boom"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='who produced the movie Here Comes the Boom'
+INFO: [Chat ff72637a] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='who produced the movie Here Comes the Boom'
+INFO: [Chat ff72637a] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='who produced the movie Here Comes the Boom' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['La Silvia'], Expected Types: ['person'], Attribute: identity
+INFO: Loading embed GGUF in-process (exclusive, n_ctx=8192): /workspace/orb/models/gguf/Qwen3-Embedding-8B-Q4_K_M.gguf
+INFO: [ModelLoad] embed loaded in 11.7s
+INFO:   [⏱️ Timing] Total query embedding: 11.84s
+INFO:   [LLM Analysis] Intent: search, Entities: ['Green Ice'], Expected Types: ['film', 'tv show'], Attribute: details
+INFO:   [⏱️ Timing] Total query embedding: 0.02s
+INFO:   [Vector] Found 12 name variants from vector results: [("women's premier league north", 'premier league'), ("women's premier league national", 'premier league'), ('Overview of Whiston, Merseyside', 'whiston'), ('whiston north ward', 'whiston'), ('whiston south ward', 'whiston'), ('whiston and cronton ward', 'whiston'), ('whiston & prescot city learning centre (clc)', 'whiston'), ('History and Format of the Singapore FA Cup', 'fa cup'), ('singapore pools fa cup', 'fa cup'), ('1894–95 FA Cup Season and Final', 'fa cup'), ('1894–95 fa cup', 'fa cup'), ('1913–14 fa cup', 'fa cup')]
+INFO:   [Vector] Found 24 semantically similar nodes: ['sunderland', 'england under-20s', 'blackpool', 'luton town', 'premier league', 'melbourne victory', 'west bromwich albion', 'sheffield wednesday', 'tranmere rovers', 'whiston', 'fa cup', 'league cup', "women's premier league north", "women's premier league national", 'Overview of Whiston, Merseyside', 'whiston north ward', 'whiston south ward', 'whiston and cronton ward', 'whiston & prescot city learning centre (clc)', 'History and Format of the Singapore FA Cup', 'singapore pools fa cup', '1894–95 FA Cup Season and Final', '1894–95 fa cup', '1913–14 fa cup']
+INFO:   [Retrieval] Found 7 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 19.18s (11 entity + 24 vector nodes)
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 33 (threshold=0.45)
+INFO:   [Qdrant] 19 unique nodes after dedup (from 33 raw hits)
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 30 (threshold=0.45)
+INFO:   [Qdrant] 16 unique nodes after dedup (from 30 raw hits)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user wants to find the birthplace of Francisco Bojado's child. This requires several steps:\n1. Identify the Italian navigator who sailed for England and explored the eastern coast of a continent (implied: North America/Eastern Coast).\n2. Find the child of this navigator.\n3. Determine the birthplace of that child.\n4. Finally, check if Francisco Bojado is related to the person identified in step 2 or 3, or if there's an intended link between 'Francisco Bojado' and the previous chain of events.\n\nLooking closely at the question structure: \"Who is the child of [Navigator X]? Francisco Bojado's birthplace is located?\"\nThis phrasing suggests two potentially distinct queries merged confusingly. It most likely means: Find the child of Navigator X, AND find where Francisco Bojado was born. The final output asks for a single answer derived from this chain.\n\nLet's re-read carefully: \"Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent [X]? Francisco Bojado's birthplace is located?\"\nThis structure is ambiguous. It might mean:\nA) Find Child (C). Then, find where Francisco Bojado was born. The ultimate answer required is C's birthplace.\nB) Find Navigator X. Find Child C of Navigator X. Find the location of *Francisco Bojado's* birthplace. Is there a connection? (This seems unlikely for a single final answer).\nC) Perhaps 'Francisco Bojado' refers to the child found in Step 1/2, or the entire phrase implies that the resulting location must be connected to Francisco Bojado.\n\nGiven the complexity, I must break it down into traceable steps. The first necessary piece of information is identifying the navigator.", "finding": null, "answer": null, "next_query": "Italian navigator who sailed for England and explored the eastern coast of the continent"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Italian navigator who sailed for England and explored the eastern coast of the continent'
+INFO: [Chat 9ae43383] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='Italian navigator who sailed for England and explored the eastern coast of the continent'
+INFO: [Chat 9ae43383] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Italian navigator who sailed for England and explored the eastern coast of the continent' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Here Comes the Boom'], Expected Types: ['film'], Attribute: producer
+INFO:   [⏱️ Timing] Total query embedding: 0.01s
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "This is a multi-hop question requiring several pieces of information. \nHop 1: Identify Peter Till's sports team and determine the date/timeframe when they played or were active.\nHop 2: Identify the winner of the 1894-95 FA Cup.\nHop 3: Determine the date/outcome of a match between Peter Till's team and the 1894-95 FA Cup winner. \nSince I don't know who "," or what sport Peter Till is involved in, the first logical step must be to identify his sports team.\n\n*Self-Correction/Refinement:* The question implies a specific event ('When was the last time...'). This suggests historical records are necessary. Starting with 'Peter Till's sports team' seems the most constrained starting point based on the name provided in the prompt, assuming he is a known figure in sports history relevant to this context (though his identity is unknown).\n\nThe primary blocker is the ambiguity of 'Peter Till' and his associated team/sport. Therefore, I must start by researching him to define the scope of the inquiry for Hops 2 and 3.\n\n*Revisiting Hop 1:* If Peter Till isn't famous enough for a general knowledge search, finding his team will require a targeted query about him in a sporting context. However, since the second part is highly specific (FA Cup winner 1894-95), I can try to find that first, as it provides a concrete entity.\n\n*Strategy Revision:* It's safer and more efficient to anchor on the known historical event first (the FA Cup winner) before trying to tie in an unknown individual ('Peter Till'). If the search reveals context about Peter Till linked to this period or sport, the chain can proceed. If not, I will then query for his team.\n\nLet's start by finding the winner of the 1894-95 FA Cup as a concrete anchor point for Hop 2 and subsequent steps.\n\n*Final Plan:* Find the winner of the 1894-95 FA Cup. This provides Entity B. Then, find Peter Till's team (Entity A) and check historical match records between A and B for recent victories by A over B, if possible within a reasonable timeframe implied by 'last time'.\n\nThe most immediate next query is to identify the specific entity from Hop 2.\n\n*Conclusion:* Start with identifying the FA Cup winner."
+    :"finding",
+    "answer": null,
+    "next_query": "winner of the 1894-95 FA Cup"
+}
+WARNING: [LLM] iterative_step: unusable reply: research step: finding: Field required (1 problem(s))
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query=None
+WARNING:   [IterLoop] No NEXT_QUERY at iteration 1, stopping
+INFO: [Chat d41f737a] Synthesizing final answer (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] EXHAUSTED in 32.56s
+  docs_accumulated=0
+  best_finding=None
+======================================================================
+INFO: [Chat d41f737a] Selecting best evidence
+INFO: [Chat] Unique docs: 0
+INFO: [Chat] Iterative loop exhausted — no answer produced.
+INFO: [Chat] Found 0 references for response
+INFO: [Chat d41f737a] Formatting answer
+INFO: [Chat] Total pipeline duration: 32.56s
+
+INFO: [Timing] chat total=32.6s model_load=11.7s inference=20.9s loads=embed×1 docs=0
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 12 (threshold=0.45)
+INFO:   [Qdrant] 6 unique nodes after dedup (from 12 raw hits)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 17.71s
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 5 hits
+INFO: 127.0.0.1:55094 - "POST /api/v1/chat HTTP/1.1" 200
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [Retrieval] Prepared 70 candidates (100 entity + 0 vector)
+INFO:   [Meili] 32 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.23s
+INFO:   [Entity] Found 2 nodes by name: ['la silvia (rv 734)', "Analysis of Vivaldi's La Silvia"]
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 19 hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.21s
+INFO:   [Entity] Found 4 nodes by name: ['green ice', 'green ice (soundtrack)', 'Green Ice Soundtrack Production Details', 'colombia (green ice opening title)']
+INFO:   [Keyword] Added 32 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 16 hits
+INFO:   [Retrieval] Prepared 27 candidates (11 entity + 24 vector)
+INFO: Loading reranker GGUF (exclusive): /workspace/orb/models/gguf/Qwen3-Reranker-8B.Q4_K_M.gguf
+INFO: [ModelLoad] rerank loaded in 37.3s
+INFO:   [Vector] Found 23 semantically similar nodes: ['university of the philippines (up)', 'daraga, albay', 'philippine board on books for young people (pbby)', 'samahang kartunista ng pilipinas (skp)', 'society of philippine illustrators and cartoonists (spic)', 'manila times', 'ramón roces', 'islaw palitaw', 'kalabog en bosyo', 'national artist for visual arts', 'australian cultural award', 'slice of life', 'riverside medical centre, bacolod city', 'grand collar of the order of national artists', 'ernesto alcala', 'caltex', 'art directors club of the philippines', 'rolling hills memorial chapel', 'visual communication department', 'elpidia zarate', 'darigold milk', 'ang ilustrador ng kabataan (ang ink)', 'panchito alba']
+INFO:   [Retrieval] Found 67 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 21.46s (102 entity + 23 vector nodes)
+INFO:   [Retrieval] Prepared 83 candidates (102 entity + 23 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 70 candidates (top score: 0.9636)
+INFO:   [Reranker] Ranked 70 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=0, vector=0, neighbor=0, community=0
+INFO:     1. [passage] # James Chadwick (Passage 0) (passage 1) (rerank=0.9636)
+INFO:     2. [passage] # James Chadwick (Passage 0) (passage 16) (rerank=0.8898)
+INFO:     3. [passage] # Discovery of the neutron (Passage 2) (passage 11) (rerank=0.8292)
+INFO:     4. [passage] # Discovery of the neutron (Passage 2) (passage 2) (rerank=0.7536)
+INFO:     5. [passage] # Discovery of the neutron (Passage 2) (passage 16) (rerank=0.6268)
+INFO:     6. [passage] # Discovery of the neutron (Passage 2) (passage 15) (rerank=0.6092)
+INFO:     7. [passage] # James Chadwick (Passage 0) (passage 3) (rerank=0.5810)
+INFO:     8. [passage] # Discovery of the neutron (Passage 2) (passage 14) (rerank=0.4650)
+INFO:     9. [passage] # Discovery of the neutron (Passage 2) (passage 10) (rerank=0.4283)
+INFO:     10. [passage] # Discovery of the neutron (Passage 2) (passage 17) (rerank=0.3256)
+INFO:   [⏱️ Timing] Total: 105.00s (Embed: 0.00s | Retrieval: 5.69s | Rerank: 84.14s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 2c4f8269] Expanding graph neighbors
+INFO:   [GraphExpand] No new 1-hop neighbors to evaluate.
+INFO:   [IterLoop] Graph expansion: 0 neighbors
+INFO: [Chat 2c4f8269] Reasoning over retrieved context (2/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question asks: 'What was the person who provided evidence to suggest the existence of the neutron a participant of?' This is a multi-hop question. \nStep 1: Identify who suggested or provided evidence for the existence of the neutron (the main discovery). The current search ('who provided evidence for the existence of the neutron') and retrieved documents point strongly to James Chadwick.\nStep 2: Once Chadwick is identified, I must look back at the context surrounding his work to see if any *other* person was a 'participant' in that specific evidence provision/suggestion. \n\nPassage 0 indicates Chadwick performed experiments showing the gamma ray hypothesis was untenable and found uncharged particles with the mass of a proton—these were neutrons.\nPassage 2 states: \"In Rome, the young physicist Ettore Majorana declared that the manner in which the new radiation interacted with protons required a new neutral particle.\"\nPassage 3 mentions Chadwick's work with Norman Feather and notes Chadwick developed methods for detecting ejected protons.\n\nThe question asks who provided evidence to *suggest* its existence AND was a *participant*. Ettore Majorana suggested it based on interaction data. Chadwick experimentally confirmed/provided the definitive evidence. Since the current search focused broadly ('who provided evidence'), I need to refine this by looking at specific participants mentioned during or immediately before the suggestion of the neutron's existence, as opposed to just naming Chadwick himself (which is too broad).\n\nLet's re-evaluate based on 'suggested its existence'. Majorana suggested it. The question asks who provided evidence *to suggest* it, and was a participant in that suggestion/evidence.\n\nThe initial search targeted the primary discoverer, but the phrasing implies an intermediary or co-contributor to the *suggestion* phase.", "finding": "Ettore Majorana declared that the manner in which the new radiation interacted with protons required a new neutral particle. Chadwick performed experiments confirming this by measuring scattered protons and finding uncharged particles (neutrons). Norman Feather was mentioned as Chadwick's colleague who worked with neutrons.\n\nThe most direct answer to 'who provided evidence *to suggest* the existence' is Ettore Majorana.", "answer": "Ettore Majorana", "next_query": null}
+INFO:   [IterLoop] iterative_step result: can_answer=True final_answer='Ettore Majorana' next_query=None
+INFO: 
+======================================================================
+[IterLoop] COMPLETE in 122.61s
+  iterations=2
+  answer='Ettore Majorana'
+  docs_accumulated=10
+  thinking=no
+======================================================================
+INFO: [Chat 2c4f8269] Selecting best evidence
+INFO: [Chat] Unique docs: 10
+INFO: [Chat] Using pipeline answer directly (structured synthesis): 'Ettore Majorana'
+INFO: [Chat] Found 2 references for response
+INFO: [Chat 2c4f8269] Formatting answer
+INFO: [Chat] Total pipeline duration: 122.62s
+
+INFO: [Timing] chat total=122.6s model_load=49.0s inference=73.6s loads=embed×1,rerank×1 docs=10
+INFO: 127.0.0.1:55050 - "POST /api/v1/chat HTTP/1.1" 200
+INFO: 
+[Chat] Started processing query: 'What is the experimental satellite being forerunner to communication satellite of INSAT-4CR's manufacturer called?'
+INFO: [Chat fcc5fef7] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='What is the experimental satellite being forerunner to communication satellite of INSAT-4CR's manufacturer called?'
+======================================================================
+INFO: [Chat fcc5fef7] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='predecessor'
+INFO: [Chat fcc5fef7] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat fcc5fef7] Reasoning over retrieved context (1/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking a multi-hop question that requires connecting several pieces of information: the satellite 'INSAT-4CR', its manufacturer, and then finding out what experimental satellite preceded the communication satellite built by that same manufacturer.\n\nStep 1: Identify the manufacturer of INSAT-4CR.\nStep 2: Determine which specific satellite was developed by this manufacturer immediately before the communication satellites (or perhaps a predecessor project related to them).\nStep 3: Synthesize the answer based on the findings.", "finding": null, "answer": null, "next_query": "What is the manufacturer of INSAT-4CR?"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='What is the manufacturer of INSAT-4CR?'
+INFO: [Chat fcc5fef7] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='What is the manufacturer of INSAT-4CR?'
+INFO: [Chat fcc5fef7] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='What is the manufacturer of INSAT-4CR?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['INSAT-4CR'], Expected Types: ['satellite'], Attribute: manufacturer
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 117 (threshold=0.45)
+INFO:   [Qdrant] 53 unique nodes after dedup (from 117 raw hits)
+INFO:   [Meili] 32 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.49s
+INFO:   [Entity] Found 2 nodes by name: ['INSAT-4CR Satellite Operations and Lifecycle', 'insat-4cr']
+INFO:   [Keyword] Added 32 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 53 hits
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 67 candidates (top score: 0.9932)
+INFO:   [Reranker] Ranked 67 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=2, vector=7, neighbor=0, community=0
+INFO:     1. [entity_match] green ice (rerank=0.9932)
+INFO:     2. [entity_match] green ice (soundtrack) (rerank=0.9630)
+INFO:     3. [passage] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) (rerank=0.9335)
+INFO:     4. [vector_match] ryan o'neal (rerank=0.7863)
+INFO:     5. [vector_match] emerald vault (rerank=0.4098)
+INFO:     6. [vector_match] floating (cloudhopper theme) (rerank=0.4037)
+INFO:     7. [vector_match] sol y sombra (rerank=0.3978)
+INFO:     8. [vector_match] noche de amore (rerank=0.3585)
+INFO:     9. [vector_match] tenderness (rerank=0.3227)
+INFO:     10. [vector_match] bill wyman (rerank=0.2882)
+INFO:   [⏱️ Timing] Total: 136.93s (Embed: 0.02s | Retrieval: 20.79s | Rerank: 97.89s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat dcec2668] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 39 1-hop relationship(s):
+INFO:     [0] Green Ice Soundtrack Production Details --[REFERENCES]--> green ice
+INFO:     [1] Green Ice Soundtrack Production Details --[REFERENCES]--> green ice (soundtrack)
+INFO:     [2] played drums and percussion
+INFO:     [3] provided background vocals
+INFO:     [4] served as orchestral conductor and arranger
+INFO:     [5] provided background vocals
+INFO:     [6] provided Latin percussion
+INFO:     [7] provided background vocals
+INFO:     [8] contributed guitars, kyoto, synthesizers, and percussion
+INFO:     [9] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> colombia (green ice opening title)
+INFO:     [10] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> dave lawson
+INFO:     [11] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> dave mattacks
+INFO:     [12] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> dave richmond
+INFO:     [13] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> doreen chanter
+INFO:     [14] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> ken thorne
+INFO:     [15] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> kenny baker
+INFO:     [16] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> maria muldaur
+INFO:     [17] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> ray cooper
+INFO:     [18] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> stuart epps
+INFO:     [19] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> terry taylor
+INFO:     [20] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> tristan fry
+INFO:     [21] Green Ice Soundtrack Production Details --[REFERENCES]--> ryan o'neal
+INFO:     [22] Production and Reception of the Film Nickelodeon --[REFERENCES]--> ryan o'neal
+INFO:     [23] acted in this film with Bogdanovich
+INFO:     [24] acted in this film with Bogdanovich
+INFO:     [25] played the character of Leo Harrigan
+INFO:     [26] starred in the film
+INFO:     [27] Green Ice Soundtrack Production Details --[REFERENCES]--> emerald vault
+INFO:     [28] performed vocoder and synthesizer on the track
+INFO:     [29] Green Ice Soundtrack Production Details --[REFERENCES]--> floating (cloudhopper theme)
+INFO:     [30] performed vocoder and synthesizer on the track
+INFO:     [31] performed bass on the track
+INFO:     [32] Green Ice Soundtrack Production Details --[REFERENCES]--> sol y sombra
+INFO:     [33] performed trumpet on the track
+INFO:     [34] Green Ice Soundtrack Production Details --[REFERENCES]--> noche de amore
+INFO:     [35] played marimba on the track
+INFO:     [36] Green Ice Soundtrack Production Details --[REFERENCES]--> tenderness
+INFO:     [37] performed bass on the track
+INFO:     [38] Green Ice Soundtrack Production Details --[REFERENCES]--> bill wyman
+INFO:   [Vector] Found 5 name variants from vector results: [('NOAA-4 Weather Satellite Launch and Operation', 'noaa-4'), ('SICRAL 1B Satellite Specifications and Launch', 'sicral 1b'), ('FedSat Satellite Mission and Technical Specifications', 'fedsat'), ('TDRS-6 Satellite History and Operations', 'tdrs-6'), ('Lockheed Martin A2100 Satellite Spacecraft Overview', 'lockheed martin a2100')]
+INFO:   [Vector] Found 57 semantically similar nodes: ['indian national satellite system', 'isro', 'geosynchronous satellite launch vehicle (gslv)', '24 november 2020', '10 february 2017', 'i-2k satellite bus', 'graveyard orbit', 'geostationary orbit', 'insat-4c', 'gslv-f04', 'september 2007', 'airtel digital tv', 'sun direct dth', 'gsat-31', 'indian space research organisation (isro)', 'intasat', 'nasa', 'itos-g', 'insat ib', 'itos', 'cooperative research centre for satellite systems', 'noaa-4', 'hellas sat 4/saudigeosat-1', 'delta rocket', 'italsat 3000 bus', 'indian news agencies', 'national oceanic and atmospheric administration (noaa)', 'lockheed martin space systems', 'italian armed forces', 'telesat', 'sicral 1b', 'a2100a', 'a2100ax', 'a2100axs', 'nasda h-iia launch vehicle', 'satellite platform', 'inertial upper stage', 'satellite instructional television experiment', 'fedsat', 'amc-1', 'tdrs-6', 'arabsat-6a', 'astro space team', 'fairchild space and electronics division', 'tdrs-f', 'lockheed martin a2100', 'communications payload', 'thales alenia space', 'vinasat-2', 'jcsat-13', 'zenit-3sl', 'aussat pty limited', 'NOAA-4 Weather Satellite Launch and Operation', 'SICRAL 1B Satellite Specifications and Launch', 'FedSat Satellite Mission and Technical Specifications', 'TDRS-6 Satellite History and Operations', 'Lockheed Martin A2100 Satellite Spacecraft Overview']
+INFO:   [Retrieval] Found 27 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 27.91s (34 entity + 57 vector nodes)
+INFO:   [Retrieval] Prepared 112 candidates (34 entity + 57 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 71 candidates (top score: 0.9843)
+INFO:   [Reranker] Ranked 71 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=3, vector=6, neighbor=0, community=0
+INFO:     1. [vector_match] elisabeth christine (rerank=0.9843)
+INFO:     2. [entity_match] antonio vivaldi (rerank=0.9824)
+INFO:     3. [entity_match] la silvia (rv 734) (rerank=0.9804)
+INFO:     4. [vector_match] john elwes (rerank=0.9748)
+INFO:     5. [vector_match] philippe cantor (rerank=0.9665)
+INFO:     6. [passage] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) (rerank=0.9619)
+INFO:     7. [vector_match] roberta invernizzi (rerank=0.9593)
+INFO:     8. [vector_match] gloria banditelli (rerank=0.9561)
+INFO:     9. [vector_match] enrico bissari (rerank=0.8959)
+INFO:     10. [entity_match] silvia conti (rerank=0.7478)
+INFO:   [⏱️ Timing] Total: 171.12s (Embed: 11.84s | Retrieval: 20.80s | Rerank: 130.25s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat c7ce260e] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 59 1-hop relationship(s):
+INFO:     [0] Analysis of Vivaldi's La Silvia --[REFERENCES]--> elisabeth christine
+INFO:     [1] is the wife of
+INFO:     [2] Analysis of Nulla in mundo pax sincera --[REFERENCES]--> antonio vivaldi
+INFO:     [3] Analysis of Vivaldi's 1714 Orlando furioso (RV 819) --[REFERENCES]--> antonio vivaldi
+INFO:     [4] Analysis of Vivaldi's La Silvia --[REFERENCES]--> antonio vivaldi
+INFO:     [5] Analysis of Vivaldi's Orlando furioso (RV 819) --[REFERENCES]--> antonio vivaldi
+INFO:     [6] thinly disguised as Aldiviva
+INFO:     [7] composed the work in 1718
+INFO:     [8] was a target of the pamphlet
+INFO:     [9] composed the work in 1720
+INFO:     [10] performed the work
+INFO:     [11] composed Nulla in mundo pax sincera
+INFO:     [12] often uses the organ for basso continuo
+INFO:     [13] was composed by Antonio Vivaldi
+INFO:     [14] was composed by Antonio Vivaldi
+INFO:     [15] nominated maestro di cappella di camera at his court
+INFO:     [16] composed the work in 1718
+INFO:     [17] composed the work in 1718
+INFO:     [18] composed the work in 1719
+INFO:     [19] returned to Venice after Mantua
+INFO:     [20] Analysis of Vivaldi's La Silvia --[REFERENCES]--> la silvia (rv 734)
+INFO:     [21] 8 arias are preserved in this institution
+INFO:     [22] performed in the reconstruction recording
+INFO:     [23] CD contains reconstruction recording
+INFO:     [24] first performed at this venue
+INFO:     [25] Analysis of Vivaldi's La Silvia --[REFERENCES]--> john elwes
+INFO:     [26] Analysis of Vivaldi's La Silvia --[REFERENCES]--> philippe cantor
+INFO:     [27] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> aldiviva
+INFO:     [28] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> anna maria strada
+INFO:     [29] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> armida al campo d'egitto
+INFO:     [30] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> austria
+INFO:     [31] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> benedetto marcello
+INFO:     [32] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> biblioteca nazionale di torino
+INFO:     [33] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> charles vi
+INFO:     [34] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> ensemble baroque de nice
+INFO:     [35] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> gilbert bezzina
+INFO:     [36] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> giovanni porta
+INFO:     [37] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> il teatro alla moda
+INFO:     [38] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> la candace
+INFO:     [39] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> la verità in cimento
+INFO:     [40] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> ligia
+INFO:     [41] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> mantua
+INFO:     [42] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> maximillian ii emmanuel
+INFO:     [43] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> milan
+INFO:     [44] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> philipp von hessen-darmstadt
+INFO:     [45] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> princess teresa kunegunda sobieska
+INFO:     [46] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> scanderbeg
+INFO:     [47] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> teatro regio ducale
+INFO:     [48] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> teatro sant'angelo
+INFO:     [49] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> teuzzone
+INFO:     [50] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> tito manlio
+INFO:     [51] # La Silvia (Passage 8)
+
+Passage 9:
+La Silvia
+La Silvia (RV  (passage 1) --[REFERENCES]--> venice
+INFO:     [52] Analysis of Vivaldi's La Silvia --[REFERENCES]--> roberta invernizzi
+INFO:     [53] Analysis of Vivaldi's La Silvia --[REFERENCES]--> gloria banditelli
+INFO:     [54] Analysis of Vivaldi's La Silvia --[REFERENCES]--> enrico bissari
+INFO:     [55] originally wrote text as a play for her
+INFO:     [56] Biography of Patricia Millardet --[REFERENCES]--> silvia conti
+INFO:     [57] is a character in the series
+INFO:     [58] played the character Silvia Conti
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 87 candidates (top score: 0.9724)
+INFO:   [Reranker] Ranked 87 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=0, vector=0, neighbor=0, community=0
+INFO:     1. [passage] # John Cabot (Passage 4)
+
+Passage 5:
+John Cabot
+John Cabot ( (passage 1) (rerank=0.9724)
+INFO:     2. [passage] # Sebastian Cabot (explorer) (Passage 10)
+
+Passage 11:
+Sebas (passage 1) (rerank=0.8530)
+INFO:     3. [passage] # John Cabot (Passage 4)
+
+Passage 5:
+John Cabot
+John Cabot ( (passage 17) (rerank=0.7194)
+INFO:     4. [passage] # Sebastian Cabot (explorer) (Passage 10)
+
+Passage 11:
+Sebas (passage 12) (rerank=0.5714)
+INFO:     5. [passage] # Sebastian Cabot (explorer) (Passage 10)
+
+Passage 11:
+Sebas (passage 2) (rerank=0.4278)
+INFO:     6. [passage] # John Cabot (Passage 4)
+
+Passage 5:
+John Cabot
+John Cabot ( (passage 2) (rerank=0.3854)
+INFO:     7. [passage] # John Cabot (Passage 4)
+
+Passage 5:
+John Cabot
+John Cabot ( (passage 6) (rerank=0.2949)
+INFO:     8. [passage] # John Cabot (Passage 4)
+
+Passage 5:
+John Cabot
+John Cabot ( (passage 16) (rerank=0.2731)
+INFO:     9. [passage] # Sebastian Cabot (explorer) (Passage 10)
+
+Passage 11:
+Sebas (passage 5) (rerank=0.1489)
+INFO:     10. [passage] # Sebastian Cabot (explorer) (Passage 10)
+
+Passage 11:
+Sebas (passage 10) (rerank=0.1457)
+INFO:   [⏱️ Timing] Total: 181.66s (Embed: 0.01s | Retrieval: 9.42s | Rerank: 151.58s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 9ae43383] Expanding graph neighbors
+INFO:   [GraphExpand] No new 1-hop neighbors to evaluate.
+INFO:   [IterLoop] Graph expansion: 0 neighbors
+INFO: [Chat 9ae43383] Reasoning over retrieved context (2/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question is a multi-hop query: 'Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent Francisco Bojado's birthplace is located?'.\n\nStep 1: Identify the 'Italian navigator who sailed for England and explored the eastern coast of the continent.' The documents identify John Cabot as an 'Italian navigator and explorer' whose 1497 voyage to North America was under commission from Henry VII of England, exploring the coastal areas. Sebastian Cabot is also mentioned in connection with England.\n\nStep 2: Identify the child of this navigator. If we assume John Cabot (the most prominent figure matching the description), his son is named 'Sebastian' (mentioned as 'John Cabot's son, Sebastian'). The documents mention Sebastian Cabot explored for England after his father’s death.\n\nStep 3: Determine where Francisco Bojado's birthplace is located. This piece of information ('Francisco Bojado's birthplace') seems disconnected from the previous steps and might be a distraction or an error in the original question structure, as no mention of 'Francisco Bojado' appears in the retrieved documents.\n\nThe current search focused on Step 1. The results strongly point to John Cabot being the navigator described (Italian navigator sailing for England).\n\nBased on the chain tracing, the bridge entity is 'John Cabot'. His child mentioned is Sebastian Cabot. However, the second part of the question ('Francisco Bojado's birthplace') cannot be answered with the current information and seems irrelevant or erroneous given the retrieved documents.", "finding": "John Cabot was an Italian navigator and explorer whose 1497 voyage to North America was under commission from Henry VII of England. Sebastian Cabot is identified as John Cabot's son, who subsequently explored for England. The name 'Francisco Bojado' does not appear in the provided documents.", "answer": null, "next_query": "Francisco Bojado birthplace"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Francisco Bojado birthplace'
+INFO: [Chat 9ae43383] Retrieval loop 3/5
+INFO:   [IterLoop] Iteration 3/5 | current_query='Francisco Bojado birthplace'
+INFO: [Chat 9ae43383] Searching knowledge base (3/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Francisco Bojado birthplace' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Francisco Bojado'], Expected Types: ['person'], Attribute: birthplace
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 34 (threshold=0.45)
+INFO:   [Qdrant] 17 unique nodes after dedup (from 34 raw hits)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 1.08s
+INFO:   [Entity] Found 2 nodes by name: ['Biography and Career of Francisco Bojado', 'francisco bojado']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 17 hits
+INFO:   [Retrieval] Found 24 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 1.09s (101 entity + 0 vector nodes)
+INFO:   [Retrieval] Prepared 67 candidates (101 entity + 0 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 83 candidates (top score: 0.9929)
+INFO:   [Reranker] Ranked 83 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=5, neighbor=0, community=0
+INFO:     1. [passage] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) (rerank=0.9929)
+INFO:     2. [entity_match] larry alcala (rerank=0.9924)
+INFO:     3. [vector_match] university of the philippines (up) (rerank=0.9732)
+INFO:     4. [passage] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) (rerank=0.8876)
+INFO:     5. [passage] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) (rerank=0.8634)
+INFO:     6. [passage] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) (rerank=0.6383)
+INFO:     7. [vector_match] manila times (rerank=0.3650)
+INFO:     8. [vector_match] visual communication department (rerank=0.2173)
+INFO:     9. [vector_match] daraga, albay (rerank=0.1942)
+INFO:     10. [vector_match] slice of life (rerank=0.1294)
+INFO:   [⏱️ Timing] Total: 199.61s (Embed: 0.03s | Retrieval: 21.46s | Rerank: 177.15s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 38a19b50] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 129 1-hop relationship(s):
+INFO:     [0] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> ang ilustrador ng kabataan (ang ink)
+INFO:     [1] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> art directors club of the philippines
+INFO:     [2] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> australian cultural award
+INFO:     [3] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> barrio bulabog
+INFO:     [4] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> caltex
+INFO:     [5] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> darigold milk
+INFO:     [6] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> dolphy
+INFO:     [7] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> elpidia zarate
+INFO:     [8] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> ernesto alcala
+INFO:     [9] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> grand collar of the order of national artists
+INFO:     [10] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> islaw palitaw
+INFO:     [11] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> kalabog en bosyo
+INFO:     [12] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> liwayway
+INFO:     [13] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> mang ambo
+INFO:     [14] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> national artist for visual arts
+INFO:     [15] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> panchito alba
+INFO:     [16] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> philippine board on books for young people (pbby)
+INFO:     [17] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> pilipino komiks
+INFO:     [18] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> ramón roces
+INFO:     [19] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> riverside medical centre, bacolod city
+INFO:     [20] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> rolling hills memorial chapel
+INFO:     [21] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> samahang kartunista ng pilipinas (skp)
+INFO:     [22] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> sampaguita pictures
+INFO:     [23] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> society of philippine illustrators and cartoonists (spic)
+INFO:     [24] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> weekend magazine
+INFO:     [25] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 2) --[REFERENCES]--> weekly graphic
+INFO:     [26] Biography and Career of Larry Alcala --[REFERENCES]--> larry alcala
+INFO:     [27] promoted the formation of Ang INK
+INFO:     [28] President of Art Directors Club of the Philippines
+INFO:     [29] received the Australian Cultural Award
+INFO:     [30] pioneered cartoons for Caltex
+INFO:     [31] pioneered cartoons for Darigold Milk
+INFO:     [32] born to Elpidia Zarate
+INFO:     [33] born to Ernesto Alcala
+INFO:     [34] posthumously conferred the Grand Collar
+INFO:     [35] created Islaw Palitaw
+INFO:     [36] created Kalabog en Bosyo
+INFO:     [37] personification of the Filipino according to Larry Alcala
+INFO:     [38] posthumously conferred the National Artist title
+INFO:     [39] granted him the title Dean of Filipino Cartoonists
+INFO:     [40] died at Riverside Medical Centre
+INFO:     [41] remains lie in state at Rolling Hills Memorial Chapel
+INFO:     [42] Adviser and President of SKP
+INFO:     [43] Vice President of SPIC
+INFO:     [44] Biography and Career of Larry Alcala --[REFERENCES]--> university of the philippines (up)
+INFO:     [45] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> ang ilustrador ng kabataan (ang ink)
+INFO:     [46] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> art directors club of the philippines
+INFO:     [47] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> australian cultural award
+INFO:     [48] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> barrio bulabog
+INFO:     [49] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> caltex
+INFO:     [50] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> darigold milk
+INFO:     [51] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> dolphy
+INFO:     [52] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> elpidia zarate
+INFO:     [53] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> ernesto alcala
+INFO:     [54] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> grand collar of the order of national artists
+INFO:     [55] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> islaw palitaw
+INFO:     [56] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> kalabog en bosyo
+INFO:     [57] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> liwayway
+INFO:     [58] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> mang ambo
+INFO:     [59] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> national artist for visual arts
+INFO:     [60] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> panchito alba
+INFO:     [61] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> philippine board on books for young people (pbby)
+INFO:     [62] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> pilipino komiks
+INFO:     [63] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> ramón roces
+INFO:     [64] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> riverside medical centre, bacolod city
+INFO:     [65] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> rolling hills memorial chapel
+INFO:     [66] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> samahang kartunista ng pilipinas (skp)
+INFO:     [67] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> sampaguita pictures
+INFO:     [68] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> society of philippine illustrators and cartoonists (spic)
+INFO:     [69] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> weekend magazine
+INFO:     [70] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 7) --[REFERENCES]--> weekly graphic
+INFO:     [71] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> ang ilustrador ng kabataan (ang ink)
+INFO:     [72] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> art directors club of the philippines
+INFO:     [73] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> australian cultural award
+INFO:     [74] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> barrio bulabog
+INFO:     [75] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> caltex
+INFO:     [76] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> darigold milk
+INFO:     [77] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> dolphy
+INFO:     [78] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> elpidia zarate
+INFO:     [79] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> ernesto alcala
+INFO:     [80] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> grand collar of the order of national artists
+INFO:     [81] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> islaw palitaw
+INFO:     [82] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> kalabog en bosyo
+INFO:     [83] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> liwayway
+INFO:     [84] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> mang ambo
+INFO:     [85] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> national artist for visual arts
+INFO:     [86] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> panchito alba
+INFO:     [87] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> philippine board on books for young people (pbby)
+INFO:     [88] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> pilipino komiks
+INFO:     [89] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> ramón roces
+INFO:     [90] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> riverside medical centre, bacolod city
+INFO:     [91] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> rolling hills memorial chapel
+INFO:     [92] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> samahang kartunista ng pilipinas (skp)
+INFO:     [93] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> sampaguita pictures
+INFO:     [94] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> society of philippine illustrators and cartoonists (spic)
+INFO:     [95] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> weekend magazine
+INFO:     [96] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 10) --[REFERENCES]--> weekly graphic
+INFO:     [97] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> ang ilustrador ng kabataan (ang ink)
+INFO:     [98] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> art directors club of the philippines
+INFO:     [99] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> australian cultural award
+INFO:     [100] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> barrio bulabog
+INFO:     [101] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> caltex
+INFO:     [102] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> darigold milk
+INFO:     [103] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> dolphy
+INFO:     [104] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> elpidia zarate
+INFO:     [105] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> ernesto alcala
+INFO:     [106] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> grand collar of the order of national artists
+INFO:     [107] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> islaw palitaw
+INFO:     [108] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> kalabog en bosyo
+INFO:     [109] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> liwayway
+INFO:     [110] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> mang ambo
+INFO:     [111] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> national artist for visual arts
+INFO:     [112] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> panchito alba
+INFO:     [113] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> philippine board on books for young people (pbby)
+INFO:     [114] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> pilipino komiks
+INFO:     [115] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> ramón roces
+INFO:     [116] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> riverside medical centre, bacolod city
+INFO:     [117] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> rolling hills memorial chapel
+INFO:     [118] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> samahang kartunista ng pilipinas (skp)
+INFO:     [119] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> sampaguita pictures
+INFO:     [120] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> society of philippine illustrators and cartoonists (spic)
+INFO:     [121] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> weekend magazine
+INFO:     [122] # Larry Alcala (Passage 1)
+
+Passage 2:
+Larry Alcala
+Lauro "L (passage 1) --[REFERENCES]--> weekly graphic
+INFO:     [123] Biography and Career of Larry Alcala --[REFERENCES]--> manila times
+INFO:     [124] publisher of Manila Times
+INFO:     [125] Biography and Career of Larry Alcala --[REFERENCES]--> visual communication department
+INFO:     [126] Biography and Career of Larry Alcala --[REFERENCES]--> daraga, albay
+INFO:     [127] Biography and Career of Larry Alcala --[REFERENCES]--> slice of life
+INFO:     [128] appeared on the pages of Weekend Magazine
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 60 candidates (top score: 0.9674)
+INFO:   [Reranker] Ranked 60 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=3, neighbor=0, community=0
+INFO:     1. [passage] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) (rerank=0.9674)
+INFO:     2. [entity_match] george peppard (rerank=0.9639)
+INFO:     3. [passage] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) (rerank=0.2403)
+INFO:     4. [vector_match] b. a. baracus (rerank=0.1000)
+INFO:     5. [vector_match] vietnam war (rerank=0.1000)
+INFO:     6. [vector_match] bo gritz (rerank=0.1000)
+INFO:     7. [passage] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) (rerank=0.1000)
+INFO:     8. [passage] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) (rerank=0.1000)
+INFO:     9. [passage] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) (rerank=0.1000)
+INFO:     10. [passage] # Samuel L. Jackson (Passage 7) (passage 6) (rerank=0.1000)
+INFO:   [⏱️ Timing] Total: 271.61s (Embed: 0.00s | Retrieval: 38.26s | Rerank: 229.41s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 392b3632] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 110 1-hop relationship(s):
+INFO:     [0] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> 5th special forces group
+INFO:     [1] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> 75th ranger regiment
+INFO:     [2] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> 7th special forces group
+INFO:     [3] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> amy allen
+INFO:     [4] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> anne sanders
+INFO:     [5] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> dr. maggie sullivan
+INFO:     [6] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> gatorella
+INFO:     [7] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> h. m. "howlin' mad" murdock
+INFO:     [8] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> james coburn
+INFO:     [9] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> john "hannibal" smith
+INFO:     [10] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> killgator
+INFO:     [11] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> korean war
+INFO:     [12] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> liam neeson
+INFO:     [13] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> medal of honor
+INFO:     [14] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> mr. lee
+INFO:     [15] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> templeton "faceman" peck
+INFO:     [16] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> the a-team
+INFO:     [17] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> the a-team (2010 film)
+INFO:     [18] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> the a-team (tv series)
+INFO:     [19] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 1) --[REFERENCES]--> the aquamaniac
+INFO:     [20] Character Analysis of John 'Hannibal' Smith --[REFERENCES]--> george peppard
+INFO:     [21] Production and Plot Analysis of Five Days from Home --[REFERENCES]--> george peppard
+INFO:     [22] directed, produced and starred in the film
+INFO:     [23] played the character in the TV series
+INFO:     [24] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> 5th special forces group
+INFO:     [25] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> 75th ranger regiment
+INFO:     [26] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> 7th special forces group
+INFO:     [27] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> amy allen
+INFO:     [28] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> anne sanders
+INFO:     [29] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> dr. maggie sullivan
+INFO:     [30] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> gatorella
+INFO:     [31] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> h. m. "howlin' mad" murdock
+INFO:     [32] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> james coburn
+INFO:     [33] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> john "hannibal" smith
+INFO:     [34] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> killgator
+INFO:     [35] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> korean war
+INFO:     [36] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> liam neeson
+INFO:     [37] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> medal of honor
+INFO:     [38] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> mr. lee
+INFO:     [39] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> templeton "faceman" peck
+INFO:     [40] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> the a-team
+INFO:     [41] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> the a-team (2010 film)
+INFO:     [42] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> the a-team (tv series)
+INFO:     [43] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 5) --[REFERENCES]--> the aquamaniac
+INFO:     [44] Character Analysis of John 'Hannibal' Smith --[REFERENCES]--> b. a. baracus
+INFO:     [45] is a member of the group
+INFO:     [46] Character Analysis of John 'Hannibal' Smith --[REFERENCES]--> vietnam war
+INFO:     [47] served during the war
+INFO:     [48] Character Analysis of John 'Hannibal' Smith --[REFERENCES]--> bo gritz
+INFO:     [49] the character was based loosely on him
+INFO:     [50] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> 5th special forces group
+INFO:     [51] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> 75th ranger regiment
+INFO:     [52] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> 7th special forces group
+INFO:     [53] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> amy allen
+INFO:     [54] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> anne sanders
+INFO:     [55] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> dr. maggie sullivan
+INFO:     [56] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> gatorella
+INFO:     [57] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> h. m. "howlin' mad" murdock
+INFO:     [58] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> james coburn
+INFO:     [59] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> john "hannibal" smith
+INFO:     [60] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> killgator
+INFO:     [61] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> korean war
+INFO:     [62] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> liam neeson
+INFO:     [63] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> medal of honor
+INFO:     [64] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> mr. lee
+INFO:     [65] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> templeton "faceman" peck
+INFO:     [66] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> the a-team
+INFO:     [67] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> the a-team (2010 film)
+INFO:     [68] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> the a-team (tv series)
+INFO:     [69] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 3) --[REFERENCES]--> the aquamaniac
+INFO:     [70] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> 5th special forces group
+INFO:     [71] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> 75th ranger regiment
+INFO:     [72] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> 7th special forces group
+INFO:     [73] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> amy allen
+INFO:     [74] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> anne sanders
+INFO:     [75] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> dr. maggie sullivan
+INFO:     [76] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> gatorella
+INFO:     [77] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> h. m. "howlin' mad" murdock
+INFO:     [78] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> james coburn
+INFO:     [79] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> john "hannibal" smith
+INFO:     [80] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> killgator
+INFO:     [81] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> korean war
+INFO:     [82] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> liam neeson
+INFO:     [83] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> medal of honor
+INFO:     [84] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> mr. lee
+INFO:     [85] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> templeton "faceman" peck
+INFO:     [86] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> the a-team
+INFO:     [87] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> the a-team (2010 film)
+INFO:     [88] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> the a-team (tv series)
+INFO:     [89] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 6) --[REFERENCES]--> the aquamaniac
+INFO:     [90] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> 5th special forces group
+INFO:     [91] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> 75th ranger regiment
+INFO:     [92] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> 7th special forces group
+INFO:     [93] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> amy allen
+INFO:     [94] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> anne sanders
+INFO:     [95] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> dr. maggie sullivan
+INFO:     [96] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> gatorella
+INFO:     [97] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> h. m. "howlin' mad" murdock
+INFO:     [98] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> james coburn
+INFO:     [99] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> john "hannibal" smith
+INFO:     [100] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> killgator
+INFO:     [101] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> korean war
+INFO:     [102] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> liam neeson
+INFO:     [103] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> medal of honor
+INFO:     [104] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> mr. lee
+INFO:     [105] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> templeton "faceman" peck
+INFO:     [106] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> the a-team
+INFO:     [107] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> the a-team (2010 film)
+INFO:     [108] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> the a-team (tv series)
+INFO:     [109] # John "Hannibal" Smith (Passage 4)
+
+Passage 5:
+John "Hannib (passage 4) --[REFERENCES]--> the aquamaniac
+INFO:   [GraphExpand] Ranked 39 neighbours → kept top 10 (scores: ['0.9870', '0.9810', '0.9798', '0.9793', '0.9784', '0.9777', '0.9772', '0.9759', '0.9749', '0.9742'])
+INFO:   [GraphExpand] Added 2 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 2 neighbors
+INFO: [Chat dcec2668] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 112 candidates (top score: 0.9963)
+INFO:   [Reranker] Ranked 112 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=6, neighbor=0, community=0
+INFO:     1. [passage] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) (rerank=0.9963)
+INFO:     2. [entity_match] insat-4cr (rerank=0.9955)
+INFO:     3. [passage] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) (rerank=0.9825)
+INFO:     4. [vector_match] isro (rerank=0.9468)
+INFO:     5. [vector_match] i-2k satellite bus (rerank=0.7629)
+INFO:     6. [vector_match] gslv-f04 (rerank=0.3609)
+INFO:     7. [passage] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) (rerank=0.3078)
+INFO:     8. [vector_match] insat-4c (rerank=0.2882)
+INFO:     9. [vector_match] indian national satellite system (rerank=0.2816)
+INFO:     10. [vector_match] geosynchronous satellite launch vehicle (gslv) (rerank=0.2516)
+INFO:   [⏱️ Timing] Total: 213.01s (Embed: 0.00s | Retrieval: 27.91s | Rerank: 183.95s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat fcc5fef7] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 50 1-hop relationship(s):
+INFO:     [0] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> 10 february 2017
+INFO:     [1] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> 24 november 2020
+INFO:     [2] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> airtel digital tv
+INFO:     [3] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> february 6, 2019
+INFO:     [4] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> geostationary orbit
+INFO:     [5] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> graveyard orbit
+INFO:     [6] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> gsat-31
+INFO:     [7] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> indian news agencies
+INFO:     [8] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> nasa
+INFO:     [9] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> september 2007
+INFO:     [10] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 2) --[REFERENCES]--> sun direct dth
+INFO:     [11] relocated on 10 February 2017
+INFO:     [12] retired on 24 November 2020
+INFO:     [13] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> insat-4cr
+INFO:     [14] capacity allocated to Airtel Digital TV
+INFO:     [15] stationed in geostationary orbit
+INFO:     [16] placed into graveyard orbit
+INFO:     [17] planned to be replaced by GSAT-31
+INFO:     [18] identified the spacecraft's orbit
+INFO:     [19] launched in September 2007
+INFO:     [20] capacity allocated to Sun Direct DTH
+INFO:     [21] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> 10 february 2017
+INFO:     [22] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> 24 november 2020
+INFO:     [23] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> airtel digital tv
+INFO:     [24] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> february 6, 2019
+INFO:     [25] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> geostationary orbit
+INFO:     [26] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> graveyard orbit
+INFO:     [27] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> gsat-31
+INFO:     [28] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> indian news agencies
+INFO:     [29] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> nasa
+INFO:     [30] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> september 2007
+INFO:     [31] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 1) --[REFERENCES]--> sun direct dth
+INFO:     [32] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> isro
+INFO:     [33] reported on ISRO losing track of satellite
+INFO:     [34] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> i-2k satellite bus
+INFO:     [35] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> gslv-f04
+INFO:     [36] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> 10 february 2017
+INFO:     [37] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> 24 november 2020
+INFO:     [38] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> airtel digital tv
+INFO:     [39] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> february 6, 2019
+INFO:     [40] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> geostationary orbit
+INFO:     [41] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> graveyard orbit
+INFO:     [42] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> gsat-31
+INFO:     [43] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> indian news agencies
+INFO:     [44] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> nasa
+INFO:     [45] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> september 2007
+INFO:     [46] # INSAT-4CR (Passage 2)
+
+Passage 3:
+INSAT-4CR
+INSAT-4CR was  (passage 3) --[REFERENCES]--> sun direct dth
+INFO:     [47] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> insat-4c
+INFO:     [48] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> indian national satellite system
+INFO:     [49] INSAT-4CR Satellite Operations and Lifecycle --[REFERENCES]--> geosynchronous satellite launch vehicle (gslv)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 27 candidates (top score: 0.9944)
+INFO:   [Reranker] Ranked 27 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=7, vector=1, neighbor=0, community=0
+INFO:     1. [passage] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) (rerank=0.9944)
+INFO:     2. [entity_match] callum henry mcmanaman (rerank=0.9864)
+INFO:     3. [entity_match] huyton (rerank=0.9759)
+INFO:     4. [passage] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) (rerank=0.9608)
+INFO:     5. [vector_match] whiston (rerank=0.8473)
+INFO:     6. [entity_match] rainhill (rerank=0.6141)
+INFO:     7. [entity_match] everton (rerank=0.1511)
+INFO:     8. [entity_match] steve mcmanaman (rerank=0.1249)
+INFO:     9. [entity_match] wigan athletic (rerank=0.1108)
+INFO:     10. [entity_match] massadio haïdara (rerank=0.1000)
+INFO:   [⏱️ Timing] Total: 337.30s (Embed: 0.00s | Retrieval: 19.18s | Rerank: 314.61s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat eb2befc6] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 111 1-hop relationship(s):
+INFO:     [0] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> blackpool
+INFO:     [1] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> england under 21s
+INFO:     [2] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> england under-20s
+INFO:     [3] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> fa cup
+INFO:     [4] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> israel
+INFO:     [5] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> league cup
+INFO:     [6] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> lee nicholls
+INFO:     [7] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> luton town
+INFO:     [8] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> melbourne victory
+INFO:     [9] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> merseyside
+INFO:     [10] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> nigeria
+INFO:     [11] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> north korea
+INFO:     [12] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> premier league
+INFO:     [13] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> sheffield wednesday
+INFO:     [14] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> sunderland
+INFO:     [15] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> the football association
+INFO:     [16] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> tranmere rovers
+INFO:     [17] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 1) --[REFERENCES]--> west bromwich albion
+INFO:     [18] Career Profile of Callum McManaman --[REFERENCES]--> callum henry mcmanaman
+INFO:     [19] joined Blackpool on a three-month loan
+INFO:     [20] called up for the first time to England Under 21s
+INFO:     [21] included in England under-20s squad
+INFO:     [22] man of the match as Wigan won the FA Cup in 2013
+INFO:     [23] scored in the League Cup for Wigan
+INFO:     [24] included in squad along with Lee Nicholls
+INFO:     [25] signed for Luton Town on a free transfer
+INFO:     [26] signed with Melbourne Victory in 2020
+INFO:     [27] Whiston and Rainhill are in Merseyside
+INFO:     [28] made first team debut in a Premier League match
+INFO:     [29] signed for Sheffield Wednesday on loan
+INFO:     [30] signed for Sunderland in 2017
+INFO:     [31] challenge was the subject of a review by the FA
+INFO:     [32] signed with Tranmere Rovers in 2021
+INFO:     [33] signed for West Bromwich Albion in 2015
+INFO:     [34] Career Profile of Callum McManaman --[REFERENCES]--> huyton
+INFO:     [35] Overview of Whiston, Merseyside --[REFERENCES]--> huyton
+INFO:     [36] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> blackpool
+INFO:     [37] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> england under 21s
+INFO:     [38] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> england under-20s
+INFO:     [39] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> fa cup
+INFO:     [40] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> israel
+INFO:     [41] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> league cup
+INFO:     [42] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> lee nicholls
+INFO:     [43] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> luton town
+INFO:     [44] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> melbourne victory
+INFO:     [45] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> merseyside
+INFO:     [46] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> nigeria
+INFO:     [47] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> north korea
+INFO:     [48] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> premier league
+INFO:     [49] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> sheffield wednesday
+INFO:     [50] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> sunderland
+INFO:     [51] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> the football association
+INFO:     [52] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> tranmere rovers
+INFO:     [53] # Callum McManaman (Passage 5)
+
+Passage 6:
+Callum McManaman
+ (passage 2) --[REFERENCES]--> west bromwich albion
+INFO:     [54] Career Profile of Callum McManaman --[REFERENCES]--> whiston
+INFO:     [55] Overview of Whiston, Merseyside --[REFERENCES]--> whiston
+INFO:     [56] historian associated with Whiston
+INFO:     [57] operates bus routes serving Whiston
+INFO:     [58] is located in Whiston
+INFO:     [59] footballer associated with Whiston
+INFO:     [60] footballer associated with Whiston
+INFO:     [61] musician associated with Whiston
+INFO:     [62] cricketer associated with Whiston
+INFO:     [63] is in England
+INFO:     [64] local industry in Whiston
+INFO:     [65] was host to Halsnead Hall in Whiston
+INFO:     [66] primary education provider in Whiston
+INFO:     [67] held the first recorded mill in Whiston
+INFO:     [68] rugby league player associated with Whiston
+INFO:     [69] cricketer associated with Whiston
+INFO:     [70] actress and singer associated with Whiston
+INFO:     [71] was previously recorded in Lancashire
+INFO:     [72] is eight miles east of Liverpool
+INFO:     [73] runs directly through the town
+INFO:     [74] footballer associated with Whiston
+INFO:     [75] jockey associated with Whiston
+INFO:     [76] footballer associated with Whiston
+INFO:     [77] rugby league player associated with Whiston
+INFO:     [78] singer associated with Whiston
+INFO:     [79] is in Merseyside
+INFO:     [80] is within the borough
+INFO:     [81] songwriter and musician associated with Whiston
+INFO:     [82] screenwriter associated with Whiston
+INFO:     [83] was rendered as Quistan
+INFO:     [84] actress associated with Whiston
+INFO:     [85] served by local bus routes from Whiston
+INFO:     [86] served by local bus routes from Whiston
+INFO:     [87] primary education provider in Whiston
+INFO:     [88] primary education provider in Whiston
+INFO:     [89] operates bus routes serving Whiston
+INFO:     [90] rugby league player associated with Whiston
+INFO:     [91] footballer associated with Whiston
+INFO:     [92] radio presenter and author associated with Whiston
+INFO:     [93] is nearby Whiston
+INFO:     [94] was within the West Derby Hundred
+INFO:     [95] elects councillors for Whiston
+INFO:     [96] was a ward of Whiston
+INFO:     [97] serves the town
+INFO:     [98] lent its name to and was headquartered in Whiston
+INFO:     [99] was a ward of Whiston
+INFO:     [100] oversees parish level administration for Whiston
+INFO:     [101] primary education provider in Whiston
+INFO:     [102] cricketer associated with Whiston
+INFO:     [103] screenwriter and playwright associated with Whiston
+INFO:     [104] Career Profile of Callum McManaman --[REFERENCES]--> rainhill
+INFO:     [105] Career Profile of Callum McManaman --[REFERENCES]--> everton
+INFO:     [106] The 1914 FA Cup Final --[REFERENCES]--> everton
+INFO:     [107] he is an ex-Evertonian
+INFO:     [108] Career Profile of Callum McManaman --[REFERENCES]--> steve mcmanaman
+INFO:     [109] Career Profile of Callum McManaman --[REFERENCES]--> wigan athletic
+INFO:     [110] Career Profile of Callum McManaman --[REFERENCES]--> massadio haïdara
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 67 candidates (top score: 0.8732)
+INFO:   [Reranker] Ranked 67 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=9, vector=0, neighbor=0, community=0
+INFO:     1. [entity_match] francisco bojado (rerank=0.8732)
+INFO:     2. [passage] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) (rerank=0.4772)
+INFO:     3. [entity_match] juan carlos rubio (rerank=0.1000)
+INFO:     4. [entity_match] golden boy promotions (rerank=0.1000)
+INFO:     5. [entity_match] us border security (rerank=0.1000)
+INFO:     6. [entity_match] showtime (rerank=0.1000)
+INFO:     7. [entity_match] mgm grand (rerank=0.1000)
+INFO:     8. [entity_match] oscar de la hoya (rerank=0.1000)
+INFO:     9. [entity_match] de la hoya/mayweather 24/7 (rerank=0.1000)
+INFO:     10. [entity_match] atlantic city, new jersey (rerank=0.1000)
+INFO:   [⏱️ Timing] Total: 154.11s (Embed: 0.00s | Retrieval: 1.09s | Rerank: 151.95s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat 9ae43383] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 42 1-hop relationship(s):
+INFO:     [0] competed in the 2000 Summer Olympics
+INFO:     [1] Biography and Career of Francisco Bojado --[REFERENCES]--> francisco bojado
+INFO:     [2] is the brother of Angel Bojado
+INFO:     [3] won a unanimous decision against Dairo Esalas
+INFO:     [4] beat Derrick Castor by knockout
+INFO:     [5] won over Eleazar Contreras
+INFO:     [6] defeated Emmanuel Clottey
+INFO:     [7] won over Glenn Forde
+INFO:     [8] beat Francisco Bojado by split decision
+INFO:     [9] won over Mauro Lucero
+INFO:     [10] represented Mexico at the Olympics
+INFO:     [11] managed Francisco Bojado
+INFO:     [12] won a split-decision upset over Francisco Bojado
+INFO:     [13] debuted in Uncasville, Connecticut
+INFO:     [14] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> 2000 summer olympics
+INFO:     [15] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> angel bojado
+INFO:     [16] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> dairo esalas
+INFO:     [17] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> derrick castor
+INFO:     [18] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> eleazar contreras
+INFO:     [19] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> emmanuel clottey
+INFO:     [20] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> evander holyfield
+INFO:     [21] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> glenn forde
+INFO:     [22] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> hbo
+INFO:     [23] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> jesse james leija
+INFO:     [24] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> las vegas
+INFO:     [25] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> mauro lucero
+INFO:     [26] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> mexico
+INFO:     [27] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> mike tyson
+INFO:     [28] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> shelly finkel
+INFO:     [29] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> stephen forbes
+INFO:     [30] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> sydney, australia
+INFO:     [31] # Francisco Bojado (Passage 1)
+
+Passage 2:
+Francisco Bojado
+ (passage 1) --[REFERENCES]--> uncasville, connecticut
+INFO:     [32] Biography and Career of Francisco Bojado --[REFERENCES]--> juan carlos rubio
+INFO:     [33] Biography and Career of Francisco Bojado --[REFERENCES]--> golden boy promotions
+INFO:     [34] Biography and Career of Francisco Bojado --[REFERENCES]--> us border security
+INFO:     [35] Biography and Career of Francisco Bojado --[REFERENCES]--> showtime
+INFO:     [36] Biography and Career of Francisco Bojado --[REFERENCES]--> mgm grand
+INFO:     [37] is in Las Vegas
+INFO:     [38] Biography and Career of Francisco Bojado --[REFERENCES]--> oscar de la hoya
+INFO:     [39] Biography and Career of Francisco Bojado --[REFERENCES]--> de la hoya/mayweather 24/7
+INFO:     [40] is an HBO short series
+INFO:     [41] Biography and Career of Francisco Bojado --[REFERENCES]--> atlantic city, new jersey
+INFO: Unloading local GGUFs after 322s idle (limit 300s)
+INFO: Unloading in-process chat/embed GGUFs to free memory
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 60 candidates (top score: 0.9934)
+INFO:   [Reranker] Ranked 60 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=0, vector=6, neighbor=0, community=0
+INFO:     1. [passage] # Here Comes the Boom (Passage 2)
+
+Passage 3:
+Here Comes the (passage 1) (rerank=0.9934)
+INFO:     2. [passage] # Here Comes the Boom (Passage 2)
+
+Passage 3:
+Here Comes the (passage 3) (rerank=0.2540)
+INFO:     3. [vector_match] shakalaka boom boom (rerank=0.1000)
+INFO:     4. [vector_match] himesh reshammiya (rerank=0.1000)
+INFO:     5. [vector_match] lindsay doran (rerank=0.1000)
+INFO:     6. [vector_match] tim bevan (rerank=0.1000)
+INFO:     7. [vector_match] eric fellner (rerank=0.1000)
+INFO:     8. [vector_match] april 6, 2007 (rerank=0.1000)
+INFO:     9. [passage] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) (rerank=0.1000)
+INFO:     10. [passage] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) (rerank=0.1000)
+INFO:   [⏱️ Timing] Total: 380.18s (Embed: 0.01s | Retrieval: 20.66s | Rerank: 347.40s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat ff72637a] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 80 1-hop relationship(s):
+INFO:     [0] Analysis of the Film Shakalaka Boom Boom --[REFERENCES]--> shakalaka boom boom
+INFO:     [1] loosely based on the film
+INFO:     [2] plays Reggie's Father
+INFO:     [3] wrote the film
+INFO:     [4] plays Yogra in the film
+INFO:     [5] stars in the lead
+INFO:     [6] stars in the lead
+INFO:     [7] plays Kumar in the film
+INFO:     [8] plays Guru
+INFO:     [9] stars in the lead
+INFO:     [10] rated the film 1 out of 5 stars
+INFO:     [11] gave it 3 out of 5 stars
+INFO:     [12] wrote lyrics for all songs
+INFO:     [13] plays Seema
+INFO:     [14] gave movie one and a half stars
+INFO:     [15] partly shot in this location
+INFO:     [16] directed and produced the film
+INFO:     [17] gave it 3 out of 5 stars
+INFO:     [18] stars in the lead
+INFO:     [19] plays Vidyacharan Shukla
+INFO:     [20] Analysis of the Film Shakalaka Boom Boom --[REFERENCES]--> himesh reshammiya
+INFO:     [21] Nanny McPhee and the Big Bang Film Analysis --[REFERENCES]--> lindsay doran
+INFO:     [22] was produced by
+INFO:     [23] Nanny McPhee and the Big Bang Film Analysis --[REFERENCES]--> tim bevan
+INFO:     [24] was produced by
+INFO:     [25] Nanny McPhee and the Big Bang Film Analysis --[REFERENCES]--> eric fellner
+INFO:     [26] was produced by
+INFO:     [27] Analysis of the Film Shakalaka Boom Boom --[REFERENCES]--> april 6, 2007
+INFO:     [28] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> amadeus
+INFO:     [29] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> anupam kher
+INFO:     [30] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> anurag kashyap
+INFO:     [31] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> asrani
+INFO:     [32] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> ayan joshi (aj)
+INFO:     [33] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> bobby deol
+INFO:     [34] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> celina jaitly
+INFO:     [35] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> dalip tahil
+INFO:     [36] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> dna
+INFO:     [37] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> govind namdev
+INFO:     [38] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> hindustan times
+INFO:     [39] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> kangana ranaut
+INFO:     [40] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> mayank shekhar
+INFO:     [41] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> nikhat kazmi
+INFO:     [42] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> reggie
+INFO:     [43] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> ruhi
+INFO:     [44] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> sameer
+INFO:     [45] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> seema rahmani
+INFO:     [46] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> shakti salgaokar
+INFO:     [47] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> sheena
+INFO:     [48] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> south africa
+INFO:     [49] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> suneel darshan
+INFO:     [50] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> taran adarsh
+INFO:     [51] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> times of india
+INFO:     [52] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> upen patel
+INFO:     [53] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 1) --[REFERENCES]--> vivek vaswani
+INFO:     [54] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> amadeus
+INFO:     [55] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> anupam kher
+INFO:     [56] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> anurag kashyap
+INFO:     [57] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> asrani
+INFO:     [58] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> ayan joshi (aj)
+INFO:     [59] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> bobby deol
+INFO:     [60] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> celina jaitly
+INFO:     [61] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> dalip tahil
+INFO:     [62] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> dna
+INFO:     [63] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> govind namdev
+INFO:     [64] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> hindustan times
+INFO:     [65] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> kangana ranaut
+INFO:     [66] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> mayank shekhar
+INFO:     [67] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> nikhat kazmi
+INFO:     [68] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> reggie
+INFO:     [69] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> ruhi
+INFO:     [70] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> sameer
+INFO:     [71] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> seema rahmani
+INFO:     [72] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> shakti salgaokar
+INFO:     [73] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> sheena
+INFO:     [74] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> south africa
+INFO:     [75] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> suneel darshan
+INFO:     [76] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> taran adarsh
+INFO:     [77] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> times of india
+INFO:     [78] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> upen patel
+INFO:     [79] # Shakalaka Boom Boom (Passage 12)
+
+Passage 13:
+Shakalaka Bo (passage 3) --[REFERENCES]--> vivek vaswani
+INFO:   [GraphExpand] Ranked 110 neighbours → kept top 10 (scores: ['0.9798', '0.9796', '0.9761', '0.9725', '0.9707', '0.9702', '0.9683', '0.9682', '0.9668', '0.9661'])
+INFO:   [GraphExpand] Added 2 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 2 neighbors
+INFO: [Chat 392b3632] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 2 candidates (top score: 0.9684)
+INFO:   [Reranker] Ranked 2 candidates (no cutoff)
+INFO: [Chat dcec2668] Reasoning over retrieved context (2/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{
+  "reasoning": "The original question is: \"Who is the child of the cast member of Green Ice?\".\nStep 1: Identify what 'Green Ice' is. The search results indicate that Green Ice is a 1981 United Kingdom adventure film.\nStep 2: Identify cast members of Green Ice. Ryan O'Neal is listed as an actor in the film. Other personnel from the soundtrack are mentioned, but for actors/cast members, Ryan O'Neal is confirmed.\nStep 3: Determine if any information about the children of these cast members (specifically Ryan O'Neal) is present in the documents. The retrieved documents provide details on Ryan O'Neal's role and film participation, but they do not mention any of his children or the children of other listed personnel.",
+  "finding": "Green Ice is a 1981 United Kingdom adventure film starring actor Ryan O'Neal. Personnel involved in the soundtrack include Bill Wyman, Terry Taylor, Dave Mattacks, Ray Cooper, Stuart Epps, and others. No information regarding the children of any cast member is present.",
+  "answer": null,
+  "next_query": "Ryan O'Neal child"
+}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query="Ryan O'Neal child"
+INFO: [Chat dcec2668] Retrieval loop 3/5
+INFO:   [IterLoop] Iteration 3/5 | current_query="Ryan O'Neal child"
+INFO: [Chat dcec2668] Searching knowledge base (3/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Ryan O'Neal child' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ["Ryan O'Neal"], Expected Types: ['person'], Attribute: child
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 14 (threshold=0.45)
+INFO:   [Qdrant] 9 unique nodes after dedup (from 14 raw hits)
+INFO:   [Meili] 8 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 1.05s
+INFO:   [Entity] Found 1 nodes by name: ["ryan o'neal"]
+INFO:   [Keyword] Added 8 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 9 hits
+INFO:   [Vector] Found 7 name variants from vector results: [('chaz mostert', 'chaz'), ('father bryce', 'ryce'), ('the sonny & cher show', 'cher'), ('and the beat goes on: the sonny and cher story', 'cher'), ('studentischer konvent', 'cher'), ('columbia university teachers college', 'cher'), ('Biography of Admiral Sir Guy Reginald Archer Gaunt', 'cher')]
+INFO:   [Vector] Found 14 semantically similar nodes: ['chaz', 'brody', 'ryce', 'jamieson k. price', 'cher', 'sonny bono', 'caitlyn jenner', 'chaz mostert', 'father bryce', 'the sonny & cher show', 'and the beat goes on: the sonny and cher story', 'studentischer konvent', 'columbia university teachers college', 'Biography of Admiral Sir Guy Reginald Archer Gaunt']
+INFO:   [Retrieval] Found 14 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 4.94s (8 entity + 14 vector nodes)
+INFO:   [Retrieval] Prepared 38 candidates (8 entity + 14 vector)
+INFO:   [GraphExpand] Ranked 59 neighbours → kept top 10 (scores: ['0.9949', '0.9949', '0.9948', '0.9942', '0.9939', '0.9938', '0.9932', '0.9932', '0.9931', '0.9931'])
+INFO:   [GraphExpand] Added 1 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 1 neighbors
+INFO: [Chat c7ce260e] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [GraphExpand] Ranked 50 neighbours → kept top 10 (scores: ['0.9985', '0.9982', '0.9981', '0.9977', '0.9977', '0.9974', '0.9970', '0.9970', '0.9965', '0.9965'])
+INFO:   [GraphExpand] Added 1 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 1 neighbors
+INFO: [Chat fcc5fef7] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [GraphExpand] Ranked 111 neighbours → kept top 10 (scores: ['0.9949', '0.9938', '0.9937', '0.9935', '0.9933', '0.9932', '0.9925', '0.9924', '0.9922', '0.9916'])
+INFO:   [GraphExpand] Added 3 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 3 neighbors
+INFO: [Chat eb2befc6] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [GraphExpand] Ranked 129 neighbours → kept top 10 (scores: ['0.9986', '0.9981', '0.9980', '0.9979', '0.9977', '0.9977', '0.9975', '0.9975', '0.9968', '0.9968'])
+INFO:   [GraphExpand] Added 1 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 1 neighbors
+INFO: [Chat 38a19b50] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [GraphExpand] Ranked 42 neighbours → kept top 10 (scores: ['0.9587', '0.9493', '0.9449', '0.9437', '0.9417', '0.9408', '0.9396', '0.9386', '0.9373', '0.9321'])
+INFO:   [GraphExpand] Added 1 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 1 neighbors
+INFO: [Chat 9ae43383] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [GraphExpand] Ranked 80 neighbours → kept top 10 (scores: ['0.1000', '0.1000', '0.1000', '0.1000', '0.1000', '0.1000', '0.1000', '0.1000', '0.1000', '0.1000'])
+INFO:   [GraphExpand] Added 1 neighbour node(s) via relationship expansion
+INFO:   [IterLoop] Graph expansion: 1 neighbors
+INFO: [Chat ff72637a] Reranking graph neighbors (qwen3-rerank-8b-q4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 2 candidates (top score: 0.8788)
+INFO:   [Reranker] Ranked 2 candidates (no cutoff)
+INFO: [Chat 392b3632] Reasoning over retrieved context (2/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The original question is: \"Who is the spouse of the actor who played hannibal smith in the a team?\"\n\nStep 1 (Initial Search): The current search was 'actor who played Hannibal Smith in A Team'.\n\nStep 2 (Analysis of Retrieved Documents): I found several actors associated with playing Hannibal Smith:\n- George Peppard: Played Hannibal in the 1980s action-adventure television series The A-Team.\n- Liam Neeson: Portrayed Hannibal in the 2010 film adaptation.\n\nThe question specifies 'the actor who played hannibal smith in the a team'. Given the context of detailed biographical and relationship information provided about characters/actors, it most likely refers to the original television series, which is referenced extensively ('The A-Team (tv series)'). Therefore, George Peppard is the primary candidate for 'the actor who played Hannibal Smith in the a team' (TV Series).\n\nStep 3 (Goal): The ultimate goal is to find the *spouse* of this actor.\n\nStep 4 (Check Documents for Spouse): I have reviewed all retrieved documents. They detail George Peppard's acting career, his role as Hannibal Smith, and other characters associated with him or the show (like Dr. Maggie Sullivan and Anne Sanders), but there is no mention of George Peppard's spouse.",
+ "finding": "George Peppard is the actor who played Hannibal in the 1980s action-adventure television series The A-Team. However, the documents do not contain any information regarding his spouse.",
+ "answer": null,
+ "next_query": "spouse of George Peppard"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='spouse of George Peppard'
+INFO: [Chat 392b3632] Retrieval loop 3/5
+INFO:   [IterLoop] Iteration 3/5 | current_query='spouse of George Peppard'
+INFO: [Chat 392b3632] Searching knowledge base (3/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='spouse of George Peppard' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['George Peppard'], Expected Types: ['person'], Attribute: spouse
+INFO: Loading embed GGUF in-process (exclusive, n_ctx=8192): /workspace/orb/models/gguf/Qwen3-Embedding-8B-Q4_K_M.gguf
+INFO: [ModelLoad] embed loaded in 7.0s
+INFO:   [⏱️ Timing] Total query embedding: 7.05s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 11 (threshold=0.45)
+INFO:   [Qdrant] 5 unique nodes after dedup (from 11 raw hits)
+INFO:   [Meili] 8 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 1.05s
+INFO:   [Entity] Found 1 nodes by name: ['george peppard']
+INFO:   [Keyword] Added 8 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 5 hits
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 38 candidates (top score: 0.2763)
+INFO:   [Reranker] Ranked 38 candidates → keeping top 10
+INFO:   [Retrieval] Top 10 results by source: entity=1, vector=7, neighbor=0, community=0
+INFO:     1. [entity_match] ryan o'neal (rerank=0.2763)
+INFO:     2. [vector_match] chaz (rerank=0.1000)
+INFO:     3. [vector_match] brody (rerank=0.1000)
+INFO:     4. [vector_match] ryce (rerank=0.1000)
+INFO:     5. [vector_match] jamieson k. price (rerank=0.1000)
+INFO:     6. [vector_match] cher (rerank=0.1000)
+INFO:     7. [vector_match] sonny bono (rerank=0.1000)
+INFO:     8. [vector_match] caitlyn jenner (rerank=0.1000)
+INFO:     9. [passage] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) (rerank=0.1000)
+INFO:     10. [passage] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) (rerank=0.1000)
+INFO:   [⏱️ Timing] Total: 172.75s (Embed: 0.00s | Retrieval: 4.94s | Rerank: 166.80s)
+INFO:   [IterLoop] hybrid_search returned 10 ranked candidates
+INFO: [Chat dcec2668] Expanding graph neighbors
+INFO:   [GraphExpand] Evaluating 103 1-hop relationship(s):
+INFO:     [0] Green Ice Soundtrack Production Details --[REFERENCES]--> ryan o'neal
+INFO:     [1] Production and Reception of the Film Nickelodeon --[REFERENCES]--> ryan o'neal
+INFO:     [2] acted in this film with Bogdanovich
+INFO:     [3] acted in this film with Bogdanovich
+INFO:     [4] played the character of Leo Harrigan
+INFO:     [5] starred in the film
+INFO:     [6] The Career and Legacy of Sonny & Cher --[REFERENCES]--> chaz
+INFO:     [7] Keeping Up with the Kardashians Series Overview --[REFERENCES]--> brody
+INFO:     [8] became a recurring cast member in seasons 8 and 9
+INFO:     [9] Beethoven (TV series) Production and Premise --[REFERENCES]--> ryce
+INFO:     [10] father of Ryce
+INFO:     [11] played Ryce in the films and the series
+INFO:     [12] Biography and Career of Jamieson Price --[REFERENCES]--> jamieson k. price
+INFO:     [13] is married to his wife
+INFO:     [14] is the voice of Count of Monte Cristo
+INFO:     [15] is involved with the podcast
+INFO:     [16] has a daughter named Cynthia
+INFO:     [17] has a son named Dane
+INFO:     [18] married on this date
+INFO:     [19] got him a job in voice acting
+INFO:     [20] is the voice of Galbalan
+INFO:     [21] has a daughter named Meghan
+INFO:     [22] is the voice of Milton Grimm
+INFO:     [23] is the voice of Ovan
+INFO:     [24] is the voice of Sojiro Sakura
+INFO:     [25] had a part in the movie
+INFO:     [26] became Virginia State Champion
+INFO:     [27] The Career and Legacy of Sonny & Cher --[REFERENCES]--> cher
+INFO:     [28] starring Cher
+INFO:     [29] sang backup on several of Spector's classic recordings
+INFO:     [30] made up of Sonny Bono and Cher
+INFO:     [31] Cher also announced plans to star in a new variety series... The Cher Show debuted
+INFO:     [32] Cher sued UMG in 2009
+INFO:     [33] The Career and Legacy of Sonny & Cher --[REFERENCES]--> sonny bono
+INFO:     [34] written and produced by Sonny
+INFO:     [35] Bono's final resting place is Desert Memorial Park
+INFO:     [36] working at Gold Star Studios
+INFO:     [37] Bono died of injuries from hitting a tree while skiing at Heavenly Ski Resort
+INFO:     [38] Bono's widow, Mary
+INFO:     [39] working for record producer Phil Spector
+INFO:     [40] made up of Sonny Bono and Cher
+INFO:     [41] Bono launched his own show, The Sonny Comedy Revue
+INFO:     [42] Keeping Up with the Kardashians Series Overview --[REFERENCES]--> caitlyn jenner
+INFO:     [43] children include Brandon
+INFO:     [44] is emphasized in the series
+INFO:     [45] step-parent is Caitlyn Jenner
+INFO:     [46] step-parent is Caitlyn Jenner
+INFO:     [47] step-parent is Caitlyn Jenner
+INFO:     [48] step-parent is Caitlyn Jenner
+INFO:     [49] step-parent is Caitlyn Jenner
+INFO:     [50] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> allan dwan
+INFO:     [51] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> arthur d. murphy
+INFO:     [52] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> at long last love
+INFO:     [53] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> atlantic pictures
+INFO:     [54] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> berlin international film festival
+INFO:     [55] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> bob chartoff
+INFO:     [56] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> british lion
+INFO:     [57] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> buck greenway
+INFO:     [58] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> burt reynolds
+INFO:     [59] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> california
+INFO:     [60] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> columbia pictures
+INFO:     [61] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> daisy miller
+INFO:     [62] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> david begelman
+INFO:     [63] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> edison trust
+INFO:     [64] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> gary arnold
+INFO:     [65] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> gene siskel
+INFO:     [66] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> h.h. cobb
+INFO:     [67] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> hal needham
+INFO:     [68] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> hollywoodland, california
+INFO:     [69] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> hooper
+INFO:     [70] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> irwin winkler
+INFO:     [71] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> jane hitchcock
+INFO:     [72] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> john simon
+INFO:     [73] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> kathleen cooke
+INFO:     [74] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> kevin thomas
+INFO:     [75] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> laszlo kovacs
+INFO:     [76] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> leo harrigan
+INFO:     [77] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> motion picture patents company
+INFO:     [78] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> new jersey
+INFO:     [79] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> nickelodeon (film)
+INFO:     [80] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> peter bogdanovich
+INFO:     [81] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> raoul walsh
+INFO:     [82] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> richard eder
+INFO:     [83] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> roger ebert
+INFO:     [84] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> rotten tomatoes
+INFO:     [85] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> saint jack
+INFO:     [86] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> starlight parade
+INFO:     [87] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> tatum o'neal
+INFO:     [88] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> the birth of a nation
+INFO:     [89] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> tuttle's muddle
+INFO:     [90] # Nickelodeon (film) (Passage 0)
+
+Passage 1:
+Nickelodeon (fi (passage 2) --[REFERENCES]--> w.d. richter
+INFO:     [91] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> colombia (green ice opening title)
+INFO:     [92] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> dave lawson
+INFO:     [93] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> dave mattacks
+INFO:     [94] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> dave richmond
+INFO:     [95] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> doreen chanter
+INFO:     [96] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> ken thorne
+INFO:     [97] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> kenny baker
+INFO:     [98] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> maria muldaur
+INFO:     [99] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> ray cooper
+INFO:     [100] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> stuart epps
+INFO:     [101] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> terry taylor
+INFO:     [102] # Green Ice (soundtrack) (Passage 16)
+
+Passage 17:
+Green Ice (passage 1) --[REFERENCES]--> tristan fry
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 1 candidates (top score: 0.7887)
+INFO:   [Reranker] Ranked 1 candidates (no cutoff)
+INFO: [Chat c7ce260e] Reasoning over retrieved context (2/5) (Gemma4)
+INFO:   [Vector] Found 1 name variants from vector results: [('Production and Plot Analysis of Five Days from Home', 'five days from home')]
+INFO:   [Vector] Found 5 semantically similar nodes: ['sherry boucher', 'savannah smith', 'five days from home', 'mari hulman george', 'Production and Plot Analysis of Five Days from Home']
+INFO:   [Retrieval] Found 6 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 3.57s (9 entity + 5 vector nodes)
+INFO:   [Retrieval] Prepared 11 candidates (9 entity + 5 vector)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 1 candidates (top score: 0.9637)
+INFO:   [Reranker] Ranked 1 candidates (no cutoff)
+INFO: [Chat fcc5fef7] Reasoning over retrieved context (2/5) (Gemma4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 3 candidates (top score: 0.9949)
+INFO:   [Reranker] Ranked 3 candidates (no cutoff)
+INFO: [Chat eb2befc6] Reasoning over retrieved context (2/5) (Gemma4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 1 candidates (top score: 0.9872)
+INFO:   [Reranker] Ranked 1 candidates (no cutoff)
+INFO: [Chat 38a19b50] Reasoning over retrieved context (2/5) (Gemma4)
+INFO:   [Reranker] qwen3-rerank-8b-q4 scored 1 candidates (top score: 0.9253)
+INFO:   [Reranker] Ranked 1 candidates (no cutoff)
+INFO: [Chat 9ae43383] Reasoning over retrieved context (3/5) (Gemma4)

@@ -1,0 +1,24 @@
+{
+  "name": "round7-oracle-gold-musique/base/r50",
+  "dataset": "musique",
+  "questions": 50,
+  "restore": null,
+  "ingest": false,
+  "communities": false,
+  "overrides": {
+    "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+    "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+    "LLAMA_N_CTX": "32768"
+  },
+  "provider": null,
+  "chat_model": "gemma4-e4b-q4",
+  "ingestion_model": null,
+  "started": "2026-10-11T17:22:22",
+  "commit": "",
+  "serve": {
+    "slots": 4,
+    "llama_server": "0.00.000.573 I srv  llama_server: initializing ..."
+  },
+  "finished": "2026-10-11T17:37:34",
+  "invalid_replies": {}
+}

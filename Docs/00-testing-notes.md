@@ -300,6 +300,26 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-12, round 7 results: direction clear, nothing significant at 50 questions.** 12B extraction,
+  reminder plus grammar, served, E4B answering. F1 (EM), paired with the sweep's bootstrap and McNemar test:
+  MuSiQue: passages 0.293 (26%) against none 0.215 (14%), +8/-2 EM. Best evidence at both ends 0.346 (26%),
+  +2/-2. Question as the first search 0.340 (28%), +3/-2. PageRank expansion 0.289 (20%), +1/-4, and slower
+  (582 s/question).
+  HotpotQA: passages 0.573 (42%) against none 0.524 (42%), +6/-6. Keyword search on passages 0.658 (54%), +8/-2.
+  Both ends 0.611 (50%), +7/-3. PageRank 0.635 (46%), +5/-3. Question first 0.678 (56%), +12/-4, against its own
+  base 0.570, the closest to significant.
+  Every confidence interval crosses 0. Every change except PageRank points the same way on both datasets;
+  PageRank helps HotpotQA and hurts MuSiQue. Candidates to confirm together at a larger sample: passages,
+  keyword search on passages, question first, both-ends order. Drop PageRank.
+  Measured from above: the long-context oracle (all of a question's notes, one step) matches the best MuSiQue
+  pipeline at 18 s against 450-580 s/question. Most of a question's time is the reranker: llama-cpp-python's
+  `logprobs` needs `logits_all=True`, so each candidate's every token returns full-vocabulary logits to the
+  CPU while the GPU idles. Reading only the last position's yes/no logits should remove most of it (next round).
+  Lost or empty: the refusal runs used questions 100-149, but the manifests end at 100 (HotpotQA) and 50
+  (MuSiQue), so they asked nothing. HotpotQA refusals now use 0-19 and 70-99; MuSiQue has no out-of-index
+  questions. The MuSiQue keyword-plus-header result and the MuSiQue gold oracle re-run were on the pods' disks
+  when home lost its network (03:36-08:58). The pods then stopped themselves, as designed, and their zones had no
+  capacity to restart them for the copy; `restart.sh` retries.
 - **2026-10-11, the 12B QAT is worse on MuSiQue; the oracles say where the errors are.** `round6-qat12-musique`:
   369/526 notes, gold in index 0.52, recall 0.47, F1 0.152, EM 12%. The 12B on the same setup
   (round5-musique-b) got 436/526, 0.67, 0.64, F1 0.220, EM 18%. So QAT wins HotpotQA (0.681 against 0.527) and

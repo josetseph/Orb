@@ -1,0 +1,246 @@
+[run] DATA_DIR=/workspace/orb/data
+Qdrant not reachable yet (retrying on use): [Errno 111] Connection refused
+/workspace/orb/backend/.venv/lib/python3.12/site-packages/qdrant_client/qdrant_remote.py:288: UserWarning: Failed to obtain server version. Unable to check client-server compatibility. Set check_compatibility=False to skip version check.
+  show_warning(
+Meilisearch not reachable yet (retrying on use): MeilisearchCommunicationError, HTTPConnectionPool(host='127.0.0.1', port=7700): Max retries exceeded with url: /health (Caused by NewConnectionError("HTTPConnection(host='127.0.0.1', port=7700): Failed to establish a new connection: [Errno 111] Connection refused"))
+[run] Starting Qdrant
+[run] Starting Meilisearch
+[run] Starting API on http://127.0.0.1:8000
+INFO: Logging initialized at level INFO | Logs dir: /workspace/orb/data/logs
+INFO: Started server process [638763]
+INFO: Waiting for application startup.
+INFO: Application startup: Orb API online
+INFO: Database schema ensured (create_all)
+INFO: Application startup complete.
+INFO: Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: Store migration v1 for KB 'default': 0 descriptions scrubbed, 0 note names filled
+INFO: 127.0.0.1:37554 - "GET /health HTTP/1.1" 200
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8102
+WARNING: Keychain unavailable, credentials are session-only: No recommended backend was available. Install a recommended 3rd party backend package; or, install the keyrings.alt package if you want to use the non-recommended backends. See https://pypi.org/project/keyring for details.
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:37558 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: Primary LLM Provider: LOCAL
+INFO: Initializing in-process llama-cpp-python (backend=cuda, model=local-chat)
+INFO: Ingestion LLM: shared with main (LOCAL)
+INFO: 127.0.0.1:37560 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:40776 - "GET /api/v1/models HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:40778 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:40788 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: [Embedding] Provider: local (llama-cpp-python in-process) | Model: qwen3-embed-8b-q4
+INFO: [Models] Embedding infrastructure synced — dims=4096 embed_id=qwen3-embed-8b-q4 kbs=['default']
+INFO: 127.0.0.1:40798 - "POST /api/v1/setup/download-models HTTP/1.1" 200
+INFO: 127.0.0.1:40812 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: [KBRegistry] LLM override for 'default' → provider=openai_compat model=gemma4-e4b-q4 ingestion=gemma4-12b-q4
+INFO: Primary LLM Provider: OPENAI_COMPAT
+INFO: Initializing OpenAI-compatible endpoint at http://127.0.0.1:8101
+INFO: Ingestion LLM: shared with main (OPENAI_COMPAT)
+INFO: 127.0.0.1:40820 - "PATCH /api/v1/kb/default/llm HTTP/1.1" 200
+INFO: 127.0.0.1:40836 - "GET /api/v1/benchmark/config HTTP/1.1" 200
+INFO: 127.0.0.1:40838 - "GET /api/v1/models HTTP/1.1" 200
+INFO: 127.0.0.1:40840 - "GET /api/v1/notes HTTP/1.1" 200
+INFO: RetrievalService initialized
+INFO: 
+[Chat] Started processing query: 'Who plays the wife of the producer of Here Comes the Boom in Grown Ups?'
+INFO: [Chat 5ceda4ad] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who plays the wife of the producer of Here Comes the Boom in Grown Ups?'
+======================================================================
+INFO: [Chat 5ceda4ad] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'What was the person who provided evidence to suggest the existence of the neutron a participant of?'
+INFO: [Chat ebb35372] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='What was the person who provided evidence to suggest the existence of the neutron a participant of?'
+======================================================================
+INFO: [Chat ebb35372] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'In which borough was Callum McManaman born?'
+INFO: [Chat bd2d5d49] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='In which borough was Callum McManaman born?'
+======================================================================
+INFO: [Chat bd2d5d49] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent Francisco Bojado's birthplace is located?'
+INFO: [Chat 46f6b0d1] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent Francisco Bojado's birthplace is located?'
+======================================================================
+INFO: [Chat 46f6b0d1] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who is the spouse of the actor who played hannibal smith in the a team?'
+INFO: [Chat 1c402417] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who is the spouse of the actor who played hannibal smith in the a team?'
+======================================================================
+INFO: [Chat 1c402417] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'Who is the child of the cast member of Green Ice?'
+INFO: [Chat ea48ad49] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='Who is the child of the cast member of Green Ice?'
+======================================================================
+INFO: [Chat ea48ad49] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'How many times did plague occur in the birthplace of La Silvia's composer?'
+INFO: [Chat 27c865bc] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='How many times did plague occur in the birthplace of La Silvia's composer?'
+======================================================================
+INFO: [Chat 27c865bc] Analyzing question (Gemma4)
+INFO: 
+[Chat] Started processing query: 'When was the last time Peter Till's sports team beat the winner of the 1894-95 FA Cup?'
+INFO: [Chat 8cc307a9] Planning retrieval (Gemma4)
+INFO: 
+======================================================================
+[IterLoop] START retrieve_with_iterative_loop
+  query='When was the last time Peter Till's sports team beat the winner of the 1894-95 FA Cup?'
+======================================================================
+INFO: [Chat 8cc307a9] Analyzing question (Gemma4)
+INFO:   [IterLoop] question_attribute='participant'
+INFO: [Chat ebb35372] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat ebb35372] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='child'
+INFO: [Chat ea48ad49] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat ea48ad49] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='location'
+INFO: [Chat bd2d5d49] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat bd2d5d49] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='spouse'
+INFO: [Chat 1c402417] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 1c402417] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='plague_occurrence'
+INFO: [Chat 27c865bc] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 27c865bc] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='actor'
+INFO: [Chat 5ceda4ad] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 5ceda4ad] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='birthplace'
+INFO: [Chat 46f6b0d1] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 46f6b0d1] Reasoning over retrieved context (1/5) (Gemma4)
+INFO:   [IterLoop] question_attribute='date'
+INFO: [Chat 8cc307a9] Retrieval loop 1/5
+INFO:   [IterLoop] Iteration 1/5 | current_query=None
+INFO: [Chat 8cc307a9] Reasoning over retrieved context (1/5) (Gemma4)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking for the birthplace borough of a specific individual, Callum McManaman. I need to perform an initial search to find biographical information about him.", "finding": null, "answer": null, "next_query": "Callum McManaman birthplace"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Callum McManaman birthplace'
+INFO: [Chat bd2d5d49] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='Callum McManaman birthplace'
+INFO: [Chat bd2d5d49] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Callum McManaman birthplace' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user wants to find the name of a child belonging to an actor/cast member who appeared in the movie 'Green Ice'. This requires a multi-step process: 1. Identify cast members of 'Green Ice'. 2. For those cast members, identify their children. 3. State the name of one such child.", "finding": null, "answer": null, "next_query": "cast members of Green Ice"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='cast members of Green Ice'
+INFO: [Chat ea48ad49] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='cast members of Green Ice'
+INFO: [Chat ea48ad49] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='cast members of Green Ice' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking for the identity of a person who provided evidence suggesting the existence of the neutron and was also a participant in some event or context that is not yet specified. This requires identifying potential historical figures related to neutron discovery/evidence first, and then determining which one fits the 'participant' description based on available context (which is currently missing). I need to start by searching for key individuals associated with evidence for the neutron.", "finding": null, "answer": null, "next_query": "person who provided evidence for existence of neutron"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='person who provided evidence for existence of neutron'
+INFO: [Chat ebb35372] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='person who provided evidence for existence of neutron'
+INFO: [Chat ebb35372] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='person who provided evidence for existence of neutron' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking a multi-hop question. To answer it, I need to perform the following steps:\n1. Identify who La Silvia's composer was.\n2. Determine the birthplace of that composer.\n3. Find out how many times 'plague' occurred in that specific location.\n\nThe first step is to identify the composer associated with 'La Silvia'.", "finding": null, "answer": null, "next_query": "Who was La Silvia's composer?"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query="Who was La Silvia's composer?"
+INFO: [Chat 27c865bc] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query="Who was La Silvia's composer?"
+INFO: [Chat 27c865bc] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Who was La Silvia's composer?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: search, Entities: ['Callum McManaman'], Expected Types: ['person'], Attribute: birthplace
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 74 (threshold=0.45)
+INFO:   [Qdrant] 37 unique nodes after dedup (from 74 raw hits)
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking for the spouse of an actor. This requires multiple steps:\n1. Identify the role: 'Hannibal Smith'.\n2. Identify the series/show: 'A team' (This might be a typo, I need to confirm which show this refers to).\n3. Find the actor who played Hannibal Smith in that show.\n4. Find the spouse of that actor.\nI must start by identifying the actor.", "finding": null, "answer": null, "next_query": "actor who played Hannibal Smith in A team"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='actor who played Hannibal Smith in A team'
+INFO: [Chat 1c402417] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='actor who played Hannibal Smith in A team'
+INFO: [Chat 1c402417] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='actor who played Hannibal Smith in A team' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [Meili] 38 raw Meili hits
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.85s
+INFO:   [Entity] Found 1 nodes by name: ['Career Profile of Callum McManaman']
+INFO:   [Keyword] Added 38 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 37 hits
+INFO: [LLM] iterative_step raw response:
+{"reasoning": "The user is asking for an actor who plays a specific character role: the wife of the producer of 'Here Comes the Boom' in the movie 'Grown Ups'. This requires several steps:\n1. Identify the cast/production details of 'Here Comes the Boom' to find the producer.\n2. Determine if that producer is associated with or involved in the production/cast of 'Grown Ups'.\n3. If a link exists, identify who plays the wife character in 'Grown Ups'.", "finding": null, "answer": null, "next_query": "Who produced the movie Here Comes the Boom?"}
+INFO:   [IterLoop] iterative_step result: can_answer=False final_answer=None next_query='Who produced the movie Here Comes the Boom?'
+INFO: [Chat 5ceda4ad] Retrieval loop 2/5
+INFO:   [IterLoop] Iteration 2/5 | current_query='Who produced the movie Here Comes the Boom?'
+INFO: [Chat 5ceda4ad] Searching knowledge base (2/5) (Embeddings + Reranker)
+INFO: 
+────────────────────────────────────────────────────────────
+  [HybridSearch] query='Who produced the movie Here Comes the Boom?' top_k=50
+────────────────────────────────────────────────────────────
+INFO:   [HybridSearch] Calling LLM query analysis...
+INFO:   [LLM Analysis] Intent: list, Entities: ['Green Ice'], Expected Types: ['film'], Attribute: cast members
+INFO:   [⏱️ Timing] Total query embedding: 0.00s
+INFO:   [Vector] Running vector search
+INFO:   [Qdrant] Raw hits from search_all_collections: 24 (threshold=0.45)
+INFO:   [Qdrant] 16 unique nodes after dedup (from 24 raw hits)
+INFO:   [Vector] Found 1 semantically similar nodes: ['manchester city']
+INFO:   [Retrieval] Found 9 grounding notes (for source links)
+INFO:   [⏱️ Timing] Retrieval phase: 1.95s (39 entity + 1 vector nodes)
+INFO:   [Meili] 100 raw Meili hits
+INFO:   [Retrieval] Prepared 40 candidates (39 entity + 1 vector)
+INFO:   [⏱️ Timing] Parallel entity/BM25/vector search: 0.65s
+INFO:   [Entity] Found 4 nodes by name: ['green ice', 'Green Ice Soundtrack Production Details', 'green ice (soundtrack)', 'colombia (green ice opening title)']
+INFO:   [Keyword] Added 100 Meili BM25 matches
+INFO:   [Vector] Using Qdrant multi-collection search with 16 hits
+INFO: Loading reranker GGUF (exclusive): /workspace/orb/models/gguf/Qwen3-Reranker-8B.Q4_K_M.gguf
+INFO: [ModelLoad] rerank loaded in 2.3s
