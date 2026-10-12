@@ -300,6 +300,13 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-12, round 7 complete: keyword search plus title headers reach E4B's MuSiQue ceiling, at a cost in
+  time.** MuSiQue with passages in keyword search and every passage titled: F1 0.363, EM 28%, recall 0.50,
+  1054 s/question (+3/-2 EM against passages alone, 0.293; CI -0.008 to +0.157). The gold-notes oracle is
+  0.357. Its time doubles: more long-note passages reach the reranker, whose cost is per candidate token
+  (see the reranker note). HotpotQA keyword search alone: 0.658, 380 s. `awstest` stopped in a zone with no GPU
+  capacity for hours. Its results were copied by switching the stopped instance to m6i.large (a stopped
+  instance can change type) and booting that. Both AWS pods are terminated.
 - **2026-10-12, the answering model is the ceiling on both datasets; Orb never commits to an invented answer.**
   MuSiQue gold-notes oracle (E4B, one step): F1 0.357, EM 30%. All notes: 0.339. Best pipeline (both-ends
   order): 0.346. So MuSiQue's pipeline is at E4B's ceiling too; the earlier reading that retrieval is
