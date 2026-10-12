@@ -90,6 +90,8 @@ while True:
         if stalls[name] >= 4:  # one MuSiQue question can take 20 minutes (the reranker, on long notes)
             problem(name, "no progress for 40 minutes", info)
     try:
+        if not seen:
+            raise LookupError  # no pod probed yet: P.PROVIDER is not set from a pod record (it defaults to RunPod)
         credit, spend = P.balance()
         if credit < 8:
             print(time.strftime("%H:%M"), f"PROBLEM: credit ${credit:.2f} (spending ${spend:.2f}/h)", flush=True)
