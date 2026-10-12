@@ -12,10 +12,10 @@ Varied: `{"INDEX_RAW_PASSAGES": [false], "FIRST_SEARCH_IS_QUESTION": [true]}` (o
 | INDEX_RAW_PASSAGES=False | 0.591 | 46% | 0.930 | 1.000 | 242 | 5749 (486/492 notes) | 13 {'query analysis': 9, 'research step': 4} | +7/-4 EM, answer_f1 CI -0.104 to +0.142, within noise |
 | FIRST_SEARCH_IS_QUESTION=True | 0.678 | 56% | 0.990 | 1.000 | 302 | 5774 (484/492 notes) | 10 {'query analysis': 4, 'research step': 6} | +12/-4 EM, answer_f1 CI -0.009 to +0.225, within noise |
 
-## Absent: questions 100 to 150, whose notes are not in the index (lower answered is better)
+## Absent: questions [[0, 20], [70, 100]], whose notes are not in the index (lower answered is better)
 
 | variant | answered | s / question |
 |---|---|---|
-| base | not run | |
-| INDEX_RAW_PASSAGES=False | not run | |
-| FIRST_SEARCH_IS_QUESTION=True | not run | |
+| base | 0% | 61 |
+| INDEX_RAW_PASSAGES=False | 0% | 58 |
+| FIRST_SEARCH_IS_QUESTION=True | 0% | 80 |

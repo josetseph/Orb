@@ -300,6 +300,18 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-12, the answering model is the ceiling on both datasets; Orb never commits to an invented answer.**
+  MuSiQue gold-notes oracle (E4B, one step): F1 0.357, EM 30%. All notes: 0.339. Best pipeline (both-ends
+  order): 0.346. So MuSiQue's pipeline is at E4B's ceiling too; the earlier reading that retrieval is
+  MuSiQue's weak stage was wrong. HotpotQA: gold 0.718, best pipeline (question first) 0.678. Further
+  accuracy has to come from the answering model. Retrieval work now matters for speed: the oracles take 6-18
+  s/question against 180-580.
+  HotpotQA refusals (questions 0-19 and 70-99 asked of the 20-69 index, 50 each). No research step committed
+  to an answer in any variant (answered 0%). When the loop runs out it returns its last finding as the reply.
+  That was 19/50 with passages, 25/50 without, and 29/50 with question first; the rest said "I couldn't find
+  any relevant information". Those findings are hedged ("The documents confirm that Emma Bull is ...") but read
+  like an answer. 4-6 contained the real answer. Product fix: present an exhausted loop's finding as
+  "no definitive answer; closest finding: ...", not as the answer.
 - **2026-10-12, round 7 results: direction clear, nothing significant at 50 questions.** 12B extraction,
   reminder plus grammar, served, E4B answering. F1 (EM), paired with the sweep's bootstrap and McNemar test:
   MuSiQue: passages 0.293 (26%) against none 0.215 (14%), +8/-2 EM. Best evidence at both ends 0.346 (26%),

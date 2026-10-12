@@ -1,0 +1,1 @@
+{"ts": 1791796877.9020143, "stage": "query analysis", "model": "gemma4-e4b-q4", "reason": "date_filter: Field required (2 problem(s))", "raw": "{\"entities\": [], \"expected_entity_types\": [\"Place\"], \"question_attribute\": \"location\", \"intent\": \"search\", \"keywords\": [\"Local H\", \"origin\", \"location\"]}"}

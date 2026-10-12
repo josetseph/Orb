@@ -8,4 +8,4 @@ Varied: `{}` (one-at-a-time)
 
 | variant | answer_f1 | exact match | retrieval recall | gold in index | s / question | index build s (notes ingested) | unusable replies | vs base |
 |---|---|---|---|---|---|---|---|---|
-| base | not run | | | | | | | |
+| base | 0.357 | 30% | 0.000 | n/a | 12 |  | 3 {'research step': 3} |  |

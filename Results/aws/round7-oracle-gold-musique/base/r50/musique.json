@@ -1,0 +1,879 @@
+{
+  "timestamp": "2026-10-12T03:43:45.783189",
+  "dataset": "musique",
+  "mode": "oracle-gold",
+  "num_tests": 50,
+  "config": {
+    "chat_model": "gemma4-e4b-q4",
+    "ingestion_model": "gemma4-e4b-q4",
+    "selection": {
+      "chat_id": "gemma4-e4b-q4",
+      "embed_id": "qwen3-embed-8b-q4",
+      "reranker_id": "qwen3-rerank-8b-q4",
+      "embedding_dims": 4096,
+      "chat_path": "gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",
+      "embed_path": "gguf/Qwen3-Embedding-8B-Q4_K_M.gguf",
+      "reranker_path": "gguf/Qwen3-Reranker-8B.Q4_K_M.gguf"
+    },
+    "knobs": {
+      "BENCHMARK_MODE": true,
+      "MAX_LOOP_ITERATIONS": 3,
+      "EXTRACTION_MODE": "auto",
+      "PROMPT_SUFFIX": "",
+      "EXTRACTION_PROMPT_SUFFIX": "",
+      "JSON_CONSTRAINED_DECODING": true,
+      "EXTRACTION_JSON_CONSTRAINED": true,
+      "LLAMA_FLASH_ATTN": false,
+      "QUERY_ATTRIBUTE_MODE": "single",
+      "ENABLE_THINKING": null,
+      "EXTRACTION_ENABLE_THINKING": null,
+      "EXTRACTION_ATTEMPTS": 1,
+      "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
+      "RERANK_MODEL_ID": "qwen3-rerank-8b-q4",
+      "LLAMA_N_CTX": 32768,
+      "MODEL_IDLE_SECONDS": 300.0,
+      "RERANKER_TOP_K": 10,
+      "RERANKER_SCORE_THRESHOLD": 0.05,
+      "VECTOR_PRE_RERANK_THRESHOLD": 0.45,
+      "GRAPH_EXPAND_TOP_NEIGHBORS": 10,
+      "GRAPH_EXPAND_SCORE_THRESHOLD": 0.0,
+      "LLM_PROVIDER": "local",
+      "LLM_BASE_URL": "http://127.0.0.1:8080",
+      "EMBEDDING_PROVIDER": "local",
+      "EMBEDDING_MODEL": "qwen3-embed-8b-q4",
+      "MODEL_RERANKER_LOCAL": "qwen3-rerank-8b-q4",
+      "INDEX_RAW_PASSAGES": false,
+      "RAW_PASSAGE_CHARS": 1500,
+      "PASSAGE_KEYWORD_SEARCH": false,
+      "PASSAGE_TITLE_HEADER": false,
+      "CONTEXT_ORDER": "rank",
+      "FIRST_SEARCH_IS_QUESTION": false,
+      "PPR_EXPANSION": false,
+      "PPR_TOP_NOTES": 5,
+      "PPR_DAMPING": 0.5
+    }
+  },
+  "metrics": {
+    "answer_exact_match": 0.3,
+    "answer_f1": 0.356888192336808,
+    "error_count": 0
+  },
+  "results": [
+    {
+      "test_id": "musique_0",
+      "question": "Who plays the wife of the producer of Here Comes the Boom in Grown Ups?",
+      "expected_answer": "Maria Bello",
+      "evidence_notes": [
+        "q000_p00_Grown Ups _film_ _Passage 0_.md",
+        "q000_p02_Here Comes the Boom _Passage 2_.md"
+      ],
+      "actual_answer": "Grown Ups was produced by Sandler and Jack Giarraputo. Here Comes the Boom was produced by Happy Madison Productions (Sandler's company). The cast of Grown Ups includes Sandler, Kevin James, Chris Rock, David Spade, Rob Schneider, Salma Hayek, Maria Bello, and Maya Rudolph.",
+      "error": null,
+      "total_time_ms": 21218.012898003508,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.08888888888888888
+    },
+    {
+      "test_id": "musique_1",
+      "question": "What was the person who provided evidence to suggest the existence of the neutron a participant of?",
+      "expected_answer": "Manhattan Project",
+      "evidence_notes": [
+        "q001_p00_James Chadwick _Passage 0_.md",
+        "q001_p02_Discovery of the neutron _Passage 2_.md"
+      ],
+      "actual_answer": "Walther Bothe",
+      "error": null,
+      "total_time_ms": 25502.169158004108,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_2",
+      "question": "In which borough was Callum McManaman born?",
+      "expected_answer": "Knowsley",
+      "evidence_notes": [
+        "q002_p05_Callum McManaman _Passage 5_.md",
+        "q002_p08_Whiston_ Merseyside _Passage 8_.md"
+      ],
+      "actual_answer": "Metropolitan Borough of Knowsley",
+      "error": null,
+      "total_time_ms": 10045.379615003185,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.4
+    },
+    {
+      "test_id": "musique_3",
+      "question": "Who is the child of the Italian navigator who sailed for England and explored the eastern coast of the continent Francisco Bojado's birthplace is located?",
+      "expected_answer": "Sebastian Cabot",
+      "evidence_notes": [
+        "q003_p01_Francisco Bojado _Passage 1_.md",
+        "q003_p00_Paula Santiago _Passage 0_.md",
+        "q003_p04_John Cabot _Passage 4_.md",
+        "q003_p10_Sebastian Cabot _explorer_ _Passage 10_.md"
+      ],
+      "actual_answer": "John Cabot (the Italian navigator who sailed for England) had sons: Ludovico Caboto, Sebastiano Caboto, and Santo Caboto (Passage 4). Francisco Bojado was born in Mexico (Passage 2).",
+      "error": null,
+      "total_time_ms": 16281.306208999013,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.06666666666666667
+    },
+    {
+      "test_id": "musique_4",
+      "question": "Who is the spouse of the actor who played hannibal smith in the a team?",
+      "expected_answer": "Sherry Boucher",
+      "evidence_notes": [
+        "q004_p06_Five Days from Home _Passage 6_.md",
+        "q004_p04_John _Hannibal_ Smith _Passage 4_.md"
+      ],
+      "actual_answer": "George Peppard was an actor who played John \"Hannibal\" Smith in The A-Team. Passage 7 mentions George Peppard's then wife Sherry Boucher regarding a different film, and notes that Peppard and Boucher were separated in December 1977.",
+      "error": null,
+      "total_time_ms": 9523.149365006248,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.10256410256410257
+    },
+    {
+      "test_id": "musique_5",
+      "question": "When was the last time Peter Till's sports team beat the winner of the 1894-95 FA Cup?",
+      "expected_answer": "1 December 2010",
+      "evidence_notes": [
+        "q005_p04_Second City derby _Passage 4_.md",
+        "q005_p03_Peter Till _Passage 3_.md",
+        "q005_p05_1894_95 FA Cup _Passage 5_.md"
+      ],
+      "actual_answer": "The winner of the 1894\u201395 FA Cup was Aston Villa (Document #6). Peter Till played for numerous teams including Grimsby Town, Walsall, York City, Fleetwood Town, etc. (Document #3).",
+      "error": null,
+      "total_time_ms": 13237.675452000985,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_6",
+      "question": "Who is the child of the cast member of Green Ice?",
+      "expected_answer": "Tatum O'Neal",
+      "evidence_notes": [
+        "q006_p16_Green Ice _soundtrack_ _Passage 16_.md",
+        "q006_p00_Nickelodeon _film_ _Passage 0_.md"
+      ],
+      "actual_answer": "The personnel listed for the Green Ice soundtrack include Bill Wyman, Terry Taylor, Dave Mattacks, Ray Cooper, Doreen Chanter, Maria Muldaur, Stuart Epps, Dave Richmond, Tristan Fry, Kenny Baker, Dave Lawson, and Ken Thorne. The film 'Green Ice' stars Ryan O'Neal.",
+      "error": null,
+      "total_time_ms": 12107.103731003008,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.046511627906976744
+    },
+    {
+      "test_id": "musique_7",
+      "question": "How many times did plague occur in the birthplace of La Silvia's composer?",
+      "expected_answer": "22",
+      "evidence_notes": [
+        "q007_p03_Orlando furioso _Vivaldi_ 1714_ _Passage 3_.md",
+        "q007_p00_Black Death _Passage 0_.md",
+        "q007_p08_La Silvia _Passage 8_.md"
+      ],
+      "actual_answer": "La Silvia's composer is Antonio Vivaldi (Passage 9). The documents mention Venice as a location associated with his operas (Passage 4), but do not state his specific place of birth. Plague occurrence data is available for general locations in the Black Death passages, but I need to link it to Vivaldi's birthplace.",
+      "error": null,
+      "total_time_ms": 8939.488424999581,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_8",
+      "question": "When did military instruction start at the place where Larry Alcala was educated?",
+      "expected_answer": "1912",
+      "evidence_notes": [
+        "q008_p03_Reserve Officers_ Training Corps _Passage 3_.md",
+        "q008_p01_Larry Alcala _Passage 1_.md"
+      ],
+      "actual_answer": "1912",
+      "error": null,
+      "total_time_ms": 8416.565116996935,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_9",
+      "question": "What is the experimental satellite being forerunner to communication satellite of INSAT-4CR's manufacturer called?",
+      "expected_answer": "ATS - 6 (Applications Technology Satellite - 6)",
+      "evidence_notes": [
+        "q009_p06_ATS-6 _Passage 6_.md",
+        "q009_p02_INSAT-4CR _Passage 2_.md"
+      ],
+      "actual_answer": "",
+      "error": null,
+      "total_time_ms": 7672.724392999953,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_10",
+      "question": "Who was the first African American student at the university Robert Khayat was educated at?",
+      "expected_answer": "James Howard Meredith",
+      "evidence_notes": [
+        "q010_p12_James Meredith _Passage 12_.md",
+        "q010_p09_Robert Khayat _Passage 9_.md"
+      ],
+      "actual_answer": "James Howard Meredith",
+      "error": null,
+      "total_time_ms": 8898.223388001497,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_11",
+      "question": "Who gives out the prize named after the author of Lectures on Jurisprudence?",
+      "expected_answer": "University of Cambridge",
+      "evidence_notes": [
+        "q011_p03_Lectures on Jurisprudence _Passage 3_.md",
+        "q011_p06_Adam Smith Prize _Passage 6_.md"
+      ],
+      "actual_answer": "University of Cambridge",
+      "error": null,
+      "total_time_ms": 7378.268396001658,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_12",
+      "question": "Who is Frances Freeling Broderip's sibling?",
+      "expected_answer": "Tom Hood",
+      "evidence_notes": [
+        "q012_p03_Frances Freeling Broderip _Passage 3_.md",
+        "q012_p12_Tom Hood _Passage 12_.md"
+      ],
+      "actual_answer": "Tom Hood",
+      "error": null,
+      "total_time_ms": 6925.069288998202,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_13",
+      "question": "Who is the spouse of the person who voices Jarvis in Iron Man?",
+      "expected_answer": "Jennifer Connelly",
+      "evidence_notes": [
+        "q013_p03_Paul Bettany _Passage 3_.md",
+        "q013_p05_A Beautiful Mind _soundtrack_ _Passage 5_.md"
+      ],
+      "actual_answer": "Jennifer Connelly",
+      "error": null,
+      "total_time_ms": 8026.925200996629,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_14",
+      "question": "What is the source of the river that is the mouth of the Caledon River?",
+      "expected_answer": "Thaba Putsoa",
+      "evidence_notes": [
+        "q014_p08_Orange River _Passage 8_.md",
+        "q014_p07_Upper Orange Water Management _Passage 7_.md"
+      ],
+      "actual_answer": "Passage 7 mentions that water from the Lesotho Highlands Water Project passes under the Little Caledon River south of Clarens in the Free State, discharging into the Ash River. Passage 8 lists the Caledon River as one of the major rivers within the Upper Orange WMA, but does not detail its mouth or what river it forms a mouth for.",
+      "error": null,
+      "total_time_ms": 18644.844899004966,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_15",
+      "question": "What is the name of the famous bridge located in the birthplace of the composer of Nulla in mundo pax sincera?",
+      "expected_answer": "Rialto Bridge",
+      "evidence_notes": [
+        "q015_p10_Nulla in mundo pax _Passage 10_.md",
+        "q015_p07_Rialto Bridge _Passage 7_.md",
+        "q015_p05_Orlando furioso _Vivaldi_ 1714_ _Passage 5_.md"
+      ],
+      "actual_answer": "Antonio Vivaldi composed \"Nulla in mundo pax sincera\" (Passage 10). The Rialto Bridge is a famous bridge located in Venice, Italy (Passage 7).",
+      "error": null,
+      "total_time_ms": 10780.512744000589,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.16
+    },
+    {
+      "test_id": "musique_16",
+      "question": "When did the party that gained control of Congress in the midterm elections in 1946 take control of the government branch that determines the rules of the US House?",
+      "expected_answer": "January 2015",
+      "evidence_notes": [
+        "q016_p01_Standing Rules of the _Passage 1_.md",
+        "q016_p04_1946 United States House _Passage 4_.md",
+        "q016_p06_2014 United States Senate _Passage 6_.md"
+      ],
+      "actual_answer": "The party that won majority control of the U.S. House in the 1946 midterm elections was the Republicans (Passage 5). The Senate rules and information on other election cycles are provided but do not contain the answer to the second part of the question regarding rule-making power in the House following this specific event.",
+      "error": null,
+      "total_time_ms": 9465.280571996118,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_17",
+      "question": "Where did the producer of Julius Caesar study or work?",
+      "expected_answer": "Clifton College",
+      "evidence_notes": [
+        "q017_p00_John Houseman _Passage 0_.md",
+        "q017_p04_Julius Caesar _1953 film_ _Passage 4_.md"
+      ],
+      "actual_answer": "Clifton College",
+      "error": null,
+      "total_time_ms": 8302.538335999998,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_18",
+      "question": "Mehmet Hayri Tarhan's birthplace is the capital of what municipality?",
+      "expected_answer": "Malko Tarnovo Municipality",
+      "evidence_notes": [
+        "q018_p01_Mehmet Hayri Tarhan _Passage 1_.md",
+        "q018_p05_Malko Tarnovo Municipality _Passage 5_.md"
+      ],
+      "actual_answer": "Malko Tarnovo",
+      "error": null,
+      "total_time_ms": 16530.13285799534,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": false,
+      "answer_f1": 0.8
+    },
+    {
+      "test_id": "musique_19",
+      "question": "What is the performer of Heartbeat named after?",
+      "expected_answer": "Natalie Albino",
+      "evidence_notes": [
+        "q019_p05_Heartbeat _Nina Sky song_ _Passage 5_.md",
+        "q019_p07_Nina Sky _Passage 7_.md"
+      ],
+      "actual_answer": "The document confirms that Nina Sky performed the song 'Heartbeat', but none of the retrieved passages state what the song 'Heartbeat' is named after.",
+      "error": null,
+      "total_time_ms": 4676.956895003968,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_20",
+      "question": "The author of Elizabeth and After attended which university?",
+      "expected_answer": "University of Toronto",
+      "evidence_notes": [
+        "q020_p02_Elizabeth and After _Passage 2_.md",
+        "q020_p03_Matt Cohen _writer_ _Passage 3_.md"
+      ],
+      "actual_answer": "University of Toronto",
+      "error": null,
+      "total_time_ms": 6346.222250002029,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_21",
+      "question": "What year did the publisher of Labyrinth end?",
+      "expected_answer": "1986",
+      "evidence_notes": [
+        "q021_p08_Acornsoft _Passage 8_.md",
+        "q021_p00_Labyrinth _1984 video game_ _Passage 0_.md"
+      ],
+      "actual_answer": "January 1986",
+      "error": null,
+      "total_time_ms": 8533.108081996033,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.6666666666666666
+    },
+    {
+      "test_id": "musique_22",
+      "question": "The food safety system of the agency that has the authority to decide if a drug is marketed otc or prescription is known as?",
+      "expected_answer": "Food Safety Modernization Act (FSMA)",
+      "evidence_notes": [
+        "q022_p02_Over-the-counter drug _Passage 2_.md",
+        "q022_p03_FDA Food Safety Modernization _Passage 3_.md"
+      ],
+      "actual_answer": "Passage 3 states that in the United States, 'the manufacture and sale of OTC substances are regulated by the Food and Drug Administration.' It further details that the FDA created the 'OTC monograph system' to categorize drugs. Passage 4 describes the FDA's role in food safety under FSMA.",
+      "error": null,
+      "total_time_ms": 13168.22094500094,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": false,
+      "answer_f1": 0.11320754716981132
+    },
+    {
+      "test_id": "musique_23",
+      "question": "Who is the president of the newly declared independent country that has a Commission of Truth and Friendship with the country where Ambelau is located?",
+      "expected_answer": "Francisco Guterres",
+      "evidence_notes": [
+        "q023_p03_Indonesia_Timor Leste Commission of _Passage 3_.md",
+        "q023_p05_East Timor _Passage 5_.md",
+        "q023_p06_Ambelau _Passage 6_.md"
+      ],
+      "actual_answer": "Jos\u00e9 Ramos-Horta",
+      "error": null,
+      "total_time_ms": 19664.449036004953,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_24",
+      "question": "Who was the British general in the battle named after the birth city of the person who recorded Mother-in-Law?",
+      "expected_answer": "General Edward Pakenham",
+      "evidence_notes": [
+        "q024_p00_Battle of New Orleans _Passage 0_.md",
+        "q024_p01_Mother-in-Law _song_ _Passage 1_.md",
+        "q024_p04_Mother-in-Law Lounge _Passage 4_.md"
+      ],
+      "actual_answer": "Ernie K-Doe recorded the song \"Mother-in-Law\" (Passage 2). The Battle of New Orleans involved British generals like Major General Sir Edward Pakenham and Major General Samuel Gibbs (Passage 0). No information regarding Ernie K-Doe's birth city is present.",
+      "error": null,
+      "total_time_ms": 12165.639172002557,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": false,
+      "answer_f1": 0.14634146341463414
+    },
+    {
+      "test_id": "musique_25",
+      "question": "Where is Sean Hampton's birth place in the state of Florida?",
+      "expected_answer": "in Northern Florida",
+      "evidence_notes": [
+        "q025_p04_Sean Hampton _Passage 4_.md",
+        "q025_p10_Ocala_ Florida _Passage 10_.md"
+      ],
+      "actual_answer": "Ocala",
+      "error": null,
+      "total_time_ms": 3291.8249649956124,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_26",
+      "question": "Who is the president of the group Kim Un-yong is a member of?",
+      "expected_answer": "Thomas Bach",
+      "evidence_notes": [
+        "q026_p03_President of the International _Passage 3_.md",
+        "q026_p05_Kim Un-yong _Passage 5_.md"
+      ],
+      "actual_answer": "",
+      "error": null,
+      "total_time_ms": 17798.880599999393,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_27",
+      "question": "During the war in which The Things They Carried is set, when was conscription introduced by the country where the film Grievous Bodily Harm was later released?",
+      "expected_answer": "1964",
+      "evidence_notes": [
+        "q027_p05_Grievous Bodily Harm _Passage 5_.md",
+        "q027_p00_The Things They Carried _Passage 0_.md",
+        "q027_p08_Conscription in Australia _Passage 8_.md"
+      ],
+      "actual_answer": "1964",
+      "error": null,
+      "total_time_ms": 24197.22671800264,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_28",
+      "question": "Who is the president of the new country who has jointly established a Commission on Truth and Friendship with the birth country of Satyo Husodo?",
+      "expected_answer": "Francisco Guterres",
+      "evidence_notes": [
+        "q028_p01_Indonesia_Timor Leste Commission of _Passage 1_.md",
+        "q028_p04_Satyo Husodo _Passage 4_.md",
+        "q028_p03_East Timor _Passage 3_.md"
+      ],
+      "actual_answer": "Jos\u00e9 Ramos-Horta",
+      "error": null,
+      "total_time_ms": 22762.4404639937,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_29",
+      "question": "Who is the spouse of the current queen of England?",
+      "expected_answer": "Philip Mountbatten",
+      "evidence_notes": [
+        "q029_p03_Wedding dress of Princess _Passage 3_.md",
+        "q029_p02_Elizabeth II _Passage 2_.md"
+      ],
+      "actual_answer": "Passage 3 indicates that Princess Elizabeth (the future Queen Elizabeth II) married Philip Mountbatten, Duke of Edinburgh in November 1947. Passage 2 confirms this marriage, noting they had four children: Charles, Anne, Andrew, and Edward.\nPassage 2 also states that Elizabeth died on 8 September 2022 and was succeeded by her eldest son, Charles III.",
+      "error": null,
+      "total_time_ms": 7017.049563997716,
+      "exact_match": false,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 0.1081081081081081
+    },
+    {
+      "test_id": "musique_30",
+      "question": "In which year did Taifa of Francisco Giner de los Rios' birthplace cease to exist?",
+      "expected_answer": "1065",
+      "evidence_notes": [
+        "q030_p05_Francisco Giner de los _Passage 5_.md",
+        "q030_p19_Taifa of Ronda _Passage 19_.md"
+      ],
+      "actual_answer": "1065",
+      "error": null,
+      "total_time_ms": 16007.145148993004,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_31",
+      "question": "What did M. King Hubbert's employer announce it was in the process of doing in April 2010?",
+      "expected_answer": "trying to find a potential buyer for all of its operations in Finland",
+      "evidence_notes": [
+        "q031_p01_M_ King Hubbert _Passage 1_.md",
+        "q031_p02_Royal Dutch Shell _Passage 2_.md"
+      ],
+      "actual_answer": "",
+      "error": null,
+      "total_time_ms": 4040.8857980000903,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_32",
+      "question": "Who did the person considered the founder of three major monotheistic religions marry after the death of Sarah?",
+      "expected_answer": "Keturah",
+      "evidence_notes": [
+        "q032_p00_Keturah _Passage 0_.md",
+        "q032_p02_Abrahamic religions _Passage 2_.md"
+      ],
+      "actual_answer": "Keturah",
+      "error": null,
+      "total_time_ms": 9745.782829995733,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_33",
+      "question": "In what region of the country of S-Fone is The place of birth of John Phan located?",
+      "expected_answer": "South Central Coast",
+      "evidence_notes": [
+        "q033_p12_South Central Coast _Passage 12_.md",
+        "q033_p16_S-Fone _Passage 16_.md",
+        "q033_p06_John Phan _Passage 6_.md"
+      ],
+      "actual_answer": "South Central Coast",
+      "error": null,
+      "total_time_ms": 8109.651917999145,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_34",
+      "question": "Along with the Closer performer, what notable pop artist started out his career on adult contemporary radio?",
+      "expected_answer": "Michael Bubl\u00e9",
+      "evidence_notes": [
+        "q034_p00_Adult contemporary music _Passage 0_.md",
+        "q034_p05_Closer _Josh Groban album_ _Passage 5_.md"
+      ],
+      "actual_answer": "Josh Groban is identified as the performer associated with the album 'Closer' (Passage 6). Passage 0 lists several notable artists popular on early AC charts, including Frank Sinatra, Doris Day, Johnny Mathis, Connie Francis, Nat King Cole, Perry Como, Roger Miller, Barbra Streisand, and Bobby Vinton.",
+      "error": null,
+      "total_time_ms": 16831.478326996148,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_35",
+      "question": "The Live Life Loud album's band signed to which label?",
+      "expected_answer": "Fair Trade Services",
+      "evidence_notes": [
+        "q035_p14_Live Life Loud _Passage 14_.md",
+        "q035_p07_Hawk Nelson _Passage 7_.md"
+      ],
+      "actual_answer": "BEC Recordings",
+      "error": null,
+      "total_time_ms": 6874.658573004126,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_36",
+      "question": "Who is the child of Sigrid Eskilsdotter's child?",
+      "expected_answer": "Svante Stensson Sture",
+      "evidence_notes": [
+        "q036_p03_Sigrid Sture _Passage 3_.md",
+        "q036_p04_Sigrid Eskilsdotter _Ban\u00e9r_ _Passage 4_.md"
+      ],
+      "actual_answer": "King Gustav Vasa",
+      "error": null,
+      "total_time_ms": 8245.975334997638,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_37",
+      "question": "What is the record label of the Metalworks Studio founder?",
+      "expected_answer": "TML Entertainment",
+      "evidence_notes": [
+        "q037_p00_TML Entertainment _Passage 0_.md",
+        "q037_p12_Metalworks Institute _Passage 12_.md"
+      ],
+      "actual_answer": "TML Entertainment",
+      "error": null,
+      "total_time_ms": 13333.115205001377,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_38",
+      "question": "Who is the president of the new country that jointly established a Commission of Truth and Friendship with the country that broadcasts Dahsyat?",
+      "expected_answer": "Francisco Guterres",
+      "evidence_notes": [
+        "q038_p00_East Timor _Passage 0_.md",
+        "q038_p04_Dahsyat _Passage 4_.md",
+        "q038_p06_Indonesia_Timor Leste Commission of _Passage 6_.md"
+      ],
+      "actual_answer": "Xanana Gusm\u00e3o",
+      "error": null,
+      "total_time_ms": 18386.468288998003,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_39",
+      "question": "How many times did the plague occur in the city where Flora's painter died?",
+      "expected_answer": "22",
+      "evidence_notes": [
+        "q039_p01_Black Death _Passage 1_.md",
+        "q039_p00_The Martyrdom of Saint _Passage 0_.md",
+        "q039_p05_Flora _Titian_ _Passage 5_.md"
+      ],
+      "actual_answer": "Passage 6 states that 'Flora' is an oil painting by Italian late Renaissance painter Titian. Passage 1 mentions a work by Titian, but neither document provides information about where Titian died.",
+      "error": null,
+      "total_time_ms": 9970.072245007032,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_40",
+      "question": "What is the seat of the county sharing a border with the county in which Valley New School is located?",
+      "expected_answer": "Green Bay",
+      "evidence_notes": [
+        "q040_p17_John C_ Petersen _Passage 17_.md",
+        "q040_p16_Jerome Quinn _Passage 16_.md",
+        "q040_p07_Pulaski High School _Passage 7_.md",
+        "q040_p04_Valley New School _Passage 4_.md"
+      ],
+      "actual_answer": "Valley New School is located in downtown, Appleton, Wisconsin (Passage 5). Passage 17 mentions John C. Petersen was from Outagamie County, and discusses his life in Appleton. Therefore, the county associated with Valley New School is likely Outagamie County. However, documents do not list counties bordering Outagamie County or the respective county seats.",
+      "error": null,
+      "total_time_ms": 15695.083015001728,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_41",
+      "question": "What is the highest city in the state where Dell ranks sixth by revenue?",
+      "expected_answer": "Fort Davis",
+      "evidence_notes": [
+        "q041_p01_Fort Davis_ Texas _Passage 1_.md",
+        "q041_p02_Dell _Passage 2_.md"
+      ],
+      "actual_answer": "Fort Davis",
+      "error": null,
+      "total_time_ms": 10025.522483003442,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_42",
+      "question": "Who played the girlfriend of who plays marty mcfly's daughter in back to the future 2?",
+      "expected_answer": "Claudia Wells",
+      "evidence_notes": [
+        "q042_p00_List of Back to _Passage 0_.md"
+      ],
+      "actual_answer": "In Back to the Future Part II, Marty McFly and Jennifer Parker have two children: Marlene and Marty Jr., both played by Michael J. Fox. The document does not specify who plays a girlfriend of Marlene or Marty Jr.",
+      "error": null,
+      "total_time_ms": 12427.262716002588,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_43",
+      "question": "What specific part of the book where the quote \"by the skin of your teeth\" comes from document reference for Mary?",
+      "expected_answer": "Genesis 3:15",
+      "evidence_notes": [
+        "q043_p01_Skin of my teeth _Passage 1_.md",
+        "q043_p02_Immaculate Conception _Passage 2_.md"
+      ],
+      "actual_answer": "Passage 1 mentions 'Skin o' My Tooth \u2013 1928 book by Baroness Emma Orczy in which the phrase is a nickname of the main character...'. Passage 3 details extensively about the Immaculate Conception and Mary, but does not contain the quote \"by the skin of your teeth\".",
+      "error": null,
+      "total_time_ms": 10903.792683995562,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_44",
+      "question": "What is the seat of the county sharing a border with the county in which J. P. Hayes was born?",
+      "expected_answer": "Green Bay",
+      "evidence_notes": [
+        "q044_p05_J_ P_ Hayes _Passage 5_.md",
+        "q044_p06_Pulaski High School _Passage 6_.md",
+        "q044_p07_John C_ Petersen _Passage 7_.md",
+        "q044_p09_Jerome Quinn _Passage 9_.md"
+      ],
+      "actual_answer": "J. P. Hayes was born in Appleton, Wisconsin. John C. Petersen (also from Appleton) served from Outagamie County. Therefore, we assume J.P. Hayes was born in Outagamie County.\nPulaski High School serves parts of Brown, Shawano, Outagamie, and Oconto counties.",
+      "error": null,
+      "total_time_ms": 14127.472011001373,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_45",
+      "question": "How many times did plague occur in the place where Venus with a Mirror's creator died?",
+      "expected_answer": "22",
+      "evidence_notes": [
+        "q045_p02_The Martyrdom of Saint _Passage 2_.md",
+        "q045_p05_Venus with a Mirror _Passage 5_.md"
+      ],
+      "actual_answer": "The creator of Venus with a Mirror is Titian. He died in his house in Venice in 1576. The provided documents mention various facts about the painting, Titian's life/works, and sales, but they do not mention any occurrences of plague in Venice.",
+      "error": null,
+      "total_time_ms": 10970.230046004872,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_46",
+      "question": "What is the source of the river Orlam clans crossed to migrate to Namibia?",
+      "expected_answer": "Thaba Putsoa",
+      "evidence_notes": [
+        "q046_p01_Orange River _Passage 1_.md",
+        "q046_p03_Namibia _Passage 3_.md"
+      ],
+      "actual_answer": "Drakensberg mountains in Lesotho",
+      "error": null,
+      "total_time_ms": 16007.504610999604,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.0
+    },
+    {
+      "test_id": "musique_47",
+      "question": "Why was Common Sense, by the same author as Rights of Man, an important work?",
+      "expected_answer": "crystallized the rebellious demand for independence from Great Britain",
+      "evidence_notes": [
+        "q047_p01_Thomas Paine _Passage 1_.md",
+        "q047_p02_Rights of Man _Passage 2_.md"
+      ],
+      "actual_answer": "It crystallized sentiment for independence in 1776, became the most widely read pamphlet of the American Revolution, provided a new and convincing argument for independence by advocating a complete break with history, and pioneered a style of political writing suited to the democratic society he envisioned.",
+      "error": null,
+      "total_time_ms": 14655.879368001479,
+      "exact_match": false,
+      "fuzzy_match": false,
+      "answer_contains_expected": false,
+      "answer_f1": 0.14545454545454548
+    },
+    {
+      "test_id": "musique_48",
+      "question": "In which county was Larkin I. Smith born?",
+      "expected_answer": "Pearl River County",
+      "evidence_notes": [
+        "q048_p07_Poplarville_ Mississippi _Passage 7_.md",
+        "q048_p00_Larkin I_ Smith _Passage 0_.md"
+      ],
+      "actual_answer": "Pearl River County",
+      "error": null,
+      "total_time_ms": 7050.703131004411,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    },
+    {
+      "test_id": "musique_49",
+      "question": "What movie did the person who acted in the comedy film Crime School win his only Oscar for?",
+      "expected_answer": "The African Queen",
+      "evidence_notes": [
+        "q049_p06_Crime School _Passage 6_.md",
+        "q049_p02_Humphrey Bogart _Passage 2_.md"
+      ],
+      "actual_answer": "The African Queen",
+      "error": null,
+      "total_time_ms": 10117.610597997555,
+      "exact_match": true,
+      "fuzzy_match": true,
+      "answer_contains_expected": true,
+      "answer_f1": 1.0
+    }
+  ]
+}
