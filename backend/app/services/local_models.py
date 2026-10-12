@@ -1825,7 +1825,10 @@ class LocalGgufReranker:
                 model_path=str(path),
                 n_ctx=int(settings.RERANK_N_CTX),
                 n_gpu_layers=int(accel.get("n_gpu_layers", 0)),
-                logits_all=True,
+                # Off: scoring reads one position's logits (_score_one). On, every prompt token's full-vocabulary
+                # logits were copied to the CPU and an n_ctx x vocab array was allocated, and reranking long
+                # passages was CPU-bound with the GPU idle (minutes per question; round 7).
+                logits_all=False,
                 verbose=False,
             )
             model_load_clock.record("rerank", time.perf_counter() - started)
@@ -1874,6 +1877,7 @@ class LocalGgufReranker:
             return True
 
     def _score_one(self, query: str, document: str) -> float:
+        """P(yes) from the yes/no logits after the prompt: exp(yes) / (exp(yes) + exp(no))."""
         assert self._model is not None
         prompt = (
             f"<|im_start|>system\n{_RERANK_SYSTEM}\n<|im_end|>\n"
@@ -1884,36 +1888,24 @@ class LocalGgufReranker:
             f"<|im_end|>\n"
             f"<|im_start|>assistant\n<think>\n\n</think>\n"
         )
+        model = self._model
+        tokens = model.tokenize(prompt.encode("utf-8"), special=True)  # as a completion call tokenizes it
+        if len(tokens) > model.n_ctx():
+            raise ValueError(f"Requested tokens ({len(tokens)}) exceed context window of {model.n_ctx()}")
         with self._lock:
-            out = self._model(
-                prompt,
-                max_tokens=1,
-                temperature=0.0,
-                logprobs=5,
-            )
+            # Keep the prefix shared with the previous document (system prompt, instruction, query) in the KV
+            # cache; evaluate the rest. At least one token is evaluated so its logits are fresh.
+            keep, cached = 0, model.n_tokens
+            while keep < min(cached, len(tokens) - 1) and model.input_ids[keep] == tokens[keep]:
+                keep += 1
+            model.n_tokens = keep
+            model.eval(tokens[keep:])
+            logits = model._ctx.get_logits_ith(-1)  # pylint: disable=protected-access
+            yes, no = float(logits[self._yes_id]), float(logits[self._no_id])
             self._last_used = time.monotonic()
-        # Prefer logprob yes vs no when available
-        try:
-            choice = out["choices"][0]
-            logprobs = choice.get("logprobs") or {}
-            top = (logprobs.get("top_logprobs") or [{}])[0]
-            if isinstance(top, dict) and top:
-                # keys may be token strings
-                yes_lp = top.get("yes") or top.get("Yes")
-                no_lp = top.get("no") or top.get("No")
-                if yes_lp is not None and no_lp is not None:
-                    import math
+        import math
 
-                    ey, en = math.exp(yes_lp), math.exp(no_lp)
-                    return float(ey / (ey + en + 1e-12))
-            text = (choice.get("text") or "").strip().lower()
-            if text.startswith("yes"):
-                return 0.9
-            if text.startswith("no"):
-                return 0.1
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        return 0.0
+        return 1.0 / (1.0 + math.exp(max(-700.0, min(700.0, no - yes))))
 
     def rerank(
         self, query: str, documents: list[str], top_n: int | None = None

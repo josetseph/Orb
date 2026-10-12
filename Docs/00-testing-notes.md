@@ -300,6 +300,18 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-12, the reranker's scores were coarse in every round so far; fixed.** `_score_one` asked for 5 top
+  logprobs and used yes/no only when both were among them. A sure model ranks one of them below the top 5, so
+  the score fell back to the reply text: 0.9 or 0.1. Checked on Qwen3-Reranker-4B: 4 of 5 test documents got no
+  logprob score; the one that did, an unsure case, matches the new score exactly (0.9819). Every confidently
+  relevant candidate tied at 0.9, ordered by arrival, not relevance. It also needed `logits_all=True`:
+  full-vocabulary logits for every prompt token copied to the CPU, plus an n_ctx x vocab array. Now the
+  reranker loads with `logits_all=False`, evaluates only the part of the prompt after the prefix it shares
+  with the previous document, and scores sigmoid(yes - no) from the last position's logits. That is 37% faster
+  on the Mac test, and more on long passages. Rerank cache entries are keyed "yes-no-logits" so old scores are
+  never replayed (`test_reranker_scoring.py`). Every earlier round ran with the coarse scores; round 8 is the
+  first with exact ones. Round 8 (final AWS round, `round8-hotpot100`): all 100 HotpotQA questions, round 7's
+  four winners together against none of them, and the winners with Qwen 3.5 9B answering.
 - **2026-10-12, round 7 complete: keyword search plus title headers reach E4B's MuSiQue ceiling, at a cost in
   time.** MuSiQue with passages in keyword search and every passage titled: F1 0.363, EM 28%, recall 0.50,
   1054 s/question (+3/-2 EM against passages alone, 0.293; CI -0.008 to +0.157). The gold-notes oracle is

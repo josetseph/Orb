@@ -22,7 +22,9 @@ class RerankerService:  # pylint: disable=too-few-public-methods
         def score() -> list[dict]:
             # The file name, not its path: each lane reaches the same file through its own folder.
             path = reranker_gguf_path()
-            return cached("rerank", [path.name if path else None, query, documents, top_n],
+            # "yes-no-logits": scores from the last position's yes/no logits. Earlier scores (top-5 logprobs, 0.9/0.1
+            # when the model was sure) were coarser and must not be replayed as these.
+            return cached("rerank", [path.name if path else None, "yes-no-logits", query, documents, top_n],
                           lambda: local_gguf_reranker.rerank(query, documents, top_n))
 
         return await asyncio.to_thread(score)
