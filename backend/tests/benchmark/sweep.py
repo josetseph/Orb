@@ -244,12 +244,14 @@ def run_spec(spec: dict, pool, plan: bool) -> None:
     if spec.get("absent"):
         # Questions whose notes are not in the index (outside "dev"): every answer is invented, so the share
         # answered is the hallucination rate; a refusal (the loop never committing) is the right outcome.
-        a0, a1 = spec["absent"]
-        rows = run_rung(pool, field, alive, spec, "absent", a0, a1 - a0, plan)
-        report += [f"\n## Absent: questions {a0} to {a1}, whose notes are not in the index (lower answered is better)\n",
+        # [a, b], or several ranges [[a, b], ...]: the manifests stop at 100 HotpotQA / 50 MuSiQue questions.
+        ranges = spec["absent"] if isinstance(spec["absent"][0], list) else [spec["absent"]]
+        parts = [run_rung(pool, field, alive, spec, f"absent{a0}-{a1}", a0, a1 - a0, plan) for a0, a1 in ranges]
+        report += [f"\n## Absent: questions {ranges}, whose notes are not in the index (lower answered is better)\n",
                    "| variant | answered | s / question |", "|---|---|---|"]
-        for name, path in rows:
-            res = json.loads(path.read_text())["results"] if path.is_file() else []
+        for name, _ in parts[0]:
+            res = [r for rows in parts for n, path in rows if n == name and path.is_file()
+                   for r in json.loads(path.read_text())["results"]]
             n = len(res) or 1
             report.append(f"| {name} | {sum(bool(r.get('answered')) for r in res) / n:.0%} | "
                           f"{sum(r['total_time_ms'] for r in res) / n / 1000:.0f} |" if res else f"| {name} | not run | |")

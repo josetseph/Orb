@@ -6,8 +6,14 @@
     70
   ],
   "absent": [
-    100,
-    150
+    [
+      0,
+      20
+    ],
+    [
+      70,
+      100
+    ]
   ],
   "baseline": {
     "EMBED_MODEL_ID": "qwen3-embed-8b-q4",
@@ -30,5 +36,5 @@
       true
     ]
   },
-  "_note": "Refusals: questions 100-149 asked of the 20-69 index."
+  "_note": "Refusals: questions 0-19 and 70-99 asked of the 20-69 index (the manifest has 100 questions)."
 }
