@@ -300,6 +300,19 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-13, round 8: the reranker fix is the biggest gain of the whole study; the round-7 winners add
+  little on top.** All 100 HotpotQA questions, 12B extraction (reminder plus grammar), E4B answering, exact
+  reranker. Control (none of round 7's changes): F1 0.696, EM 56%, recall 0.965, 113 s/question. The four
+  winners together: 0.716, 57%, 0.985, 135 s (+9/-8 EM, within noise). The winners with Qwen 3.5 9B
+  answering: 0.748, 60%, 121 s (+10/-7 against E4B, within noise). On the 50 questions round 7 also asked
+  (20-69): round 7's control with the coarse reranker scored 0.524 / 42% at 274 s; round 8's control with
+  the exact reranker scored 0.686 / 56% at 110 s (+8/-1 EM). Both indexes have no passages and the same
+  extraction; round 8's also holds the other 50 questions' notes. So the coarse 0.9/0.1 scores were costing
+  about 0.16 F1 and 2.5x the time. Much of what round 7's strategies won was compensation for bad ranking.
+  With exact scores the pipeline (0.716) reaches the gold-notes oracle's 0.718 (round 7, questions 20-69). A
+  better answering model is the next lever: Qwen 3.5 9B is +0.03 and faster. The pod stopped itself 15 min
+  after its queue, as designed; its final copy failed (vCPU limit while it was still stopping) and was taken by
+  booting it as m6i.large. AWS cost of round 8: about $17 (7.7 h of g6e.2xlarge; no g6e.xlarge capacity).
 - **2026-10-12, the reranker's scores were coarse in every round so far; fixed.** `_score_one` asked for 5 top
   logprobs and used yes/no only when both were among them. A sure model ranks one of them below the top 5, so
   the score fell back to the reply text: 0.9 or 0.1. Checked on Qwen3-Reranker-4B: 4 of 5 test documents got no
