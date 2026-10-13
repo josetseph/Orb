@@ -87,7 +87,9 @@ def index_name(levers: dict, spec: dict) -> str:
     """Snapshot name for the index these levers need: only extract and index levers take part."""
     span = [spec["dev"][0], max(spec["dev"][1], spec.get("holdout", spec["dev"])[1])]
     parts = {k: v for k, v in sorted(levers.items()) if BY_NAME[k].stage in INDEX_STAGES or k == "provider"}
-    base = {k: v for k, v in sorted(spec["baseline"].items()) if BY_NAME[k].stage in INDEX_STAGES or k == "provider"}
+    # Variants drop levers at their default, so the baseline is compared the same way.
+    base = {k: v for k, v in sorted(spec["baseline"].items())
+            if (BY_NAME[k].stage in INDEX_STAGES or k == "provider") and v != BY_NAME[k].default}
     if spec.get("index") and parts == base:
         return spec["index"]  # an existing snapshot stands in for the baseline's index; it must cover the span
     digest = hashlib.sha256(json.dumps([spec["dataset"], span, parts], sort_keys=True).encode()).hexdigest()[:8]
