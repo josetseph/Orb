@@ -33,7 +33,7 @@ REQUIREMENTS = [line.strip() for line in (BACKEND / "requirements.txt").read_tex
                 ] if modal.is_local() else []
 
 image = (
-    modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.12")
+    modal.Image.from_registry("nvidia/cuda:12.6.3-devel-ubuntu24.04", add_python="3.12")
     .apt_install("git", "cmake", "build-essential", "gcc", "g++", "rsync", "curl")
     .env({"CC": "/usr/bin/gcc", "CXX": "/usr/bin/g++", "CUDACXX": "/usr/local/cuda/bin/nvcc"})
     # Everything but llama-cpp-python, which is built for CUDA below (the plain install would compile it for CPU).
@@ -100,8 +100,30 @@ def gpu_check() -> str:
     return f"{smi} | llama-cpp-python offload={llama_cpp.llama_supports_gpu_offload()} | {(server.stdout + server.stderr).strip().splitlines()[-1]}"
 
 
+@app.function(timeout=600)
+def sidecar_check() -> str:
+    """Start Qdrant and Meilisearch the way run.py does and return their logs (no GPU)."""
+    import sys
+
+    data = Path("/tmp/sidecar-data")
+    sys.path.insert(0, str(ROOT / "backend"))
+    os.chdir(ROOT / "backend")
+    import run  # noqa: PLC0415
+
+    try:
+        run.start_sidecars(data)
+        result = "both started"
+    except Exception as exc:  # pylint: disable=broad-exception-caught
+        result = f"failed: {exc}"
+    logs = "".join(f"--- {p.name}\n{p.read_text(errors='replace')[-3000:]}\n" for p in sorted((data / "logs").glob("*.log")))
+    return f"{result}\n{logs}"
+
+
 @app.local_entrypoint()
-def main(specs: str = "", check: bool = False):
+def main(specs: str = "", check: bool = False, sidecars: bool = False):
+    if sidecars:
+        print(sidecar_check.remote())
+        return
     if check:
         print(gpu_check.remote())
         return
