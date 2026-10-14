@@ -300,6 +300,20 @@ whether MuSiQue's 12% is extraction loss (160 of 526 notes rejected) or answerin
 
 ## 8. Log
 
+- **2026-10-14, round 9 (Modal, L40S): on MuSiQue the round-7 winners matter, and bigger answering models break
+  E4B's ceiling.** MuSiQue 0-49, 12B extraction (reminder plus grammar), exact reranker, one index
+  (passages, keyword search, title headers; 405/526 notes). The control ran on the same index with every
+  round-7 switch off at query time: F1 0.223, EM 18%, recall 0.59, 240 s/question. The four winners with E4B:
+  0.342, 24%, 0.61, 281 s (+5/-2 EM; F1 CI +0.008 to +0.235, the first interval clear of 0; McNemar is not
+  significant on 7 discordant questions). The winners with Qwen 3.5 9B: 0.407, 34%, 290 s (+7/-2 against E4B).
+  With Gemma 4 12B: 0.414, 34%, 366 s (+6/-1). E4B's gold-notes ceiling was 0.357. Unlike HotpotQA (round 8),
+  the exact reranker alone did not lift MuSiQue's control (round 7, coarse: 0.215). MuSiQue's answers need
+  passages and keyword search, whose evidence the graph does not carry. Recommended configuration from the
+  study: the exact reranker, passages with keyword search and title headers, question first, both-ends order.
+  For answering, Qwen 3.5 9B (+0.03 HotpotQA, +0.065 MuSiQue over E4B, about the same speed) or Gemma 4 12B
+  (similar accuracy, 25% slower on MuSiQue). Modal: a `modal run --detach` local entrypoint was cancelled about
+  5 h in when its client process here died, so runs are now spawned on the deployed app (`modal_bench.py`).
+  The image needed Ubuntu 24.04 (Qdrant needs glibc 2.38) and CUDA's stub libcuda at build time.
 - **2026-10-13, round 8: the reranker fix is the biggest gain of the whole study; the round-7 winners add
   little on top.** All 100 HotpotQA questions, 12B extraction (reminder plus grammar), E4B answering, exact
   reranker. Control (none of round 7's changes): F1 0.696, EM 56%, recall 0.965, 113 s/question. The four
