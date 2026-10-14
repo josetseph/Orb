@@ -1,11 +1,13 @@
 """Run benchmark sweeps on a Modal GPU instead of a rented pod.
 
-    modal run --detach tests/benchmark/modal_bench.py --specs sweeps/a.json,sweeps/b.json   # from backend/
+    modal deploy tests/benchmark/modal_bench.py                                              # from backend/
+    python tests/benchmark/modal_bench.py sweeps/a.json sweeps/b.json                         # spawn the run
     modal volume get orb-bench Results/<spec> ../pod-state-modal/Results/                 # results home
 
 The image holds the code and the CUDA builds (llama-cpp-python, llama-server). The volume "orb-bench" holds what
 outlives a run: models, the model-call cache, index snapshots and results. It is committed every 10 minutes and at
-the end, so a crash loses at most 10 minutes. --detach keeps the run going when this machine loses its network.
+the end, so a crash loses at most 10 minutes. A spawned call on the deployed app runs on its own: a `modal run`
+local entrypoint, even with --detach, was cancelled when its client process here went away (round 9, 5 h in).
 """
 
 from __future__ import annotations
@@ -128,3 +130,10 @@ def main(specs: str = "", check: bool = False, sidecars: bool = False):
         print(gpu_check.remote())
         return
     print(run_specs.remote([s.strip() for s in specs.split(",") if s.strip()]))
+
+
+if __name__ == "__main__":
+    import sys
+
+    call = modal.Function.from_name("orb-bench", "run_specs").spawn(sys.argv[1:])
+    print(f"spawned {call.object_id}: {' '.join(sys.argv[1:])}")
