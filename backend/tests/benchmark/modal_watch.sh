@@ -3,9 +3,13 @@
 # (from the volume, committed every 10 minutes); exit when it is all done or something failed.
 FIRST=${1:?first spec of the run, e.g. sweeps/round9-musique.json}
 D=$(mktemp -d); seen=0
+# Runs started before this watcher are not its business: wait for one more "start FIRST" line than now.
+.venv/bin/python -m modal volume get --force orb-bench Results/modal-queue.log "$D/" >/dev/null 2>&1
+before=$(grep -c "start $FIRST" "$D/modal-queue.log" 2>/dev/null || echo 0)
 while true; do
+  rm -f "$D/modal-queue.log"
   .venv/bin/python -m modal volume get --force orb-bench Results/modal-queue.log "$D/" >/dev/null 2>&1
-  if [ -f "$D/modal-queue.log" ]; then
+  if [ -f "$D/modal-queue.log" ] && [ "$(grep -c "start $FIRST" "$D/modal-queue.log")" -gt "$before" ]; then
     # Only the latest run: the log on the volume is appended to by every run.
     start=$(grep -n "start $FIRST" "$D/modal-queue.log" | tail -1 | cut -d: -f1)
     [ -n "$start" ] && tail -n +"$start" "$D/modal-queue.log" > "$D/run.log" && mv "$D/run.log" "$D/modal-queue.log"
