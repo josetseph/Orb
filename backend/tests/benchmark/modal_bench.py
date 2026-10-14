@@ -20,24 +20,32 @@ import modal
 
 LLAMA_CPP_PYTHON = "0.3.35"
 LLAMA_SERVER_TAG = "v0.5.0"
+STUB_LINK = "-DCMAKE_EXE_LINKER_FLAGS=-Wl,-rpath-link,/usr/local/cuda/lib64/stubs -DCMAKE_SHARED_LINKER_FLAGS=-L/usr/local/cuda/lib64/stubs"
 CUDA_ARCH = "89"  # Ada: L40S, L4. No GPU at build time, so the architecture is named, not "native".
 GPU = os.environ.get("ORB_MODAL_GPU", "L40S")
 ROOT = Path("/workspace/orb")  # the harness's REPO: backend/, llama.cpp/, models/, llm-cache/, snapshots/, Results/
 KEPT = ("models", "llm-cache", "snapshots", "Results")  # live on the volume
 HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parent.parent
+# Read here, where the image is defined; inside the container this file is not at this path.
+REQUIREMENTS = [line.strip() for line in (BACKEND / "requirements.txt").read_text().splitlines()
+                if line.strip() and not line.startswith("#") and not line.startswith("llama-cpp-python")
+                ] if modal.is_local() else []
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.12")
-    .apt_install("git", "cmake", "build-essential", "rsync", "curl")
-    .pip_install_from_requirements(str(BACKEND / "requirements.txt"))
-    .pip_install("httpx", "tqdm", "pytest")
+    .apt_install("git", "cmake", "build-essential", "gcc", "g++", "rsync", "curl")
+    .env({"CC": "/usr/bin/gcc", "CXX": "/usr/bin/g++", "CUDACXX": "/usr/local/cuda/bin/nvcc"})
+    # Everything but llama-cpp-python, which is built for CUDA below (the plain install would compile it for CPU).
+    .pip_install(*REQUIREMENTS, "httpx", "tqdm", "pytest")
     .run_commands(
-        f'CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES={CUDA_ARCH}" CMAKE_BUILD_PARALLEL_LEVEL=8 '
-        f'pip install --no-cache-dir --force-reinstall --no-deps "llama-cpp-python=={LLAMA_CPP_PYTHON}"',
+        # No GPU driver at build time: link against CUDA's stub libcuda (the real one is there when the GPU is).
+        "ln -sf /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/stubs/libcuda.so.1",
+        f'CMAKE_ARGS="-DGGML_CUDA=on -DCMAKE_CUDA_ARCHITECTURES={CUDA_ARCH} {STUB_LINK}" CMAKE_BUILD_PARALLEL_LEVEL=8 '
+        f'pip install --no-cache-dir "llama-cpp-python=={LLAMA_CPP_PYTHON}"',
         f"git clone -q --depth 1 --branch {LLAMA_SERVER_TAG} https://github.com/ggml-org/llama.cpp {ROOT}/llama.cpp",
         f"cmake -S {ROOT}/llama.cpp -B {ROOT}/llama.cpp/build -DGGML_CUDA=ON -DCMAKE_CUDA_ARCHITECTURES={CUDA_ARCH} "
-        "-DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF",
+        f"-DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF {STUB_LINK}",
         f"cmake --build {ROOT}/llama.cpp/build --target llama-server -j 8",
     )
     .add_local_dir(str(BACKEND), str(ROOT / "backend"),
