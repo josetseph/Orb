@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Calendar,
-  Check,
   FolderOpen,
   Loader2,
   Mic,
@@ -9,6 +8,7 @@ import {
   MoreHorizontal,
   X,
   ArrowLeft,
+  ArrowRight,
   Network,
   Paperclip,
   RefreshCw,
@@ -38,15 +38,19 @@ type NoteEditorHeaderProps = {
   onToggleConnectedPanel: () => void;
   onDelete: () => void;
   onExportPdf: () => void;
-  /** Title of the note Back returns to; null when there is no history. */
+  /** Titles of the notes Back / Forward go to; null when there is none. */
   backTitle: string | null;
+  forwardTitle: string | null;
   onBack: () => void;
+  onForward: () => void;
+  /** Folder segment clicked in the breadcrumb: reveal it in the explorer. */
+  onRevealFolder: (path: string) => void;
 };
 
-function folderOf(relPath?: string | null): string {
-  const parts = (relPath || "").split("/");
+function folderParts(relPath?: string | null): string[] {
+  const parts = (relPath || "").split("/").filter(Boolean);
   parts.pop();
-  return parts.join("/");
+  return parts;
 }
 
 export function NoteEditorHeader({
@@ -65,7 +69,10 @@ export function NoteEditorHeader({
   onDelete,
   onExportPdf,
   backTitle,
+  forwardTitle,
   onBack,
+  onForward,
+  onRevealFolder,
 }: NoteEditorHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -101,33 +108,43 @@ export function NoteEditorHeader({
         : "Ingest";
 
   return (
-    <div className="flex shrink-0 items-center gap-1.5 border-b border-n-900 px-5 py-2.5">
+    <div className="flex shrink-0 items-center gap-1.5 px-3 py-1.5">
       <button
         type="button"
         onClick={onBack}
         disabled={backTitle === null}
-        title={backTitle === null ? "No previous note" : `Back to “${backTitle}” (⌘⌥←)`}
-        aria-label="Back to previous note"
+        title={backTitle === null ? "Navigate back" : `Back to “${backTitle}” (⌘⌥←)`}
+        aria-label="Navigate back"
         className="btn btn-ghost btn-icon h-7 w-7 shrink-0 disabled:opacity-30"
       >
         <ArrowLeft className="h-4 w-4" />
       </button>
-      <div className="flex min-w-0 flex-1 items-center gap-2 text-[12px] text-n-500">
-        <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-        <span className="truncate">{folderOf(selectedNote.rel_path) || "Vault"}</span>
-        <span className="opacity-50">/</span>
-        <span className="truncate text-n-300">{selectedNote.title || "Untitled"}</span>
-      </div>
-
-      <span className="mr-1 flex items-center gap-1.5 text-[12px] text-n-500">
-        {isSaving || isUploading ? (
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        ) : (
-          <Check className="h-3.5 w-3.5" />
-        )}
-        {isSaving ? "Saving…" : isUploading ? "Uploading…" : "Saved"}
-      </span>
-
+      <button
+        type="button"
+        onClick={onForward}
+        disabled={forwardTitle === null}
+        title={forwardTitle === null ? "Navigate forward" : `Forward to “${forwardTitle}” (⌘⌥→)`}
+        aria-label="Navigate forward"
+        className="btn btn-ghost btn-icon h-7 w-7 shrink-0 disabled:opacity-30"
+      >
+        <ArrowRight className="h-4 w-4" />
+      </button>
+      <nav className="ml-2 flex min-w-0 flex-1 items-center gap-1.5 text-[13px] text-n-500" aria-label="Note location">
+        {folderParts(selectedNote.rel_path).map((part, i, all) => (
+          <span key={i} className="flex min-w-0 shrink items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => onRevealFolder(all.slice(0, i + 1).join("/"))}
+              className="truncate hover:text-text"
+              title="Show in file explorer"
+            >
+              {part}
+            </button>
+            <span className="opacity-50">/</span>
+          </span>
+        ))}
+        <span className="truncate text-n-200">{selectedNote.title || "Untitled"}</span>
+      </nav>
 
       <input
         ref={fileRef}
@@ -142,9 +159,10 @@ export function NoteEditorHeader({
         onClick={() => fileRef.current?.click()}
         disabled={isUploading}
         title="Attach photo, PDF or file"
-        className="btn btn-secondary"
+        aria-label="Attach file"
+        className="btn btn-ghost btn-icon h-7 w-7 text-n-400"
       >
-        <Paperclip className="h-3.5 w-3.5" /> Attach
+        <Paperclip className="h-4 w-4" />
       </button>
 
       <button
@@ -152,11 +170,11 @@ export function NoteEditorHeader({
         onClick={onToggleRecording}
         disabled={isUploading}
         title={isRecording ? "Stop recording" : "Record voice note"}
+        aria-label={isRecording ? "Stop recording" : "Record voice note"}
         className={cn(
-          "btn",
           isRecording
-            ? "border-danger/60 bg-danger/10 text-danger-text"
-            : "btn-secondary",
+            ? "btn border-danger/60 bg-danger/10 text-danger-text"
+            : "btn btn-ghost btn-icon h-7 w-7 text-n-400",
         )}
       >
         {isRecording ? (
@@ -165,9 +183,7 @@ export function NoteEditorHeader({
             <Square className="h-3 w-3" /> Stop
           </>
         ) : (
-          <>
-            <Mic className="h-3.5 w-3.5" /> Record
-          </>
+          <Mic className="h-4 w-4" />
         )}
       </button>
 
@@ -176,7 +192,7 @@ export function NoteEditorHeader({
         onClick={onIngest}
         disabled={isSaving || busy || !selectedNote.content.trim()}
         title="Extract entities and links into the graph"
-        className="btn btn-primary min-w-[96px]"
+        className="btn btn-primary btn-sm mr-1 min-w-[88px]"
       >
         {busy ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -203,8 +219,8 @@ export function NoteEditorHeader({
         <button
           type="button"
           onClick={() => setMenuOpen((v) => !v)}
-          title="More"
-          className="btn btn-secondary btn-icon"
+          title="More options"
+          className="btn btn-ghost btn-icon h-7 w-7 text-n-400"
         >
           <MoreHorizontal className="h-4 w-4" />
         </button>
@@ -251,10 +267,10 @@ export function NoteEditorHeader({
       <button
         type="button"
         onClick={onToggleConnectedPanel}
-        title="Note graph"
+        title={showConnectedPanel ? "Hide connections" : "Show connections"}
         className={cn(
-          "btn btn-icon",
-          showConnectedPanel ? "border-accent-700 text-accent" : "btn-secondary",
+          "btn btn-ghost btn-icon h-7 w-7",
+          showConnectedPanel ? "text-accent" : "text-n-400",
         )}
       >
         <Network className="h-4 w-4" />

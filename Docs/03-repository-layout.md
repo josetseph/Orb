@@ -88,6 +88,7 @@ backend/
 │   │   ├── chat_store.py       conversation / message persistence
 │   │   ├── credentials.py      CredentialStore — cloud keys in the OS keychain (keyring)
 │   │   ├── llm.py              multi-provider LLMService (local / OpenAI / Gemini / Anthropic / HF)
+│   │   ├── extraction_server.py  on-demand llama-server (pinned llama.cpp) for local ingestion: parallel slots, JSON grammar
 │   │   ├── local_models.py     GGUF download + llama-cpp-python runtime + exclusive residency
 │   │   ├── model_catalog.py    resource-aware catalogue of chat / embed / rerank GGUFs
 │   │   ├── model_discovery.py  discover user-supplied chat GGUFs on disk (shards, depth cap)
@@ -139,13 +140,13 @@ frontend/
 ├── dist/                   GIT-IGNORED `npm run build` output, served by the API
 └── src/
     ├── main.tsx            React root
-    ├── App.tsx             KBProvider > ChatProvider > Sidebar + CommandPalette + main; lazy react-router routes (/ → /notes)
+    ├── App.tsx             KBProvider > ChatProvider > NotesProvider > Shell (Ribbon + resizable FileExplorer + main) + NotesOverlays + CommandPalette; lazy react-router routes (/ → /notes)
     ├── app/
     │   ├── globals.css
     │   ├── chat/page.tsx   Chat (async polling, conversations, citations)
     │   ├── notes/          Notes workspace
     │   │   ├── page.tsx
-    │   │   ├── _components/  VaultFolderTree, NotesSidebar, NoteEditorHeader, FilePreviewModal, …
+    │   │   ├── _components/  VaultFolderTree, NoteEditorHeader, FilePreviewModal, …
     │   │   ├── _hooks/       useNotesPageController (hub), useVaultTree, useNoteAutosave, useNoteIngest,
     │   │   │                 useNoteMedia, useAttachmentJobs, useNotesList, useNoteSelection, useNoteBatchSelection, useWikilinkPreview
     │   │   └── _lib/         wikilinks, folder-tree, processing-status, rewrite-vault-urls, parse-note-attachments, media-recorder, …
@@ -157,7 +158,7 @@ frontend/
     │   ├── setup/page.tsx        First-run / model download / paths
     │   └── settings/page.tsx     Provider + model settings
     ├── components/
-    │   ├── sidebar.tsx, command-palette.tsx, settings-shell.tsx, ai-limited-banner.tsx, system-status-indicator.tsx
+    │   ├── sidebar.tsx (Ribbon, WorkspaceFooter), file-explorer.tsx (FileExplorer, NotesOverlays), resize-handle.tsx, command-palette.tsx, settings-shell.tsx, ai-limited-banner.tsx, system-status-indicator.tsx
     │   ├── connected-notes-panel.tsx, entity-detail-panel.tsx, segmented-note-content.tsx
     │   ├── blob-media-player.tsx, shader-background.tsx
     │   ├── markdown-editor/   MarkdownNoteEditor + CodeMirror extensions (wikilink, entity, media embed, …)
@@ -168,6 +169,7 @@ frontend/
         ├── types.ts           shared TS types (Note, ChatStatus, KnowledgeBase, Finance*, SetupStatus, …)
         ├── kb-context.tsx     current KB (localStorage `orb_current_kb`)
         ├── chat-context.tsx   chat state + polling across routes
+        ├── notes-context.tsx  NotesProvider/useNotes: notes controller hoisted above the routes + tabs, history, sort
         ├── desktop.ts         window.orbDesktop bridge helpers (pickers, restartBackend, notifyIfUnfocused)
         ├── endpoint-names.ts, models-types.ts
         ├── markdown-entities.tsx  entity-aware markdown rendering
@@ -230,6 +232,7 @@ Note: `.gitignore` force-tracks `Results*/` (with its `*.log` files), but the be
 | What happens after "Ingest" | `workflows/agents/ingestion_agent.py` → `workflows/ingestion.py` → [10](10-ingestion-pipeline.md) |
 | PDF / image / audio / video handling | `services/multimedia.py`, `multimodal_runtime.py` → [11](11-multimedia-enrichment.md) |
 | Model download / which GGUF is loaded | `services/local_models.py`, `model_catalog.py` → [12](12-local-models-and-inference.md) |
+| Which model ingestion extracts with / the llama-server it runs on | `services/extraction_server.py`, `llm.get_ingestion_model`, `model_catalog.auto_extraction_model` → [12](12-local-models-and-inference.md) §7.5 |
 | Prompt text, provider switching | `services/llm.py` → [13](13-llm-providers-and-prompting.md) |
 | Kuzu schema / Cypher | `services/graph.py` → [14](14-graph-storage-kuzu.md) |
 | Qdrant / Meilisearch payloads | `services/qdrant_service.py`, `meilisearch_service.py` → [15](15-search-indexes-qdrant-meilisearch.md) |

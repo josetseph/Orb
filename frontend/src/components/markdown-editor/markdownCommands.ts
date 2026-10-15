@@ -1,5 +1,39 @@
-import { EditorSelection } from "@codemirror/state";
-import type { EditorView as EditorViewType } from "@codemirror/view";
+import { EditorSelection, type EditorState, type TransactionSpec } from "@codemirror/state";
+import { EditorView, type EditorView as EditorViewType } from "@codemirror/view";
+
+const PAIRS: Record<string, string> = { "[": "]", "(": ")", "{": "}", "*": "*", _: "_", "`": "`", "~": "~", "=": "=", '"': '"' };
+
+/** The edit that wraps every selected range in `text` and its closing mark; null when typing should go ahead as usual. */
+export function wrapOnType(state: EditorState, text: string): TransactionSpec | null {
+  const close = PAIRS[text];
+  if (!close || state.selection.ranges.every((r) => r.empty)) return null;
+  return {
+    ...state.changeByRange((range) =>
+      range.empty
+        ? { changes: { from: range.from, insert: text }, range: EditorSelection.cursor(range.from + 1) }
+        : {
+            changes: [
+              { from: range.from, insert: text },
+              { from: range.to, insert: close },
+            ],
+            range: EditorSelection.range(range.from + 1, range.to + 1),
+          },
+    ),
+    // Not "input.type": a wrap should not open the completion popup.
+    userEvent: "input.wrap",
+    scrollIntoView: true,
+  };
+}
+
+/**
+ * Typing an opening mark over a selection wraps it instead of replacing it, as
+ * in Obsidian; the inner text stays selected, so `[` twice makes `[[link]]`.
+ */
+export const wrapSelectionOnType = EditorView.inputHandler.of((view, _from, _to, text) => {
+  const spec = wrapOnType(view.state, text);
+  if (spec) view.dispatch(spec);
+  return Boolean(spec);
+});
 
 function wrapSelection(
   view: EditorViewType,

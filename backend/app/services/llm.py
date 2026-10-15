@@ -18,7 +18,6 @@ from app.services.credentials import (
 )
 from google import genai
 from google.genai import types
-from json_repair import repair_json
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -49,6 +48,15 @@ def describe_call_failure(exc: Exception) -> str:
 # their own limit. Anthropic is the one API that refuses a request without
 # ``max_tokens``, so it gets this single high value everywhere.
 ANTHROPIC_MAX_OUTPUT_TOKENS = 16384
+
+
+def edges_order(docs: list[dict]) -> list[dict]:
+    """Best evidence at both ends, weakest in the middle, where long-context models read least
+    carefully: ranks 1, 3, 5, ... from the top, then ..., 6, 4, 2 back to the bottom. Search
+    results and graph neighbours are reranked separately, so the whole set is ranked by rerank
+    score first (stable: unscored docs keep their order)."""
+    ranked = sorted(docs, key=lambda d: d.get("rerank_score", 0.0), reverse=True)
+    return ranked[0::2] + ranked[1::2][::-1]
 
 
 class _ResearchStep(BaseModel):
@@ -148,7 +156,13 @@ class LLMService:
         self.chat_client, self.gemini_client, self.anthropic_client = self._build_clients(self.provider)
 
         self.ingestion_provider = self._ingestion_provider_override or self.provider
-        if self.ingestion_provider == self.provider:
+        if self.ingestion_provider == "local":
+            # On this device ingestion runs on llama-server: parallel notes, JSON grammar at no cost.
+            from app.services.extraction_server import ServerChatClient
+
+            self.i_chat_client, self.i_gemini_client, self.i_anthropic_client = ServerChatClient(), None, None
+            logger.info("Ingestion LLM: llama-server on this device")
+        elif self.ingestion_provider == self.provider:
             # Alias main clients — no extra connections needed.
             self.i_chat_client, self.i_gemini_client, self.i_anthropic_client = (
                 self.chat_client, self.gemini_client, self.anthropic_client,
@@ -231,17 +245,6 @@ class LLMService:
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
-    def _clean_json(self, json_str: str) -> str:
-        """Model output → parseable JSON text: unwrap a code fence, then json_repair."""
-        match = re.search(r"```(?:json)?(.*?)```", json_str, re.DOTALL)
-        if match:
-            json_str = match.group(1)
-        # json_repair escapes stray control characters itself, but it does not
-        # read curly quotes as string delimiters.
-        json_str = re.sub(r"[\u2018\u2019\u201B]", "'", json_str)
-        json_str = re.sub(r"[\u201C\u201D\u201E]", '"', json_str)
-        return repair_json(json_str)
-
     def _chat(  # pylint: disable=too-many-locals,too-many-branches
         self,
         messages: list[dict],
@@ -262,7 +265,7 @@ class LLMService:
 
         ``json_mode`` asks the provider for a JSON object structurally where it
         can (OpenAI-style ``response_format``, Gemini ``response_mime_type``,
-        llama.cpp's JSON grammar); callers still parse through ``_clean_json``.
+        llama.cpp's JSON grammar). Replies are parsed as written: one that is not valid JSON for its schema fails.
         """
         provider = self.ingestion_provider if ingestion else self.provider
         model = model or (self.get_ingestion_model() if ingestion else self.get_chat_model())
@@ -672,7 +675,7 @@ class LLMService:
         raw, _ = self._chat([{"role": "user", "content": prompt}], temperature=0, json_mode=True)
         if not raw:
             raise ValueError("Empty extraction result")
-        return QueryAnalysis.model_validate_json(self._clean_json(raw)).model_dump()
+        return QueryAnalysis.model_validate_json(raw or "").model_dump()
 
     async def generate(
         self,
@@ -754,6 +757,7 @@ class LLMService:
         # ── Build current search block ────────────────────────────────────────
         current_block = ""
         if search_query and docs:
+            docs = edges_order(docs)
             context_lines = []
             for doc in docs:
                 text = (doc.get("text") or "").strip()
@@ -806,7 +810,7 @@ class LLMService:
         raw, step_thinking = await asyncio.to_thread(self._reason_step, prompt, json_mode=True)
         logger.info(f"[LLM] iterative_step raw response:\n{raw}")
         try:
-            step = _ResearchStep.model_validate_json(self._clean_json(raw or ""))
+            step = _ResearchStep.model_validate_json(raw or "")
         except ValueError as e:  # pydantic ValidationError is a ValueError
             logger.warning(f"[LLM] iterative_step: unparseable reply: {e}")
             return {
@@ -902,12 +906,26 @@ class LLMService:
         return provider_model_map.get(self.provider, settings.LLM_MODEL)
 
     def get_ingestion_model(self) -> str | None:
-        """The model ingestion runs on: the model selected for chat.
+        """The model ingestion runs on.
 
-        One selection drives both. The only exception is a workspace that ticked
-        "use a different model for note ingestion" (the per-instance override).
+        A workspace that ticked "use a different model for note ingestion" uses
+        that. On this device the extraction model applies (``EXTRACTION_MODEL``:
+        automatic picks Gemma 4 12B when it fits); otherwise the chat model.
         """
-        return getattr(self, "_ingestion_model_override", None) or self.get_chat_model()
+        override = getattr(self, "_ingestion_model_override", None)
+        if override:
+            return override
+        if getattr(self, "ingestion_provider", self.provider) == "local":
+            choice = (settings.EXTRACTION_MODEL or "").strip()
+            if choice and choice != "chat":
+                return choice
+            if not choice:
+                from app.services.model_catalog import auto_extraction_model
+
+                auto = auto_extraction_model()
+                if auto:
+                    return auto
+        return self.get_chat_model()
 
     # ── Ingestion-specific generation ─────────────────────────────────────────
 
@@ -1015,9 +1033,29 @@ class LLMService:
         )
 
         if provider == "local":
-            from app.services.local_models import local_llama_runtime
+            # The extraction server, so the model is not loaded a second time in-process; it reads
+            # images when the model's vision projector (mmproj-*.gguf) sits beside it.
+            from app.services.extraction_server import has_vision
 
-            return local_llama_runtime.describe_image(data_url, prompt, model=model)
+            if not has_vision(model):
+                raise RuntimeError(
+                    f"{model or 'The extraction model'} has no vision projector (mmproj-*.gguf) beside it, "
+                    "so it cannot read images. Download it from the Models page or pick a vision-capable model."
+                )
+            reply = self.i_chat_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": data_url}},
+                        ],
+                    }
+                ],
+                temperature=0.1,
+            )
+            return (reply.choices[0].message.content or "").strip()
 
         if provider == "gemini":
             mime, b64 = data_url[5:].split(";base64,", 1)

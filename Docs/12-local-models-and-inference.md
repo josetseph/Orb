@@ -15,6 +15,7 @@ The local-inference layer **owns**:
 - `MODELS_DIR/manifest.json`: the persisted model *selection* (chat/embed/reranker ids, embedding dims, resolved file paths) plus per-file download records and the last runtime descriptor.
 - Loading and unloading models **in the FastAPI process** via `llama-cpp-python` (`Llama(...)`) and torch/`transformers`, with a hard rule that at most one heavy model is resident at a time (chat ↔ embed ↔ reranker ↔ Phonon-2 ↔ Marlin).
 - Chat generation over the local GGUF exposed through an OpenAI-client-shaped shim (`LocalOpenAICompat`) so `LLMService` can treat "local" like any other provider.
+- The one exception to "in the FastAPI process": the **extraction server** (`extraction_server.py`, §7.5) — a llama.cpp `llama-server` child process that runs every local *ingestion* call (extraction, titles, image descriptions) with parallel slots, started on demand and stopped when idle.
 - Embedding (`LocalLlamaEmbeddings`, `EmbeddingService`) and reranking (`LocalGgufReranker`, `RerankerService`) primitives consumed by ingestion and retrieval.
 - Keeping `settings.EMBEDDING_DIMENSIONS` and **every** KB's Qdrant collections sized to the selected embed model (`sync_embedding_infrastructure`).
 - Idle unloading (default 5 minutes) and accelerator cache release.
@@ -37,12 +38,13 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 |---|---|---|
 | `backend/app/services/model_catalog.py` | Static `ModelOption` catalog, RAM/accelerator probing, budget filtering and recommendation. Deliberately avoids importing `settings`/`local_models` at module level so it can run early. | `ModelOption`, `CHAT_MODELS`, `EMBED_MODELS`, `RERANK_MODELS`, `ALL_MODELS`, `get_option`, `total_ram_gb`, `detect_accel_backend`, `hardware_profile`, `pick_embed_for_budget`, `pick_rerank_for_budget`, `chat_options_for_budget`, `recommend_chat`, `recommend_stack` |
 | `backend/app/services/local_models.py` | GGUF download + manifest + in-process llama-cpp runtime (chat/embed), GGUF reranker, residency manager, backend detection, OpenAI-compat shim. | `CHAT_MODEL_ID`/`EMBED_MODEL_ID`/`RERANK_MODEL_ID`, `load_manifest`/`save_manifest`/`models_manifest_path`, `download_file`, `ensure_gguf`, `save_selection`, `sync_embedding_infrastructure`, `resolve_selected_hf_paths`, `ensure_chat_and_embed_models`, `gguf_paths_if_present`, `reranker_gguf_path`, `detect_llama_backend`, `release_accelerator_memory`, `model_idle_seconds`, `RepetitionLoopError`, `LocalOpenAICompat`, `LocalLlamaEmbeddings`, `LocalLlamaRuntime` + singleton `local_llama_runtime`, `LocalGgufReranker` + singleton `local_gguf_reranker` |
+| `backend/app/services/extraction_server.py` | Pinned llama.cpp release (`BUILD = "b11617"`) downloaded on first use; one on-demand `llama-server` for local ingestion with `slots_for_ram` parallel slots, idle stop, stale-pid cleanup; OpenAI-shaped `ServerChatClient` that turns `json_object` into llama.cpp's JSON grammar. | `extraction_server` (`ExtractionServer`), `ServerChatClient`, `slots_for_ram`, `binary`, `has_vision`, `BUILD`, `IDLE_SECONDS` |
 | `backend/app/services/embedding.py` | Thin provider-agnostic façade over `LocalLlamaEmbeddings`; adds the Qwen3 query instruction prefix. | `EmbeddingService`, singleton `embedding_service` |
 | `backend/app/services/reranker.py` | Async façade over `local_gguf_reranker` (runs it in a thread, normalises result dicts, never raises). | `RerankerService`, singleton `reranker_service` |
 | `backend/app/services/multimodal_models.py` | HF snapshot paths under `MODELS_DIR`, readiness check, `snapshot_download` with NAS staging. | `multimodal_model_path`, `is_hf_snapshot_ready`, `ensure_hf_snapshot`, `ensure_multimodal_models` |
 | `backend/app/services/multimodal_runtime.py` | Lazy in-process Phonon-2 / Marlin, speaker labelling, audio decoding, exclusive residency hooks. | `MultimodalRuntime`, singleton `multimodal_runtime` |
 | `backend/app/services/asr_engine.py` | Phonon-2 through fermion (readiness, download, load, transcribe), pyannote diarization, `[MM:SS] Speaker N:` lines. | `PHONON_MODEL`, `DIARIZER_REPO`, `fermion_cache_dir`, `is_phonon_ready`, `download_phonon`, `load_phonon`, `transcribe_with_phonon`, `speaker_turns`, `timed_lines`, `untimed` |
-| `backend/app/services/multimodal_services.py` | "Are the torch/transformers deps importable, and optionally pip-install them into the running interpreter"; compat status payloads. | `ensure_multimodal_python_deps`, `services_ready`, `ensure_multimodal_services`, `_MULTIMODAL_PIP` |
+| `backend/app/services/multimodal_services.py` | "Are the torch/transformers deps importable, and optionally pip-install them into the running interpreter" (`restart_needed()` once an install replaced modules already imported); compat status payloads. | `ensure_multimodal_python_deps`, `services_ready`, `ensure_multimodal_services`, `_MULTIMODAL_PIP` |
 | `backend/app/core/inference_device.py` | torch device/dtype selection and the Qwen3.5 fast-path shim. Imports `torch` at module top — only import it lazily. | `resolve_torch_device`, `resolve_torch_dtype`, `prepare_qwen3_5_inference` |
 | `backend/app/core/paths.py` | (shared) `resolve_models_dir`, `looks_like_network_volume`, `local_download_staging_dir` used by both download paths. | see [06](06-backend-core-and-configuration.md) |
 | `backend/app/api_desktop.py` (setup section) | HTTP surface: `/api/v1/setup/status`, `/model-catalog`, `/download-models`, `/select-chat-model`, `/start-local-llm`, `/start-multimodal-services`, `/multimodal-status`, `/paths`. | route handlers |
@@ -142,7 +144,8 @@ Key point: the frontend **never** calls `/setup/start-local-llm` or `/setup/star
 | `LLMService` (provider `local`) via `LocalOpenAICompat.chat.completions.create` | `LocalLlamaRuntime.create_chat_completion` | `ensure_chat_loaded()` | chat GGUF |
 | `EmbeddingService.embed_query / embed_documents` | `LocalLlamaRuntime.embed / embed_batch` | `ensure_embed_loaded()` | embed GGUF |
 | `RerankerService.rerank` (retrieval) | `LocalGgufReranker.rerank` (in `asyncio.to_thread`) | `ensure_loaded()` | reranker GGUF |
-| `LLMService.describe_image` (provider `local`) | `LocalLlamaRuntime.describe_image` | `ensure_chat_loaded()` | chat GGUF **with** its `mmproj` projector |
+| `LLMService` ingestion calls (ingestion provider `local`) via `ServerChatClient` | `extraction_server.url_for(gguf)` → HTTP `/v1/chat/completions` | starts/swaps the `llama-server` child (§7.5) | the extraction GGUF, in a separate process (not part of the residency manager) |
+| `LLMService.describe_image` (ingestion provider `local`) | `ServerChatClient` with an `image_url` part | same | the extraction GGUF **with** its `mmproj` projector (`--mmproj`) |
 | `MultimediaService.transcribe_audio` | `multimodal_runtime.transcribe_audio_path` | `_load_phonon()` — kept for the batch | Phonon-2 (+ pyannote diarizer when speaker labels are on) |
 | `MultimediaService._caption_video_with_marlin` | `multimodal_runtime.caption_video_path` | `_load_marlin()` | Marlin |
 | `POST /setup/start-local-llm` | `local_llama_runtime.load(chat, embed)` then `local_gguf_reranker.ensure_loaded()` | explicit | ends with **reranker** resident (see gotcha §10) |
@@ -179,13 +182,13 @@ Chat (`CHAT_MODELS`, order preserved = UI order):
 | id | family | label | hf_repo | hf_file | min_ram_gb | size_gb | params | recommended |
 |---|---|---|---|---|---|---|---|---|
 | `gemma4-e2b-q4` | gemma4 | Gemma 4 E2B (Q4) | `bartowski/google_gemma-4-E2B-it-GGUF` | `google_gemma-4-E2B-it-Q4_K_M.gguf` | 5 | 2.8 | E2B | |
-| `gemma4-e4b-q4` | gemma4 | Gemma 4 E4B (Q4) | `bartowski/google_gemma-4-E4B-it-GGUF` | `google_gemma-4-E4B-it-Q4_K_M.gguf` | 9 | 5.4 | E4B | **yes** |
+| `gemma4-e4b-q4` | gemma4 | Gemma 4 E4B (Q4) | `bartowski/google_gemma-4-E4B-it-GGUF` | `google_gemma-4-E4B-it-Q4_K_M.gguf` | 9 | 5.4 | E4B | |
 | `gemma4-12b-q4` | gemma4 | Gemma 4 12B (Q4) | `bartowski/gemma-4-12B-it-GGUF` (note: no `google_` prefix) | `gemma-4-12B-it-Q4_K_M.gguf` | 11 | 7.7 | 12B | |
 | `gemma4-31b-q4` | gemma4 | Gemma 4 31B (Q4) | `bartowski/google_gemma-4-31B-it-GGUF` | `google_gemma-4-31B-it-Q4_K_M.gguf` | 28 | 18.0 | 31B | |
 | `qwen35-0.8b-q4` | qwen35 | Qwen 3.5 0.8B (Q4) | `bartowski/Qwen_Qwen3.5-0.8B-GGUF` | `Qwen_Qwen3.5-0.8B-Q4_K_M.gguf` | 2.5 | 0.6 | 0.8B | |
 | `qwen35-2b-q4` | qwen35 | Qwen 3.5 2B (Q4) | `bartowski/Qwen_Qwen3.5-2B-GGUF` | `Qwen_Qwen3.5-2B-Q4_K_M.gguf` | 3.5 | 1.4 | 2B | |
 | `qwen35-4b-q4` | qwen35 | Qwen 3.5 4B (Q4) | `bartowski/Qwen_Qwen3.5-4B-GGUF` | `Qwen_Qwen3.5-4B-Q4_K_M.gguf` | 5 | 2.5 | 4B | |
-| `qwen35-9b-q4` | qwen35 | Qwen 3.5 9B (Q4) | `bartowski/Qwen_Qwen3.5-9B-GGUF` | `Qwen_Qwen3.5-9B-Q4_K_M.gguf` | 10 | 5.5 | 9B | |
+| `qwen35-9b-q4` | qwen35 | Qwen 3.5 9B (Q4) | `bartowski/Qwen_Qwen3.5-9B-GGUF` | `Qwen_Qwen3.5-9B-Q4_K_M.gguf` | 10 | 5.5 | 9B | **yes** (retrieval study rounds 8–9: +0.03 HotpotQA / +0.065 MuSiQue F1 over E4B at about its speed) |
 | `qwen35-27b-q4` | qwen35 | Qwen 3.5 27B (Q4) | `bartowski/Qwen_Qwen3.5-27B-GGUF` | `Qwen_Qwen3.5-27B-Q4_K_M.gguf` | 28 | 18.0 | 27B | |
 | `qwen36-27b-q4` | qwen36 | Qwen 3.6 27B (Q4) | `bartowski/Qwen_Qwen3.6-27B-GGUF` | `Qwen_Qwen3.6-27B-Q4_K_M.gguf` | 28 | 18.0 | 27B | |
 | `qwen36-35b-a3b-q4` | qwen36 | Qwen 3.6 35B-A3B MoE (Q4) | `bartowski/Qwen_Qwen3.6-35B-A3B-GGUF` | `Qwen_Qwen3.6-35B-A3B-Q4_K_M.gguf` | 32 | 22.3 | 35B-A3B | |
@@ -228,11 +231,15 @@ chat_options_for_budget(usable, embed, rerank):
     reserve = min(2.5, embed.size_gb*0.5 + rerank.size_gb*0.5)
     budget  = max(usable - reserve, usable * 0.7)
     fits    = [m for m in CHAT_MODELS if _fits(m, budget)] or [smallest-by-min_ram]
-recommend_chat(fits): first of gemma4-e4b-q4, gemma4-12b-q4, gemma4-e2b-q4, qwen35-4b-q4,
-                      qwen35-9b-q4, qwen36-27b-q4 that is in fits; else max(fits, key=min_ram_gb)
+recommend_chat(fits): first of qwen35-9b-q4, gemma4-e4b-q4, gemma4-12b-q4, gemma4-e2b-q4,
+                      qwen36-35b-a3b-q3, qwen36-27b-q3, qwen35-4b-q4, qwen36-27b-q4 that is in fits;
+                      else max(fits, key=min_ram_gb)
+auto_extraction_model(): "gemma4-12b-q4" (EXTRACTION_DEFAULT) when it is in
+                      chat_options_for_budget(usable, embed, rerank) for this machine (lru_cached)
+                      and chat_model_downloaded(it); else None (extract with the chat model)
 ```
 
-Embed and reranker tiers are **not user-selectable**; they are derived from total RAM only. Worked examples: a 16 GB Apple Silicon Mac → usable 14.1, embed 0.6B, rerank 0.6B, reserve 0.5, budget 13.6 → all chats up to `gemma4-12b-q4` (min(11, 10.4)=10.4) fit, `qwen35-9b-q4` fits, 27B/31B do not; suggested `gemma4-e4b-q4`. A 32 GB Mac → embed 4B (2560 dims), rerank 4B, budget ≈ 25.7 → 27B/31B do **not** fit (`min(28, 24.3)=24.3 <= 25.7` → actually fits; `qwen36-35b-a3b-q4` min(32,30.1)=30.1 does not). A 64 GB machine → embed 8B (4096 dims), rerank 8B.
+Embed and reranker tiers are **not user-selectable**; they are derived from total RAM only. Worked examples: a 16 GB Apple Silicon Mac → usable 14.1, embed 0.6B, rerank 0.6B, reserve 0.5, budget 13.6 → all chats up to `gemma4-12b-q4` (min(11, 10.4)=10.4) fit, `qwen35-9b-q4` fits, 27B/31B do not; suggested `qwen35-9b-q4`. A 32 GB Mac → embed 4B (2560 dims), rerank 4B, budget ≈ 25.7 → 27B/31B do **not** fit (`min(28, 24.3)=24.3 <= 25.7` → actually fits; `qwen36-35b-a3b-q4` min(32,30.1)=30.1 does not). A 64 GB machine → embed 8B (4096 dims), rerank 8B.
 
 ### 4.5 `recommend_stack(chat_id=None)` — response contract of `GET /api/v1/setup/model-catalog`
 
@@ -412,7 +419,7 @@ All constructions go through `_construct_llama(Llama, **kwargs)` → `_llama_met
 |---|---|---|---|---|---|---|
 | chat | selected chat GGUF | `False` | `max(LLAMA_N_CTX (16384), LLAMA_MAX_TOKENS (10240) + LLAMA_PROMPT_RESERVE (4096))` | from backend detection | `LLAMA_N_THREADS` if set | `verbose=False`, `swa_full`, `flash_attn?` |
 | embed | selected embed GGUF | `True` | `EMBED_N_CTX` (8192) | same | same | same as chat minus `n_ctx` |
-| reranker | selected reranker GGUF | (default False) | `RERANK_N_CTX` (8192) | `accel["n_gpu_layers"]` | — | `logits_all=True`, `verbose=False`, `swa_full`, `flash_attn?` |
+| reranker | selected reranker GGUF | (default False) | `RERANK_N_CTX` (8192) | `accel["n_gpu_layers"]` | — | `logits_all=False`, `verbose=False`, `swa_full`, `flash_attn?` |
 
 `n_batch` is **not** set anywhere (llama-cpp-python default, 512). The chat `n_ctx` floor rule means the defaults give `max(16384, 14336) = 16384`; if you raise `LLAMA_MAX_TOKENS` to 16384 the context is silently raised to 20480 (logged at INFO). The embed model inherits `n_gpu_layers`/`n_threads` from `_chat_kwargs()`.
 
@@ -447,7 +454,7 @@ Public API summary:
 | `embed(text)`, `embed_batch(texts)` | yes | see §9 |
 | `make_chat_client()` | — | a `LocalOpenAICompat` (the `chat_client` slot of `LLMService._build_clients`) |
 
-**Vision projector.** `find_mmproj(chat_gguf)` is strict: only `mmproj-<model stem>-*.gguf` beside the chat GGUF counts (a projector is architecture-specific; an unrelated one in the folder is never used). Once per boot, `sync_embedding_infrastructure()` → `_ensure_mmproj_in_background(sel)`: when the manifest's `chat_id` is a catalog id and no matching projector is on disk, `ensure_mmproj(<hf_path>)` runs in a daemon thread (`orb-mmproj`, start / finish / failure logged, never blocks startup). `_load_chat_unlocked` constructs `MTMDChatHandler` and, because llama-cpp-python otherwise binds the projector lazily on the first completion (so a wrong one used to fail *every* completion), calls `handler._init_mtmd_context(llama)` eagerly; on any exception it logs a warning and drops the handler (`chat_handler = None`, `_mmproj_path = None`) so text chat keeps working and `describe_image` raises its "no vision projector" error.
+**Vision projector.** `find_mmproj(chat_gguf)` is strict: only `mmproj-<model stem>-*.gguf` beside the chat GGUF counts (a projector is architecture-specific; an unrelated one in the folder is never used). Once per boot, `sync_embedding_infrastructure()` → `_ensure_mmproj_in_background(sel)`: when the manifest's `chat_id` is a catalog id and no matching projector is on disk, `ensure_mmproj(<hf_path>)` runs in a daemon thread (`orb-mmproj`, start / finish / failure logged, never blocks startup). `_load_chat_unlocked` constructs `MTMDChatHandler` and, because llama-cpp-python otherwise binds the projector lazily on the first completion (so a wrong one used to fail *every* completion), calls `handler._init_mtmd_context(llama)` eagerly; on any exception it logs a warning and drops the handler (`chat_handler = None`, `_mmproj_path = None`) so text chat keeps working; image descriptions go to the extraction server, which checks `has_vision` first.
 
 Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon thread `orb-model-idle` that every 30 s calls `unload_if_idle(limit)` on both the runtime and `local_gguf_reranker`, where `limit = model_idle_seconds()` (`MODEL_IDLE_SECONDS`, default 300; `0` disables idle unload but the thread keeps looping). The multimodal runtime has **no** idle unloader — Phonon-2 or Marlin stays resident until evicted by a GGUF load or the ingestion agent's explicit `unload` between phases. The old "unload everything once the ingest batch drains" block in `workflows/ingestion.py` has been removed in the current tree — models now stay resident after a note and rely on the idle watcher / eviction.
 
@@ -456,6 +463,23 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 ### 7.4 OpenAI-compat shim
 
 `LocalOpenAICompat(runtime, model_id=None)` exposes `.chat.completions.create(**kwargs)` and `.models.list()`. `create` reads `messages`, `temperature` (default 0.2), `max_tokens` **or** `max_completion_tokens`, `model`; `response_format` is passed through to `create_chat_completion` (JSON mode, below); **`stop`, `top_p`, `stream`, etc. are accepted and ignored**. It returns a `SimpleNamespace` shaped like an OpenAI `ChatCompletion` (`.choices[0].message.content`, `.choices[0].finish_reason`, `.model`, `.usage`, `.id="local-chat"`). Async callers (`LLMService.generate`, `ingestion_generate_with_meta`) wrap the call in `asyncio.to_thread` themselves. Default `model_id` is `settings.LLM_MODEL or "local-chat"`; the model string is echoed back and does **not** select a file — the resident chat GGUF is always used.
+
+### 7.5 Extraction server (`extraction_server.py`)
+
+In-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `llama-server` with parallel slots it cost nothing measurable. So when a KB's **ingestion** provider is `local`, `LLMService.init_clients` sets `i_chat_client = ServerChatClient()` (no Gemini/Anthropic twins) and every ingestion call — extraction, renames, titles, image naming and `describe_image` — goes to a `llama-server` running the extraction model (`get_ingestion_model()`, doc 13 §5.2). Chat, embeddings and the reranker stay in-process.
+
+- **Binary.** `binary()` returns `DATA_DIR/bin/llama.cpp-b11617/**/llama-server[.exe]`, downloading the pinned release from `github.com/ggml-org/llama.cpp/releases/download/b11617` on first use (staged in `llama.cpp-b11617.partial`, extracted, renamed into place). Asset per machine (`_assets`): macOS `bin-macos-arm64|x64` (Metal); Windows / Linux with `nvidia-smi` on `PATH` → the CUDA build (`win-cuda-12.4-x64` / `ubuntu-cuda-12.8-x64`) **plus** its `cudart` archive (on Windows the runtime DLLs are moved beside the binary), else the Vulkan build.
+- **Start** (`url_for(gguf)`, under a lock, blocking until `/health` is 200, up to 10 minutes): reuses a running server with the same GGUF, else stops it and starts one on a free loopback port with `-m <gguf> -ngl 999 -np <slots> -c <slots × LLAMA_N_CTX> --jinja --chat-template-kwargs {"enable_thinking": false} --reasoning-format auto --no-webui -fa on|off (LLAMA_FLASH_ATTN) --repeat-penalty LLAMA_REPEAT_PENALTY --cache-ram 0`, plus `--mmproj <projector>` when `find_mmproj(gguf)` finds one (image descriptions without a second copy of the model). `--reasoning-format auto` because with `none` Gemma 4 12B's replies began with the empty thinking block its template opens; `--cache-ram 0` because the host-RAM prompt cache can restore an unrelated conversation into a slot under concurrent load (llama.cpp #27148). Output goes to `DATA_DIR/logs/llama-server.log`; the pid to `DATA_DIR/llama-server.pid`.
+- **Slots.** `slots = slots_for_ram(total_ram_gb())`: < 20 GB → 1, < 40 GB → 2, < 80 GB → 4, else 6 (RAM tiers, not a measured KV budget). Each slot gets `LLAMA_N_CTX` of context. The same number sizes each KB's ingestion pipeline (doc 10 §4.3).
+- **Model choice.** `_gguf_for(model)` → `local_llama_runtime.resolve_chat_gguf(model)`, else the Setup selection's chat GGUF (`RuntimeError("No chat model is downloaded…")` when none). A different GGUF than the running one restarts the server.
+- **Requests.** `ServerChatClient.chat.completions.create(model, messages, **kwargs)` resolves the GGUF, pops `response_format` and, for `{"type": "json_object"}`, sends llama-cpp-python's `JSON_GBNF` as `extra_body.grammar` (the grammar the in-process runtime applies for JSON mode; llama-server's own `response_format` lets a thinking template reason first), then calls an `openai.OpenAI(base_url=<server>/v1, timeout=3600, max_retries=0)` client. `begin()`/`end()` count in-flight requests.
+- **Idle stop.** A daemon thread (`llama-server-idle`) checks every 30 s and stops the server once nothing is in flight and the last use is older than `IDLE_SECONDS = 300`, so its memory goes back to chat and media. `desktop_runtime.stop_sidecars` also calls `extraction_server.stop()`.
+- **Stale process.** Before a start `_kill_stale()` reads the pid file and sends `SIGTERM` only if that pid is still a `llama-server` (`ps -p <pid> -o comm=` / `tasklist`), since the number may have been reused; the file is then removed.
+- **Vision.** `has_vision(model)` = a projector exists beside the GGUF (a catalog download through `ensure_chat_and_embed_models` fetches it with the GGUF; the `orb-mmproj` boot thread back-fills it for the selected chat model and for the automatic extraction model); `LLMService.describe_image` checks it first and raises "… has no vision projector (mmproj-*.gguf) beside it, so it cannot read images…".
+- **Measured** on the maintainer's 24 GB Mac: Gemma 4 12B at ~10 tok/s with and without the grammar (no per-token cost), and two parallel requests finished in the wall time of one.
+- The server is **outside the residency manager** (§11): while it runs, its model's memory is held alongside whatever is resident in-process; the idle stop is what returns it.
+
+Test: `tests/unit/test_extraction_server.py` (submission-ordered writes, one slot = one note at a time, `slots_for_ram`, release assets per platform, `json_object` → grammar, extraction-model choice).
 
 ## 8. Chat generation and the repetition-loop guard
 
@@ -525,7 +549,7 @@ The contract that keeps `settings.EMBEDDING_DIMENSIONS`, `settings.EMBEDDING_MOD
 
 `LocalGgufReranker` (singleton `local_gguf_reranker`) keeps `_model`, `_path`, `_yes_id`, `_no_id`, `_last_used`, its own `RLock`.
 
-`ensure_loaded() -> bool`: `False` (not an exception) when no reranker GGUF is on disk or `llama_cpp` is missing. If already loaded from the same path → touch, `True`. Otherwise **evicts `local_llama_runtime` (chat+embed) and all multimodal families**, closes any old handle, constructs `Llama(model_path, n_ctx=RERANK_N_CTX (8192), n_gpu_layers=<accel>, logits_all=True, verbose=False, swa_full…)`, resolves `_yes_id/_no_id` via `tokenize(b"yes"/b"no", add_bos=False)[-1]` (currently unused by scoring — kept for a logits-based path), and starts the shared idle watcher.
+`ensure_loaded() -> bool`: `False` (not an exception) when no reranker GGUF is on disk or `llama_cpp` is missing. If already loaded from the same path → touch, `True`. Otherwise **evicts `local_llama_runtime` (chat+embed) and all multimodal families**, closes any old handle, constructs `Llama(model_path, n_ctx=RERANK_N_CTX (8192), n_gpu_layers=<accel>, logits_all=False, verbose=False, swa_full…)`, resolves `_yes_id/_no_id` via `tokenize(b"yes"/b"no", add_bos=False)[-1]` (the two logits scoring reads), and starts the shared idle watcher. `logits_all` is off because scoring reads one position's logits: with it on, every prompt token's full-vocabulary logits were copied to the CPU into an `n_ctx × vocab` array, and reranking long passages was CPU-bound with the GPU idle (minutes per question).
 
 `_score_one(query, document) -> float` builds the Qwen3-Reranker prompt (ChatML, with an **empty think block** so the model answers immediately):
 
@@ -545,13 +569,12 @@ Judge whether the Document meets the requirements based on the Query and the Ins
 </think>
 ```
 
-then calls `self._model(prompt, max_tokens=1, temperature=0.0, logprobs=5)` and scores:
+then tokenizes it (`tokenize(prompt, special=True)`, as a completion call would) and, under the lock, evaluates it directly — no sampling call:
 
-1. If `top_logprobs[0]` contains both a `yes`/`Yes` and a `no`/`No` key → `softmax` over the two: `e^yes / (e^yes + e^no + 1e-12)` ∈ (0,1).
-2. Else if the generated text starts with `yes` → 0.9; `no` → 0.1.
-3. Else (or on any exception) → 0.0.
+1. **Prefix reuse.** It counts the leading tokens that match what is already in the KV cache (`model.input_ids[:model.n_tokens]`, i.e. the previous document's prompt — system prompt, instruction and query are shared), keeping at least one token to evaluate so its logits are fresh; sets `model.n_tokens = keep` and calls `model.eval(tokens[keep:])`.
+2. **Score.** It reads the last position's logits, `model._ctx.get_logits_ith(-1)`, takes `yes = logits[_yes_id]`, `no = logits[_no_id]` and returns `sigmoid(yes − no) = e^yes / (e^yes + e^no)` ∈ (0,1), computed as `1 / (1 + exp(no − yes))` with the exponent clamped to ±700.
 
-Note that only the two exact token strings are looked up; a leading-space variant (`" yes"`) is not matched, which is why the text fallback exists. Documents are scored **one at a time, sequentially** (no batching; each call re-processes the full prompt — the dominant cost for large candidate sets). No truncation is applied to `document`; overly long texts hit the `n_ctx` limit inside llama.cpp and surface as an exception → score 0.0 for that document.
+Previously it called `self._model(prompt, max_tokens=1, temperature=0.0, logprobs=5)` and took the softmax of the `yes`/`no` entries in the top-5 logprobs, falling back to 0.9 / 0.1 on the sampled text; scoring every document now costs only the tokens after the shared prefix. Documents are scored **one at a time, sequentially** (no batching). No truncation is applied to `document`; a prompt longer than `n_ctx` raises `ValueError("Requested tokens (N) exceed context window of M")`, which aborts that `rerank` call (the façade turns it into `[]`, §10.2). Test: `tests/unit/test_reranker_scoring.py` (the yes/no softmax, the shared prefix kept, one token re-evaluated for an identical prompt).
 
 `rerank(query, documents, top_n=None) -> list[dict]` returns `[{"index", "relevance_score", "document"}]` sorted descending by `relevance_score` (the only score key), optionally truncated to `top_n`; `[]` when not loadable.
 
@@ -653,11 +676,11 @@ Environment defaults set at import of `multimodal_runtime.py` (`os.environ.setde
 
 ### 12.3 Vision: the chat GGUF's projector (`local_models.py`)
 
-There is no separate vision model. `LLMService.describe_image` (doc 13 §9.13) routes to `LocalLlamaRuntime.describe_image(data_url, prompt, model)` for the local provider, which `ensure_chat_loaded(resolve_chat_gguf(model))`s and runs one `create_chat_completion` with an `image_url` content part (`temperature=0.1`, `max_tokens` = the remaining context budget unless the caller passes less). It works only while `vision_ready` — a chat handler exists — and otherwise raises `RuntimeError("<file> has no vision projector (mmproj-*.gguf) beside it, so it cannot read images. Download it from the Models page or pick a vision-capable model.")`.
+There is no separate vision model. `LLMService.describe_image` (doc 13 §9.13) sends local image descriptions to the **extraction server** (§7.5), so the model is not loaded a second time in-process: one completion with an `image_url` content part (`temperature=0.1`) on the extraction GGUF, which the server started with `--mmproj` when `find_mmproj` found a projector. Without one (`has_vision(model)` false) it raises `RuntimeError("<file> has no vision projector (mmproj-*.gguf) beside it, so it cannot read images. Download it from the Models page or pick a vision-capable model.")`.
 
 - `find_mmproj(chat_gguf)` is strict: only `mmproj-<model stem>-*.gguf` in the same folder counts (the quantisation suffix is stripped from the stem first, `_QUANT_SUFFIX_RE`). A projector is architecture-specific, so an unrelated one in the folder is never used — binding the wrong one breaks every completion, not just image ones.
 - `_load_chat_unlocked` constructs `MTMDChatHandler(clip_model_path=<mmproj>, use_gpu=n_gpu_layers != 0)` **before** the `Llama(...)` call (llama-cpp-python binds the projector at construction; reloading a multi-GB model to add it later costs more than the ~1 GB it holds), then calls `handler._init_mtmd_context(llama)` eagerly. Any failure logs a warning and drops the handler (`chat_handler = None`, `_mmproj_path = None`) so text chat keeps working. `unload` frees the mtmd context (`mtmd_free`).
-- `ensure_mmproj(model_id)` downloads a catalog model's projector (§6.2); `_ensure_mmproj_in_background(sel)` runs it once per boot in the `orb-mmproj` daemon thread when the selected catalog chat model has no projector on disk (start, result and failure are logged; startup is never blocked).
+- `ensure_mmproj(model_id)` downloads a catalog model's projector (§6.2); `_ensure_mmproj_in_background(sel)` runs it once per boot in the `orb-mmproj` daemon thread for the selected catalog chat model and the automatic extraction model (`auto_extraction_model()`) when either has no projector on disk (start, result and failure are logged; startup is never blocked).
 - Images are downscaled to `IMAGE_DESCRIBE_MAX_PIXELS` (1 500 000 px) and sent as a JPEG data URL (`multimedia.image_data_url`) whichever provider answers.
 
 ### 12.4 Phonon-2 (audio transcription)
@@ -694,7 +717,8 @@ Transcription is **Phonon-2** (`FermionResearch/Phonon-2`, a quantized NVIDIA Pa
 |---|---|
 | Chat GGUF | `size_gb` + KV cache. With `swa_full=True` and `n_ctx=16384` Gemma 4 E4B ≈ 5.4 GB weights + ~3–4 GB KV; 12B ≈ 7.7 + ~5 GB. Source comment: "16k + swa_full fits ~24GB Metal; 32k + swa_full OOMs". |
 | Embed GGUF | 0.6 – 4.8 GB weights + small KV (`n_ctx` 8192, no generation). |
-| Reranker GGUF | 0.4 – 5 GB weights; `logits_all=True` allocates a logits buffer of `n_ctx × vocab` floats (8192 × ~152k × 4 B ≈ 5 GB **virtual**, lazily touched) — this is why `RERANK_N_CTX` matters more than it looks. |
+| Reranker GGUF | 0.4 – 5 GB weights + KV for `RERANK_N_CTX`. Loaded with `logits_all=False`, so only the last position's logits are kept (the old `logits_all=True` buffer of `n_ctx × vocab` floats is gone). |
+| Extraction `llama-server` (§7.5) | the extraction GGUF + KV for `slots × LLAMA_N_CTX`, in its own process, held until 300 s idle. |
 | Phonon-2 / Marlin | see §12.7 |
 
 Only one of these is resident at a time (plus the ~150–200 MB of torch import overhead that `_LazyLLMService` defers until first use — see doc 13). The catalog's `usable_model_gb` (88 % of RAM on Metal/CUDA) is the budget the chat model must fit into *alone*; embed/rerank are only charged a "reserve" of half their sizes because they are never co-resident with chat.
@@ -750,15 +774,15 @@ Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS`, `EXTR
 | `ORB_CHAT_GGUF` / `ORB_EMBED_GGUF` / `ORB_RERANK_GGUF` (ORB-only) | catalog defaults (E4B / embed-0.6B-Q8 / rerank-0.6B) | module constants `*_MODEL_ID` | fallback `org/repo/file` when catalog lookup fails or manifest has no selection |
 | `LLAMA_BACKEND` | `auto` | `detect_llama_backend`, `model_catalog.detect_accel_backend` (ORB-only there) | `metal|cuda|vulkan|cpu` |
 | `LLAMA_N_GPU_LAYERS` | `-1` (GPU) / `0` (cpu) | same | layers offloaded; `-1` = all |
-| `LLAMA_N_CTX` | `16384` | `_chat_kwargs`, `LLMService.ingestion_context_tokens` | chat context window (KV size); also the "context" figure used for extraction chunk sizing |
+| `LLAMA_N_CTX` | `16384` | `_chat_kwargs`, `LLMService.ingestion_context_tokens`, `extraction_server` | chat context window (KV size); also the "context" figure used for extraction chunk sizing, and the context **per slot** of the extraction server (`-c slots × LLAMA_N_CTX`) |
 | `LLAMA_MAX_TOKENS` | **unset** (dynamic) | `_default_chat_max_tokens` | hard cap on generated tokens; when set also raises `n_ctx` to `cap + PROMPT_RESERVE` |
 | `LLAMA_PROMPT_RESERVE` | `4096` | `_chat_kwargs` | only used with `LLAMA_MAX_TOKENS` (floor for `n_ctx`) |
 | `LLAMA_SWA_FULL` | `true` | `_llama_metal_safe_kwargs` | `swa_full` for every `Llama()` |
-| `LLAMA_FLASH_ATTN` | `false` | same | `flash_attn=True` when on |
-| `LLAMA_REPEAT_PENALTY` | `1.12` | `_default_repeat_penalty` | chat sampling |
+| `LLAMA_FLASH_ATTN` | `false` | same; `extraction_server` | `flash_attn=True` when on; `-fa on|off` for the extraction server |
+| `LLAMA_REPEAT_PENALTY` | `1.12` | `_default_repeat_penalty`; `extraction_server` | chat sampling; `--repeat-penalty` for the extraction server |
 | `LLAMA_N_THREADS` | unset (llama default) | `_chat_kwargs` | CPU threads for chat/embed |
 | `EMBED_N_CTX` | `8192` | `_load_embed_unlocked` | embed model context |
-| `RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | reranker context (also sizes the `logits_all` buffer) |
+| `RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | reranker context; a query + document prompt longer than this raises |
 | `MODEL_IDLE_SECONDS` | `300` | `model_idle_seconds` | idle unload for chat/embed/reranker; `0` = never |
 | `LARGE_ATTACHMENT_TOKENS` (ORB-only) | `20000` | `ingestion_agent.finish_attachment` | documents with more extracted tokens are summarised for the graph and indexed in full for search, with no prompt; recordings always are (doc 11 §6.4). UI row: "Summarize documents over (tokens)" |
 | `EXTRACTION_CHUNK_TOKENS` (ORB-only) | `4000` ceiling | `workflows/extraction_chunking.chunk_token_budget` | max input tokens per extraction chunk (doc 10) |
@@ -777,6 +801,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | `ASR_SPEAKERS` (`True`), `ASR_DIARIZE_STEP` (`2.0`), `ASR_MAX_SPEAKERS` (`None`), `MODEL_MARLIN_HF/LOCAL` | see §6.2, §12.4 | Marlin repo/folder and speaker-label knobs (Phonon-2's model and engine are fixed) |
 | `IMAGE_DESCRIBE_MAX_PIXELS` | `1500000` | downscale threshold before any image model (local projector or cloud) |
 | `LLM_MODEL` | `local-chat` | placeholder meaning "Setup selection"; set to the chat catalog id after a download |
+| `EXTRACTION_MODEL` | `""` | the model the extraction server runs: `""` automatic (`auto_extraction_model()`, Gemma 4 12B when it fits and is downloaded, else the chat model), `"chat"` the chat model, else a model ref. Models page "Extraction model"; saved as `extraction_model` in `runtime_config.json` |
 | `MULTIMEDIA_CONCURRENCY` | `1` | semaphore around the multimodal node |
 
 ## 15. Interfaces with other subsystems
@@ -788,7 +813,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | Retrieval → `EmbeddingService.embed_query` | single vector with the Qwen3 instruction prefix when `is_qwen3`. |
 | Retrieval → `RerankerService.rerank` | async; returns `[]` on any failure; items carry `index`, `relevance_score`, `document`. |
 | Multimedia → `multimodal_runtime` | `transcribe_audio_path(path) -> str`, `caption_video_path(path) -> {scene, events, elapsed_seconds}`, `unload(family)`; both raise `RuntimeError` when weights are missing. |
-| `LLMService.describe_image` → `local_llama_runtime.describe_image(data_url, prompt, model)` | one chat completion with an image part on the resident chat GGUF; raises when no projector is bound (`vision_ready` false). |
+| `LLMService` (ingestion provider `local`) → `ServerChatClient` | OpenAI-shaped `chat.completions.create` against the extraction `llama-server` (§7.5); `describe_image` sends one completion with an image part and raises first when `has_vision(model)` is false. (`LocalLlamaRuntime.describe_image` was removed.) |
 | Setup API → this layer | see §6.3. |
 | `main.startup_event` → `sync_embedding_infrastructure()` | after `runtime_config` overrides are applied; failures logged, never fatal. |
 | `ai_gate.provider_is_configured("local")` → `gguf_paths_if_present()` | "local AI is available" ⇔ chat+embed paths from the manifest exist. |
@@ -797,8 +822,8 @@ Settings fields (`app/core/config.py`) touched by this layer:
 
 ## 16. Invariants, constraints and locked decisions
 
-1. **In-process only.** No Ollama, llama-server, LM Studio or HTTP model sidecars. `EMBEDDING_PROVIDER`/`LLM_PROVIDER` values `ollama`/`lm_studio` are coerced to `local` with a warning; do not add HTTP embedding providers back. (Locked in `3f21e08`.)
-2. **At most one heavy model resident.** Every loader evicts all others first. Do not add a code path that holds chat and embed (or a GGUF and an HF model) simultaneously — the RAM budget in the catalog assumes exclusivity.
+1. **In-process only — except the extraction server.** No Ollama, LM Studio or HTTP model sidecars; the single exception is Orb's own pinned `llama-server` for local ingestion (§7.5), which Orb downloads, starts and stops itself. `EMBEDDING_PROVIDER`/`LLM_PROVIDER` values `ollama`/`lm_studio` are coerced to `local` with a warning; do not add HTTP embedding providers back. (Locked in `3f21e08`.)
+2. **At most one heavy model resident in-process.** Every loader evicts all others first (the extraction server's model is outside this rule and is stopped after 300 s idle). Do not add a code path that holds chat and embed (or a GGUF and an HF model) simultaneously — the RAM budget in the catalog assumes exclusivity.
 3. **`swa_full=True` by default for chat.** Compact SWA causes Gemma 4 ordinal/"or the" collapse; keep the default and the repetition guard together.
 4. **Embedding dims are global across KBs.** Every KB's Qdrant collections share `EMBEDDING_DIMENSIONS`; that is why embed/rerank/multimodal are *not* per-KB configurable (only chat/ingestion models are). Changing the embed model recreates collections and requires re-ingest.
 5. **Never resize Qdrant during ingest.** `ensure_vector_size` runs only from `sync_embedding_infrastructure` (startup / selection / load). `_prepare_vector` fails closed on mismatch.
@@ -821,11 +846,13 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | `MODELS_DIR` on SMB/NAS | staged to local cache, then copied; `.partial`/`.tmp` siblings cleaned. HF snapshot staging wipes `dest` before copying. |
 | Prompt too long | `PromptTooLongError` (before generation); llama.cpp `ValueError` if the heuristic under-estimated. `LLMService` treats both as provider errors (extraction → `None`/empty, chat → error). |
 | Output hits `max_tokens` | `finish_reason="length"`, warning logged; `LLMService.ingestion_generate_with_meta` reports `truncated=True` and the ingestion agent splits the chunk (doc 10). |
+| llama-server download fails / binary exits while loading / not healthy in 10 min | `RuntimeError` from `url_for` → the ingestion call fails (extraction retries, then the note fails); details in `DATA_DIR/logs/llama-server.log`. |
+| Backend crashed with the extraction server running | the orphan keeps the model's memory until the next start, when `_kill_stale()` stops it (pid file + process-name check). |
 | Gemma 4 repetition cascade | abort stream, retry ≤ 3 with fresh sample, then `RuntimeError("LLM repetition loop persisted after 3 attempts")`. Deterministic `temperature=0` calls will repeat the same loop. |
 | Embed dims changed (model upgrade) | collections recreated (data loss), warning "re-ingest notes so vectors match"; ingest upserts with stale dims raise `ValueError`. |
 | Reranker GGUF changed | `sync_embedding_infrastructure` unloads the stale in-memory reranker; next rerank loads the new one. |
-| Multimodal deps missing | `ensure_multimodal_services` → `{started:false, error}`; transcription and Marlin raise at ingest time. Image description is unaffected — it goes through the chat GGUF's projector or the cloud provider. |
-| Chat GGUF has no matching `mmproj` | text chat works; `describe_image` raises "… has no vision projector …" and image/PDF-image attachments fail their note. The `orb-mmproj` boot thread fetches the projector for catalog models when the repo publishes one. |
+| Multimodal deps missing | `ensure_multimodal_services` → `{started:false, error}`; transcription and Marlin raise at ingest time. Image description is unaffected — it goes through the extraction model's projector on the extraction server or the cloud provider. |
+| Extraction GGUF has no matching `mmproj` | text works; `describe_image` raises "… has no vision projector …" and image/PDF-image attachments fail their note. The `orb-mmproj` boot thread fetches the projector for catalog models when the repo publishes one. |
 | Marlin gated / 401 | download skipped with warning; `multimodal_ready=false`; video visual analysis raises at ingest time. |
 | ffmpeg missing | PyAV decode path (bundled libs); logged at INFO. |
 | Idle unload during a long generation | cannot happen mid-call (lock held); can happen right after if `_last_used` is older than the limit — next call simply reloads. |
@@ -869,3 +896,4 @@ Settings fields (`app/core/config.py`) touched by this layer:
 - `8de5cda` (2026-08-07): `embed_batch` / `_embed_batch_unlocked` (single llama call per batch, fail-closed on length mismatch); `LocalLlamaEmbeddings.embed_documents` switched to it.
 - Uncommitted working tree (2026-09): `ModelLoadClock`, `PromptTooLongError`, dynamic `max_tokens`, `count_tokens`, `resolve_chat_gguf` + per-KB pinning, `chat_model_downloaded`/`downloaded_chat_models`, `finish_reason` propagation, removal of the post-ingest unload, HF loads recorded in the clock.
 - `cb4561f` (2026-09): images read through the chat GGUF's `mmproj` projector (`MTMDChatHandler`) / cloud image input; Florence-2 and its transformers-5 patches removed. `da4a690`, `a6997ca` (2026-09): Whisper replaced by Qwen3-ASR with the MLX engine on Apple Silicon (`asr_engine.py`). `09e6521` (2026-09-15): speaker labels (pyannote + forced aligner). 2026-09-19/20: GGUF-only chat runtime (MLX/safetensors chat backends removed), `make_chat_client()` returning one sync shim, `json_object` `response_format` pass-through, reranker rows `relevance_score` only, strict `find_mmproj`, eager projector init, `orb-mmproj` boot download, `_heal_selection_paths` once per boot.
+- Uncommitted working tree (2026-10): the extraction server (`extraction_server.py`, llama.cpp `b11617`, parallel slots, JSON grammar, idle stop) runs local ingestion and image descriptions; `EXTRACTION_MODEL` / `auto_extraction_model()` (Gemma 4 12B); Qwen 3.5 9B became the recommended chat model; the reranker scores from the last position's yes/no logits with `logits_all=False` and KV-prefix reuse instead of top-5 logprobs.

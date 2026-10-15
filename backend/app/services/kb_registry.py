@@ -779,6 +779,7 @@ class KBRegistry:
                     meta["qdrant_col_cores"],
                     meta["qdrant_col_rels"],
                     meta["qdrant_col_contexts"],
+                    f"{meta['qdrant_col_contexts']}_passages",
                 ]:
                     try:
                         qdrant_service.client.delete_collection(col)
@@ -793,13 +794,12 @@ class KBRegistry:
             index_name = meta.get("typesense_collection")
             ms = MeilisearchService(index_name=index_name)
             if ms.is_available() and ms.client:
-                try:
-                    task = ms.client.delete_index(index_name)
-                    ms.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
-                except Exception as exc:  # pylint: disable=broad-exception-caught
-                    logger.warning(
-                        f"[KBRegistry] Meili index delete failed for '{index_name}': {exc}"
-                    )
+                for name in (index_name, f"{index_name}_passages"):
+                    try:
+                        task = ms.client.delete_index(name)
+                        ms.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
+                    except Exception as exc:  # pylint: disable=broad-exception-caught
+                        logger.warning(f"[KBRegistry] Meili index delete failed for '{name}': {exc}")
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[KBRegistry] Meilisearch cleanup failed: {exc}")
 

@@ -55,7 +55,7 @@ Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `OR
 
 Boot order in `desktop_runtime.py`: free stale listeners on the port block → start uvicorn immediately → in a background thread, Qdrant + Meilisearch (download binaries first if missing) → Firefly install/migrate/boot → multimodal readiness check. Progress is written to `DATA_DIR/boot-status.json`, exposed by `/api/v1/admin/maintenance-status` and shown in the UI's status indicator; `QdrantService` / `MeilisearchService` reconnect on use once their sidecar is listening. Details: [04-desktop-shell.md](04-desktop-shell.md).
 
-There are **no model HTTP sidecars**. Phonon-2, Marlin, chat (with its vision projector), embed and rerank all load in the uvicorn process. This is a locked decision ([26](26-decisions-and-constraints.md)).
+There are **no third-party model HTTP sidecars**. Phonon-2, Marlin, chat, embed and rerank all load in the uvicorn process; the one child process is Orb's own extraction `llama-server` (pinned llama.cpp build, `DATA_DIR/bin/llama.cpp-b11617/`, log `logs/llama-server.log`, random loopback port), started on demand by the API for local ingestion and stopped after 300 s idle or by `stop_sidecars`. This is a locked decision ([26](26-decisions-and-constraints.md)).
 
 ---
 
@@ -147,7 +147,7 @@ sequenceDiagram
   API-->>UI: note (processing_stage = "Queued for ingestion")
   API->>AG: BackgroundTask: run agent(note_id)
   AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF / vision projector / Phonon-2 / Marlin → append enrichment blocks to the .md
-  AG->>LLM: extraction node — nodes + relationships (Extraction schema, provider JSON mode, json_repair on parse; relationship_type from the closed RELATIONSHIP_TYPES vocabulary)
+  AG->>LLM: extraction node — nodes + relationships (Extraction schema, provider JSON mode, reply validated as written — no repair; relationship_type from the closed RELATIONSHIP_TYPES vocabulary)
   AG->>IW: storage node — resolve entities by exact normalised name (Qdrant node_cores → Kuzu fallback), merge, write; prior data is never deleted on re-ingest
   IW->>QD: upsert cores / relationships / isolated contexts (embeddings via in-process GGUF)
   IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(mention_count, ingested_at)
@@ -156,9 +156,9 @@ sequenceDiagram
   IW->>TR: note finished → end_ingestion (counter only; community recompute and temporal digests run from the Setup button / admin endpoints)
 ```
 
-Every LLM call that expects structured output passes `json_mode=True` to `LLMService._chat`, which asks the provider for a JSON object structurally — `response_format={"type": "json_object"}` for openai/openai_compat/huggingface/local (llama.cpp's JSON grammar), `response_mime_type="application/json"` for Gemini; Anthropic stays prompt-driven — and the reply is still parsed through `_clean_json` (`json_repair`). Relationship types are a closed vocabulary: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates) is listed in the extraction prompts, and anything off-list is coerced to `related_to`.
+Every LLM call that expects structured output passes `json_mode=True` to `LLMService._chat`, which asks the provider for a JSON object structurally — `response_format={"type": "json_object"}` for openai/openai_compat/huggingface/local (llama.cpp's JSON grammar), `response_mime_type="application/json"` for Gemini; Anthropic stays prompt-driven — and the reply is validated with `<Schema>.model_validate_json` exactly as written; nothing repairs it, so a malformed reply is a failed call (doc 13 §6.2). Relationship types are a closed vocabulary: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates) is listed in the extraction prompts, and anything off-list is coerced to `related_to`.
 
-Concurrency: `INGESTION_PIPELINE_CONCURRENCY` (default 1) makes full-note ingestion FIFO; `MULTIMEDIA_CONCURRENCY` (default 1) serialises heavy model jobs within a note; graph/Qdrant writes are batched and offloaded with `asyncio.to_thread`. Stage strings are written to `notes.processing_stage` and polled by the UI through `GET /notes/{id}/status`. Details: [10-ingestion-pipeline.md](10-ingestion-pipeline.md), [11-multimedia-enrichment.md](11-multimedia-enrichment.md).
+Before the agent runs, the note's own text is stored as title-prefixed passages in Qdrant and Meilisearch (searched beside the graph; a note whose extraction fails is still findable). Concurrency: each KB extracts as many notes at once as the extraction `llama-server` has slots (`slots_for_ram`: 1 below 20 GB RAM, up to 6), but graph writes happen in submission order; `MULTIMEDIA_CONCURRENCY` (default 1) serialises heavy model jobs within a note; graph/Qdrant writes are batched and offloaded with `asyncio.to_thread`. Stage strings are written to `notes.processing_stage` and polled by the UI through `GET /notes/{id}/status`. Details: [10-ingestion-pipeline.md](10-ingestion-pipeline.md), [11-multimedia-enrichment.md](11-multimedia-enrichment.md).
 
 External edits to vault files (e.g. via Obsidian or cloud sync) are noticed by `vault_watcher`, which refreshes metadata and marks the note stale but **never auto-ingests**.
 
@@ -175,9 +175,10 @@ flowchart TD
     E[Entity lookup<br/>Kuzu name match] 
     K[Keyword<br/>Meilisearch]
     V[Vector<br/>Qdrant cores/rels/contexts<br/>≥ VECTOR_PRE_RERANK_THRESHOLD]
+    PS[Note passages<br/>Qdrant + Meili passages]
     G[Graph expansion<br/>top GRAPH_EXPAND_TOP_NEIGHBORS neighbours]
     E & K & V --> M[name-level dedup<br/>precedence entity › keyword › vector<br/>no numeric score fusion]
-    M --> R[Cross-encoder rerank GGUF<br/>RERANKER_TOP_K · RERANKER_SCORE_THRESHOLD<br/>top 6 kept as context]
+    M & PS --> R[Cross-encoder rerank GGUF<br/>RERANKER_TOP_K · RERANKER_SCORE_THRESHOLD<br/>top 6 kept as context]
     R --> G[Graph expansion of survivors<br/>shown to the LLM, not cited]
   end
   L --> iter --> N{FINDING answers the question /<br/>no new query / iterations exhausted?}
@@ -187,7 +188,7 @@ flowchart TD
   P --> O[GET /chat/status/{request_id} → done, answer, sources]
 ```
 
-Points that surprise people (all detailed in [16](16-retrieval-and-chat.md)): the cross-encoder is the **only** ranking signal, so a disabled or missing reranker GGUF yields empty results rather than a degraded fallback; `MAX_LOOP_ITERATIONS=3` means at most two actual retrievals per turn because iteration one only plans the query; all evidence text comes from Qdrant payloads, Kuzu supplies structure and note provenance; citations are a `sources: [{id, title}]` field on the chat response (the answer text carries no reference block) that the frontend renders as chips; temporal filters (`date_filter`, `period_filter`) are produced by the query-analysis LLM call, not by date parsing.
+Points that surprise people (all detailed in [16](16-retrieval-and-chat.md)): the cross-encoder is the **only** ranking signal, so a disabled or missing reranker GGUF yields empty results rather than a degraded fallback; `MAX_LOOP_ITERATIONS=3` means up to three retrievals per turn — the first searches the question itself; node evidence text comes from Qdrant payloads and note passages from the Qdrant or Meilisearch passage stores, Kuzu supplies structure and note provenance; a loop that runs out without an answer shows its closest finding labelled "No definitive answer in your notes. Closest finding: …"; citations are a `sources: [{id, title}]` field on the chat response (the answer text carries no reference block) that the frontend renders as chips; temporal filters (`date_filter`, `period_filter`) are produced by the query-analysis LLM call, not by date parsing.
 
 Model residency during one chat on a fully local setup: embed GGUF (query vectors) → rerank GGUF → chat GGUF, repeated per iteration. Each swap unloads the previous model (exclusive residency). Details: [16-retrieval-and-chat.md](16-retrieval-and-chat.md), [12-local-models-and-inference.md](12-local-models-and-inference.md).
 
@@ -197,15 +198,16 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 
 | Role | Implementation | Default model | Loader |
 |---|---|---|---|
-| Chat + ingestion extraction | llama-cpp-python GGUF (Metal / CUDA / Vulkan / CPU) | Gemma 4 E4B (catalogue in `model_catalog.py`) | `local_models.py` |
+| Chat | llama-cpp-python GGUF (Metal / CUDA / Vulkan / CPU) | Qwen 3.5 9B where it fits, else Gemma 4 E4B (`recommend_chat` in `model_catalog.py`) | `local_models.py` |
+| Ingestion extraction | llama.cpp `llama-server` (pinned build `b11617`, downloaded into `DATA_DIR/bin/`), parallel slots, JSON grammar; started on demand, stopped after 300 s idle | `EXTRACTION_MODEL`: automatic = Gemma 4 12B when it fits and is downloaded, else the chat model | `extraction_server.py` |
 | Embeddings | llama-cpp-python GGUF, `EMBEDDING_DIMENSIONS` = 1024 | Qwen3-Embedding-0.6B | `local_models.py` via `embedding.py` |
 | Reranker | llama-cpp-python GGUF cross-encoder (yes/no logits) | Qwen3-Reranker-0.6B | `local_models.py` via `reranker.py` |
-| Image description / OCR | the ingestion chat model: a local GGUF with its `mmproj-<model stem>-*.gguf` vision projector (llama.cpp mtmd, paired by name only), or the cloud provider | same as chat | `local_models.py` (`find_mmproj`, `ensure_mmproj`) / `llm.py` |
+| Image description / OCR | the ingestion model: locally the extraction model on the extraction server with its `mmproj-<model stem>-*.gguf` vision projector (`--mmproj`, paired by name only), or the cloud provider | same as extraction | `extraction_server.py` / `local_models.py` (`find_mmproj`, `ensure_mmproj`) / `llm.py` |
 | Speech-to-text | Phonon-2 (English) — `fermion-research`, MLX on Apple Silicon, CPU elsewhere; optional pyannote speaker labels | `fermion/speech/FermionResearch__Phonon-2/` | `asr_engine.py` via `multimodal_runtime.py` |
 | Video understanding | transformers (Qwen3.5 backbone) Marlin-2B | `lunahr/Marlin-2B-ungated` | `multimodal_runtime.py` |
 | Cloud alternatives | OpenAI / Gemini / Anthropic / HuggingFace / any OpenAI-compatible `LLM_BASE_URL` | – | `llm.py` |
 
-Chat and ingestion share one provider and model (`LLM_PROVIDER` + `CHAT_MODEL`; only a workspace that ticked "Use a different model for note ingestion" pins its own `llm_ingestion_model`); embeddings are separate (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `ai_gate` derives readiness from what is actually configured (GGUFs on disk, a provider key, an endpoint URL); there is no stored "AI mode".
+Chat and ingestion share one provider (`LLM_PROVIDER`); the model is `CHAT_MODEL` for chat and, on this device, `EXTRACTION_MODEL` for ingestion (a workspace that ticked "Use a different model for note ingestion" pins its own `llm_ingestion_model`); embeddings are separate (`EMBEDDING_PROVIDER` + `EMBEDDING_MODEL`). `ai_gate` derives readiness from what is actually configured (GGUFs on disk, a provider key, an endpoint URL); there is no stored "AI mode".
 
 Embedding dimensions must match Qdrant collections; `sync_embedding_infrastructure` runs at startup, and a mismatch **mid-ingest raises** rather than silently recreating collections.
 

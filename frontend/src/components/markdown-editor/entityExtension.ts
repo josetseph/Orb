@@ -5,10 +5,7 @@ import {
   type DecorationSet,
   type ViewUpdate,
 } from "@codemirror/view";
-import type { CompletionContext, CompletionResult } from "@codemirror/autocomplete";
-import { api } from "@/lib/api";
 import { visibleLineChunks } from "./visibleLineChunks";
-import { wikilinkQueryAt } from "./wikilinkExtension";
 
 export interface EntitySuggestion {
   node_id: string;
@@ -131,69 +128,4 @@ export function entityClickHandler(
       return false;
     },
   });
-}
-
-function getWordBefore(
-  text: string,
-  pos: number,
-  minLength = 3,
-): { word: string; from: number; to: number } | null {
-  let start = pos;
-  while (start > 0 && /\S/.test(text[start - 1])) start--;
-  const word = text.slice(start, pos);
-  if (word.length < minLength) return null;
-  return { word, from: start, to: pos };
-}
-
-/**
- * CM6 autocomplete source that searches graph entities as the user types.
- */
-export function entityCompletionSource(kb: string) {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let lastReq = 0;
-
-  return async (
-    context: CompletionContext,
-  ): Promise<CompletionResult | null> => {
-    // Words never span lines, so only the cursor's line needs inspecting
-    // (doc.toString() on every keystroke is wasteful for large notes).
-    const line = context.state.doc.lineAt(context.pos);
-    // Defer to wikilink completions while typing inside `[[...`.
-    if (wikilinkQueryAt(line.text, context.pos - line.from)) return null;
-    const local = getWordBefore(line.text, context.pos - line.from);
-    const wordInfo = local && {
-      word: local.word,
-      from: line.from + local.from,
-      to: line.from + local.to,
-    };
-    if (!wordInfo) return null;
-    if (!context.explicit && wordInfo.word.length < 3) return null;
-
-    const reqId = ++lastReq;
-    const results = await new Promise<EntitySuggestion[]>((resolve) => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(async () => {
-        try {
-          const found = await api.searchEntities(wordInfo.word, kb, 6);
-          resolve(found);
-        } catch {
-          resolve([]);
-        }
-      }, 250);
-    });
-
-    if (reqId !== lastReq) return null;
-    if (!results.length) return null;
-
-    return {
-      from: wordInfo.from,
-      options: results.map((e) => ({
-        label: e.name,
-        detail: e.node_type || "entity",
-        type: "text",
-        apply: e.name,
-      })),
-      filter: false,
-    };
-  };
 }

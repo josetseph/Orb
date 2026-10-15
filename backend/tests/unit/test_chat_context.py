@@ -138,9 +138,13 @@ class TestIterativeStep:
         }
 
     def test_next_query_when_no_answer(self, svc):
-        got = _step(svc, '```json\n{"reasoning": "", "finding": null, "answer": null, "next_query": "who?"}\n```')
+        got = _step(svc, '{"reasoning": "", "finding": null, "answer": null, "next_query": "who?"}')
         assert not got["can_answer"] and got["next_query"] == "who?"
         assert got["full_answer"] == ""
+
+    def test_a_fenced_reply_is_a_failed_step_not_unwrapped(self, svc):
+        got = _step(svc, '```json\n{"answer": "42", "next_query": null}\n```')
+        assert got["can_answer"] is False and got["next_query"] is None
 
     def test_non_answer_strings_do_not_count(self, svc):
         got = _step(svc, '{"answer": "INSUFFICIENT", "next_query": "null"}', [{"text": "d"}])

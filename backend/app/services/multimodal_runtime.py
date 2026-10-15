@@ -131,7 +131,10 @@ class MultimodalRuntime:
         if self._phonon is not None:
             return self._phonon
         from app.services import asr_engine
+        from app.services.multimodal_services import restart_needed
 
+        if restart_needed():
+            raise RuntimeError("Media packages were just updated: restart Orb to transcribe")
         self._unload_except("asr")
         logger.info("Loading Phonon-2")
         started = time.perf_counter()

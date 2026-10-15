@@ -154,5 +154,7 @@ class TestLLMServiceEndpoint:
 
 
 def test_ingestion_follows_the_globally_selected_chat_model(monkeypatch):
+    # Where Gemma 4 12B fits and is downloaded, ingestion uses it instead (auto_extraction_model).
+    monkeypatch.setattr("app.services.model_catalog.auto_extraction_model", lambda: None)
     monkeypatch.setattr(config.settings, "CHAT_MODEL", "gguf/picked-in-settings.gguf", raising=False)
     assert _svc().get_ingestion_model() == "gguf/picked-in-settings.gguf"

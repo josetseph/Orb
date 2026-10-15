@@ -99,3 +99,43 @@ pub fn restart_backend(app: AppHandle) -> Result<(), String> {
     std::thread::spawn(move || runtime::restart(app));
     Ok(())
 }
+
+/// The newer release named by the update feed, if any.
+#[tauri::command]
+pub async fn check_update(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    Ok(update.map(|u| json!({ "version": u.version, "notes": u.body })))
+}
+
+/// Download the update, stop the runtime, swap the app and relaunch. Emits
+/// `update-progress` (0-100) while downloading.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app
+        .updater()
+        .map_err(|e| e.to_string())?
+        .check()
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("Orb is already up to date")?;
+    let mut done = 0usize;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                done += chunk;
+                if let Some(total) = total {
+                    let _ = app.emit("update-progress", done as u64 * 100 / total.max(1));
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+    // The Windows installer exits the process and needs the runtime's files free.
+    runtime::stop(&app);
+    update.install(bytes).map_err(|e| e.to_string())?;
+    app.restart();
+}

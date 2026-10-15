@@ -19,6 +19,8 @@ class LLMSettings(BaseModel):
     provider: str | None = None
     model: str | None = None
     base_url: str | None = None
+    # "" = automatic (Gemma 4 12B when it fits), "chat" = the chat model, else a model ref.
+    extraction_model: str | None = None
 
 
 class LocalRuntimeSettings(BaseModel):
@@ -108,6 +110,9 @@ async def update_runtime_settings(body: LLMSettings):
     if body.base_url is not None:
         overrides["base_url"] = body.base_url
         settings.LLM_BASE_URL = body.base_url
+    if body.extraction_model is not None:
+        overrides["extraction_model"] = body.extraction_model
+        settings.EXTRACTION_MODEL = body.extraction_model
 
     runtime_config.save(overrides)
 
@@ -122,6 +127,6 @@ async def update_runtime_settings(body: LLMSettings):
     return {
         "provider": settings.LLM_PROVIDER,
         "model": settings.CHAT_MODEL or settings.LLM_MODEL,
-        "ingestion_model": settings.CHAT_MODEL or settings.LLM_MODEL,
+        "ingestion_model": llm_service.get_ingestion_model(),
         "base_url": settings.LLM_BASE_URL,
     }

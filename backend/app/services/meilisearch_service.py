@@ -96,14 +96,69 @@ class MeilisearchService:
     def reset_all(self) -> None:
         if not self.client:
             return
-        try:
-            task = self.client.delete_index(self.index_name)
-            self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
-            logger.info(f"[Meili] Deleted index '{self.index_name}'")
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning(f"[Meili] Could not delete index '{self.index_name}': {exc}")
+        for name in (self.index_name, self._passages_name):
+            try:
+                task = self.client.delete_index(name)
+                self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
+                logger.info(f"[Meili] Deleted index '{name}'")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning(f"[Meili] Could not delete index '{name}': {exc}")
         self._ensure_collection()
         logger.info(f"[Meili] Index '{self.index_name}' reset.")
+
+    # ── Note passages: each note's own text, for keyword search ───────────────
+    @property
+    def _passages_name(self) -> str:
+        return f"{self.index_name}_passages"
+
+    def replace_note_passages(self, note_id: str, title: str, texts: list[str]) -> None:
+        """A note's passages for keyword search, replacing an earlier ingest's. Raises on failure."""
+        if not self.client:
+            raise RuntimeError("Meilisearch unavailable: note passages not stored")
+        try:
+            self.client.get_index(self._passages_name)
+        except MeilisearchApiError:
+            task = self.client.create_index(self._passages_name, {"primaryKey": "id"})
+            self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
+            task = self.client.index(self._passages_name).update_settings(
+                {"searchableAttributes": ["title", "content"], "filterableAttributes": ["note_id"]}
+            )
+            self.client.wait_for_task(task.task_uid, timeout_in_ms=10000)
+        idx = self.client.index(self._passages_name)
+        task = idx.delete_documents(filter=f'note_id = "{note_id}"')
+        self.client.wait_for_task(task.task_uid, timeout_in_ms=30000)
+        if not texts:
+            return
+        docs = [
+            {"id": f"{note_id}_{i}", "note_id": note_id, "title": title, "index": i, "content": text}
+            for i, text in enumerate(texts)
+        ]
+        task = idx.add_documents(docs, primary_key="id")
+        done = self.client.wait_for_task(task.task_uid, timeout_in_ms=30000)
+        if getattr(done, "status", "succeeded") != "succeeded":
+            raise RuntimeError(f"Meilisearch passage indexing {done.status}: {getattr(done, 'error', '')}")
+
+    def search_passages(self, query: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Passage documents for ``query``, best first; [] before any passage was stored."""
+        if not self.client:
+            return []
+        try:
+            self.client.get_index(self._passages_name)
+            return self.client.index(self._passages_name).search(query, {"limit": limit}).get("hits", [])
+        except MeilisearchApiError:
+            return []  # no passages stored yet
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[Meili] passage search failed: {exc}")
+            return []
+
+    def delete_note_passages(self, note_id: str) -> None:
+        """Drop a deleted note's passages."""
+        try:
+            if self.client:
+                self.client.get_index(self._passages_name)
+                self.replace_note_passages(note_id, "", [])
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[Meili] delete_note_passages failed for {note_id}: {exc}")
 
     def get_node(self, node_id: str) -> dict[str, Any] | None:
         """Fetch one document by node id."""

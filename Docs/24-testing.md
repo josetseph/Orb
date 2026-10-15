@@ -25,12 +25,11 @@ Boundary facts that matter when modifying code:
 |---|---|---|
 | `backend/tests/__init__.py`, `backend/tests/unit/__init__.py` | Make `tests` a package so pytest's default (`prepend`) import mode inserts `backend/` on `sys.path`; `app.*` imports then work from any cwd. | — |
 | `backend/tests/unit/conftest.py` | The one shared fixture: the autouse settings patch. | `patch_settings` (autouse, pins `LLM_PROVIDER="local"`) |
-| `backend/tests/unit/test_chat_context.py` | Follow-up query rewrite (`LLMService.rewrite_follow_up_query`). | 6 tests in `TestRewriteFollowUpQuery` |
+| `backend/tests/unit/test_chat_context.py` | Follow-up query rewrite (`LLMService.rewrite_follow_up_query`), `_chat` JSON mode, `iterative_step` reply parsing (a fenced reply is a failed step, not unwrapped). | 18 tests: `TestRewriteFollowUpQuery` (6), `TestJsonMode` (5), `TestIterativeStep` (7) |
 | `backend/tests/unit/test_chat_summary.py` | Rolling chat summary: `ChatStore.refresh_summary` window arithmetic over a real SQLite file and `render_history` ordering/truncation. | 2 tests |
 | `backend/tests/unit/test_extraction_schemas.py` | Pydantic pre-validators in `app/schemas/extraction.py` (`None` handling, wrapper unwrapping, the closed `RELATIONSHIP_TYPES` vocabulary — off-list predicates become `related_to`). | 16 tests |
 | `backend/tests/unit/test_graph_layout.py` | Pure geometry in `app/utils/graph_layout.py`. | `TestFibonacciSphere`, `TestDeterministicJitter`, `TestComputeSolarPositions`, `TestComputeSpringLayout3d` |
 | `backend/tests/unit/test_graph_queries.py` | Cypher-shape regression guards for `GraphService.get_related_nodes`. | `_get_graph_service_class()` (imports `app.services.graph` with `kuzu.Database`/`kuzu.Connection` patched), `_make_graph_service()`, `_row()` |
-| `backend/tests/unit/test_llm_json_cleaning.py` | `LLMService._clean_json` (fence stripping, smart quotes, `json_repair`). | 16 tests |
 | `backend/tests/unit/test_meili_contract.py` | Meilisearch document contract: `node_id` (primary key) always present in `index_node` payloads; `isolated_contexts` stored as a list. | `_make_meili_service()`, 2 tests |
 | `backend/tests/unit/test_qdrant_contract.py` | Qdrant payload/filter contract for `upsert_node_core` and `search_node_cores`. | `_make_service()` |
 | `backend/tests/unit/test_extraction_chunking.py` | Paragraph-bounded chunking, token budget, and extraction merge in `app/workflows/extraction_chunking.py`. | `TestSplitForExtraction`, `TestChunkTokenBudget`, `TestMergeExtractions` |
@@ -38,6 +37,7 @@ Boundary facts that matter when modifying code:
 | `backend/tests/unit/test_kb_llm_config.py` | Per-KB provider/model override resolution (`kb_registry.effective_llm_config`) and `LLMService` model getters. | `TestEffectiveLLMConfig`, `TestLLMServiceOverrides` |
 | `backend/tests/unit/test_local_runtime_budget.py` | `LocalLlamaRuntime` output budgeting, token counting, `LLAMA_MAX_TOKENS`, GGUF resolution, `response_format` pass-through in JSON mode, eager projector init dropping a broken projector so text chat still works. | `TestOutputBudget`, `TestMaxTokensEnv`, `TestResolveChatGguf`, `TestJsonMode`, `TestEagerProjectorInit` (17 tests) |
 | `backend/tests/unit/test_model_load_clock.py` | `ModelLoadClock` snapshot/diff/describe. | `TestModelLoadClock` |
+| `backend/tests/unit/test_model_replies_as_written.py` | Model replies are parsed exactly as written: a fenced `Extraction` reply raises `ValidationError`; valid JSON is used as is. | 2 tests |
 | `backend/tests/unit/test_vault_migration.py` | The one-time vault sweep (`vault_sync.migrate_vault_files`): legacy link shapes fixed in place and the second run is a no-op; v2 relativises `/vault-files/<any kb>/…` links and their markers; v3 moves stray non-`.md` files under `attachments/` and rewrites their links; `.orb/migrated-v4` marker written. | 3 tests |
 | `backend/tests/unit/test_large_attachments.py` | Notes blocks: the `orb:extract` marker round-trips with and without `mode="…"`, `graph_text` keeps only the summary of a notes block, `split_notes` handles both headings (`## Transcript`, `## Full text`) and plain bodies, the strip step keeps a notes block while its link remains, `ingestion._passages` splits on paragraphs and cuts giants; `finish_attachment` with a stub LLM — a recording always gets notes with its timed transcript kept and the summariser fed the `untimed` text, a long document is summarised and a short one is not (file name with brackets included), images never; and `multimodal_node` plus `api/notes._run_attachment_job` with stubs — a full ingest and "process this item" apply the same rule. | 9 tests (`asyncio.run`) |
 | `backend/tests/unit/test_upload_folder.py` | `store_upload` puts a file in `attachments/<note folder>/`, root notes upload flat, and `..`/absolute folders raise `Invalid folder`. | 3 tests |
@@ -81,7 +81,7 @@ python -m pytest tests/unit -q -k "chunk"                       # by keyword
 |---|---|---|
 | `pytest` | runner | `requirements-dev.txt` |
 | `pytest-asyncio` | `@pytest.mark.asyncio` tests | `requirements-dev.txt` |
-| `json-repair`, `openai`, `google-genai`, `anthropic` | imported by `app/services/llm.py` (several test modules import `LLMService`) | yes |
+| `openai`, `google-genai`, `anthropic` | imported by `app/services/llm.py` (several test modules import `LLMService`) | yes |
 | `qdrant-client` | `app/services/qdrant_service.py` (`test_qdrant_contract.py` also imports `qdrant_client.models` directly) | yes |
 | `kuzu` | `test_graph_queries.py` does `patch("kuzu.Database")`, which imports the real `kuzu` module before patching | yes |
 | `meilisearch` | `app/services/meilisearch_service.py` | yes |
@@ -100,7 +100,7 @@ In short: the unit tests need the **full** backend environment installed, even t
 
 ### 3.4 Observed state of the suite (2026-09-20)
 
-`pytest tests/unit -q` → **485 passed, 0 failed** (2026-09-20, after the attachments / projector / packaging changes; 473 after the 09-19 band-aid removal pass, 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
+`pytest tests/unit -q` → **556 passed, 0 failed** (2026-10-15, after `_clean_json` was removed; 485 on 2026-09-20 after the attachments / projector / packaging changes; 473 after the 09-19 band-aid removal pass, 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
 
 Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing_helpers.py` and `test_chat_runtimes.py` were deleted with the code they covered; `test_graph_queries.py` lost the three tests for `min_confidence` / `find_paths_between_nodes` (APIs removed in `fbcafe7`); `test_qdrant_*.py` and `test_meili_contract.py` now set the backing `_client` attribute instead of the read-only lazy `client` property; `test_model_formats.py` shrank to the GGUF cases; `test_credentials.py` fakes `keyring` (it used to write into the developer's real keychain); the image-title stub speaks `ingestion_generate_with_meta`; the whitespace-query assertion in `test_chat_context.py` matches the stripping behaviour.
 
@@ -122,15 +122,15 @@ The pattern the live tests rely on is three idioms, documented in §13:
 
 ## 5. Unit test modules — contract pinned and why it matters
 
-61 modules under `backend/tests/unit/`. "Status" is against the current sources.
+69 modules under `backend/tests/unit/`. "Status" is against the current sources.
 
 | Module | Target | Tests | Status |
 |---|---|---|---|
-| `test_chat_context.py` | `LLMService.rewrite_follow_up_query` | 6 | pass |
+| `test_chat_context.py` | `LLMService.rewrite_follow_up_query`, `_chat` JSON mode, `iterative_step` parsing | 18 | pass |
 | `test_extraction_schemas.py` | `app/schemas/extraction.py` validators, `RELATIONSHIP_TYPES` coercion | 16 | pass |
 | `test_graph_layout.py` | `app/utils/graph_layout.py` | 19 | pass |
 | `test_graph_queries.py` | `GraphService.get_related_nodes` | 3 | pass |
-| `test_llm_json_cleaning.py` | `LLMService._clean_json` | 16 | pass |
+| `test_model_replies_as_written.py` | `Extraction.model_validate_json` on raw replies (no unwrap, no repair) | 2 | pass |
 | `test_meili_contract.py` | `MeilisearchService.index_node` (primary key, `isolated_contexts` list) | 2 | pass |
 | `test_qdrant_contract.py` | `QdrantService.upsert_node_core` / `search_node_cores` | 13 | pass |
 | `test_extraction_chunking.py` | `app/workflows/extraction_chunking.py` | 15 | pass |
@@ -142,7 +142,12 @@ The pattern the live tests rely on is three idioms, documented in §13:
 | `test_large_attachments.py` | `ingestion_agent` marker helpers (`extract_open`, `extraction_blocks`, `graph_text`, `split_notes`), `ingestion._passages`, `finish_attachment`, the shared rule in `multimodal_node` and `_run_attachment_job` | 9 | pass |
 | `test_note_created_at.py` | `schemas.note` / `POST /ingest` `created_at` parsing | 4 | pass |
 | `test_ingestion_community_names.py` | `IngestionWorkflow._name_and_summary`, `_name_fits_members` | 2 | pass |
-| (45 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
+| `test_reranker_scoring.py` | `LocalGgufReranker._score_one`: sigmoid(yes − no) from the last position's logits, KV prefix shared with the previous document kept, one token re-evaluated for an identical prompt (fake model, no GGUF) | 1 | pass |
+| `test_extraction_server.py` | `IngestionWorkflow` ordered writes (submission order with several slots; one slot = one note at a time), `slots_for_ram`, release assets per platform, `ServerChatClient` turning `json_object` into the JSON grammar, `get_ingestion_model` extraction-model choice | 6 | pass |
+| `test_ingestion_queue_failure.py` | A failure writing `"Queued for ingestion"` marks the note failed and ends the tracker entry | 1 | pass |
+| `test_note_passages.py` | Qdrant/Meili passage replace/search/delete per note, `_store_passages` (title prefix, both indexes), `backfill_passages` continuing past a failure, `llm.edges_order` | 4 | pass |
+| `test_media_install_restart.py` | `multimodal_services.ensure_multimodal_python_deps`: upgrading an already-imported package reports `restart_required`; a first install loads in place | 2 | pass |
+| (48 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
 
 ### 5.1 `test_chat_context.py` — follow-up query rewriting
 
@@ -170,7 +175,7 @@ Pins the pre-validators in `app/schemas/extraction.py` that absorb the many shap
 | `Extraction.normalize_keys` | `None` → empty; unwrap `{"extraction"|"data"|"result": {...}}` when the inner dict has `nodes` or `relationships`; Gemma two-list `[nodes, rels]`; bare list of dicts/strings → nodes (strings become `{"name": s}`); a node's embedded `"relationships"` list is hoisted to the top level. |
 | `Extraction.ensure_list` | `nodes`/`relationships` `None` or scalar → `[]`; string items in `nodes` → `{"name": …}`. |
 
-Why it matters: the ingestion pipeline (`app/workflows/agents/ingestion_agent.py`, see [Ingestion pipeline](10-ingestion-pipeline.md)) calls `Extraction.model_validate` on whatever `_clean_json` returns; a validator regression turns into "note failed" for a whole model family. Per-edge scores (`strength`/`confidence`/`relevance`) no longer exist on the schema (doc 26 D2), so there is no score scale to preserve.
+Why it matters: the ingestion pipeline (`app/workflows/agents/ingestion_agent.py`, see [Ingestion pipeline](10-ingestion-pipeline.md)) calls `Extraction.model_validate_json` on the model's reply exactly as written (§5.5); a validator regression turns into "note failed" for a whole model family. Per-edge scores (`strength`/`confidence`/`relevance`) no longer exist on the schema (doc 26 D2), so there is no score scale to preserve.
 
 ### 5.3 `test_graph_layout.py` — deterministic 3-D layout
 
@@ -196,11 +201,11 @@ Contracts:
 
 Why it matters: Kuzu's Cypher dialect differs from Neo4j's; the Neo4j-era hyphenated-relationship-type errors (32 per run, `Results/Results (Sub Questions Approach)/…/GEMINI_INGESTION_REPORT.md`) and the Kuzu `KU_UNREACHABLE` assertion were both discovered by benchmark runs, and these tests are the only thing that stops the query text from drifting back. See [Graph storage (Kuzu)](14-graph-storage-kuzu.md).
 
-### 5.5 `test_llm_json_cleaning.py` — `_clean_json`
+### 5.5 `test_model_replies_as_written.py` — replies are parsed as written
 
-`LLMService._clean_json(json_str) -> str`, in order: (1) if ` ``` ` present, take the first fenced block (` ```json ` or bare) with `re.DOTALL`; (2) map `‘ ’ ‛` → `'` and `“ ” „` → `"` (`json_repair` escapes stray control characters itself); (3) `json_repair.repair_json(...)` — a hard import. Tests cover fence extraction with surrounding prose, smart-quote normalisation, missing closing brace, trailing comma, and a combined case.
+`_clean_json` and `json_repair` are gone; every structured caller runs `<Schema>.model_validate_json(raw or "")` on the raw reply. Two tests: a ```` ```json ```` fenced `Extraction` reply raises `ValidationError` (it is not unwrapped), and a plain JSON object is used as is. `test_chat_context.py::TestIterativeStep::test_a_fenced_reply_is_a_failed_step_not_unwrapped` pins the same rule for the research step (a fenced reply → `can_answer=False`, `next_query=None`), and its `next_query` test uses plain JSON.
 
-Why it matters: every structured LLM call (ingestion extraction, query analysis) goes through this; it is the first line of defence behind the validators in §5.2.
+Why it matters: a malformed reply is a counted model failure, not something to repair (doc 26 D12); a regression that reintroduced unwrapping or repair would hide model failures from benchmarks.
 
 ### 5.6 `test_meili_contract.py` — primary-key invariant
 
@@ -237,7 +242,7 @@ Targets `app/workflows/extraction_chunking.py`:
 
 ### 5.10 `test_ingestion_chunked_extraction.py` (new) — the agent's chunk/retry loop
 
-Imports `app.workflows.agents.ingestion_agent` directly (the package `__init__` no longer re-exports anything). A `_StubLLM` documents the **duck-typed LLM protocol** the agent needs: `provider`, `ingestion_count_tokens(text)`, `ingestion_context_tokens()`, `get_ingestion_model()`, `_clean_json(raw)`, `async ingestion_generate_with_meta(prompt, temperature, max_tokens) -> (content, {"finish_reason", "truncated"})`, `async ingestion_generate(prompt, temperature, max_tokens)`. The stub finds the note as the text after the prompt's final `"nothing else:\n\n"` — a coupling to the extraction prompt's last line.
+Imports `app.workflows.agents.ingestion_agent` directly (the package `__init__` no longer re-exports anything). A `_StubLLM` documents the **duck-typed LLM protocol** the agent needs: `provider`, `ingestion_count_tokens(text)`, `ingestion_context_tokens()`, `get_ingestion_model()`, `async ingestion_generate_with_meta(prompt, temperature, max_tokens) -> (content, {"finish_reason", "truncated"})`, `async ingestion_generate(prompt, temperature, max_tokens)`. The stub finds the note as the text after the prompt's final `"nothing else:\n\n"` — a coupling to the extraction prompt's last line.
 
 Contracts for `await agent._extract_with_chunking(llm, note_text, images) -> (Extraction, chunk_count)`:
 
@@ -251,7 +256,7 @@ Why it matters: this is the fix for the "Invalid JSON: EOF while parsing a value
 ### 5.11 `test_kb_llm_config.py` (new) — per-KB model overrides
 
 - `kb_registry.effective_llm_config(kb_row) -> {"provider", "model", "ingestion_model", "inherited"}`: `{}` or blank strings → inherit system settings (`inherited=True`), model = `CHAT_MODEL` if set else `LLM_MODEL`, ingestion follows the chat model; `llm_model` alone keeps the system provider and pins both chat and ingestion; `llm_provider` alone switches to that provider's system default model (`GEMINI_MODEL` for gemini).
-- `LLMService.get_chat_model()` / `get_ingestion_model()`: `_chat_model_override` beats even a global `CHAT_MODEL`; `_ingestion_model_override` is independent; with no override, ingestion is `get_chat_model()` — the pinned chat model, else the globally selected `CHAT_MODEL` (`test_ingestion_follows_the_globally_selected_chat_model`). An instance created with `__new__` and **no** override attributes still works (the getters use safe attribute access).
+- `LLMService.get_chat_model()` / `get_ingestion_model()`: `_chat_model_override` beats even a global `CHAT_MODEL`; `_ingestion_model_override` is independent; with no override, ingestion is `get_chat_model()` — the pinned chat model, else the globally selected `CHAT_MODEL` (`test_ingestion_follows_the_globally_selected_chat_model`). The test patches `auto_extraction_model` to `None`, so it holds on any machine; the local precedence itself is pinned by `test_extraction_server.py::test_extraction_model_choice` with `auto_extraction_model` patched. An instance created with `__new__` and **no** override attributes still works (the getters use safe attribute access).
 
 Why it matters: the KB → provider/model resolution is what `?kb=` selects on every chat/ingest call; see [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) and [LLM providers and prompting](13-llm-providers-and-prompting.md). Model ids appearing here (`gemma4-12b-q4`, `gemma4-e4b-q4`, `qwen35-4b-q4`) are catalog ids from `app/services/model_catalog.py`.
 
@@ -402,7 +407,7 @@ cd frontend && npx vitest src/lib                             # watch one folder
 - **`patch("kuzu.Database")` imports kuzu.** The graph tests are not free of the native dependency, only of a database file.
 - **Kuzu query text is pinned**: never reintroduce `WHERE all(...)` over `relationships(path)` or `*1..N` in the depth-1 path — `KU_UNREACHABLE` is a hard crash, not an exception.
 - **Extraction validators are order-sensitive**: `Extraction.normalize_keys` (before) → `ensure_list` (before, per field) → `Node`/`ExtractedRelationship` validators. Wrapper unwrapping only happens when the inner dict has `nodes` or `relationships`.
-- **`_clean_json` picks the *first* fenced block** — a response containing two fences returns only the first.
+- **Model replies are never unwrapped or repaired** — a fenced or curly-quoted reply fails validation; tests must feed plain JSON wherever they expect success.
 - **Meilisearch documents must carry `node_id`** (index primary key); `update_nodes_community` synthesises `{"node_id": …}` if `get_node` returns nothing.
 - **Retrieval F1 is F1 of means**, not mean of F1s.
 - **Results JSON lacks per-case F1/contains** — do not try to recompute report tables from it alone.
@@ -430,5 +435,6 @@ cd frontend && npx vitest src/lib                             # watch one folder
 | 2026-08 → 09 | `b4d14cd`… | Five new unit modules for chunked extraction, per-KB LLM config, llama.cpp budgeting and the model-load clock. |
 | 2026-09-19 | `1d5c7d7`, `69330c7` | Over-engineering sweep and band-aid removal: stale modules deleted (`test_relationships.py`, `test_timing_helpers.py`, `test_chat_runtimes.py`), `test_vault_migration.py`, `test_note_created_at.py`, `test_ingestion_community_names.py` added; 455 → 473 passing. |
 | 2026-09-20 | `f54809b` … `5a60d40` | Release prep: `test_upload_folder.py`; new cases for the `attachments/` boundary (`test_vault_folders.py`), the v2/v3 sweeps (`test_vault_migration.py`), eager projector init and strict `find_mmproj` (`test_local_runtime_budget.py`, `test_vision_routing.py`), Firefly `.env` quoting (`test_desktop_runtime.py`); 485 passing. |
+| 2026-10-15 | uncommitted | No repair of model replies: `test_llm_json_cleaning.py` deleted with `_clean_json`; `test_model_replies_as_written.py` added; `test_chat_context.py` gained `test_a_fenced_reply_is_a_failed_step_not_unwrapped`. 556 passed. |
 
 Why the archive is kept in git despite its size: the reports are the only record of *why* the retrieval loop, reranker thresholds, Kuzu migration and model choices look the way they do; the raw logs let the numbers be re-derived. Why unit tests avoid infrastructure entirely: the project has no CI runner with Qdrant/Meilisearch, and the desktop packaging bundles its own binaries, so "fast, deterministic, import-only" was the only feasible contract (conftest docstring).

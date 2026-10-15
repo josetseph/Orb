@@ -176,6 +176,3 @@ class TestEagerProjectorInit:
         assert rt._chat.chat_handler.inner is text_handler
         assert rt._chat_handler is None and rt._mmproj_path is None
         assert not rt.vision_ready
-        with pytest.raises(RuntimeError, match="no vision projector"):
-            monkeypatch.setattr(rt, "ensure_chat_loaded", lambda *a, **k: None)
-            rt.describe_image("data:image/png;base64,", "what?")

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Cloud, Cpu, Download, Loader2, RotateCcw } from "lucide-react";
 import { api } from "@/lib/api";
+import { getDesktopBridge } from "@/lib/desktop";
 import { useKB } from "@/lib/kb-context";
 import { cn } from "@/lib/utils";
 import { SettingRow, SettingsShell } from "@/components/settings-shell";
@@ -26,6 +27,7 @@ export default function ModelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [needsRestart, setNeedsRestart] = useState(false);
 
   // Per-KB draft
   const [kbMode, setKbMode] = useState<Mode | "inherit">("inherit");
@@ -42,6 +44,7 @@ export default function ModelsPage() {
   const [sysModel, setSysModel] = useState("");
   const [sysUrl, setSysUrl] = useState("");
   const [sysCloudModel, setSysCloudModel] = useState("");
+  const [sysExtraction, setSysExtraction] = useState("");
 
   // New endpoint
   const [newUrl, setNewUrl] = useState("");
@@ -55,6 +58,7 @@ export default function ModelsPage() {
           setState(data);
           setSysMode(data.global.mode);
           setSysUrl(data.global.base_url ?? "");
+          setSysExtraction(data.global.extraction_model ?? "");
           if (data.global.mode === "local") setSysModel(data.global.model ?? "");
           else setSysCloudModel(data.global.model ?? "");
 
@@ -142,7 +146,7 @@ export default function ModelsPage() {
     setError(null);
     try {
       if (sysMode === "local") {
-        await api.updateLLMSettings({ provider: "local", model: sysModel });
+        await api.updateLLMSettings({ provider: "local", model: sysModel, extraction_model: sysExtraction });
         if (sysModel && !sysModel.includes("/") && !sysModel.endsWith(".gguf")) {
           // A curated catalog id also drives the embed/rerank pairing.
           await api.selectChatModel(sysModel);
@@ -208,7 +212,9 @@ export default function ModelsPage() {
     setBusy("media");
     setError(null);
     try {
-      await api.downloadModels(true, undefined, { multimodalOnly: true });
+      const res = await api.downloadModels(true, undefined, { multimodalOnly: true });
+      // The packages were updated under the running backend; new versions load on restart.
+      setNeedsRestart(Boolean(res?.restart_required));
       flash("media");
       await load();
     } catch (err) {
@@ -364,14 +370,35 @@ export default function ModelsPage() {
           ])}
 
           {sysMode === "local" ? (
-            <ModelPicker
-              label="System model"
-              models={installed}
-              value={sysModel}
-              onChange={setSysModel}
-              onBrowse={(p) => void applyBrowsedPath(p, "system")}
-              browsing={busy === "browse-system"}
-            />
+            <>
+              <ModelPicker
+                label="System model"
+                models={installed}
+                value={sysModel}
+                onChange={setSysModel}
+                onBrowse={(p) => void applyBrowsedPath(p, "system")}
+                browsing={busy === "browse-system"}
+              />
+              <div className="field space-y-1.5">
+                <label>Extraction model</label>
+                <select value={sysExtraction} onChange={(e) => setSysExtraction(e.target.value)} className="input">
+                  <option value="">
+                    Automatic · {state?.global.extraction_auto ?? "the system model (Gemma 4 12B does not fit or is not downloaded)"}
+                  </option>
+                  <option value="chat">Same as the system model</option>
+                  {installed.map((m) => (
+                    <option key={m.ref} value={m.ref}>
+                      {m.label} · {m.size_gb} GB
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-n-500">
+                  Ingestion runs this model in a separate llama.cpp server, several notes at once, started when a
+                  note is ingested and stopped after 5 idle minutes. Gemma 4 12B extracted far better than smaller
+                  models in testing.
+                </p>
+              </div>
+            </>
           ) : (
             <CloudFields endpoints={endpoints} url={sysUrl} setUrl={setSysUrl} model={sysCloudModel} setModel={setSysCloudModel} />
           )}
@@ -523,6 +550,27 @@ export default function ModelsPage() {
               </div>
             )}
           </div>
+          {needsRestart && (
+            <div className="mt-2 flex items-center justify-between gap-3 text-[12px] text-n-400">
+              Media packages updated. Restart Orb's engine before transcribing.
+              {getDesktopBridge()?.restartBackend && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm shrink-0"
+                  disabled={busy === "restart"}
+                  onClick={async () => {
+                    setBusy("restart");
+                    const res = await getDesktopBridge()!.restartBackend!();
+                    setBusy(null);
+                    if (res.ok) setNeedsRestart(false);
+                    else setError(res.error || "Restart failed");
+                  }}
+                >
+                  {busy === "restart" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Restart now"}
+                </button>
+              )}
+            </div>
+          )}
         </Card>
         <LocalRuntimeCard />
       </div>

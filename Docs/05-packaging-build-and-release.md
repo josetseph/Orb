@@ -57,6 +57,7 @@ Windows) with `FRONTEND_DIR` and `ORB_RESOURCES_ROOT` set (doc 04).
 | `ORB_REBUILD_PYTHON`, `ORB_REBUILD_FIREFLY` | Force a stage instead of reusing its output |
 | `ORB_FIREFLY_VERSION`, `ORB_PHP_BIN_VERSION` | Firefly III release / NativePHP php-bin tag (v6.6.6 / 1.2.0) |
 | `ORB_QDRANT_VERSION`, `ORB_MEILI_VERSION` | Sidecar releases fetched at first launch |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Signs the in-app update archives (repo secret; password empty). Unset → `dist` skips them |
 | `APPLE_SIGNING_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, `APPLE_TEAM_ID` | macOS signing + notarization (unset → unsigned) |
 
 ## 4. Release workflow
@@ -95,6 +96,22 @@ and publish.
 Builds are unsigned until the Apple / Windows certificates are configured; Tauri signs
 and notarizes the `.app` (and Windows bundles) when the variables above are present, using the entitlements in
 `desktop/build/entitlements.mac.plist`. The DMG that `build.py` writes with `hdiutil` gets no
-signature of its own. Auto-update is not wired: when it is, it uses
-`tauri-plugin-updater` with a minisign keypair and a `latest.json` on the GitHub
-release, gated by `ORB_ENABLE_UPDATER=1` and never active on unsigned builds.
+signature of its own.
+
+In-app updates use `tauri-plugin-updater` and work on unsigned builds: the updater
+checks a minisign signature, not the code signature. The public key is
+`plugins.updater.pubkey` in `tauri.conf.json`; the private key lives outside the repo
+(`~/.tauri/orb-updater.key` on the maintainer's machine, backed up) and in the
+`TAURI_SIGNING_PRIVATE_KEY` repo secret. Losing it means shipped apps can never
+update again without a manual reinstall.
+
+- With the key set, `build.py dist` adds `createUpdaterArtifacts`: macOS gets
+  `Orb_<v>_<arch>.app.tar.gz` + `.sig` (renamed from `Orb.app.tar.gz` so both Macs fit in
+  one release), Windows signs the NSIS installer (`.exe.sig`).
+- The release job's "Update feed" step writes `latest.json` (`darwin-aarch64`,
+  `darwin-x86_64`, `windows-x86_64`) and fails if a signature is missing.
+- The app reads `releases/latest/download/latest.json`, so only a *published* release
+  is offered. Linux (deb/rpm) is not an updater format: the check fails there and
+  About links to the releases page.
+- Homebrew installs update in place too; the cask declares `auto_updates true` so
+  `brew upgrade` does not fight the app.

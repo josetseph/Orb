@@ -753,6 +753,8 @@ async def _delete_note_impl(
     try:
         stale = await asyncio.to_thread(kb.qdrant.node_ids_for_note, note_id)
         await asyncio.to_thread(kb.qdrant.delete_note_contexts, note_id)
+        await asyncio.to_thread(kb.qdrant.delete_note_passages, note_id)
+        await asyncio.to_thread(kb.meili.delete_note_passages, note_id)
         wf = kb.get_ingestion_workflow()
         for nid in stale - set(orphan_ids):
             await wf._reindex_node(nid)  # pylint: disable=protected-access

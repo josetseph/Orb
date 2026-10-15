@@ -132,7 +132,7 @@ export default function KBPage() {
     return (
         <SettingsShell
             title="Workspace"
-            intro="Each workspace is one vault folder with its own graph and index. Switch from the sidebar."
+            intro="Each workspace is one vault folder with its own graph and index. Switch from the bottom of the file explorer."
         >
             {error && (
                 <div className="card mb-4 flex items-center gap-3 text-[12.5px] text-danger-text">

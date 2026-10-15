@@ -858,27 +858,32 @@ def _prune_missing_ggufs() -> None:
 
 
 def _ensure_mmproj_in_background(sel: dict) -> None:
-    """Fetch the selected catalog chat model's projector when none sits beside it.
+    """Fetch the projector of the selected catalog chat model, and of the automatic extraction
+    model (which reads image attachments), when none sits beside it.
 
     Best-effort and off the boot path: a daemon thread, every outcome logged.
     """
-    from app.services.model_catalog import get_option
+    from app.services.model_catalog import auto_extraction_model, get_option
 
+    wanted = []
     chat_id = (sel.get("chat_id") or "").strip()
-    opt = get_option(chat_id) if chat_id else None
     chat = selected_gguf(sel.get("chat_path"))
-    if not opt or not chat or find_mmproj(chat) is not None:
+    if chat_id and get_option(chat_id) and chat and find_mmproj(chat) is None:
+        wanted.append(get_option(chat_id))
+    extract = get_option(auto_extraction_model() or "")
+    if extract and extract not in wanted and find_mmproj(resolve_models_dir() / "gguf" / extract.hf_file) is None:
+        wanted.append(extract)
+    if not wanted:
         return
 
     def _run() -> None:
-        logger.info("[LocalModels] Fetching vision projector for %s", chat_id)
-        try:
-            got = ensure_mmproj(opt.hf_path)
-            logger.info(
-                "[LocalModels] Vision projector for %s: %s", chat_id, got or "none published"
-            )
-        except Exception as exc:  # pylint: disable=broad-exception-caught
-            logger.warning("[LocalModels] Vision projector for %s failed: %s", chat_id, exc)
+        for opt in wanted:
+            logger.info("[LocalModels] Fetching vision projector for %s", opt.id)
+            try:
+                got = ensure_mmproj(opt.hf_path)
+                logger.info("[LocalModels] Vision projector for %s: %s", opt.id, got or "none published")
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning("[LocalModels] Vision projector for %s failed: %s", opt.id, exc)
 
     threading.Thread(target=_run, name="orb-mmproj", daemon=True).start()
 
@@ -1721,61 +1726,6 @@ class LocalLlamaRuntime:
         """True while the resident chat model can take images."""
         return self._chat is not None and self._chat_handler is not None
 
-    def describe_image(
-        self,
-        image_data_url: str,
-        prompt: str,
-        model: str | None = None,
-        max_tokens: int | None = None,
-    ) -> str:
-        """Ask the local chat model about one image (a ``data:`` URL).
-
-        No cap by default: the answer may use everything the context window
-        has left, so a dense screenshot is transcribed in full.
-        """
-        with self._lock:  # see create_chat_completion: check and use in one hold
-            return self._describe_image_locked(image_data_url, prompt, model, max_tokens)
-
-    def _describe_image_locked(self, image_data_url, prompt, model, max_tokens) -> str:
-        self.ensure_chat_loaded(self.resolve_chat_gguf(model))
-        assert self._chat is not None
-        if self._chat_handler is None:
-            raise RuntimeError(
-                f"{self._chat_path.name if self._chat_path else 'The chat model'} has no "
-                "vision projector (mmproj-*.gguf) beside it, so it cannot read images. "
-                "Download it from the Models page or pick a vision-capable model."
-            )
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_data_url}},
-                ],
-            }
-        ]
-        budget = self._remaining_output_budget(messages)
-        if max_tokens is None or max_tokens > budget:
-            max_tokens = budget
-        with self._lock:
-            raw = self._chat.create_chat_completion(
-                messages=messages,
-                temperature=0.1,
-                max_tokens=max_tokens,
-                repeat_penalty=_default_repeat_penalty(),
-            )
-            self._touch()
-        choice = (raw.get("choices") or [{}])[0]
-        text = ((choice.get("message") or {}).get("content") or "").strip()
-        if choice.get("finish_reason") == "length":
-            logger.warning(
-                "Image description filled the context window (%s tokens); raise "
-                "the context size in Settings for longer transcriptions",
-                max_tokens,
-            )
-            text += " […]"
-        return text
-
     def make_chat_client(self) -> "LocalOpenAICompat":
         """OpenAI-compat shim over the in-process runtime."""
         return LocalOpenAICompat(self)
@@ -1847,7 +1797,10 @@ class LocalGgufReranker:
                 model_path=str(path),
                 n_ctx=int(settings.RERANK_N_CTX),
                 n_gpu_layers=int(accel.get("n_gpu_layers", 0)),
-                logits_all=True,
+                # Off: scoring reads one position's logits (_score_one). On, every prompt token's full-vocabulary
+                # logits were copied to the CPU and an n_ctx x vocab array was allocated, and reranking long
+                # passages was CPU-bound with the GPU idle (minutes per question; round 7).
+                logits_all=False,
                 verbose=False,
             )
             model_load_clock.record("rerank", time.perf_counter() - started)
@@ -1896,6 +1849,7 @@ class LocalGgufReranker:
             return True
 
     def _score_one(self, query: str, document: str) -> float:
+        """P(yes) from the yes/no logits after the prompt: exp(yes) / (exp(yes) + exp(no))."""
         assert self._model is not None
         prompt = (
             f"<|im_start|>system\n{_RERANK_SYSTEM}\n<|im_end|>\n"
@@ -1906,36 +1860,24 @@ class LocalGgufReranker:
             f"<|im_end|>\n"
             f"<|im_start|>assistant\n<think>\n\n</think>\n"
         )
+        model = self._model
+        tokens = model.tokenize(prompt.encode("utf-8"), special=True)  # as a completion call tokenizes it
+        if len(tokens) > model.n_ctx():
+            raise ValueError(f"Requested tokens ({len(tokens)}) exceed context window of {model.n_ctx()}")
         with self._lock:
-            out = self._model(
-                prompt,
-                max_tokens=1,
-                temperature=0.0,
-                logprobs=5,
-            )
+            # Keep the prefix shared with the previous document (system prompt, instruction, query) in the KV
+            # cache; evaluate the rest. At least one token is evaluated so its logits are fresh.
+            keep, cached = 0, model.n_tokens
+            while keep < min(cached, len(tokens) - 1) and model.input_ids[keep] == tokens[keep]:
+                keep += 1
+            model.n_tokens = keep
+            model.eval(tokens[keep:])
+            logits = model._ctx.get_logits_ith(-1)  # pylint: disable=protected-access
+            yes, no = float(logits[self._yes_id]), float(logits[self._no_id])
             self._last_used = time.monotonic()
-        # Prefer logprob yes vs no when available
-        try:
-            choice = out["choices"][0]
-            logprobs = choice.get("logprobs") or {}
-            top = (logprobs.get("top_logprobs") or [{}])[0]
-            if isinstance(top, dict) and top:
-                # keys may be token strings
-                yes_lp = top.get("yes") or top.get("Yes")
-                no_lp = top.get("no") or top.get("No")
-                if yes_lp is not None and no_lp is not None:
-                    import math
+        import math
 
-                    ey, en = math.exp(yes_lp), math.exp(no_lp)
-                    return float(ey / (ey + en + 1e-12))
-            text = (choice.get("text") or "").strip().lower()
-            if text.startswith("yes"):
-                return 0.9
-            if text.startswith("no"):
-                return 0.1
-        except Exception:  # pylint: disable=broad-exception-caught
-            pass
-        return 0.0
+        return 1.0 / (1.0 + math.exp(max(-700.0, min(700.0, no - yes))))
 
     def rerank(
         self, query: str, documents: list[str], top_n: int | None = None

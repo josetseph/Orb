@@ -206,7 +206,7 @@ Extend the discovery regexes and the per-type handler in `services/multimedia.py
 
 ### Add a page
 
-Create `frontend/src/app/<route>/page.tsx`, add a lazy `<Route>` in `src/App.tsx` and the entry in `components/sidebar.tsx`, use `useKB()` and `api.*`. See [18](18-frontend-architecture.md).
+Create `frontend/src/app/<route>/page.tsx`, add a lazy `<Route>` in `src/App.tsx` and the entry in the `nav` array of `Ribbon` (`components/sidebar.tsx`), use `useKB()` and `api.*`. See [18](18-frontend-architecture.md).
 
 ### Debug "the app won't start"
 
@@ -226,7 +226,7 @@ Nothing is reachable: no chat+embed GGUFs on disk (`gguf_paths_if_present()`), n
 
 Short form of [26](26-decisions-and-constraints.md):
 
-- Do not add HTTP model sidecars or reintroduce Ollama / LM Studio / llama-server paths.
+- Do not add HTTP model sidecars or reintroduce Ollama / LM Studio paths. The only server-backed model path is Orb's own extraction `llama-server` (`extraction_server.py`) for local ingestion.
 - Do not load two heavy models at once outside the residency manager.
 - Do not store note bodies in SQLite, or attachments anywhere but `<vault>/attachments/` (grouped by note folder).
 - Do not drop or recreate Qdrant collections implicitly on a dimension mismatch.

@@ -28,9 +28,6 @@ class FakeLLM:
         self.context_tokens = context_tokens
         self.prompts = []
 
-    def _clean_json(self, raw):
-        return raw
-
     def get_ingestion_model(self):
         return "fake-model"
 

@@ -33,11 +33,11 @@ import { createLivePreviewHideMarks } from "./livePreviewHideMarks";
 import {
   insertAtCursor as insertAtCursorCmd,
   runMarkdownAction,
+  wrapSelectionOnType,
 } from "./markdownCommands";
 import {
   createEntityDecorations,
   entityClickHandler,
-  entityCompletionSource,
   type EntitySuggestion,
 } from "./entityExtension";
 import {
@@ -432,13 +432,13 @@ const MarkdownNoteEditor = forwardRef<
       autocompletion({
         override: [
           wikilinkCompletionSource(() => notesRef.current),
-          entityCompletionSource(kb),
         ],
         closeOnBlur: true,
         activateOnTyping: true,
         maxRenderedOptions: 12,
       }),
       Prec.highest(keymap.of(completionKeymap)),
+      wrapSelectionOnType,
       entityClickHandler(
         hasEntityClick ? (nodeId, name) => handlersRef.current.onEntityClick?.(nodeId, name) : undefined,
       ),

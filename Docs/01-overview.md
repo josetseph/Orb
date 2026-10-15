@@ -20,7 +20,7 @@ Key user-facing capabilities:
 | Multimedia ingest | PDF text + vision on embedded images and scanned pages, image descriptions/OCR by the ingestion model (a local GGUF through its vision projector, or a cloud endpoint), audio and video transcription (Phonon-2, English), video visual understanding (Marlin); results are appended to the note markdown |
 | Knowledge graph | Embedded Kuzu property graph, LLM-extracted typed entities and relationships (relationship types are a closed 42-predicate vocabulary, off-list → `related_to`), optional community clustering (labelled "Leiden", implemented as a greedy cosine merge over embeddings) and temporal digests, deterministic 3D layouts, a 3D graph explorer and a separate wikilink graph |
 | Chat | Multi-hop research loop combining entity lookup, keyword search (Meilisearch), vector search (Qdrant), graph expansion and a local cross-encoder reranker; persistent conversations; optional "thinking" display |
-| Knowledge bases | Multiple fully isolated KBs (separate vault, graph, vectors, keyword index, Firefly administration) switchable from the sidebar |
+| Knowledge bases | Multiple fully isolated KBs (separate vault, graph, vectors, keyword index, Firefly administration) switchable from the file explorer's workspace switcher |
 | Finance | Per-KB Firefly III administration: accounts, transactions, budgets, categories, recurrences, rules, reports, search |
 | Local models | First-run setup page picks a data dir (local disk — never a cloud-synced folder), a models dir (NAS-friendly) and the notes vault (the one folder that may be synced); GGUF chat/embed/rerank via llama-cpp-python inside the API process; cloud providers optional |
 
@@ -39,8 +39,8 @@ Key user-facing capabilities:
 These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-and-constraints.md) for the full list with rationale):
 
 1. **Desktop shell, no Docker for users.** A Tauri shell spawns `python -m app.desktop_runtime`, which supervises the local binaries and processes.
-2. **Every local model runs in-process** in the FastAPI worker, loaded from `MODELS_DIR`. No HTTP model sidecars, no Ollama/LM Studio/llama-server.
-3. **Exclusive residency.** Only one heavy model is in memory at a time (chat *or* embed *or* rerank *or* Phonon-2/Marlin).
+2. **Every local model runs in-process** in the FastAPI worker, loaded from `MODELS_DIR`. No third-party HTTP model sidecars (no Ollama/LM Studio); the one exception is Orb's own pinned `llama-server`, which the API starts on demand for local ingestion (parallel notes, JSON grammar) and stops when idle.
+3. **Exclusive residency.** Only one heavy model is in memory at a time in-process (chat *or* embed *or* rerank *or* Phonon-2/Marlin); the extraction server's model is held only while ingesting.
 4. **Notes are files.** Bodies live as `.md` in a per-KB vault; SQLite stores metadata only. Attachments live in the vault too — only under `attachments/`, grouped by note folder, and notes link to them vault-root-relative.
 5. **Per-KB isolation everywhere**, including finance (one Firefly administration per KB).
 6. **Fail-closed indexing.** A Qdrant dimension mismatch during ingest raises instead of wiping a collection.
@@ -60,7 +60,7 @@ These are locked decisions (see [26-decisions-and-constraints.md](26-decisions-a
 | Vectors | Qdrant (local binary) + qdrant-client | Qdrant v1.18.2, client 1.17.1 |
 | Keyword search | Meilisearch (local binary) + meilisearch python | Meilisearch v1.49.0, client 0.34.1 |
 | Local inference | llama-cpp-python (GGUF; Metal/CUDA/Vulkan/CPU), torch + transformers ≥ 5.7 + qwen-vl-utils (Marlin), Phonon-2 via `fermion-research` (MLX on Apple Silicon, CPU elsewhere); images are described by the chat GGUF through its `mmproj-*` vision projector | llama-cpp-python ≥ 0.3 |
-| Cloud LLMs | openai, anthropic, google-genai, HuggingFace; structured output requested in each provider's JSON mode (llama.cpp grammar locally, prompt-only on Anthropic) and cleaned with `json-repair` | – |
+| Cloud LLMs | openai, anthropic, google-genai, HuggingFace; structured output requested in each provider's JSON mode (llama.cpp grammar locally, prompt-only on Anthropic) and validated as written, never repaired | – |
 | Document parsing | PyMuPDF, Pillow, python-docx, openpyxl, `av` (media probing), ffmpeg (transcoding) | – |
 | Finance | Firefly III (Laravel) on a portable PHP 8.5 from NativePHP `php-bin` | Firefly v6.6.6, php-bin 1.2.0 |
 | Packaging | `desktop/build.py` + `cargo tauri build`: python-build-standalone CPython, Vite build, Firefly seed; no Node ships; the macOS DMG is written by `hdiutil`, not Tauri's DMG script | Python 3.12.9 |

@@ -1,9 +1,40 @@
 import type { Note } from "@/lib/types";
 import type { FolderTreeNode } from "./types";
 
+export type NoteSort = "name-asc" | "name-desc" | "modified-new" | "modified-old" | "created-new" | "created-old";
+
+export const NOTE_SORTS: Array<{ key: NoteSort; label: string }> = [
+  { key: "name-asc", label: "File name (A to Z)" },
+  { key: "name-desc", label: "File name (Z to A)" },
+  { key: "modified-new", label: "Modified time (new to old)" },
+  { key: "modified-old", label: "Modified time (old to new)" },
+  { key: "created-new", label: "Created time (new to old)" },
+  { key: "created-old", label: "Created time (old to new)" },
+];
+
+const time = (iso?: string | null) => (iso ? Date.parse(iso) || 0 : 0);
+
+/** Folders first; folders by name (reversed only for Z to A), notes by `sort`. */
+function compareNodes(sort: NoteSort) {
+  return (a: FolderTreeNode, b: FolderTreeNode) => {
+    const aFolder = !a.note;
+    const bFolder = !b.note;
+    if (aFolder !== bFolder) return aFolder ? -1 : 1;
+    const byName = a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" });
+    if (sort === "name-desc") return -byName;
+    if (aFolder || sort === "name-asc") return byName;
+    const field = sort.startsWith("modified") ? "updated_at" : "created_at";
+    const at = time(a.note![field] ?? a.note!.created_at);
+    const bt = time(b.note![field] ?? b.note!.created_at);
+    const diff = sort.endsWith("new") ? bt - at : at - bt;
+    return diff || byName;
+  };
+}
+
 export function buildFolderTree(
   notes: Note[],
   extraFolders: string[] = [],
+  sort: NoteSort = "name-asc",
 ): FolderTreeNode[] {
   const root: FolderTreeNode[] = [];
 
@@ -55,12 +86,7 @@ export function buildFolderTree(
   }
 
   const sortTree = (nodes: FolderTreeNode[]) => {
-    nodes.sort((a, b) => {
-      const aFolder = !a.note;
-      const bFolder = !b.note;
-      if (aFolder !== bFolder) return aFolder ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
+    nodes.sort(compareNodes(sort));
     for (const n of nodes) sortTree(n.children);
   };
   sortTree(root);

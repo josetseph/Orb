@@ -30,9 +30,11 @@ Under the desktop app nothing injects `ORB_DATA_DIR`/`ORB_MODELS_DIR`: the runti
 ```
 DATA_DIR/                                   (e.g. ~/Library/Application Support/Orb/data)
 ├── orb.db                                  SQLite: notes, note_links, knowledge_bases, chat_conversations, chat_messages
-├── runtime_config.json                     {"provider","model","base_url", llama.cpp knobs} (MUTABLE_KEYS only)
+├── runtime_config.json                     {"provider","model","base_url","extraction_model", llama.cpp knobs} (MUTABLE_KEYS only)
 ├── meili_master_key                        random base64url key (mode 0600) or "orb-dev-key" for pre-hardening installs
 ├── .stores-migrated-v1-<kb_id>             marker per KB: main._migrate_stores ran (see §9.1)
+├── .passages-v1-<kb_id>                    marker per KB: main._backfill_passages stored every note's passages (see §9.1)
+├── llama-server.pid                        pid of the running extraction llama-server (removed when it stops; stale ones are cleaned up at the next start)
 ├── kuzu/
 │   ├── kuzu_graph                          default KB Kuzu database FILE
 │   ├── kuzu_graph.wal                      its write-ahead log (may be absent)
@@ -40,7 +42,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 │       ├── kuzu_graph                      non-default KB database file
 │       └── kuzu_graph.wal
 ├── qdrant/                                 Qdrant storage root (QDRANT__STORAGE__STORAGE_PATH); also its cwd
-│   ├── collections/<name>/…                node_cores, node_relationships, node_isolated_contexts, <slug>_node_cores, …
+│   ├── collections/<name>/…                node_cores, node_relationships, node_isolated_contexts, node_isolated_contexts_passages, <slug>_node_cores, …
 │   ├── aliases/, raft_state.json, …        Qdrant-internal
 ├── meilisearch/                            Meilisearch --db-path (data.ms layout: indexes/, tasks/, auth/, …)
 ├── vaults/
@@ -54,12 +56,14 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 │   ├── api.log            errors.log        ingestion.log     multimedia.log   chat.log      (backend, RotatingFileHandler 10 MB × 5)
 │   ├── database.log       graph.log         llm.log           retrieval.log    finance.log
 │   ├── backend.log        qdrant.log        meilisearch.log   firefly.log      multimodal.log (process stdio; each rolls to `.log.1` past 10 MB at spawn; backend.log = runtime + API, written by the shell)
+│   ├── llama-server.log                                                                   (extraction server stdio, appended by extraction_server; not rotated)
 │   └── *.log.1 … *.log.5                                                                  (rotated backups)
 ├── bin/
 │   ├── .tmp/                               download scratch (archives, extracted trees) — transient
-│   └── <triple>/                           macos-arm64 | macos-x86_64 | linux-x86_64 | linux-aarch64 | windows-amd64 | windows-arm64
-│       ├── qdrant[.exe]
-│       └── meilisearch[.exe]
+│   ├── <triple>/                           macos-arm64 | macos-x86_64 | linux-x86_64 | linux-aarch64 | windows-amd64 | windows-arm64
+│   │   ├── qdrant[.exe]
+│   │   └── meilisearch[.exe]
+│   └── llama.cpp-b11617/                   pinned llama.cpp release (llama-server + its libraries; CUDA runtime DLLs beside it on Windows), downloaded on first local ingest; staged in llama.cpp-b11617.partial/
 └── firefly/                                HOME/USERPROFILE for the PHP process
     ├── runtime.json                        {password, api token, APP_KEY, userId, groupId, …} — secrets, owner-only
     ├── php/                                static-php-cli runtime (bin/php, bin/php7/lib/…, extensions)
@@ -98,6 +102,9 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 | `DATA_DIR/boot-status.json` | `desktop_runtime.status()` (atomic rewrite) | every desktop launch | Yes — rewritten on next launch; `/admin/maintenance-status` surfaces it while not `Ready` |
 | `DATA_DIR/bin/<triple>/{qdrant,meilisearch}` | `desktop_runtime.ensure_binaries` | first launch (status indicator "Downloading…") | Yes — re-downloaded from GitHub releases on next launch (needs network) |
 | `DATA_DIR/bin/.tmp/` | `ensure_binaries` | during downloads | Yes — scratch |
+| `DATA_DIR/bin/llama.cpp-b11617/` (`.partial` while downloading) | `extraction_server.binary()` | first local ingestion | Yes (while no ingestion runs) — re-downloaded from GitHub on the next ingest (needs network) |
+| `DATA_DIR/llama-server.pid`, `DATA_DIR/logs/llama-server.log` | `extraction_server` | first extraction-server start | Yes — the pid file only matters while a server runs (deleting it then leaves an orphan the next start cannot find) |
+| `DATA_DIR/.passages-v1-<kb_id>` | `main._backfill_passages` | first start after passages existed, once every note's passages were stored | Yes — the backfill re-embeds and re-stores every note's passages at the next start |
 | `DATA_DIR/firefly/php/` | `desktop_runtime.ensure_php_runtime` | first launch | Yes — re-downloaded/re-seeded from bundled resources or GitHub (static-php-cli `PHP_BIN_VERSION`) |
 | `DATA_DIR/firefly/app/` (except `storage/`) | `desktop_runtime.ensure_firefly_app` | first launch / version change (`.orb-firefly-version`) | Yes — re-seeded; `storage/` is stashed and restored across upgrades |
 | `DATA_DIR/firefly/app/storage/database/firefly.sqlite`, `storage/upload/`, `oauth-*.key` | Firefly III (migrations, `db:seed`, Passport) | first launch | **No** — all finance data for every KB. The KB↔group mapping in `orb.db` (`firefly_group_id`) would then point at missing groups |
@@ -265,6 +272,7 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 | Kuzu path repair | `kb_registry._load` | none — idempotent; persisted with `UPDATE knowledge_bases SET kuzu_path` when `normalize_kuzu_path` changes it | Directory-shaped `kuzu_path` → `…/kuzu_graph` file path. Removed from `get_kb`/`graph`/`_build_context`/`_cleanup_stores`. |
 | `llm_provider` coercion | `kb_registry._load` | none — idempotent `UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')` | Deprecated provider names in KB rows. |
 | Attachments boundary (invariant enforced after the sweep, not a migration) | `local_storage.store_upload`, `vault_ops.move_vault_file`, the vault tree UI | none | Uploads land in `attachments/<note folder>/`; `move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment → note folder, note → `attachments/`, and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`. Note moves never move attachments, because links are vault-root-relative. |
+| Passage backfill | `main._backfill_passages()` after `_migrate_stores` in `_background_startup`, per KB | `DATA_DIR/.passages-v1-<kb_id>`, touched only when every note's passages were stored (a failure defers the KB to the next start) | Stores title-prefixed passages of every note with a vault file (Qdrant `<contexts>_passages`, Meili `<index>_passages`) for notes ingested before passages existed; the graph is untouched. Progress in `maintenance-status.passages` |
 | Store scrub | `main._migrate_stores()` at the end of `_background_startup`, per KB | `DATA_DIR/.stores-migrated-v1-<kb_id>`, touched **only after** all three steps succeeded (an unreachable Qdrant/Kuzu leaves it absent, so the KB is retried next boot) | Kuzu: `SEMANTIC_REL {rel_type:'relates_to'}` → `'related_to'` (closed vocabulary default rename); Qdrant: `QdrantService.strip_facts_prefixes()` removes legacy `FACTS: …. ` prefixes from `node_cores` descriptions; Kuzu: `kind='note'` nodes with NULL/`''`/`Unknown`/`Untitled` names are backfilled from `orb.db` (`notes.title`, else the `rel_path` stem). |
 
 

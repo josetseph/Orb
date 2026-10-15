@@ -60,10 +60,10 @@ export function useNoteSelection({ currentKB, setNotes }: UseNoteSelectionArgs) 
 
   /** Load a note by id and make it the active selection (used by graph → notes, restore). */
   const openNoteById = useCallback(
-    async (noteId: string) => {
+    async (noteId: string): Promise<boolean> => {
       try {
         const fresh = await api.getNote(noteId, currentKB);
-        if (!fresh) return;
+        if (!fresh) return false;
         sessionStorage.setItem(lastNoteStorageKey(currentKB), fresh.id);
         contentBeforeEditRef.current = fresh.content;
         titleBeforeEditRef.current = fresh.title || "";
@@ -73,8 +73,10 @@ export function useNoteSelection({ currentKB, setNotes }: UseNoteSelectionArgs) 
             : prev,
         );
         setSelectedNote(fresh);
+        return true;
       } catch (error) {
         console.error("Error opening note:", error);
+        return false;
       }
     },
     [currentKB, setNotes],

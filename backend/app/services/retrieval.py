@@ -1320,9 +1320,33 @@ class RetrievalService:
                 }
             )
 
+        # C. The notes' own text: vector and keyword passage hits, reranked with the graph's
+        # candidates (the reranker scores the union, so there are no fusion weights to tune).
+        # ponytail: no date filter on passages; add note_created_at to their payload if dated queries need it.
+        passage_hits = await asyncio.to_thread(
+            self._qdrant.search_passages, full_vector, 500, settings.VECTOR_PRE_RERANK_THRESHOLD
+        )
+        seen_passages = {(h["note_id"], h["index"]) for h in passage_hits}
+        for hit in await asyncio.to_thread(self._meili.search_passages, query, 50):
+            if (hit["note_id"], hit["index"]) not in seen_passages:
+                seen_passages.add((hit["note_id"], hit["index"]))
+                passage_hits.append(hit)
+        for hit in passage_hits:
+            # A distinct name: docs are merged by name, and a note's title is often an entity's.
+            name = f"{hit['title']} (passage {hit['index'] + 1})"
+            candidates.append(
+                {
+                    "text": hit["content"],
+                    "_rerank_text": hit["content"],
+                    "type": "passage",
+                    "original_obj": {"name": name, "node_id": hit["note_id"], "summary": hit["content"]},
+                    "linked_notes": [{"id": hit["note_id"], "title": hit["title"]}],
+                }
+            )
+
         logger.info(
             f"  [Retrieval] Prepared {len(candidates)} candidates "
-            f"({len(entity_nodes)} entity + {len(vector_nodes)} vector)"
+            f"({len(entity_nodes)} entity + {len(vector_nodes)} vector + {len(passage_hits)} passage)"
         )
 
         # ============ RERANKING ============
@@ -1481,7 +1505,7 @@ class RetrievalService:
         top_k: int = 50,
         progress_callback: Callable[[str, str | None], None] | None = None,
         conversation_history: list[dict] | None = None,
-    ) -> tuple[str | None, list[dict], str | None]:
+    ) -> tuple[str | None, list[dict], str | None, bool]:
         """
         Iterative retrieval loop — one LLM call per iteration.
 
@@ -1492,7 +1516,9 @@ class RetrievalService:
         Continues until ANSWER is produced or MAX_LOOP_ITERATIONS is hit.
         On exhaustion, synthesizes from accumulated steps using the existing
         final_synthesis_from_sub_results function.
-        Returns (final_answer, all_accumulated_docs, thinking).
+        Returns (final_answer, all_accumulated_docs, thinking, answered). ``answered`` is False
+        when the loop ran out without a step committing to an answer: ``final_answer`` is then
+        only the closest finding.
         """
         # This KB's LLM (a pinned per-KB model, or the system default).
         llm = self._llm
@@ -1529,7 +1555,8 @@ class RetrievalService:
         accumulated_steps: list[dict] = []
         all_docs: list[dict] = []
         surfaced_names: set[str] = set()
-        current_query: str | None = None
+        # The first step reads the question's own results instead of only planning a query.
+        current_query: str | None = query
         tried_queries: list[str] = []
 
         for iteration in range(settings.MAX_LOOP_ITERATIONS):
@@ -1656,7 +1683,7 @@ class RetrievalService:
                     f"  thinking={'yes' if thinking else 'no'}\n"
                     f"{'='*70}"
                 )
-                return final_answer, all_docs, thinking
+                return final_answer, all_docs, thinking, True
 
             # Mark this query as tried now that we have processed its results
             if current_query and current_query not in tried_queries:
@@ -1700,7 +1727,7 @@ class RetrievalService:
             f"  best_finding={last_answer!r}\n"
             f"{'='*70}"
         )
-        return last_answer, all_docs, None
+        return last_answer, all_docs, None, False
 
 
 retrieval_service = RetrievalService()

@@ -21,6 +21,7 @@ _SETTING_FOR = {
     "provider": "LLM_PROVIDER",
     "model": "CHAT_MODEL",
     "base_url": "LLM_BASE_URL",
+    "extraction_model": "EXTRACTION_MODEL",
 }
 # Local runtime knobs: key == lower-cased Settings attribute.
 LOCAL_RUNTIME_KEYS: tuple[str, ...] = (

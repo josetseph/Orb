@@ -40,6 +40,7 @@ COMPONENT_LOG_FILES = {
     "GraphService": "graph.log",
     "LLMService": "llm.log",
     "LocalModels": "llm.log",
+    "ExtractionServer": "llm.log",
     "InferenceDevice": "llm.log",
     "RetrievalService": "retrieval.log",
     "QdrantService": "retrieval.log",

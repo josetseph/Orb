@@ -1,6 +1,6 @@
 # Search Indexes: Qdrant & Meilisearch
 
-**What this covers.** The two external index services every Knowledge Base owns beside its Kuzu graph: **Qdrant** (vector store; three collections per KB — node cores, relationship sentences, isolated contexts) and **Meilisearch** (keyword/BM25 index; one index per KB), plus the in-process `EmbeddingService` that produces every vector they hold. It documents client construction, per-KB naming, vector parameters, point-ID scheme, the exact payload/document schemas, every write/read/delete function and its callers, the embedding-dimension synchronisation and fail-closed rules, collection/index lifecycle on KB create/delete/reset, task-waiting semantics, key management, the legacy `TYPESENSE_*` aliases, what the contract unit tests pin, failure modes and gotchas. Retrieval *ranking* logic is out of scope (see [16](16-retrieval-and-chat.md)); only the store contracts retrieval relies on are described.
+**What this covers.** The two external index services every Knowledge Base owns beside its Kuzu graph: **Qdrant** (vector store; three graph collections per KB — node cores, relationship sentences, isolated contexts — plus a note-passages collection) and **Meilisearch** (keyword/BM25 index; one node index per KB plus a note-passages index), plus the in-process `EmbeddingService` that produces every vector they hold. It documents client construction, per-KB naming, vector parameters, point-ID scheme, the exact payload/document schemas, every write/read/delete function and its callers, the embedding-dimension synchronisation and fail-closed rules, collection/index lifecycle on KB create/delete/reset, task-waiting semantics, key management, the legacy `TYPESENSE_*` aliases, what the contract unit tests pin, failure modes and gotchas. Retrieval *ranking* logic is out of scope (see [16](16-retrieval-and-chat.md)); only the store contracts retrieval relies on are described.
 
 **Related docs:** [Graph storage (Kuzu)](14-graph-storage-kuzu.md) · [Ingestion pipeline](10-ingestion-pipeline.md) · [Retrieval and chat](16-retrieval-and-chat.md) · [Local models and inference](12-local-models-and-inference.md) · [Knowledge bases and vaults](08-knowledge-bases-and-vaults.md) · [Desktop shell](04-desktop-shell.md) · [Backend core and configuration](06-backend-core-and-configuration.md) · [Configuration reference](21-configuration-reference.md) · [Data directory layout](22-data-directory-layout.md) · [Testing](24-testing.md) · [Decisions and constraints](26-decisions-and-constraints.md)
 
@@ -11,6 +11,8 @@
 **Qdrant owns** all node *content* and all vectors: entity/community/digest cores (name, type, description, merged-context vector), relationship natural-language sentences with vectors, and per-entity isolated-context chunks with vectors and note dates. It is also the **authoritative name → node_id resolver** used by ingestion and by `GraphService.resolve_node_id`.
 
 **Meilisearch owns** a flattened, keyword-searchable copy of node content (name, type, contexts text, relationship NL) used for BM25 retrieval, editor entity autocomplete, text scanning, and as a content fallback for the 3D node card. It is **derived** — written only after Qdrant succeeded — and can be rebuilt from Qdrant + Kuzu.
+
+**Note passages.** Both stores also hold each note's own text, split into passages (`<contexts collection>_passages` in Qdrant, `<index>_passages` in Meilisearch, §4.8 / §5.5a). They are written by ingestion before extraction (doc 10 §6.0), searched beside the graph by `hybrid_search` section C (doc 16), and are not derived from the graph.
 
 **EmbeddingService owns** the query/document embedding calls (in-process GGUF via `llama-cpp-python`), including the Qwen3 instruction prefix rule.
 
@@ -98,7 +100,7 @@ Desktop values are injected by `desktop_runtime.py`: `QDRANT_HOST=127.0.0.1`, `Q
 
 The prefix is the sanitised KB slug (`[a-z0-9_-]` only). Names are read back from SQLite, so renaming a KB does **not** rename collections (slug is immutable).
 
-`QdrantService.collections` property returns `[cores, rels, contexts]` — the ordered list `search_all_collections` fans out to. `col_contexts` is exposed as a property because `_update_node_summary` passes it explicitly to `append_node_item`.
+The passages collection is `f"{col_contexts}_passages"` (`self._col_passages`, set in `__init__`; e.g. `node_isolated_contexts_passages`, `<slug>_node_isolated_contexts_passages`) — derived, not stored in SQLite. `QdrantService.collections` property returns `[cores, rels, contexts]` — the ordered list `search_all_collections` fans out to; passages are **not** in it (searched separately by `search_passages`). `col_contexts` is exposed as a property because `_update_node_summary` passes it explicitly to `append_node_item`.
 
 ### 4.3 Vector parameters
 
@@ -178,7 +180,7 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 | `delete_node` | `(node_id) -> None` | deletes core point `uuid5(node_id)`, all `*_node_isolated_contexts` with `parent_node_id==node_id`, and every `*_node_relationships` point whose `source_node_id` or `target_node_id` is the node | `api/notes.py` (note + orphans), `_write_ontology` (re-ingest orphans), `rebuild_leiden_communities` (old communities), `build_temporal_digests` (old digests) |
 | `delete_relationships` | `(relationship_ids) -> None` | deletes the `uuid5(relationship_id)` points | `_write_ontology` (edges dropped by `clear_note_contribution`) |
 | `delete_community_relationships` | `() -> None` | delete-by-filter `is_community_rel == True` in rels | `GraphService.clear_all_communities` |
-| `reset_all` | `() -> None` | `delete_collection` ×3 (warn on failure) then `_ensure_collections()` | admin reset-ingestion-data, KB empty |
+| `reset_all` | `() -> None` | `delete_collection` ×4 (cores, rels, contexts, passages; warn on failure) then `_ensure_collections()` | admin reset-ingestion-data, KB empty |
 | `ensure_vector_size` | `(vector_len) -> None` | adopts `vector_len` into `settings.EMBEDDING_DIMENSIONS` (warn if changed) and re-runs `_ensure_collections()` — always, even if settings already matched | `sync_embedding_infrastructure` only |
 | `strip_facts_prefixes` | `() -> int` | one-time scrub: pages `*_node_cores` (500/page, payload `description` only) and `set_payload`s every description starting `FACTS:` to the text after its first `". "` (empty if none). Raises when Qdrant is unreachable so the caller does not mark the migration done. | `main._migrate_stores` only (doc 22) |
 
@@ -195,6 +197,16 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 | `list_all_community_payloads` | `() -> list[{community_id, community_level, name, description}]` | scroll cores with `type == "community"` | none currently |
 | `get_relationships_for_node_ids` | `(node_ids) -> list[{relationship_id, natural_language, source_node_id, target_node_id}]` | two scrolls (`source_node_id` in ids, `target_node_id` in ids), paged 500, deduplicated by `relationship_id` (falling back to the sentence for points written before the id was stored) | retrieval, `_update_node_summary` (Meili NL), `rebuild_leiden_communities` (Meili refresh), `GraphService.get_node_storage_payload` |
 | `scroll_all_isolated_contexts_with_dates` | `() -> list[payload]` | full unfiltered scroll of contexts (500/page) keeping payloads with `note_created_at` | `build_temporal_digests` |
+
+### 4.8 Note passages (`<contexts>_passages`)
+
+Payload `{note_id, title, index, content}` (+ vector = `embed_documents(content)`; `content` already starts with `"<title>\n\n"`), point id `uuid4`. Part of the per-KB collection set: created and dim-checked by `_ensure_collections`, deleted by `reset_all`.
+
+| Function | Signature | Behaviour | Callers |
+|---|---|---|---|
+| `replace_note_passages` | `(note_id, title, texts, vectors) -> None` | delete-by-filter `note_id == note_id`, then `_upsert_batched` one point per passage. **Raises** when Qdrant is unavailable (`RuntimeError("Qdrant unavailable: note passages not stored")`) or a write fails | `IngestionWorkflow._store_passages` (ingest, backfill) |
+| `search_passages` | `(query_vector, limit, min_score) -> list[payload + score]` | `query_points(passages, limit, score_threshold=min_score)`; `[]` when unavailable or the collection does not exist yet | `hybrid_search` section C (`limit=500`, `VECTOR_PRE_RERANK_THRESHOLD`) |
+| `delete_note_passages` | `(note_id) -> None` | `replace_note_passages(note_id, "", [], [])`; errors warn-only | `api/notes.py` note delete |
 
 **Score semantics and thresholds.** Scores are raw cosine similarities from Qdrant. Retrieval passes `limit=500` per collection ("a large ceiling … the score_threshold is the only real filter") and `min_score` = `settings.VECTOR_PRE_RERANK_THRESHOLD` (**0.45**). Every collection is queried with the same vector and threshold, so a context sentence, a relationship sentence and a merged-core passage compete on equal footing; retrieval then maps each hit to a node via `node_id` / `parent_node_id` / `source_node_id` / `target_node_id` and de-duplicates. `isolated_contexts` strings returned by the content getters have the note date appended as `" - <date>"` when present — consumers that display or re-embed them see that suffix.
 
@@ -260,10 +272,20 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 | `index_node` | `(node_id, name, node_type, isolated_contexts: list[str] | None = None, relationship_natural_language="", community_level=None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
 | `update_nodes_community` | `(rows: list[{node_id, relationship_natural_language?, name?}]) -> None` | for each row `get_node` (or `{node_id}`), overlay non-empty fields, one `add_documents(docs)` | `wait_for_task(…, 30000)` | `rebuild_leiden_communities` end-of-run refresh |
 | `delete_node` | `(node_id) -> None` | `index.delete_document(node_id)`; 404/"not found" silently ignored | `wait_for_task(…, 5000)` | `api/notes.py`, community/digest rebuilds |
-| `reset_all` | `() -> None` | `delete_index(uid)` (+wait 10 s) then `_ensure_collection()` | 10000 | admin reset, KB empty |
+| `reset_all` | `() -> None` | `delete_index` for the node index **and** the passages index (+wait 10 s each, warn on failure) then `_ensure_collection()` (the node index only; the passages index is re-created by the next `replace_note_passages`) | 10000 | admin reset, KB empty |
 | `is_available` | `() -> bool` | `client.health()` | | all |
 
 **Task-waiting semantics.** Meilisearch writes are asynchronous tasks; every write here blocks on `client.wait_for_task(task_uid, timeout_in_ms=…)` so that subsequent reads (e.g. `get_node` inside `update_nodes_community`, or the immediate `search_nodes` from the editor) see the write. The SDK raises `MeilisearchTimeoutError` when the timeout elapses; all writers catch broad `Exception` and log (WARNING for `index_node`/`delete_node`, **DEBUG** for `update_nodes_community`), so a timed-out write is not surfaced to the caller even though the task will usually still complete server-side. Timeouts: 5 s single doc, 30 s batch community refresh, 10 s index create/delete/settings. `KBRegistry._cleanup_stores` uses 10 s for `delete_index`.
+
+### 5.5a Note passages index (`<index>_passages`)
+
+`_passages_name = f"{index_name}_passages"` (e.g. `orb_nodes_passages`). Documents `{id: "<note_id>_<i>", note_id, title, index, content}`.
+
+| Function | Behaviour | Task wait | Callers |
+|---|---|---|---|
+| `replace_note_passages(note_id, title, texts)` | creates the index on first use (`primaryKey: id`, `searchableAttributes: [title, content]`, `filterableAttributes: [note_id]`), deletes the note's documents by filter, adds the new ones. **Raises** when Meilisearch is unavailable (`RuntimeError("Meilisearch unavailable: note passages not stored")`) or the add task did not succeed | 10 s create/settings, 30 s delete and add | `IngestionWorkflow._store_passages` |
+| `search_passages(query, limit=50)` | `index.search(query, {"limit": limit})["hits"]`; `[]` without a client or before the index exists | — | `hybrid_search` section C (`limit=50`) |
+| `delete_note_passages(note_id)` | `replace_note_passages(note_id, "", [])` when the index exists; errors warn-only | 30 s | `api/notes.py` note delete |
 
 ### 5.6 Master key
 
@@ -343,10 +365,12 @@ Rationale in code: avoid "split-brain cores@1024 + contexts@768". Recreation is 
 | **Startup** | `sync_embedding_infrastructure()` → `ensure_vector_size` on default + every registered KB (constructs a temporary `QdrantService` per KB, which itself runs `_ensure_collections`) | untouched | `main.startup_event` |
 | **KB create** | `KBRegistry.create_kb` → `_build_context` → `QdrantService(col_cores=…, col_relationships=…, col_contexts=…)` → collections created immediately | `MeilisearchService(index_name=f"{slug}_nodes")` → index + settings created immediately | `kb_registry.py` |
 | **KB load at startup** | `_load` → `_build_context` per row (collections re-ensured) | same | `kb_registry.py` |
-| **KB delete** | `_cleanup_stores`: temporary `QdrantService` then `client.delete_collection` ×3, errors ignored (pass `create_collections=False` so the constructor does not first re-create the collections it is about to delete; `kb_registry.py` does not yet) | `client.delete_index(uid)` + `wait_for_task(…, 10000)` | `KBRegistry.delete_kb(wipe_indexes=True)` |
-| **KB empty** (`api/kb.py`) | `kb.qdrant.reset_all()` in `asyncio.to_thread` (delete ×3 + recreate) | `kb.meili.reset_all()` | after Firefly destroy, SQL note purge, `graph.wipe_all_nodes`; before vault clear |
+| **KB delete** | `_cleanup_stores`: temporary `QdrantService` then `client.delete_collection` ×4 (cores, rels, contexts, passages), errors ignored (pass `create_collections=False` so the constructor does not first re-create the collections it is about to delete; `kb_registry.py` does not yet) | `client.delete_index` + `wait_for_task(…, 10000)` for the node index and `<index>_passages` | `KBRegistry.delete_kb(wipe_indexes=True)` |
+| **KB empty** (`api/kb.py`) | `kb.qdrant.reset_all()` in `asyncio.to_thread` (delete ×4 incl. passages + recreate) | `kb.meili.reset_all()` | after Firefly destroy, SQL note purge, `graph.wipe_all_nodes`; before vault clear |
 | **Admin reset-ingestion-data** | `kb.qdrant.reset_all()` (background) | `kb.meili.reset_all()` (background) | `api/admin.py` |
-| **Note delete** | `delete_node(note_id)` and `delete_node(orphan_id)` (cores + contexts + relationship points) | `delete_node` per id | `api/notes.py` |
+| **Note delete** | `delete_node(note_id)` and `delete_node(orphan_id)` (cores + contexts + relationship points); `delete_note_contexts`; `delete_note_passages(note_id)` | `delete_node` per id; `delete_note_passages(note_id)` | `api/notes.py` |
+| **Note ingest** (before extraction) | `replace_note_passages(note_id, …)` | `replace_note_passages(note_id, …)` | `IngestionWorkflow._store_passages` |
+| **Startup passage backfill** (once per KB, marker `DATA_DIR/.passages-v1-<kb_id>`) | `replace_note_passages` per note | same | `main._backfill_passages` → `backfill_passages` (doc 10 §6.0) |
 | **Note re-ingest** | `delete_relationships(ids of edges no other note restated)`; `delete_node(orphan_id)` for entities only this note kept alive; `delete_note_contexts(note_id)` | `delete_node` per orphan; re-indexed nodes rewritten | `_write_ontology`, `_update_neighborhoods` |
 | **Community rebuild** | `delete_community_relationships()`; `delete_node(old_cid)`; new cores + rels | `delete_node(old_cid)`; `index_node` per community; `update_nodes_community` batch | `rebuild_leiden_communities` |
 | **Digest rebuild** | `delete_node(old_did)`; `upsert_node_core` | `delete_node`; `index_node` | `build_temporal_digests` |
@@ -457,6 +481,8 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, base_url` 
 18. **`QdrantService.__init__` mutates global `settings.EMBEDDING_DIMENSIONS`** as a side effect of constructing any KB's service.
 19. **Meili master key differs between fresh desktop installs (random, in `DATA_DIR/meili_master_key`) and upgraded/dev installs (`orb-dev-key`)** — `curl` debugging must use the file's value.
 20. **Contract tests construct services via `__new__`** — they never exercise `_ensure_collections`, `_prepare_vector`, or task waiting; those paths are untested.
+21. **Passages are per-KB stores like the rest.** `_cleanup_stores` deletes `<contexts>_passages` and `<index>_passages` with the graph collections and node index.
+22. **Passages are searched without a date filter** (`hybrid_search` section C carries a `ponytail:` note: add `note_created_at` to their payload if dated queries need it).
 
 ## 15. Extension points / how to modify safely
 
@@ -483,3 +509,4 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, base_url` 
 | `b84ca73` | 2026-08-06 | Batched Meili community updates (`update_nodes_community`) — one task wait instead of one per node. |
 | `8de5cda` | 2026-08-07 | Batched embeds/upserts (`upsert_node_cores`, `upsert_node_relationships`, `find_node_ids_by_names` paging), per-collection Qdrant search (made sequential again 2026-09-19), concurrent Meili term fan-out in retrieval. |
 | Desktop random Meili master key (`resolveMeiliMasterKey`) | 2026-08 | Fresh installs get a random key persisted under `DATA_DIR`; existing data keeps `orb-dev-key`. |
+| working tree | 2026-10 | Note passages: `<contexts>_passages` collection (part of `_ensure_collections` / `reset_all`) and `<index>_passages` Meili index, `replace_note_passages` / `search_passages` / `delete_note_passages` on both. |

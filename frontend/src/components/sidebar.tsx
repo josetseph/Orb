@@ -4,9 +4,10 @@ import { useLocation, useNavigate } from "react-router-dom";
 import {
   Check,
   ChevronsUpDown,
+  Files,
   MessageCircle,
   Network,
-  NotebookPen,
+  PanelLeft,
   Plus,
   Search,
   Settings,
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { kbSlug, useKB } from "@/lib/kb-context";
 import { ActivityStatus } from "@/components/system-status-indicator";
 import { openCommandPalette } from "@/components/command-palette";
+import { availableUpdate } from "@/lib/desktop";
 
 const SWATCHES = ["bg-accent-700", "bg-accent-800", "bg-n-700", "bg-accent-600"];
 
@@ -46,62 +48,132 @@ function useDismiss(open: boolean, close: () => void) {
   return ref;
 }
 
-export function Sidebar() {
+const SETTINGS_PATHS = ["/kb", "/models", "/setup", "/settings"];
+
+/** Checked once at launch; installing always waits for a click in About. */
+function useUpdateVersion() {
+  const [update, setUpdate] = useState<string | null>(null);
+  useEffect(() => {
+    availableUpdate().then((u) => setUpdate(u?.version ?? null), () => {});
+  }, []);
+  return update;
+}
+
+function SettingsButton({ className }: { className?: string }) {
   const { pathname } = useLocation();
+  const update = useUpdateVersion();
+  const active = SETTINGS_PATHS.some((p) => pathname.startsWith(p));
+  return (
+    <Link
+      to={update ? "/settings" : "/kb"}
+      data-tip={update ? `Settings · Orb ${update} is available` : "Settings"}
+      aria-label="Settings"
+      className={cn(
+        "relative grid h-8 w-8 shrink-0 place-items-center rounded-md hover:bg-n-900",
+        active ? "text-accent" : "text-n-500 hover:text-text",
+        className,
+      )}
+    >
+      <Settings className="h-[17px] w-[17px]" />
+      {update && <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-accent" />}
+    </Link>
+  );
+}
+
+/**
+ * The far-left icon strip: explorer toggle, search, and the app's views.
+ * Names show on hover. Settings joins it while the explorer (which holds the
+ * settings button) is collapsed.
+ */
+export function Ribbon({
+  explorerOpen,
+  onToggleExplorer,
+}: {
+  explorerOpen: boolean;
+  onToggleExplorer: () => void;
+}) {
+  const { pathname } = useLocation();
+  const { currentKBRecord } = useKB();
+  const financeOn = currentKBRecord ? currentKBRecord.finance_enabled !== false : true;
+  const nav = [
+    { label: "Notes", href: "/notes", icon: Files, match: ["/notes"] },
+    { label: "Graph", href: "/graph-3d", icon: Network, match: ["/graph-3d", "/notes-graph"] },
+    { label: "Ask", href: "/chat", icon: MessageCircle, match: ["/chat"] },
+    ...(financeOn ? [{ label: "Finance", href: "/finance", icon: Wallet, match: ["/finance"] }] : []),
+  ];
+  const item = "grid h-8 w-8 place-items-center rounded-md hover:bg-n-900";
+
+  return (
+    <nav className="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-n-900 bg-bg-deep/60 py-2.5">
+      <button
+        type="button"
+        onClick={onToggleExplorer}
+        data-tip={explorerOpen ? "Hide file explorer (⌘\\)" : "Show file explorer (⌘\\)"}
+        aria-label="Toggle file explorer"
+        className={cn(item, "text-n-500 hover:text-text")}
+      >
+        <PanelLeft className="h-[17px] w-[17px]" />
+      </button>
+      <button
+        type="button"
+        onClick={() => openCommandPalette()}
+        data-tip="Search (⌘K)"
+        aria-label="Search"
+        className={cn(item, "text-n-500 hover:text-text")}
+      >
+        <Search className="h-[17px] w-[17px]" />
+      </button>
+      <div className="my-1 h-px w-5 bg-n-900" />
+      {nav.map((n) => {
+        const Icon = n.icon;
+        const active = n.match.some((m) => pathname.startsWith(m));
+        return (
+          <Link
+            key={n.href}
+            to={n.href}
+            data-tip={n.label}
+            aria-label={n.label}
+            className={cn(item, "relative", active ? "bg-n-900 text-accent" : "text-n-500 hover:text-text")}
+          >
+            <Icon className="h-[17px] w-[17px]" />
+            {active && <span className="absolute -left-[6px] bottom-2 top-2 w-0.5 rounded-r-sm bg-accent" />}
+          </Link>
+        );
+      })}
+      <div className="mt-auto flex flex-col items-center gap-1">
+        <ActivityStatus compact />
+        {!explorerOpen && <SettingsButton />}
+      </div>
+    </nav>
+  );
+}
+
+/** Explorer footer: the workspace switcher with settings beside it. */
+export function WorkspaceFooter() {
   const navigate = useNavigate();
-  const { currentKB, currentKBName, currentKBRecord, kbs, setCurrentKB, refreshKBs } =
-    useKB();
+  const { currentKB, currentKBName, currentKBRecord, kbs, setCurrentKB, refreshKBs } = useKB();
   const [wsOpen, setWsOpen] = useState(false);
   const wsRef = useDismiss(wsOpen, () => setWsOpen(false));
 
-  const financeOn = currentKBRecord ? currentKBRecord.finance_enabled !== false : true;
-
-  const nav = [
-    { label: "Notes", href: "/notes", icon: NotebookPen, match: ["/notes"] },
-    { label: "Ask", href: "/chat", icon: MessageCircle, match: ["/chat"] },
-    { label: "Graph", href: "/graph-3d", icon: Network, match: ["/graph-3d", "/notes-graph"] },
-    ...(financeOn
-      ? [{ label: "Finance", href: "/finance", icon: Wallet, match: ["/finance"] }]
-      : []),
-  ];
-  const settingsActive = ["/kb", "/models", "/setup", "/settings"].some((p) =>
-    pathname.startsWith(p),
-  );
-
   return (
-    <aside className="flex w-[232px] shrink-0 flex-col border-r border-n-900 bg-bg-deep/40">
-      {/* Workspace switcher */}
-      <div ref={wsRef} className="relative px-3 pb-2.5 pt-3.5">
+    <div className="flex shrink-0 items-center gap-1 border-t border-n-900 px-2 py-2">
+      <div ref={wsRef} className="relative min-w-0 flex-1">
         <button
           type="button"
           onClick={() => {
             setWsOpen((v) => !v);
             if (!wsOpen) void refreshKBs();
           }}
-          className="flex w-full items-center gap-2.5 rounded-md border border-transparent px-2 py-1.5 text-left hover:bg-n-900"
-          title="Switch workspace"
+          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left hover:bg-n-900"
+          title={currentKBRecord?.vault_path || "Switch workspace"}
         >
-          <img
-            src="/logo-icon.png"
-            alt="Orb"
-            width={26}
-            height={26}
-            loading="eager"
-            className="h-[26px] w-[26px] shrink-0 rounded-[7px] object-cover"
-          />
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[13px] font-medium leading-tight">
-              {currentKBName}
-            </div>
-            <div className="truncate text-[11px] text-n-500">
-              {vaultFolderName(currentKBRecord?.vault_path) || "Workspace"}
-            </div>
-          </div>
-          <ChevronsUpDown className="h-3.5 w-3.5 text-n-500" />
+          <ChevronsUpDown className="h-3.5 w-3.5 shrink-0 text-n-500" />
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{currentKBName}</span>
+          <span className="truncate text-[11px] text-n-600">{vaultFolderName(currentKBRecord?.vault_path)}</span>
         </button>
 
         {wsOpen && (
-          <div className="popover absolute left-3 right-3 top-[58px] z-40">
+          <div className="popover absolute bottom-full left-0 z-40 mb-1.5 w-[280px]">
             <div className="kicker px-2.5 pb-1 pt-2">Workspaces</div>
             {kbs.map((kb, i) => {
               const slug = kbSlug(kb);
@@ -126,9 +198,7 @@ export function Sidebar() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[13px]">{kb.name}</span>
-                    <span className="block truncate font-mono text-[11px] text-n-500">
-                      {kb.vault_path || "—"}
-                    </span>
+                    <span className="block truncate font-mono text-[11px] text-n-500">{kb.vault_path || "—"}</span>
                   </span>
                   {active && <Check className="h-3.5 w-3.5 text-accent" />}
                 </button>
@@ -158,59 +228,7 @@ export function Sidebar() {
           </div>
         )}
       </div>
-
-      {/* Search / jump */}
-      <button
-        type="button"
-        onClick={() => openCommandPalette()}
-        className="mx-3 mb-3.5 flex items-center gap-2 rounded-md border border-n-900 bg-surface px-2.5 py-[7px] text-left text-[12px] text-n-500 hover:border-n-700"
-      >
-        <Search className="h-3.5 w-3.5" />
-        <span className="flex-1">Search or jump to…</span>
-        <kbd className="rounded border border-n-800 px-1.5 py-px font-mono text-[10px] text-n-600">
-          ⌘K
-        </kbd>
-      </button>
-
-      {/* Navigation */}
-      <nav className="flex flex-col gap-0.5 px-3">
-        {nav.map((item) => {
-          const Icon = item.icon;
-          const active = item.match.some((m) => pathname.startsWith(m));
-          return (
-            <Link
-              key={item.href}
-              to={item.href}
-              className={cn(
-                "relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] font-medium hover:bg-n-900",
-                active ? "bg-n-900 text-text" : "text-n-400",
-              )}
-            >
-              <Icon className={cn("h-[17px] w-[17px]", active ? "text-accent" : "text-n-500")} />
-              <span className="flex-1">{item.label}</span>
-              {active && (
-                <span className="absolute -left-3 bottom-[9px] top-[9px] w-0.5 rounded-r-sm bg-accent" />
-              )}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* Activity + settings */}
-      <div className="mt-auto flex flex-col gap-2 p-3">
-        <div className="hr-fade" />
-        <ActivityStatus />
-        <Link
-          to="/kb"
-          className={cn(
-            "flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] hover:bg-n-900",
-            settingsActive ? "bg-n-900 text-text" : "text-n-400",
-          )}
-        >
-          <Settings className={cn("h-[17px] w-[17px]", settingsActive && "text-accent")} />
-          Settings
-        </Link>
-      </div>
-    </aside>
+      <SettingsButton />
+    </div>
   );
 }

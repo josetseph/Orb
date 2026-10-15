@@ -264,6 +264,14 @@ a:hover {
   .screen {
     @apply flex h-screen min-w-0 flex-1 overflow-hidden;
   }
+  /* Hover label for icon-only controls (the ribbon): data-tip="Name". */
+  [data-tip] {
+    position: relative;
+  }
+  [data-tip]:hover::after {
+    content: attr(data-tip);
+    @apply pointer-events-none absolute left-[calc(100%+10px)] top-1/2 z-50 -translate-y-1/2 whitespace-nowrap rounded-md bg-surface px-2 py-1 text-[12px] font-normal text-text shadow-md;
+  }
   .pane-header {
     @apply flex items-center gap-2 px-3 pb-2 pt-3.5;
   }

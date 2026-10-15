@@ -42,15 +42,16 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ## B. Models and inference
 
-### B1. Every local model runs in-process in the API
-- Rejected: Ollama, LM Studio, `llama-server`, a "local-models" HTTP service, a separate Marlin service (`LOCAL_MODELS_SERVICE_URL`, `MARLIN_SERVICE_URL`, `POST …/image/describe|/audio/transcribe|/caption|/rerank`).
+### B1. Every local model runs in-process in the API — except local ingestion on Orb's own `llama-server`
+- Rejected: Ollama, LM Studio, a user-run `llama-server`, a "local-models" HTTP service, a separate Marlin service (`LOCAL_MODELS_SERVICE_URL`, `MARLIN_SERVICE_URL`, `POST …/image/describe|/audio/transcribe|/caption|/rerank`).
 - Rationale: one process to supervise, no port juggling, no network hop for embeddings, easier packaging (`fbcafe7`, rules file).
 - Enforced: `services/local_models.py`, `multimodal_runtime.py`; `EmbeddingService` maps `ollama`/`lm_studio` to `local` with a warning; the runtime has no model sidecar ports.
+- Exception (working tree, 2026-10): `services/extraction_server.py` runs every local *ingestion* call (extraction, titles, image descriptions) on a pinned llama.cpp `llama-server` (build `b11617`, downloaded into `DATA_DIR/bin/` on first use) that the API starts on demand on a random loopback port and stops after 300 s idle. Rationale: in-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `llama-server` with parallel slots it cost nothing measurable — on the maintainer's 24 GB Mac Gemma 4 12B ran at ~10 tok/s with and without the grammar, and two parallel requests finished in the wall time of one. Chat, embeddings, reranking and media models stay in-process.
 
 ### B2. Exclusive residency: one heavy model at a time
 - Rejected: keeping chat + embed + rerank resident; separate processes per model.
 - Rationale: consumer machines (24 GB Metal was the reference) cannot hold Gemma 4 E4B (with its vision projector), Qwen3 embed/rerank and Phonon-2/Marlin simultaneously.
-- Enforced: residency manager in `local_models.py` (`_unload_peers_for_gguf`, `ensure_chat_loaded`, `ensure_embed_loaded`), `_unload_multimodal_families`, `multimodal_runtime` single-family policy; `ModelLoadClock` reports load time separately so swaps are visible in stage timings.
+- Enforced: residency manager in `local_models.py` (`_unload_peers_for_gguf`, `ensure_chat_loaded`, `ensure_embed_loaded`), `_unload_multimodal_families`, `multimodal_runtime` single-family policy; `ModelLoadClock` reports load time separately so swaps are visible in stage timings. The extraction `llama-server` (B1) sits outside this manager: its model's memory is held alongside the in-process one while ingesting and returned by its 300 s idle stop.
 
 ### B3. Chat GGUF defaults: `n_ctx=16384`, `swa_full=true`, `repeat_penalty=1.12`, flash-attention opt-in, no fixed output cap
 - Rejected: 32k context (OOMs with full SWA on ~24 GB Metal); compact SWA (causes Gemma 4 "ordinal loops" / "or the" repetition cascades); a fixed `LLAMA_MAX_TOKENS=10240` (silently truncated long extractions — removed as a default in the current working tree, the runtime now sizes `max_tokens` from the context left after the prompt).
@@ -64,9 +65,9 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: rerank quality drove the "Final Implementation" results; a cross-encoder can be swapped independently of the vector space.
 - Enforced: `services/reranker.py`, `LocalGgufReranker`.
 
-### B6. Chat and ingestion share one provider and model; embeddings are separate; plus per-KB chat+ingestion override
-- Rationale: one selection on the Models page drives both, so a single GGUF is resident (the removed global `INGESTION_*` settings let chat use `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded a second GGUF); a workspace that wants a cheaper or faster extraction model opts in per KB; embeddings must stay system-wide because Qdrant dims are shared across KBs.
-- Enforced: `Settings.LLM_PROVIDER/CHAT_MODEL`, `LLMService.get_ingestion_model()` (= per-KB override or `get_chat_model()`), `EMBEDDING_*`; per-KB columns `llm_provider/llm_model/llm_ingestion_model` (working tree) with validation in `api/kb.py::update_kb_llm` (local ids must be downloaded; cloud needs a key). Embed/rerank/multimodal are **not** per-KB by design.
+### B6. Chat and ingestion share one provider; embeddings are separate; plus per-KB chat+ingestion override; a separate local extraction model
+- Rationale: one provider selection on the Models page drives both; for cloud providers the chat model also ingests. On this device ingestion runs a separate extraction model (`EXTRACTION_MODEL`; automatic = Gemma 4 12B when it fits and is downloaded — nothing smaller extracted as well in the retrieval study, rounds 1–6) on the extraction server, which holds it only while ingesting. Originally one model drove both so a single GGUF was resident (the removed global `INGESTION_*` settings let chat use `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded a second GGUF); a workspace that wants a cheaper or faster extraction model opts in per KB; embeddings must stay system-wide because Qdrant dims are shared across KBs.
+- Enforced: `Settings.LLM_PROVIDER/CHAT_MODEL/EXTRACTION_MODEL`, `LLMService.get_ingestion_model()` (= per-KB override, else (local) the extraction model, else `get_chat_model()`), `EMBEDDING_*`; per-KB columns `llm_provider/llm_model/llm_ingestion_model` (working tree) with validation in `api/kb.py::update_kb_llm` (local ids must be downloaded; cloud needs a key). Embed/rerank/multimodal are **not** per-KB by design.
 
 ### B7. Cloud providers remain available but are opt-in
 - Rationale: privacy-first default; some users want frontier quality.
@@ -151,9 +152,10 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: `da75dfc` (2026-05-28) removed the evolution logic as complexity without measured benefit and added period-keyed temporal digests (`TEMPORAL_DIGEST_PERIOD`; the enable flag has since been removed) stored as summary nodes/vectors instead.
 - Enforced: `SEMANTIC_REL.ingested_at/last_updated/mention_count` are live; `created_at` and `is_similarity` are never-set leftovers (`tests/unit/test_relationships.py`, which still imported the deleted module, was removed on 2026-09-19). Do not rebuild bi-temporal edges on top of these columns without a new decision.
 
-### D4. Ingestion is FIFO by default; heavy media jobs serialised
-- Rationale: local GPUs thrash when two notes contend for the same model; exclusive residency makes true parallelism counter-productive.
-- Enforced: `INGESTION_PIPELINE_CONCURRENCY=1`, `MULTIMEDIA_CONCURRENCY=1`, semaphores in `IngestionWorkflow`.
+### D4. Notes extract in parallel but write the graph in submission order; heavy media jobs serialised
+- Rejected (superseded): FIFO ingestion (`INGESTION_PIPELINE_CONCURRENCY=1`, removed) — with in-process extraction, two notes contending for the same model thrashed the GPU.
+- Rationale: the extraction `llama-server` serves parallel slots in one model load, so per KB as many notes extract at once as it has slots (`slots_for_ram`: < 20 GB RAM 1, < 40 GB 2, < 80 GB 4, else 6 — RAM tiers, not a measured KV budget). Graph writes still go in submission order so the graph never depends on which extraction finished first (entity merges read what earlier notes wrote).
+- Enforced: `IngestionWorkflow._process_semaphore(extraction_server.slots)`, tickets + `_pipeline_slot` + `write_turn` (awaited before `storage_node`), `MULTIMEDIA_CONCURRENCY=1`; test `test_extraction_server.py`.
 
 ### D5. Long notes are chunked for extraction rather than truncated
 - Rationale: extraction JSON is ~2–3× the input; a single call overflows the context and truncates mid-JSON (working tree module `extraction_chunking.py`, tests `test_extraction_chunking.py`).
@@ -171,11 +173,12 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### D8. Retrieval is a bounded multi-hop loop, `MAX_LOOP_ITERATIONS=3`
 - Rejected: unbounded loops; single-shot vector RAG; the removed "refiner" and "benchmark mode" (`8eba91d`).
 - Rationale: HotPotQA-style questions rarely improve past three iterations before KB-miss exhaustion (`core/config.py` comment; `Results/`).
-- Enforced: `Settings.MAX_LOOP_ITERATIONS`, `retrieve_with_iterative_loop`.
+- Enforced: `Settings.MAX_LOOP_ITERATIONS`, `retrieve_with_iterative_loop`. The first iteration searches the question itself (it used to only plan a query); a loop that runs out returns `answered=False` and chat labels the finding "No definitive answer in your notes. Closest finding: …" rather than presenting it as an answer.
 
 ### D9. Hybrid retrieval with cross-encoder rerank
 - Rationale: graph-first hybrid retrieval (`6852528`) plus reranking (`097c822`) produced the best final-implementation numbers.
 - Enforced: `hybrid_search` channels, `RERANKER_*` settings.
+- Working tree (2026-10): the notes' own text (title-prefixed passages of ~1500 characters, stored before extraction) is searched beside the graph, by vector and keyword, and reranked together with the graph candidates — the reranker scores the union, so there are no fusion weights to tune, and a note whose extraction failed or missed a fact is still findable. No settings or switches. Reranker scores come from the last position's yes/no logits (`logits_all=False`, shared KV prefix) instead of top-5 logprobs, which had made reranking long passages CPU-bound.
 
 ### D10. Async chat with polling and a single in-flight job
 - Rejected: server-sent streaming; unlimited concurrent chats.
@@ -186,10 +189,11 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rationale: cloud-sync bursts (hundreds of events) would otherwise trigger runaway LLM work.
 - Enforced: `vault_watcher.py`, self-write suppression TTL (12 s), shared sync engine.
 
-### D12. Structured JSON output over prompt-and-repair
-- Rejected: labelled-prose protocols (`REASONING:`/`ANSWER:`/`NEXT_QUERY:`, `NAME:`/`SUMMARY:`) with regex parsers and per-model rescues; grammar-constrained sampling against a full schema (empties nested arrays on small GGUFs).
-- Rationale: every structured call asks the provider for a JSON object structurally where it can (`json_mode` → OpenAI `response_format`, Gemini `response_mime_type`, llama.cpp's generic JSON grammar; Anthropic stays prompt-driven) and validates with a pydantic model after `json_repair`. A probe on Gemma-4 E4B Q4 returned 23 nodes/22 rels in JSON mode vs 25/24 in prose, with `finish=stop` instead of `length`.
-- Enforced: `LLMService._chat(json_mode=)`, `_ResearchStep`, `_CommunityName`, `Extraction`; `_clean_json` is fence-unwrap + curly quotes + `repair_json` only.
+### D12. Structured JSON output, never repaired
+- Decision: model output is never repaired. A reply is validated exactly as written; a fenced, curly-quoted or otherwise malformed reply is a counted failure, handled by the caller's existing failure path (extraction retries, then the note fails; a research step is a no-op; query analysis falls back to safe defaults).
+- Rejected: labelled-prose protocols (`REASONING:`/`ANSWER:`/`NEXT_QUERY:`, `NAME:`/`SUMMARY:`) with regex parsers and per-model rescues; grammar-constrained sampling against a full schema (empties nested arrays on small GGUFs); repairing replies before parsing (`_clean_json`: fence unwrap, curly-quote normalisation, `json_repair`) — it hid model failures and made benchmark numbers measure the repair, not the model.
+- Rationale: every structured call asks the provider for a JSON object structurally where it can (`json_mode` → OpenAI `response_format`, Gemini `response_mime_type`, llama.cpp's generic JSON grammar; Anthropic stays prompt-driven) and validates the reply with a pydantic model as written. Local ingestion gets the same generic JSON grammar through the extraction `llama-server` (`ServerChatClient` sends `JSON_GBNF` as `grammar`). A probe on Gemma-4 E4B Q4 returned 23 nodes/22 rels in JSON mode vs 25/24 in prose, with `finish=stop` instead of `length`.
+- Enforced: `LLMService._chat(json_mode=)`; every caller does `<Schema>.model_validate_json(raw or "")` (`QueryAnalysis`, `_ResearchStep`, `Extraction` and the task-split `model_cls`, `_CommunityName`); `llm.py` has no `_clean_json` and no `json_repair` import; `test_model_replies_as_written.py` and `test_chat_context.py::test_a_fenced_reply_is_a_failed_step_not_unwrapped` pin it.
 
 ### D13. Closed relationship vocabulary
 - Rejected: free-text predicates cleaned per edge (`clean_rel_type` stripping entity tokens, `_` → space rewrites) — one edge label per note.

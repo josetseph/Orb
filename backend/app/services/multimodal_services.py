@@ -106,6 +106,8 @@ def ensure_multimodal_python_deps(*, install: bool = False) -> dict:
         "Installing multimodal deps %s …",
         f"into {os.environ['PYTHONUSERBASE']}" if user_site else f"with {sys.executable}",
     )
+    target = site.getusersitepackages() if user_site else site.getsitepackages()[0]
+    loaded = _modules_under(target)
     try:
         subprocess.check_call(
             [sys.executable, "-m", "pip", "install", "--upgrade", *(["--user"] if user_site else []), *_MULTIMODAL_PIP],
@@ -116,8 +118,33 @@ def ensure_multimodal_python_deps(*, install: bool = False) -> dict:
         # This process started before the directory had anything in it.
         site.addsitedir(site.getusersitepackages())
         importlib.invalidate_caches()
+    # pip may have replaced modules this process already imported (the
+    # diarizer pulls in transformers); mixing the two versions fails on import.
+    global _restart_needed  # pylint: disable=global-statement
+    _restart_needed = _restart_needed or bool(loaded)
+    if _restart_needed:
+        logger.warning("Media packages updated under loaded modules (%s); restart needed", ", ".join(sorted(loaded)[:5]))
+        return {"ok": True, "installed": True, "restart_required": True}
     ok, err = _deps_importable()
     return {"ok": ok, "installed": True, "error": None if ok else err}
+
+
+_restart_needed = False
+
+
+def restart_needed() -> bool:
+    """True once an install replaced packages this process had already imported."""
+    return _restart_needed
+
+
+def _modules_under(directory: str) -> set[str]:
+    """Top-level modules this process imported from ``directory``."""
+    root = os.path.realpath(directory) + os.sep
+    return {
+        name
+        for name, mod in list(sys.modules.items())
+        if "." not in name and os.path.realpath(getattr(mod, "__file__", None) or "").startswith(root)
+    }
 
 
 def services_ready() -> dict:

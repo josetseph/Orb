@@ -132,6 +132,42 @@ def _background_startup() -> None:
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning(f"Vault watcher not started: {exc}")
     _migrate_stores()
+    _backfill_passages()
+
+
+def _backfill_passages() -> None:
+    """Notes ingested before passages existed get them once per KB (embedding and keyword
+    index only; the graph is untouched). A marker per KB, written only when every note's
+    passages were stored, stops it running again."""
+    import sqlite3
+
+    from app.core.paths import resolve_data_dir
+    from app.services.kb_registry import kb_registry
+    from app.services.vault import read_note_file
+
+    data = resolve_data_dir()
+    for meta in kb_registry.list_kbs():
+        kb_id = meta["id"]
+        marker = data / f".passages-v1-{kb_id}"
+        if marker.exists():
+            continue
+        try:
+            kb = kb_registry.get_kb(kb_id)
+            conn = sqlite3.connect(data / "orb.db")
+            rows = conn.execute(
+                "SELECT id, title, rel_path FROM notes WHERE kb_id = ? AND rel_path IS NOT NULL", (kb_id,)
+            ).fetchall()
+            conn.close()
+            notes = []
+            for note_id, title, rel in rows:
+                content = read_note_file(Path(kb.vault_path), rel) if kb.vault_path else ""
+                if content.strip():
+                    notes.append((note_id, title, content))
+            logger.info("Passage backfill for KB '%s': %d notes", meta.get("name"), len(notes))
+            if kb.get_ingestion_workflow().backfill_passages(notes):
+                marker.touch()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Passage backfill for KB '%s' deferred to next start: %s", meta.get("name"), exc)
 
 
 def _migrate_stores() -> None:

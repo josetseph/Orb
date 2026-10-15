@@ -21,7 +21,9 @@ engine = create_async_engine(
     echo=False,
     future=True,
     poolclass=NullPool,
-    connect_args={"check_same_thread": False},
+    # sqlite3 waits 5 s for a write lock by default; with many notes ingesting at once (benchmark: 24 in flight)
+    # a status write timed out, and that note was left "processing" forever. Wait longer instead of failing.
+    connect_args={"check_same_thread": False, "timeout": 30},
 )
 
 

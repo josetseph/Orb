@@ -47,6 +47,8 @@ class QdrantService:
         self._col_contexts = (
             col_contexts or settings.QDRANT_COLLECTION_NODE_ISOLATED_CONTEXTS
         )
+        # Each note's own text, searched beside the graph (written before extraction).
+        self._col_passages = f"{self._col_contexts}_passages"
         self._client: QdrantClient | None = None
         self._retry_at = 0.0
         self._connect()
@@ -106,7 +108,7 @@ class QdrantService:
         try:
             existing = {c.name for c in self.client.get_collections().collections}
             want_size = int(settings.EMBEDDING_DIMENSIONS) or 1024
-            names = (self._col_cores, self._col_rels, self._col_contexts)
+            names = (self._col_cores, self._col_rels, self._col_contexts, self._col_passages)
 
             nonempty_mismatch: list[tuple[str, int, int]] = []
             empty_mismatch: list[str] = []
@@ -260,7 +262,7 @@ class QdrantService:
         """Delete and recreate all Qdrant collections for this KB, wiping all vectors."""
         if not self.client:
             return
-        for name in (self._col_cores, self._col_rels, self._col_contexts):
+        for name in (self._col_cores, self._col_rels, self._col_contexts, self._col_passages):
             try:
                 self.client.delete_collection(name)
                 logger.info(f"[Qdrant] Deleted collection '{name}'")
@@ -1125,6 +1127,58 @@ class QdrantService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"[Qdrant] node_ids_for_note failed: {exc}")
         return out
+
+    def replace_note_passages(self, note_id: str, title: str, texts: list[str], vectors: list[list[float]]) -> None:
+        """Store a note's own text as passages, replacing what an earlier ingest stored. Raises on failure."""
+        client = self.client
+        if client is None:
+            raise RuntimeError("Qdrant unavailable: note passages not stored")
+        client.delete(
+            collection_name=self._col_passages,
+            points_selector=FilterSelector(
+                filter=Filter(must=[FieldCondition(key="note_id", match=MatchValue(value=note_id))])
+            ),
+        )
+        if not texts:
+            return
+        self._upsert_batched(
+            self._col_passages,
+            [
+                PointStruct(
+                    id=str(uuid.uuid4()),
+                    vector=self._prepare_vector(vec),
+                    payload={"note_id": note_id, "title": title, "index": i, "content": text},
+                )
+                for i, (text, vec) in enumerate(zip(texts, vectors))
+            ],
+        )
+
+    def search_passages(self, query_vector: list[float], limit: int, min_score: float) -> list[dict[str, Any]]:
+        """Passage payloads above ``min_score``, best first; [] before any passage was stored."""
+        client = self.client
+        try:
+            if client is None or not client.collection_exists(self._col_passages):
+                return []
+            result = client.query_points(
+                collection_name=self._col_passages,
+                query=query_vector,
+                limit=limit,
+                score_threshold=min_score,
+                with_payload=True,
+            )
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"[Qdrant] passage search failed: {exc}")
+            return []
+        return [{**(p.payload or {}), "score": p.score} for p in result.points]
+
+    def delete_note_passages(self, note_id: str) -> None:
+        """Drop a deleted note's passages."""
+        if not self.is_available() or not self.client or not note_id:
+            return
+        try:
+            self.replace_note_passages(note_id, "", [], [])
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning(f"Qdrant delete_note_passages failed for {note_id}: {exc}")
 
     def delete_note_contexts(self, note_id: str) -> None:
         """Drop every context this note contributed, on every node."""

@@ -249,7 +249,13 @@ def dist(extra: list[str]) -> None:
     # which mangles quoted arguments.
     config = HERE / "src-tauri" / "target" / "dist-bundle.json"
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(json.dumps({"bundle": {"resources": resources}}))
+    bundle_config = {"resources": resources}
+    # In-app updates: a signed archive per platform. Releases sign with the
+    # TAURI_SIGNING_PRIVATE_KEY secret; a local build without the key skips them.
+    signing = bool(os.environ.get("TAURI_SIGNING_PRIVATE_KEY"))
+    if signing:
+        bundle_config["createUpdaterArtifacts"] = True
+    config.write_text(json.dumps({"bundle": bundle_config}))
     if sys.platform != "darwin":
         bundles = BUNDLES[sys.platform]
         run([*TAURI, "build", "--bundles", bundles, "--config", config, *extra], cwd=HERE / "src-tauri")
@@ -275,6 +281,10 @@ def dist(extra: list[str]) -> None:
          "-format", "UDZO", "-imagekey", "zlib-level=9", str(out)])
     shutil.rmtree(staging, ignore_errors=True)
     print(f"DMG: {out}")
+    if signing:
+        # Both Macs build Orb.app.tar.gz; name them apart for the one release.
+        for suffix in (".tar.gz", ".tar.gz.sig"):
+            (bundle / "macos" / f"Orb.app{suffix}").rename(bundle / "macos" / f"Orb_{version}_{arch}.app{suffix}")
 
 
 STAGES = {"python": bundle_python, "frontend": build_frontend, "firefly": prefetch_firefly, "check": check}

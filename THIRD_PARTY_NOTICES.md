@@ -71,3 +71,11 @@ REFERENCE RUNTIME (optional)
 PyTorch ..................... BSD-3-Clause ........ https://pytorch.org
 transformers ................ Apache-2.0 .......... https://github.com/huggingface/transformers
 ```
+
+## llama.cpp (llama-server)
+
+Ingestion runs the extraction model in `llama-server`, which Orb downloads on
+first use from the llama.cpp releases (https://github.com/ggml-org/llama.cpp,
+build `b11617`) into its data folder. llama.cpp is under the MIT License,
+Copyright (c) 2023-2026 The ggml authors; the release's `LICENSE` file is kept
+beside the binary.

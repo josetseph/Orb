@@ -425,20 +425,13 @@ export function useNoteRestoreEffects({
   searchQuery: string;
   processedFilter: ProcessedFilter;
   selectedNoteRef: MutableRefObject<Note | null>;
-  openNoteById: (noteId: string) => Promise<void>;
+  openNoteById: (noteId: string) => Promise<unknown>;
   refreshSelectedNote: (noteId: string) => Promise<void>;
   fetchNotes: (search?: string, filter?: ProcessedFilter) => Promise<void>;
 }) {
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const noteParam = params.get("note");
-    if (noteParam) {
-      sessionStorage.setItem(lastNoteStorageKey(currentKB), noteParam);
-      void openNoteById(noteParam);
-      // Drop the query so refresh doesn't fight with in-page selection changes
-      window.history.replaceState({}, "", "/notes");
-      return;
-    }
+    // /notes?note= is handled by NotesProvider, which sees every navigation.
+    if (new URLSearchParams(window.location.search).has("note")) return;
 
     // Only cold-restore when nothing is selected yet. Visibility / bfcache
     // handlers below refresh an already-open note; calling refresh on every

@@ -73,6 +73,13 @@ async def generate_with_meta(
     return raw, meta
 
 
+def forget(llm, prompt: str, temperature: float = 0.1) -> None:
+    """Drop a saved reply that turned out unusable, so a retry asks the model again."""
+    slot = _slot(llm, prompt, temperature)
+    if slot is not None:
+        slot.unlink(missing_ok=True)
+
+
 async def generate(llm, prompt: str, temperature: float = 0.1, json_mode: bool = False) -> str:
     raw, _ = await generate_with_meta(llm, prompt, temperature=temperature, json_mode=json_mode)
     return raw

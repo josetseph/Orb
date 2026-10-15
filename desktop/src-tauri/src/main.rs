@@ -14,12 +14,15 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(runtime::Runtime::default())
         .invoke_handler(tauri::generate_handler![
             commands::app_state,
             commands::save_setup,
             commands::print_page,
-            commands::restart_backend
+            commands::restart_backend,
+            commands::check_update,
+            commands::install_update
         ])
         .setup(|app| {
             // Before any webview exists: WebKit reads these when it starts.

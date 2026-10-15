@@ -305,6 +305,13 @@ def _signal_group(proc: subprocess.Popen, sig: int) -> None:
 
 
 def stop_sidecars(grace: float = 1.5) -> None:
+    try:
+        # Started by the API (same process) while ingesting; it holds the extraction model's memory.
+        from app.services.extraction_server import extraction_server
+
+        extraction_server.stop()
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
     for label, proc in reversed(_children):
         if proc.poll() is not None:
             continue

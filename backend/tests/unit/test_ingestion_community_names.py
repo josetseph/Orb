@@ -24,9 +24,6 @@ def test_name_and_summary_parse_json():
             self.prompts.append((prompt, kw))
             return json.dumps({"name": "Adwa", "summary": "The battle."})
 
-        def _clean_json(self, raw):
-            return raw
-
     wf = IngestionWorkflow.__new__(IngestionWorkflow)
     wf._llm = LLM()
     assert wf._build_community_summary(MEMBERS, 2) == ("Adwa", "The battle.")

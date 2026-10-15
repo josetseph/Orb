@@ -15,6 +15,7 @@ tauri-plugin-opener = "2"
 tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tauri-plugin-updater = "2"
 
 # Already in the tree through the webview; used to switch on WebKit's grammar checking.
 [target.'cfg(target_os = "macos")'.dependencies]

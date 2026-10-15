@@ -205,7 +205,17 @@ def _global_state() -> dict:
         "ingestion_model": llm_service.get_ingestion_model(),
         "base_url": settings.LLM_BASE_URL,
         "configured": ai_is_configured(),
+        # On this device: "" automatic, "chat" the chat model, else a model ref.
+        "extraction_model": settings.EXTRACTION_MODEL,
+        "extraction_auto": _auto_extraction_label(),
     }
+
+
+def _auto_extraction_label() -> str | None:
+    from app.services.model_catalog import auto_extraction_model, get_option
+
+    picked = auto_extraction_model()
+    return get_option(picked).label if picked else None
 
 
 def _kb_state(kb_name: str | None) -> dict | None:

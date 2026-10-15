@@ -1,6 +1,6 @@
 # 18 — Frontend architecture (Vite + React app)
 
-**What this covers.** The structure of the `frontend/` Vite + React application that renders Orb's UI: the toolchain and build modes (Vite dev server on 3700 vs. the static `dist/` build served by the API on 17401), the dev-only Vite proxy for `/api/v1`, `/vault-files` and `/health`, the `src/lib` layer (`api.ts` method catalogue, `types.ts`, `utils.ts`, the Tauri `desktop.ts` bridge, the `KBProvider` and `ChatProvider` React contexts, and the `markdown-entities` pipeline), the root layout and provider tree, the sidebar navigation map, the shared component catalogue (`src/components/*.tsx` and `src/components/graph3d/**`), styling/theme conventions, lint/TypeScript configuration, performance patterns, and step-by-step recipes for adding a page or an API call. Page-level behaviour is documented separately: the notes editor in [19](19-frontend-notes-editor.md) and every other page (home, chat, graphs, KB, settings, setup) in [20](20-frontend-chat-graph-and-pages.md). Finance UI components under `src/components/finance/**` are only referenced here; their behaviour is covered with the finance backend in [17](17-finance-firefly.md).
+**What this covers.** The structure of the `frontend/` Vite + React application that renders Orb's UI: the toolchain and build modes (Vite dev server on 3700 vs. the static `dist/` build served by the API on 17401), the dev-only Vite proxy for `/api/v1`, `/vault-files` and `/health`, the `src/lib` layer (`api.ts` method catalogue, `types.ts`, `utils.ts`, the Tauri `desktop.ts` bridge, the `KBProvider`, `ChatProvider` and `NotesProvider` React contexts, and the `markdown-entities` pipeline), the root layout and provider tree, the ribbon and file-explorer shell, the shared component catalogue (`src/components/*.tsx` and `src/components/graph3d/**`), styling/theme conventions, lint/TypeScript configuration, performance patterns, and step-by-step recipes for adding a page or an API call. Page-level behaviour is documented separately: the notes editor in [19](19-frontend-notes-editor.md) and every other page (home, chat, graphs, KB, settings, setup) in [20](20-frontend-chat-graph-and-pages.md). Finance UI components under `src/components/finance/**` are only referenced here; their behaviour is covered with the finance backend in [17](17-finance-firefly.md).
 
 **Related docs:** [Overview](01-overview.md) · [System architecture](02-system-architecture.md) · [Repository layout](03-repository-layout.md) · [Desktop shell](04-desktop-shell.md) · [Packaging, build & release](05-packaging-build-and-release.md) · [API reference](07-api-reference.md) (section 8 cross-checks `api.ts` against backend routes) · [Knowledge bases & vaults](08-knowledge-bases-and-vaults.md) · [Retrieval & chat](16-retrieval-and-chat.md) · [Finance](17-finance-firefly.md) · [Notes editor](19-frontend-notes-editor.md) · [Chat, graph & pages](20-frontend-chat-graph-and-pages.md) · [Configuration reference](21-configuration-reference.md) · [Development guide](27-development-guide.md) · [Glossary](28-glossary.md)
 
@@ -35,9 +35,9 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `tsconfig.json` | Strict TS, `@/*` → `./src/*`, bundler resolution, `vite/client` types | — |
 | `eslint.config.mjs` | `@eslint/js` + `typescript-eslint` + `eslint-plugin-react-hooks` flat config, `_`-prefixed unused vars allowed | — |
 | `postcss.config.mjs` | Only `@tailwindcss/postcss` | — |
-| `public/favicon.ico`, `public/logo.png`, `public/logo-icon.png` | Brand assets referenced from sidebar/chat | — |
+| `public/favicon.ico`, `public/logo.png`, `public/logo-icon.png` | Brand assets referenced from chat | — |
 | `src/main.tsx` | React root: Inter font import, `globals.css`, `StrictMode`, `BrowserRouter` | — |
-| `src/App.tsx` | Providers, sidebar, `CommandPalette`, `AiLimitedBanner`, lazy `<Routes>` (`/` → `/notes`, `/graph` → `/graph-3d`) | `App` |
+| `src/App.tsx` | Providers, `Shell` (ribbon, resizable file explorer, `main`), `NotesOverlays`, `CommandPalette`, `AiLimitedBanner`, lazy `<Routes>` (`/` → `/notes`, `/graph` → `/graph-3d`) | `App` |
 | `src/app/globals.css` | Tailwind v4 import, typography plugin, black/white tokens, `--font-sans` (Inter Variable), scrollbar CSS | — |
 | `src/app/chat/page.tsx` | Chat UI (`/chat`) — see [20](20-frontend-chat-graph-and-pages.md) | `ChatPage` |
 | `src/app/graph-3d/page.tsx` | 3D entity graph (`/graph-3d`) composed from `components/graph3d` | `Graph3DPage` |
@@ -57,12 +57,15 @@ All paths are relative to `frontend/`. Files owned by other docs are listed once
 | `src/lib/desktop.ts` | Tauri bridge typing + helpers | `getDesktopBridge`, `isDesktopApp`, `pickDesktopDirectory`, `pickDesktopFile`, `notifyIfUnfocused`, `revealInFolder` (API call), `revealInFolderLabel` |
 | `src/lib/kb-context.tsx` | Active-KB context, `localStorage` persistence | `KBProvider`, `useKB`, `kbSlug` |
 | `src/lib/chat-context.tsx` | Chat session state machine + async polling | `ChatProvider`, `useChat`, `Message` |
+| `src/lib/notes-context.tsx` | Notes controller hoisted above the routes, plus tabs, back/forward history, sort, `?note=`/`?new=1` links, ⌘N/⌘T/⌘⌥←→, context-menu state — [19](19-frontend-notes-editor.md) | `NotesProvider`, `useNotes`, `NotesWorkspace`, `CtxMenu` |
 | `src/lib/markdown-entities.tsx` | Entity-link injection, URL sanitiser, scan cache hook, anchor renderer | `urlTransform`, `injectEntityLinks`, `useScannedEntities`, `flattenLinkText`, `isAttachmentHref`, `MarkdownAnchor` |
-| `src/components/sidebar.tsx` | 232 px left rail: workspace switcher, ⌘K search button, nav, `ActivityStatus`, Settings link | `Sidebar` |
+| `src/components/sidebar.tsx` | 44 px icon ribbon (explorer toggle, ⌘K search, nav, compact `ActivityStatus`, Settings while the explorer is hidden) and the explorer's footer (workspace switcher + Settings) | `Ribbon`, `WorkspaceFooter` |
+| `src/components/file-explorer.tsx` | App-wide vault file explorer (toolbar, batch bar, `VaultFolderTree`, `WorkspaceFooter`) and the note/folder menus + dialogs it opens | `FileExplorer`, `NotesOverlays` |
+| `src/components/resize-handle.tsx` | Drag strip on a panel edge (double-click resets) and a `localStorage`-backed state hook | `ResizeHandle`, `useStored` |
 | `src/components/command-palette.tsx` | ⌘K palette (notes search, navigation, workspace switch); opened via a window event | `CommandPalette`, `openCommandPalette` |
 | `src/components/settings-shell.tsx` | Settings sheet with a left tab rail (Workspace `/kb`, Models `/models`, Storage `/setup`, About `/settings`) | `SettingsShell`, `SettingRow`, `Toggle` |
 | `src/components/ai-limited-banner.tsx` | Bottom banner when `ai_configured` is false | `AiLimitedBanner` |
-| `src/components/system-status-indicator.tsx` | Polls `/admin/maintenance-status`; activity row + popover in the sidebar | `ActivityStatus` |
+| `src/components/system-status-indicator.tsx` | Polls `/admin/maintenance-status`; activity dot + popover in the ribbon (`compact`) | `ActivityStatus` |
 | `src/components/blob-media-player.tsx` | `<video>`/`<audio>`/YouTube/Vimeo player with blob fallback | `BlobMediaPlayer` |
 | `src/components/segmented-note-content.tsx` | Renders note markdown split at multimedia markers, with entity + attachment links | `SegmentedNoteContent` |
 | `src/components/connected-notes-panel.tsx` | 340 px side panel: mini force-graph of wikilink neighbours or entity subgraph | `ConnectedNotesPanel` |
@@ -271,7 +274,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 
 | Method | Call | Notes |
 |---|---|---|
-| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running}, temporal_digests:{running}, ingestion?:{active}, boot?:{status,ts?}, healthy?}` |
+| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running}, temporal_digests:{running}, passages?:{running, done?, total?}, ingestion?:{active}, boot?:{status,ts?}, healthy?}` |
 | `rebuildCommunities(kb)` | `POST /admin/rebuild-communities?kb=` `{}` | |
 | `buildTemporalDigests(period?, kb)` | `POST /admin/build-temporal-digests?kb=` `{period: period ?? null}` | |
 | `resetIngestionData(kb)` | `POST /admin/reset-ingestion-data?kb=` `{}` | |
@@ -323,29 +326,40 @@ useEffect(() => {
 ```tsx
 <KBProvider>
   <ChatProvider>
-    <div className="flex h-screen w-full overflow-hidden">
-      <Sidebar />
-      <main className="relative flex min-w-0 flex-1">
-        <Routes>{/* lazy page chunks; / → /notes, /graph → /graph-3d */}</Routes>
-      </main>
-    </div>
-    <CommandPalette />
-    <AiLimitedBanner />
+    <NotesProvider>
+      <Shell>{/* flex h-screen row: */}
+        <Ribbon explorerOpen onToggleExplorer />
+        {explorerOpen && <aside style={{ width }}><FileExplorer /><ResizeHandle edge="right" /></aside>}
+        <main className="relative flex min-w-0 flex-1">
+          <Routes>{/* lazy page chunks; / → /notes, /graph → /graph-3d */}</Routes>
+        </main>
+      </Shell>
+      <NotesOverlays />
+      <CommandPalette />
+      <AiLimitedBanner />
+    </NotesProvider>
   </ChatProvider>
 </KBProvider>
 ```
 
-Title, description and icons live in `index.html` (`<html class="dark">`). Because both providers sit above `{children}`, their state persists across client-side navigations (chat messages survive leaving `/chat` and coming back; the KB survives everything until reload, and then is rehydrated from `localStorage`).
+Title, description and icons live in `index.html` (`<html class="dark">`). Because the providers sit above the routes, their state persists across client-side navigations (chat messages survive leaving `/chat` and coming back; the open note, tabs and history survive a trip to Ask or Graph; the KB survives everything until reload, and then is rehydrated from `localStorage`).
+
+`Shell` keeps the explorer's open flag in `localStorage` `orb:explorer-open` (`⌘\` or the ribbon's first button toggles it) and its width in `orb:explorer-width` (default 280, dragged between 200 and 520, double-click resets), both through `useStored`.
 
 ```mermaid
 flowchart TD
   L[App.tsx] --> KB[KBProvider<br/>currentKB<br/>localStorage orb_current_kb]
   KB --> CH[ChatProvider<br/>messages, conversations, polling]
-  CH --> S[Sidebar]
-  S --> SSI[ActivityStatus<br/>polls /admin/maintenance-status]
-  CH --> M[main flex-1]
+  CH --> NP[NotesProvider<br/>notes controller, tabs, history]
+  NP --> R[Ribbon]
+  R --> SSI[ActivityStatus<br/>polls /admin/maintenance-status]
+  NP --> FE[FileExplorer<br/>+ WorkspaceFooter]
+  NP --> NO[NotesOverlays<br/>menus, dialogs, preview]
+  NP --> M[main flex-1]
   M --> P[page.tsx of the route]
-  CH --> B[AiLimitedBanner<br/>GET /setup/status once]
+  NP --> B[AiLimitedBanner<br/>GET /setup/status once]
+  FE -->|useNotes| NP
+  P -->|useNotes notes only| NP
   P -->|useKB| KB
   P -->|useChat chat only| CH
   P -->|api.*| API[(lib/api.ts → /api/v1 same origin → FastAPI 17401)]
@@ -364,8 +378,8 @@ Context value:
 | Field | Type | Meaning |
 |---|---|---|
 | `currentKB` | `string` | KB **slug** (`"default"` for the built-in KB). This is what goes into `?kb=`. |
-| `currentKBName` | `string` | Display name (sidebar label, chat badge, settings text). |
-| `kbs` | `KnowledgeBase[]` | Every workspace, from `GET /kb`; refreshed on mount and by `refreshKBs()` (the sidebar switcher calls it when opened). A failed list (backend not up yet) is swallowed. |
+| `currentKBName` | `string` | Display name (explorer-footer label, chat badge, settings text). |
+| `kbs` | `KnowledgeBase[]` | Every workspace, from `GET /kb`; refreshed on mount and by `refreshKBs()` (the explorer-footer switcher calls it when opened). A failed list (backend not up yet) is swallowed. |
 | `currentKBRecord` | `KnowledgeBase \| null` | The active workspace's row (matched by `kbSlug(k) === slug \|\| k.name === slug`); `currentKBName` prefers its `name` over the stored one. |
 | `refreshKBs()` | fn | Re-fetch `kbs`. |
 | `setCurrentKB(slug, displayName?)` | fn | Trims; empty → `"default"`; name defaults to slug; writes storage. |
@@ -380,7 +394,7 @@ Persistence: key **`orb_current_kb`**, value `JSON.stringify({slug, name})`, wri
 
 The provider initialises its state from storage in a lazy `useState` initialiser, so the first render already has the stored KB and pages fetch the right KB on their first effect. There is no hydration flag (a leftover from the Next.js era) and nothing to gate on.
 
-Who reads it: `sidebar`, `command-palette`, `system-status-indicator`, `chat`, `graph-3d`, `notes-graph`, `kb`, `models`, `setup`, `finance`, `notes/_hooks/useNotesPageController`. Who writes it: the sidebar workspace switcher, the command palette and `kb/page.tsx` (switch, delete, delete-all, rename).
+Who reads it: `sidebar` (`Ribbon`, `WorkspaceFooter`), `command-palette`, `system-status-indicator`, `chat`, `graph-3d`, `notes-graph`, `kb`, `models`, `setup`, `finance`, `notes/_hooks/useNotesPageController`. Who writes it: the explorer-footer workspace switcher, the command palette and `kb/page.tsx` (switch, delete, delete-all, rename).
 
 ### 8.2 `ChatProvider` / `useChat()` — `src/lib/chat-context.tsx`
 
@@ -460,22 +474,30 @@ The Tauri shell injects `window.orbDesktop` from `desktop/src-tauri/src/init.js`
 
 `revealInFolder(path)` is **not** a bridge member: it calls `POST /api/v1/desktop/reveal`, which validates that the path lies under `DATA_DIR`, `MODELS_DIR` or a KB vault and runs the platform's reveal command ([07 §3.9](07-api-reference.md)). `revealInFolderLabel()` picks "Reveal in Finder" / "Reveal in Explorer" / "Reveal in folder" from `navigator.userAgent`. The frontend first calls `api.resolveVaultLocalPath(url, kb)` to translate a `/vault-files/...` URL into an absolute path, then hands that to the API.
 
-## 10. Sidebar navigation map — `src/components/sidebar.tsx`
+## 10. Ribbon and file explorer — `src/components/sidebar.tsx`, `file-explorer.tsx`
 
-A 232 px `aside` (`border-r`, `bg-bg-deep/40`) inside the root flex row; `main` takes the rest. Top to bottom:
+The root flex row is `Ribbon` (44 px, `w-11`), the explorer `aside` (when open; `border-r`, `bg-bg-deep/40`, resizable — §7), then `main`.
 
-1. **Workspace switcher** — a button showing the logo, `currentKBName` and the vault folder's basename; click opens a popover listing `kbs` (letter swatch, name, vault path, a check on the active one), plus "New workspace" (`/kb?new=1`) and "Workspace settings" (`/kb`). Opening it calls `refreshKBs()`; a `useDismiss` hook closes it on outside click or Escape.
-2. **Search button** — "Search or jump to… ⌘K" → `openCommandPalette()` (`command-palette.tsx` listens for the `orb:palette` window event).
+**`Ribbon`** — an icon strip; every item's name shows on hover via `data-tip`. Top to bottom:
+
+1. **Explorer toggle** (`PanelLeft`) — shows/hides the explorer (same as `⌘\`).
+2. **Search** — `openCommandPalette()` (`command-palette.tsx` listens for the `orb:palette` window event); ⌘K does the same.
 3. **Navigation** (`nav` array):
 
 | Label | href | Icon (lucide) | Active when `pathname.startsWith` |
 |---|---|---|---|
-| Notes | `/notes` | `NotebookPen` | `/notes` |
-| Ask | `/chat` | `MessageCircle` | `/chat` |
+| Notes | `/notes` | `Files` | `/notes` |
 | Graph | `/graph-3d` | `Network` | `/graph-3d`, `/notes-graph` |
+| Ask | `/chat` | `MessageCircle` | `/chat` |
 | Finance | `/finance` | `Wallet` | `/finance` — rendered only when `currentKBRecord.finance_enabled !== false` |
 
-4. **Bottom**: `ActivityStatus` (§15) and a "Settings" link to `/kb`, highlighted when the path starts with `/kb`, `/models`, `/setup` or `/settings` (the four tabs of `SettingsShell`).
+4. **Bottom**: `ActivityStatus compact` (a status dot or spinner; §15) and, only while the explorer is collapsed, the Settings button.
+
+**`FileExplorer`** — reads everything from `useNotes()` ([19](19-frontend-notes-editor.md)), so it works on every page; picking a note navigates to `/notes`. Toolbar: new note (⌘N), new folder (under the selected folder), sort menu (`NOTE_SORTS`), collapse all, filter toggle (reveals a text filter; Escape clears), and the needs-ingest toggle with its count. The batch bar appears only while notes are checked. Then `VaultFolderTree`, and **`WorkspaceFooter`** at the bottom: the workspace switcher (current name + vault folder basename; the popover opens upward and lists `kbs` with a letter swatch, vault path and a check on the active one, plus "New workspace" (`/kb?new=1`) and "Workspace settings" (`/kb`); opening it calls `refreshKBs()`, `useDismiss` closes it on outside click or Escape) and the **Settings** button.
+
+**Settings button** — links to `/kb` (or `/settings` when an update is available, with an accent dot; `availableUpdate()` is checked once per mount), highlighted when the path starts with `/kb`, `/models`, `/setup` or `/settings` (the four tabs of `SettingsShell`).
+
+**`NotesOverlays`** — mounted once beside `Shell` so it works from any page and with the explorer collapsed: the note and folder context menus (note menu includes "Open in new tab"), `FilePreviewModal`, `FolderDialog`, `RenameDialog`.
 
 Active state is a prefix match, so `/notes?note=…` and nested routes highlight their section. Home (`/`) and `/graph` are redirects, not entries.
 
@@ -483,8 +505,11 @@ Active state is a prefix match, so `/notes?note=…` and nested routes highlight
 
 | Component | Props | Purpose / behaviour | Endpoints | Used by |
 |---|---|---|---|---|
-| `Sidebar` | — | Navigation rail (see §10). | `GET /kb` (via `refreshKBs`) | `App.tsx` |
-| `ActivityStatus` (`system-status-indicator.tsx`) | — | Sidebar activity row + popover; see §15. | `GET /admin/maintenance-status?kb=` | `Sidebar` |
+| `Ribbon` | `explorerOpen`, `onToggleExplorer` | Icon strip (see §10). | — | `App.tsx` |
+| `WorkspaceFooter` | — | Workspace switcher + Settings at the foot of the explorer (see §10). | `GET /kb` (via `refreshKBs`) | `FileExplorer` |
+| `FileExplorer`, `NotesOverlays` | — | App-wide vault tree and its menus/dialogs (see §10). | via `useNotes()` | `App.tsx` |
+| `ResizeHandle` | `edge`, `width`, `min`, `max`, `initial`, `onWidth` | Pointer-drag strip on a panel edge; double-click resets to `initial`. | — | `App.tsx`, notes page right panel |
+| `ActivityStatus` (`system-status-indicator.tsx`) | `compact?` | Activity row (or, `compact`, a dot) + popover; see §15. | `GET /admin/maintenance-status?kb=` | `Ribbon` |
 | `CommandPalette` | — | ⌘K palette: searches notes (`GET /notes?search=`), jumps to pages, switches workspace; writes `orb:last-note-id:<kb>` before navigating to a note. | `GET /notes` | `App.tsx` |
 | `SettingsShell` | `title`, `intro?`, `children` | Card with a left tab rail (Workspace / Models / Storage / About) used by `/kb`, `/models`, `/setup`, `/settings`; also exports `SettingRow` and `Toggle`. | — | those four pages |
 | `AiLimitedBanner` | — | Fixed bottom banner when AI is not configured; see §16. | `GET /setup/status` (once per mount) | `App.tsx` |
@@ -518,7 +543,7 @@ Composed only by `src/app/graph-3d/page.tsx`; the page-level behaviour (payload 
 - **Tailwind v4** via `@import "tailwindcss"` + `@plugin "@tailwindcss/typography"`; no `tailwind.config.js` — configuration is CSS-first in `src/app/globals.css`. A `@theme` block defines the "Nocturne" tokens every colour resolves to: `--color-bg`, `--color-bg-deep`, `--color-surface`, `--color-text`, `--color-divider`, `--color-danger[-text]`, an `--color-accent` scale (100–900, violet) and a neutral `--color-n-*` scale (100–900), plus `--radius-*`, `--shadow-*` and `--animate-rise`. Components use them as utilities (`bg-surface`, `text-n-500`, `text-accent`, `border-divider`, `shadow-sm`, `animate-rise`).
 - **Font**: Inter Variable from `@fontsource-variable/inter` (imported in `main.tsx`), set as `--font-sans`, so `font-sans` = Inter; `--font-mono` is the system monospace stack. The graph3d components and HUD use inline `style={{fontFamily:"system-ui"}}` and inline CSS objects instead of Tailwind — they were written to be self-contained.
 - **Component classes** (`@layer components` in `globals.css`): `.btn` variants (`btn-primary`, `btn-secondary`, `btn-ghost`, `btn-danger`, `btn-sm`, `btn-icon`), `.input`, `.field`, `.card`, `.card-outline`, `.popover`, `.menu-item`, `.tag`, `.kicker`, `.dot`, `.pane-header`/`.pane-title`, `.screen`, `.seg`/`.seg-opt`, `.hr-fade`, and the modal classes `.dialog`, `.dialog::backdrop`, `.dialog-title`, `.dialog-body`, `.dialog-actions`. Modals are native `<dialog>` elements opened with `showModal()`; the browser's top layer handles stacking, so there is no backdrop `<div>` or z-index juggling.
-- **`.tree-row`** sets `content-visibility: auto; contain-intrinsic-size: auto 50px` — the notes sidebar renders every row and lets the browser skip layout for off-screen ones ([19 §9.3](19-frontend-notes-editor.md)).
+- **`.tree-row`** sets `content-visibility: auto; contain-intrinsic-size: auto 50px` — the file explorer renders every row and lets the browser skip layout for off-screen ones ([19 §9.3](19-frontend-notes-editor.md)).
 - **Prose**: `react-markdown` output is styled with `.prose-orb` (chat, note previews) and `PREVIEW_PROSE` in notes-graph; `not-prose` is applied to embedded media blocks and segment dividers so typography margins do not apply.
 - `cn()` is `clsx` re-exported; use it for conditional class joins. Nothing passes conflicting Tailwind utilities through it, so no merge step is needed.
 
@@ -566,11 +591,11 @@ Rule of thumb used across pages: `resolveFileUrl(raw, currentKB)` is the canonic
 
 ## 15. `ActivityStatus` — polling and states
 
-`system-status-indicator.tsx` exports `ActivityStatus`, mounted once inside `Sidebar`. `useMaintenanceStatus(currentKB)` polls `api.getMaintenanceStatus(currentKB)` with adaptive `setTimeout` scheduling (re-armed by `tick` when "Restart backend" completes):
+`system-status-indicator.tsx` exports `ActivityStatus`, mounted once inside `Ribbon` (`compact`: a dot or spinner, label + meta in the hover tip). `useMaintenanceStatus(currentKB)` polls `api.getMaintenanceStatus(currentKB)` with adaptive `setTimeout` scheduling (re-armed by `tick` when "Restart backend" completes):
 
 | Condition | Next poll in |
 |---|---|
-| Any job active (`ingestion.active > 0`, `community_detection.running`, `temporal_digests.running`) | 4 000 ms |
+| Any job active (`ingestion.active > 0`, `community_detection.running`, `passages.running`, `temporal_digests.running`) | 4 000 ms |
 | Idle | 30 000 ms |
 | Request failed | 5 000 ms (so a restart shows up quickly) |
 | `document.visibilityState === "hidden"` | skip the request, reschedule in 30 s |
@@ -586,10 +611,11 @@ Displayed state (`buildStatus`) — first match wins:
 | `idle` (busy bar) | `boot.status` verbatim | `boot.status` present (desktop runtime still starting services) | "Local services are still starting. Notes work now; …" |
 | `ingest` (pulsing) | Ingesting N note(s) | `ingestion.active > 0` | "Extracting entities and links into the graph." |
 | `community` (pulsing) | Rebuilding communities | `community_detection.running` | meta shows `pending_nodes` when > 0 |
+| `digest` (pulsing) | Indexing passages | `passages.running` (the startup passage backfill) | meta `done/total` (or "running" without a total); "Making existing notes searchable by their own text. The graph is not touched." |
 | `digest` (pulsing) | Building digests | `temporal_digests.running` | |
 | `idle` | Ready | otherwise | "No ingestion or community jobs running." |
 
-The row shows the dot, label and meta; clicking opens a popover with the detail text, a "Restart backend" button in the error tone (desktop only — `bridge.restartBackend`), and a static line of what runs locally (Chat · Phonon-2 · Vision via chat model · the current KB slug).
+The ribbon dot's hover tip shows the label and meta; clicking opens a popover with the detail text, a "Restart backend" button in the error tone (desktop only — `bridge.restartBackend`), and a static line of what runs locally (Chat · Phonon-2 · Vision via chat model · the current KB slug).
 
 The Storage page (`/setup`) runs a second, independent poller on the same endpoint (3 s while its own rebuild runs / 15 s idle) to drive its Rebuild button state; it does not share state with the indicator.
 
@@ -613,7 +639,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 | `keepalive` PUT on unload (< 60 KB) | `updateNoteOnUnload` | Autosave must survive window close. |
 | `React.lazy` import for WebGL/canvas libs | `Graph3DCanvas`, notes-graph | keeps `three` / `react-force-graph-*` out of the initial chunk. |
 | `content-visibility: auto` rows instead of a virtualiser | notes `VaultFolderTree` (`.tree-row`) | Off-screen rows skip layout/paint with no measuring code and no dependency. |
-| `loading="eager"` logos | sidebar/chat | Avoid layout shift on the rail. |
+| `loading="eager"` logos | chat | Avoid layout shift on the rail. |
 
 ## 18. Lint and TypeScript configuration
 
@@ -629,7 +655,7 @@ On mount: one `GET /setup/status`. Shows when `ai_configured === false`; hides o
 2. Read the KB with `const { currentKB } = useKB()`; it is correct on the first render.
 3. Put route-private pieces in `src/app/<route>/_components`, `_hooks`, `_lib`.
 4. Wrap the page in `<div className="screen">` (full-height flex row) — or in `SettingsShell` if it belongs to the settings sheet; content sits inside the flex `<main>` automatically (`App.tsx` does it).
-5. Register the route in the `nav` array of `src/components/sidebar.tsx` (label, href, lucide icon, `match` prefixes) or in `TABS` of `settings-shell.tsx`. Active highlighting is a path-prefix match.
+5. Register the route in the `nav` array of `Ribbon` in `src/components/sidebar.tsx` (label, href, lucide icon, `match` prefixes) or in `TABS` of `settings-shell.tsx`. Active highlighting is a path-prefix match.
 6. If the page shows KB-scoped data, pass `currentKB` to every `api.*` call — nothing does this for you.
 7. If the page pulls in a heavy library (three.js, force-graph), import it with `React.lazy` so it stays out of the initial chunk.
 

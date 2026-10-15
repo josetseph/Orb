@@ -106,7 +106,7 @@ There is no conversation `<select>` and no stack badges; the composer footer sho
 
 ## 4. 3D entity graph — `/graph-3d` (and `/graph`)
 
-`/graph` is `<Navigate to="/graph-3d" replace />` in `src/App.tsx`; old links end up here, and the sidebar "Graph" item points at `/graph-3d` directly. Both graph pages render `GraphModeSwitch` (Notes ↔ Entities) in their top bar.
+`/graph` is `<Navigate to="/graph-3d" replace />` in `src/App.tsx`; old links end up here, and the ribbon "Graph" item points at `/graph-3d` directly. Both graph pages render `GraphModeSwitch` (Notes ↔ Entities) in their top bar.
 Deep link: `/graph-3d?node=<node id>` (the entity panel's "Open in graph") flies the camera to that node and opens its detail once the graph data holds it.
 
 
@@ -248,17 +248,17 @@ The save effect writes controls only when `controlsLoadedKbRef.current === curre
 
 ## 6. Workspace — `/kb`
 
-The "Workspace" tab of `SettingsShell` (title "Workspace", intro "Each workspace is one vault folder with its own graph and index. Switch from the sidebar.").
+The "Workspace" tab of `SettingsShell` (title "Workspace", intro "Each workspace is one vault folder with its own graph and index. Switch from the bottom of the file explorer.").
 
 ### 6.1 State and load
 
-The list comes from `useKB()` — `kbs`, `currentKBRecord`, `refreshKBs` — so the page issues no `GET /kb` of its own; every mutation ends with `refreshKBs()` (also on failure, because create/delete may have partially succeeded). Local state: `error`, `busy` (a string key such as `"rename"`, `"create"`, `"empty-<id>"`, `"delete-<id>"`, `"finance"`, `"delete-all"` — every button is disabled while any key is set), `name` (rename draft, re-seeded whenever the active record's name changes), `showForm` (initially `true` when the URL carries `?new=1`, which the sidebar's "New workspace" uses; the query is then stripped with `history.replaceState`), `newName`, `newVaultPath`. `canBrowse = Boolean(getDesktopBridge()?.pickDirectory)` decides whether "Browse…" renders.
+The list comes from `useKB()` — `kbs`, `currentKBRecord`, `refreshKBs` — so the page issues no `GET /kb` of its own; every mutation ends with `refreshKBs()` (also on failure, because create/delete may have partially succeeded). Local state: `error`, `busy` (a string key such as `"rename"`, `"create"`, `"empty-<id>"`, `"delete-<id>"`, `"finance"`, `"delete-all"` — every button is disabled while any key is set), `name` (rename draft, re-seeded whenever the active record's name changes), `showForm` (initially `true` when the URL carries `?new=1`, which the workspace switcher's "New workspace" uses; the query is then stripped with `history.replaceState`), `newName`, `newVaultPath`. `canBrowse = Boolean(getDesktopBridge()?.pickDirectory)` decides whether "Browse…" renders.
 
 Slug/identity: `kbSlug(kb)` from `kb-context` (`"default"` for the built-in KB, else `kb.slug` — required on the wire, never derived from the name). The active record is `currentKBRecord ?? kbs.find(k => kbSlug(k) === currentKB || k.name === currentKB)`; `isDefault = current.id === "default"`.
 
 ### 6.2 Layout and flows
 
-**Active workspace card** (while `current` is loaded): Name input (rename on blur/Enter, Escape restores; no-op if unchanged → `PATCH /kb/{id} {name}` then `setCurrentKBName`), read-only vault path (the "Choose…" button is disabled — vault paths are fixed after creation), a Finance `SettingRow` with a `Toggle` (→ `PATCH /kb/{id}/finance {enabled}`; the sidebar hides the Finance entry when off; nothing is deleted), a Model `SettingRow` whose description is `modelSummary(kb)` — `inherits|pinned · on this device|<endpoint host> · <model>` from `effective_llm` — with a "Change" link to `/models`, and the buttons **Empty workspace…** and (non-default only) **Delete workspace…**.
+**Active workspace card** (while `current` is loaded): Name input (rename on blur/Enter, Escape restores; no-op if unchanged → `PATCH /kb/{id} {name}` then `setCurrentKBName`), read-only vault path (the "Choose…" button is disabled — vault paths are fixed after creation), a Finance `SettingRow` with a `Toggle` (→ `PATCH /kb/{id}/finance {enabled}`; the ribbon hides the Finance entry when off; nothing is deleted), a Model `SettingRow` whose description is `modelSummary(kb)` — `inherits|pinned · on this device|<endpoint host> · <model>` from `effective_llm` — with a "Change" link to `/models`, and the buttons **Empty workspace…** and (non-default only) **Delete workspace…**.
 
 **All workspaces** list: one row per KB (letter swatch, name, `built-in`/`active` tags, vault path) with a **Switch** button on non-active rows → `setCurrentKB(kbSlug(kb), kb.name)`; below it the **New workspace** dashed button that opens the create form, and — when any non-default KB exists — **Delete all non-default workspaces**.
 
@@ -290,14 +290,14 @@ The per-KB chat/ingestion model is chosen on `/models` ("This workspace" card, �
 The single page for every model decision, rendered from one `GET /api/v1/models`. Sections follow the order a person decides in:
 
 1. **This knowledge base** — the KB currently open (from `KBProvider`), with three choices: inherit the system model, a model on this device, or a cloud endpoint. Writes to `PATCH /api/v1/kb/{id}/llm`. Shows the resolved model and whether it is inherited or pinned.
-2. **Default for everything else** — the system model, written via `PATCH /api/v1/settings` (plus `POST /setup/select-chat-model` when a curated catalog id is chosen, since that also pairs embed/rerank).
+2. **Default for everything else** — the system model, written via `PATCH /api/v1/settings` (plus `POST /setup/select-chat-model` when a curated catalog id is chosen, since that also pairs embed/rerank). In local mode an **Extraction model** select sits under the system-model picker: "Automatic · <`global.extraction_auto`, or "the system model (Gemma 4 12B does not fit or is not downloaded)">" (`""`), "Same as the system model" (`"chat"`), or any installed model (`ref`); it is saved with the system model as `extraction_model` in the same `PATCH /api/v1/settings`. Help text: ingestion runs this model in a separate llama.cpp server, several notes at once, started when a note is ingested and stopped after 5 idle minutes.
 3. **Cloud endpoints** — URL + key, written with `PUT /api/v1/credentials/endpoint`; the backend stores the key in the OS keychain. The URL is the credential identity.
-4. **Download a model** — the curated catalog with sizes, "suggested" and "may be tight" badges, and an "on disk" state; `POST /setup/download-models`.
+4. **Download a model** — the curated catalog with sizes, "suggested" and "may be tight" badges, and an "on disk" state; `POST /setup/download-models`. ("suggested" marks the catalog entry with `recommended=True`, now Qwen 3.5 9B instead of Gemma 4 E4B.)
 5. **Search and media models** — embedding and reranker, read-only, with the reason they are not per-KB (embedding dimensions are shared by every KB's Qdrant collections).
 
 `_components/ModelPicker.tsx` lists every installed GGUF (`InstalledModel`: label, size, architecture, warnings) plus **Browse** buttons for a file or a folder (`pickDesktopFile` with a `.gguf` filter / `pickDesktopDirectory`). A path the user picks is validated by `POST /api/v1/models/inspect` (`{ref, path, name, size_gb, warnings}`) before it is stored, so an unusable path is refused with a specific reason. GGUF is the only local format, so there is no format badge and no "cannot run here" state; the backend placeholder ref `local-chat` is shown as "nothing picked" rather than as a model.
 
-The backend persists the system choice to `DATA_DIR/runtime_config.json` (`provider`, `model`, `base_url`) and swaps the provider live ([06](06-backend-core-and-configuration.md), [13](13-llm-providers-and-prompting.md)); per-KB pins (§6.3) layer on top.
+The backend persists the system choice to `DATA_DIR/runtime_config.json` (`provider`, `model`, `base_url`, `extraction_model`) and swaps the provider live ([06](06-backend-core-and-configuration.md), [13](13-llm-providers-and-prompting.md)); per-KB pins (§6.3) layer on top.
 
 ## 7. About — `/settings`
 
@@ -316,7 +316,7 @@ Re-configuration page for the bootstrap paths plus per-workspace maintenance. Th
 ### 8.2 State and load
 
 - Mount: `GET /setup/status` → seeds `dataDir`, `modelsDir`, `vaultPath = default_vault_path || active_vault_path || ""`. Error: "Could not load setup status."
-- A second effect polls `GET /admin/maintenance-status?kb=` (3 s while a user-triggered rebuild runs, 15 s otherwise, paused while the tab is hidden) to drive the Rebuild button state; it is independent of the sidebar indicator's poller.
+- A second effect polls `GET /admin/maintenance-status?kb=` (3 s while a user-triggered rebuild runs, 15 s otherwise, paused while the tab is hidden) to drive the Rebuild button state; it is independent of the ribbon indicator's poller.
 
 ### 8.3 UI
 
@@ -332,13 +332,13 @@ Re-configuration page for the bootstrap paths plus per-workspace maintenance. Th
 ### 8.4 Gotchas
 
 - Saving paths does not restart services; the backend writes `paths.json` and the user must relaunch for `data_dir`/`models_dir` changes to take effect ([04](04-desktop-shell.md)).
-- The maintenance poller and the sidebar `ActivityStatus` hit the same endpoint independently; two pollers per open Storage page is expected.
+- The maintenance poller and the ribbon `ActivityStatus` hit the same endpoint independently; two pollers per open Storage page is expected.
 - No KB usage for the paths half — paths are global; the maintenance half is per workspace.
 
 ## 9. Cross-page gotchas
 
 - Native `window.confirm`/`alert` are used for destructive confirmations on `/chat` and `/kb`; Storage (`/setup`) uses two-click confirmation for "Reset indexes" instead. Keep one style per page.
-- The only static model text left is the sidebar activity popover's "Chat · Phonon-2 · Vision via chat model" line; pages read the live configuration from `GET /models` / `GET /setup/status`.
+- The only static model text left is the ribbon activity popover's "Chat · Phonon-2 · Vision via chat model" line; pages read the live configuration from `GET /models` / `GET /setup/status`.
 - `localStorage`/`sessionStorage` keys touched by these pages: `orb_current_kb` (KB), `orb:notes-graph-controls:<kb>` (2D controls; 3D reads `textFade`), `orb:last-note-id:<kb>` (sessionStorage; written by notes-graph "Open in Notes" and the command palette, read by the editor), `orb.endpointNames` (Models page endpoint labels).
 - There are no server components; every route is a lazy client chunk behind `App.tsx`.
 

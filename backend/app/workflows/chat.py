@@ -83,7 +83,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
     ) -> tuple[str, str, list[dict], str]:
         """Rewrite → research-loop retrieve → dedupe/truncate.
 
-        Returns ``(rewritten_query, final_answer, unique_docs, thinking)``.
+        Returns ``(rewritten_query, final_answer, unique_docs, thinking, answered)``.
         """
         history = history or []
         history_payload = [{"role": t.role, "content": t.content} for t in history]
@@ -96,7 +96,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
                 progress_callback(stage, model)
 
         _progress("Planning retrieval", "Gemma4")
-        final_answer, all_docs, thinking = (
+        final_answer, all_docs, thinking, answered = (
             await self._retrieval.retrieve_with_iterative_loop(
                 rewritten_query,
                 top_k=50,
@@ -106,7 +106,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         )
         _progress("Selecting best evidence")
         unique_docs = _clear_unverified_links(_dedupe_docs(all_docs))
-        return rewritten_query, final_answer or "", unique_docs, thinking
+        return rewritten_query, final_answer or "", unique_docs, thinking, answered
 
     async def chat(
         self,
@@ -118,7 +118,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         start_time = time.perf_counter()
         load_before = model_load_clock.snapshot()
         logger.info(f"\n[Chat] Started processing query: '{user_query}'")
-        rewritten_query, final_answer, unique_docs, thinking = (
+        rewritten_query, final_answer, unique_docs, thinking, answered = (
             await self._retrieve_context(
                 user_query, history, progress_callback
             )
@@ -139,7 +139,11 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
 
         # Only valid answer synthesis is the pipeline's structured final answer.
         answer = final_answer
-        if answer:
+        if answer and not answered:
+            # The loop ran out: its last finding is the closest it got, not an answer.
+            answer = f"No definitive answer in your notes. Closest finding: {answer}"
+            logger.info("[Chat] Iterative loop exhausted — returning the closest finding, labelled.")
+        elif answer:
             logger.info(
                 f"[Chat] Using pipeline answer directly (structured synthesis): "
                 f"'{answer}'"
@@ -178,7 +182,7 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
         """Retrieve note context without synthesizing a final answer."""
         start_time = time.perf_counter()
         load_before = model_load_clock.snapshot()
-        rewritten_query, _final_answer, unique_docs, thinking = (
+        rewritten_query, _final_answer, unique_docs, thinking, _answered = (
             await self._retrieve_context(
                 user_query, history, progress_callback
             )

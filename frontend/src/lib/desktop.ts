@@ -23,6 +23,10 @@ export type OrbDesktopBridge = {
   printPage?: () => Promise<void>;
   /** Kill and relaunch the Python runtime. */
   restartBackend?: () => Promise<{ ok: boolean; error?: string }>;
+  /** The newer release, or null when up to date. */
+  checkUpdate?: () => Promise<{ version: string; notes?: string | null } | null>;
+  /** Download, install and relaunch Orb. Rejects with the reason on failure. */
+  installUpdate?: (onProgress?: (percent: number) => void) => Promise<void>;
   /** OS notification; resolves false when unavailable or denied. */
   notify?: (title: string, body: string) => Promise<boolean>;
 };
@@ -82,4 +86,14 @@ export function revealInFolderLabel(): string {
   if (/Mac|iPhone|iPad/i.test(ua)) return "Reveal in Finder";
   if (/Win/i.test(ua)) return "Reveal in Explorer";
   return "Reveal in folder";
+}
+
+let updateCheck: Promise<{ version: string; notes?: string | null } | null> | null = null;
+
+/** The launch-time update check, run once per window; null outside the app or when up to date. */
+export function availableUpdate(refresh = false) {
+  const bridge = getDesktopBridge();
+  if (!bridge?.checkUpdate) return Promise.resolve(null);
+  if (!updateCheck || refresh) updateCheck = bridge.checkUpdate();
+  return updateCheck;
 }

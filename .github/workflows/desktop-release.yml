@@ -20,15 +20,18 @@ jobs:
             os: macos-14
             bundles: |
               desktop/src-tauri/target/release/bundle/dmg/*.dmg
+              desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz*
           - name: mac-x64
             # macos-13 is retired; macos-15-intel is GitHub's remaining x64 macOS runner.
             os: macos-15-intel
             bundles: |
               desktop/src-tauri/target/release/bundle/dmg/*.dmg
+              desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz*
           - name: windows-x64
             os: windows-latest
             bundles: |
               desktop/src-tauri/target/release/bundle/nsis/*.exe
+              desktop/src-tauri/target/release/bundle/nsis/*.exe.sig
           - name: linux-x64
             os: ubuntu-22.04
             bundles: |
@@ -74,7 +77,13 @@ jobs:
       - name: Prepare resources (Python + backend, UI, Firefly seed)
         run: python3 desktop/build.py prepare
 
+      # Not code signing: the key signs the in-app update archives, which the
+      # app checks against the public key in tauri.conf.json.
       - name: Build installer (unsigned)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # The key has no password; unset, Tauri tries to prompt for one and fails.
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: python3 desktop/build.py dist
 
       - uses: actions/upload-artifact@v6
@@ -96,6 +105,32 @@ jobs:
         with:
           path: bundles
           merge-multiple: true
+      # The in-app updater reads releases/latest/download/latest.json.
+      - name: Update feed
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import datetime, json, os, pathlib
+          tag = os.environ["TAG"]; version = tag.removeprefix("desktop-v")
+          base = f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/download/{tag}"
+          files = {p.name: p for p in pathlib.Path("bundles").rglob("*") if p.is_file()}
+          targets = {
+              "darwin-aarch64": f"Orb_{version}_aarch64.app.tar.gz",
+              "darwin-x86_64": f"Orb_{version}_x64.app.tar.gz",
+              "windows-x86_64": f"Orb_{version}_x64-setup.exe",
+          }
+          # A missing signature fails the release: an update feed without a
+          # platform would leave its users stuck.
+          platforms = {
+              key: {"url": f"{base}/{name}", "signature": files[name + ".sig"].read_text().strip()}
+              for key, name in targets.items()
+          }
+          feed = {"version": version, "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  "notes": f"https://github.com/{os.environ['GITHUB_REPOSITORY']}/releases/tag/{tag}",
+                  "platforms": platforms}
+          pathlib.Path("bundles/latest.json").write_text(json.dumps(feed, indent=2))
+          PY
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}

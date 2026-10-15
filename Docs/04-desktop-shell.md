@@ -30,7 +30,7 @@ desktop/
     capabilities/remote-ui.json  http://127.0.0.1:17401 (the UI): dialog open, opener, notifications
     src/main.rs            builder, plugins, run-event handling (Exit → stop; macOS Reopen)
     src/runtime.rs         paths, layout (packaged vs repo), spawn/watch/kill, window, health poll
-    src/commands.rs        app_state, save_setup, print_page, restart_backend
+    src/commands.rs        app_state, save_setup, print_page, restart_backend, check_update, install_update
     src/init.js            injected into every page: orbDesktop bridge + single-window guard
 backend/app/desktop_runtime.py   the process the shell spawns
 ```
@@ -79,6 +79,11 @@ leaves nothing behind.
   key lives in `DATA_DIR/meili_master_key`. Firefly: portable PHP + app seeded from
   `<resources>/firefly` (or downloaded), `.env` written with every value quoted (`_env_quote`: single quotes, or double quotes with `\`, `"` and `$` escaped when the value holds an apostrophe — the default macOS data dir path contains a space and phpdotenv rejects an unquoted one), `artisan migrate`, `db:seed`,
   Passport keys/client, desktop user + API token in `DATA_DIR/firefly/runtime.json`.
+- **Extraction server**: not a boot sidecar — the API itself downloads the pinned
+  llama.cpp build into `DATA_DIR/bin/llama.cpp-b11617/` and starts `llama-server` on
+  the first local ingestion, stopping it after 300 s idle; `stop_sidecars()` stops it
+  first on shutdown, and a server orphaned by a crashed backend is killed at the next
+  start (`DATA_DIR/llama-server.pid`). See [12](12-local-models-and-inference.md) §7.5.
 - **Reconnect on use**: `QdrantService` and `MeilisearchService` retry their
   connection when called, so a KB opened before a sidecar is listening becomes
   searchable the moment it is.
@@ -99,9 +104,15 @@ leaves nothing behind.
   `https://www.youtube-nocookie.com/embed/…` and `https://player.vimeo.com/video/…`.
 - macOS: `enable_text_checking()` registers `WebContinuousSpellCheckingEnabled` and `WebGrammarCheckingEnabled` as NSUserDefaults *defaults* at setup (before the window exists), so the note editor gets spelling and grammar underlines; the user's choice in the context menu's Spelling and Grammar submenu overrides them.
 - `init.js` provides `window.orbDesktop` with `isDesktop`, `pickDirectory`, `pickFile`
-  (Tauri dialog plugin), `restartBackend` (command) and `notify` (notification plugin,
+  (Tauri dialog plugin), `restartBackend`, `printPage`, `checkUpdate` / `installUpdate`
+  (commands) and `notify` (notification plugin,
   requests permission the first time). `frontend/src/lib/desktop.ts` is the typed
   consumer; `notifyIfUnfocused` fires only when the window is not focused.
+- Updates: the Settings button runs `check_update` once per launch (`availableUpdate()` in
+  `desktop.ts`) and shows a dot on Settings; Settings → About shows the version and an
+  "Update to x.y.z" button. `install_update` downloads (emitting `update-progress`
+  0-100), stops the Python runtime, installs and relaunches. Nothing installs without
+  that click. Release side: [Packaging](05-packaging-build-and-release.md) §5.
 - The UI is a remote origin to Tauri. `capabilities/remote-ui.json` grants it exactly
   those plugin commands and nothing else; `save_setup` additionally refuses calls
   from any page that is not the bundled one.

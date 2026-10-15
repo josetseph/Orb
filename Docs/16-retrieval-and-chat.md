@@ -84,7 +84,7 @@ sequenceDiagram
         RS->>LLM: iterative_step(...) — stage "Reasoning over retrieved context (i/N)"
         LLM-->>RS: JSON {answer} → break, or {next_query} → continue
     end
-    RS-->>WF: (final_answer | None, all_docs, thinking)
+    RS-->>WF: (final_answer | None, all_docs, thinking, answered)
     WF->>WF: _dedupe_docs → _clear_unverified_links — stage "Selecting best evidence"
     WF->>CS: _extract_references (SQLite titles for linked note ids)
     WF-->>JOB: {query, rewritten_query, answer, sources, context, thinking} — stage "Formatting answer"
@@ -103,23 +103,23 @@ sequenceDiagram
 flowchart TD
     A[Rewritten query] --> B[analyze_query original<br/>→ question_attribute for expansion rerank]
     B --> C{iteration < MAX_LOOP_ITERATIONS?}
-    C -- no --> Z[EXHAUSTED: return last non-'Not found' FINDING<br/>thinking=None]
-    C -- yes --> D{current_query set?}
-    D -- "no (iteration 1)" --> H
+    C -- no --> Z[EXHAUSTED: return last non-'Not found' FINDING<br/>thinking=None, answered=False]
+    C -- yes --> D{current_query set?<br/>iteration 1: the question itself}
+    D -- no --> H
     D -- yes --> E[hybrid_search current_query]
     E --> E1[analyze_query sub-query<br/>entities, keywords, attribute, types, date/period]
     E1 --> E2[embed_query enriched query]
     E2 --> E3[asyncio.gather<br/>entity branch Kuzu + Person name variants<br/>Meili BM25 per term<br/>Qdrant 3 collections w/ temporal filters]
     E3 --> E4[merge entity → BM25 → vector, dedup by lowercase name<br/>vector name variants]
     E4 --> E5[get_linked_evidence_by_node_ids → linked_notes]
-    E5 --> E6[candidates: entity_match / vector_match / community_summary<br/>text = _build_node_text node, []]
+    E5 --> E6[candidates: entity_match / vector_match / community_summary<br/>text = _build_node_text node, []<br/>+ passage: Qdrant passages 500 + Meili passages 50]
     E6 --> E7[_apply_reranker_logging<br/>top_n=RERANKER_TOP_K, threshold=RERANKER_SCORE_THRESHOLD<br/>query + attribute + expected types]
     E7 --> F[_expand_relevant_neighbors<br/>1-hop Kuzu, NL from Qdrant node_relationships<br/>per-pair rerank → GRAPH_EXPAND_TOP_NEIGHBORS<br/>one graph_expansion doc per origin]
     F --> G[rerank expansion docs top_n=RERANKER_TOP_K]
     G --> G2[docs = selected + expanded<br/>accumulate into all_docs by name]
     G2 --> H[iterative_step<br/>ORIGINAL QUESTION + PRIOR FINDINGS + TRIED QUERIES + CURRENT SEARCH docs]
     H --> I{can_answer?}
-    I -- ANSWER --> Y[return final_answer, all_docs, thinking]
+    I -- ANSWER --> Y[return final_answer, all_docs, thinking, True]
     I -- next_query --> J[tried_queries += current_query<br/>current_query = next_query]
     I -- neither --> Z
     J --> C
@@ -313,33 +313,33 @@ The working tree adds a per-KB chat/ingestion model override that changes how ch
 
 ## 6. The research loop, step by step (`retrieve_with_iterative_loop`)
 
-`ChatWorkflow._retrieve_context` calls `retrieval.retrieve_with_iterative_loop(rewritten_query, top_k=50, progress_callback, conversation_history)` (the older alias `retrieve_with_self_correction` from the Looping-approach reports was removed). Return type: `tuple[str | None, list[dict], str | None]` = `(final_answer, all_docs, thinking)`. The `top_k` parameter is **unused** (pylint-suppressed) — `hybrid_search` is called with its default and never slices by `top_k`.
+`ChatWorkflow._retrieve_context` calls `retrieval.retrieve_with_iterative_loop(rewritten_query, top_k=50, progress_callback, conversation_history)` (the older alias `retrieve_with_self_correction` from the Looping-approach reports was removed). Return type: `tuple[str | None, list[dict], str | None, bool]` = `(final_answer, all_docs, thinking, answered)`; `answered` is `False` when the loop ran out without a step committing to an answer, and `final_answer` is then only the closest finding. The `top_k` parameter is **unused** (pylint-suppressed) — `hybrid_search` is called with its default and never slices by `top_k`.
 
 ### 6.1 Setup
 
 1. Build `conversation_context` from history (§5.4 item 2).
 2. `_progress("Analyzing question", "Gemma4")`; `_loop_qa = llm.analyze_query(query)`; keep only `question_attribute` (`_loop_question_attr`) for reranking graph-expansion docs later. `hybrid_search` re-analyses each sub-query itself; the `analyze_query` memo (`functools.lru_cache(maxsize=64)` on `_analyze_query_cached`, key `(query, today)`) dedupes identical strings within a day, which matters because a cache miss on local mode forces a chat-GGUF load.
-3. State: `accumulated_steps: list[{query, full_answer, reasoning}]`, `all_docs: list[dict]`, `surfaced_names: set[str]`, `current_query = None`, `tried_queries: list[str]`.
+3. State: `accumulated_steps: list[{query, full_answer, reasoning}]`, `all_docs: list[dict]`, `surfaced_names: set[str]`, `current_query = query` (the rewritten question — the first step reads the question's own results instead of only planning a query), `tried_queries: list[str]`.
 
 ### 6.2 Each iteration (`for iteration in range(settings.MAX_LOOP_ITERATIONS)`, default 3)
 
 1. `_progress(f"Retrieval loop {i}/{N}")`.
-2. **Retrieval, skipped on iteration 1** because `current_query is None` — the first LLM call only *plans* the first query. Consequently with `MAX_LOOP_ITERATIONS = 3` there are at most **two** retrievals per chat turn (iterations 2 and 3), and the third iteration's LLM step is the last chance to say `ANSWER`.
+2. **Retrieval** whenever `current_query is not None` — every iteration, since iteration 1 searches the question itself. With `MAX_LOOP_ITERATIONS = 3` there are up to **three** retrievals per chat turn, and the third iteration's LLM step is the last chance to say `ANSWER`. (Before, `current_query` started as `None`, iteration 1 only planned a query, and a turn had at most two retrievals.)
    - `selected_docs = await self.hybrid_search(current_query)` (§7–§8); add each doc's `original_obj.name` to `surfaced_names`.
    - `expanded = await self._expand_relevant_neighbors(selected_docs, current_query, surfaced_names)` (§8.4) inside a try/except (failure → warning, `expanded = []`). If non-empty: `_progress("Reranking graph neighbors", MODEL_RERANKER_LOCAL)` and `expanded = _apply_reranker_logging(current_query, expanded, top_n=RERANKER_TOP_K, question_attribute=_loop_question_attr)` (no score threshold on this pass). Names of expansion docs' `original_obj` (the *origin* node, not the neighbours) are added to `surfaced_names`.
    - `docs = selected_docs + expanded`; docs are merged into `all_docs` **deduplicated by `original_obj.name`** (fallback `d["name"]`). Because a `graph_expansion` doc's `original_obj` is the origin node that was just added from `selected_docs`, the expansion doc itself is not appended; its `linked_notes` (neighbour note provenance) are folded into the origin doc, so expansion notes reach `sources` while the expansion text is visible to the LLM for this iteration only (see Gotchas §16).
 3. `_progress(f"Reasoning over retrieved context ({i}/{N})", "Gemma4")`; `result = await llm.iterative_step(original_question=query, accumulated_steps, search_query=current_query, docs, tried_queries or None, conversation_context or None)` (§9.2).
-4. If `docs` is non-empty and the step produced `full_answer` or `reasoning`, append `{query: current_query, full_answer, reasoning}` to `accumulated_steps` (iteration 1 never records a step).
-5. **Termination A — answer:** if `result["can_answer"]`, return `(result["final_answer"], all_docs, result.get("thinking"))`. Only the *terminating* step's thinking is returned.
+4. If `docs` is non-empty and the step produced `full_answer` or `reasoning`, append `{query: current_query, full_answer, reasoning}` to `accumulated_steps`.
+5. **Termination A — answer:** if `result["can_answer"]`, return `(result["final_answer"], all_docs, result.get("thinking"), True)`. Only the *terminating* step's thinking is returned.
 6. Otherwise add `current_query` to `tried_queries`; `next_q = result.get("next_query")`.
 7. **Termination B — no next query:** if `next_q` is falsy (the JSON had neither `answer` nor `next_query`, or the LLM call/parse failed and returned the empty dict), log a warning and `break` to exhaustion handling. Nothing detects a *repeated* query; `tried_queries` is only surfaced to the LLM as "do NOT repeat these".
 8. `current_query = next_q`; loop.
 
 ### 6.3 Termination C — exhaustion
 
-After the loop (either `range` exhausted or `break`): `_progress("Synthesizing final answer", "Gemma4")` — a label only; **no LLM call is made**. The code walks `accumulated_steps` in reverse and returns the first `full_answer` (the `FINDING:` text) whose lowercase value is not in `{"not found", "none", "insufficient", "n/a", "unknown"}`; else `None`. Returned tuple is `(last_answer_or_None, all_docs, None)` — thinking is always `None` on exhaustion. Log line `[IterLoop] EXHAUSTED in Xs ... best_finding=...`.
+After the loop (either `range` exhausted or `break`): `_progress("Synthesizing final answer", "Gemma4")` — a label only; **no LLM call is made**. The code walks `accumulated_steps` in reverse and returns the first `full_answer` (the `FINDING:` text) whose lowercase value is not in `{"not found", "none", "insufficient", "n/a", "unknown"}`; else `None`. Returned tuple is `(last_answer_or_None, all_docs, None, False)` — thinking is always `None` on exhaustion. Log line `[IterLoop] EXHAUSTED in Xs ... best_finding=...`.
 
-`ChatWorkflow.chat` then decides the user-facing text: the loop's answer if truthy; else `"I couldn't find any relevant information in the knowledge base to answer that."` when `unique_docs` is empty, or `"I couldn't find enough information to answer that."` when there were docs but no finding. `sources` is filled in all three cases from whichever docs have `linked_notes`.
+`ChatWorkflow.chat` then decides the user-facing text: the loop's answer if truthy and `answered`; a truthy finding with `answered=False` is labelled `"No definitive answer in your notes. Closest finding: <finding>"` (logged `[Chat] Iterative loop exhausted — returning the closest finding, labelled.`); else `"I couldn't find any relevant information in the knowledge base to answer that."` when `unique_docs` is empty, or `"I couldn't find enough information to answer that."` when there were docs but no finding. `sources` is filled in all three cases from whichever docs have `linked_notes`.
 
 ### 6.4 What "potential questions" meant
 
@@ -351,7 +351,7 @@ The Sub-Questions approach (decompose into 2–4 sub-questions) preceded the loo
 
 ### 7.1 Query analysis (LLM, structured)
 
-`self._llm.analyze_query(query)` → `LLMService.analyze_query` builds a `QueryAnalysis` Pydantic schema, asks the chat model for a JSON object (temperature 0) and validates it with `model_validate_json` after `_clean_json` (see [LLM providers](13-llm-providers-and-prompting.md)). Fields and how retrieval uses them:
+`self._llm.analyze_query(query)` → `LLMService.analyze_query` builds a `QueryAnalysis` Pydantic schema, asks the chat model for a JSON object (temperature 0) and validates the reply as written with `model_validate_json` — no repair; a malformed reply falls back to safe defaults (see [LLM providers](13-llm-providers-and-prompting.md)). Fields and how retrieval uses them:
 
 | Field | Type | Used for |
 |---|---|---|
@@ -452,7 +452,7 @@ Timing: `[⏱️ Timing] Retrieval phase: Xs (E entity + V vector nodes)`.
 {
   "text": "<formatted block sent to the LLM>",        # from _build_node_text(node, [])
   "_rerank_text": "<same block>",                      # what the cross-encoder scores
-  "type": "entity_match" | "vector_match" | "community_summary" | "graph_expansion",
+  "type": "entity_match" | "vector_match" | "community_summary" | "passage" | "graph_expansion",
   "original_obj": { "id"/"node_id", "name", "entity_type", "summary", "description"?, "isolated_contexts"?, "score"?, "_source", ... },
   "linked_notes": [ {"id": "<note uuid>", "title": "<note.name in Kuzu>"}, ... ],
   # added by _apply_reranker_logging:
@@ -467,6 +467,7 @@ Build order and types:
 
 - **A. Entity nodes** (`entity_nodes`, incl. Meili rows and Person name variants): skipped if `_get_node_text(node)` is empty; `type="entity_match"`; `linked_notes = node_to_notes[lower_name]`.
 - **B. Vector nodes** (incl. vector variants): same text check; `type="community_summary"` when `entity_type.lower() == "community"` else `"vector_match"`.
+- **C. Note passages** (the notes' own text, doc 10 §6.0): `qdrant.search_passages(full_vector, 500, VECTOR_PRE_RERANK_THRESHOLD)` plus `meili.search_passages(query, 50)`, joined and de-duplicated on `(note_id, index)` (vector hits first). Each becomes `{"text": content, "_rerank_text": content, "type": "passage", "original_obj": {"name": "<title> (passage n)", "node_id": note_id, "summary": content}, "linked_notes": [{"id": note_id, "title": title}]}` — a distinct name because docs are merged by name and a note's title is often an entity's. They are reranked together with the graph candidates (the reranker scores the union, so there are no fusion weights to tune). No date filter applies to passages. The log line reads `Prepared N candidates (E entity + V vector + P passage)`.
 - No candidate type `neighbor_node` is produced any more, although the summary log line still counts it.
 
 `_get_node_text(node)` = `summary` or `description` or `" ".join(isolated_contexts)`. `_build_node_text(node, [])` renders the root line: `"{name} is a {entity_type}. {text}"` when a type exists; else the text itself if it already starts with the name; else `"{name}. {text}"`. There is **no scoring fusion** across channels: vector scores, Meili pseudo-scores and entity matches are never combined numerically. Channel precedence only decides *which entry survives name-dedup*; the reranker alone decides the final order. (`_log_retrieval_details` is one JSON debug line per retrieval — type, score, name, linked notes and the text sent to the LLM per candidate.)
@@ -479,13 +480,13 @@ Three layers:
 
 1. `RetrievalService._apply_reranker_logging(query, candidates, top_n, question_attribute, expected_entity_types, score_threshold)` — builds query + texts, applies scores, sorts, slices, thresholds.
 2. `RerankerService.rerank(query, documents, top_n=None)` (`services/reranker.py`) — async façade: returns `[]` if no documents, if `reranker_gguf_path()` is `None` (logs `No GGUF selected — download/select a reranker on the Models page`), or on any exception (logged at ERROR). Otherwise `await asyncio.to_thread(local_gguf_reranker.rerank, ...)` and the rows are returned as-is (`results or []`).
-3. `LocalGgufReranker.rerank` (`services/local_models.py`) — Qwen3-Reranker GGUF via llama-cpp-python, `n_ctx` from `RERANK_N_CTX` (default 8192), `logits_all=True`. Each document is scored **one at a time, sequentially** with a 1-token completion (`max_tokens=1, temperature=0, logprobs=5`) of the prompt
+3. `LocalGgufReranker.rerank` (`services/local_models.py`) — Qwen3-Reranker GGUF via llama-cpp-python, `n_ctx` from `RERANK_N_CTX` (default 8192), `logits_all=False`. Each document is scored **one at a time, sequentially** by evaluating the prompt (no sampling call)
    ```
    <|im_start|>system\n{_RERANK_SYSTEM}\n<|im_end|>
    <|im_start|>user\n<Instruct>: Given a question, retrieve relevant passages that answer the question\n<Query>: {query}\n\n<Document>: {document}\n<|im_end|>
    <|im_start|>assistant\n<think>\n\n</think>\n
    ```
-   Score = `P(yes) / (P(yes) + P(no))` from the top-5 logprobs when both tokens appear; else `0.9` if the sampled text starts with "yes", `0.1` if "no", else `0.0`. Returns `[{index, relevance_score, document}]` sorted desc by `relevance_score`, optionally sliced to `top_n`. `relevance_score` is the only score key — there is no mirrored `score`. Cost is therefore **one forward pass per candidate** — 30 candidates ≈ 30 prompt evaluations of up to 8 K tokens.
+   Score = `sigmoid(yes − no)` = `P(yes) / (P(yes) + P(no))` from the `yes`/`no` logits at the last position (`_ctx.get_logits_ith(-1)`). The prompt prefix shared with the previous document (system prompt, instruction, query) is kept in the KV cache, so each candidate costs only the tokens after it (doc 12 §10.1). Returns `[{index, relevance_score, document}]` sorted desc by `relevance_score`, optionally sliced to `top_n`. `relevance_score` is the only score key — there is no mirrored `score`. (Before: a 1-token completion with `logprobs=5`, softmax over the top-5 `yes`/`no` entries, 0.9 / 0.1 fallback on the sampled text, and `logits_all=True`, which made reranking long passages CPU-bound.)
 
 ### 8.3 `_apply_reranker_logging` semantics
 
@@ -539,7 +540,7 @@ Back in the loop, the expansion docs are reranked a second time as whole documen
 
 `iterative_step` concatenates `doc["text"]` of **every** doc passed for that iteration (≤ 10 reranked candidates + ≤ 10 reranked expansion docs), separated by `\n\n---\n\n`. There is **no token budget, no per-doc truncation and no character cap** anywhere in retrieval or the workflow: the only limiters are `RERANKER_TOP_K` (docs per pass) and the natural length of node summaries/isolated contexts. On the local runtime the safety net is `LocalLlamaRuntime._remaining_output_budget` (working tree): the prompt is token-estimated against `n_ctx` (`LLAMA_N_CTX`, default 16384) and if fewer than 256 tokens would remain it raises `PromptTooLongError` — which propagates out of `iterative_step` and the loop to the chat job, so the turn fails with that message in the status `error` field (`Prompt is ~N tokens; context window is …`) and in `api.log`.
 
-Doc text ordering inside the prompt = reranked order (candidates first, then expansion docs). Each candidate's text is the `_build_node_text` block; there is no per-source header, no score, no citation marker — the LLM never sees note ids, and **citations are not produced by the LLM** (see §9.4).
+Doc text ordering inside the prompt = `edges_order(docs)` (`llm.py`): the iteration's docs (candidates and expansion docs, reranked in separate passes) are sorted by `rerank_score`, then the best are placed at both ends and the weakest in the middle — ranks 1, 3, 5, … from the top, …, 6, 4, 2 back to the bottom (doc 13 §9.10). Each candidate's text is the `_build_node_text` block; there is no per-source header, no score, no citation marker — the LLM never sees note ids, and **citations are not produced by the LLM** (see §9.4).
 
 `_doc_passage(doc)` in `workflows/chat.py` (= `original_obj.summary` or `.description` or `doc.text`) is used only for the DEBUG "Context (N docs)" log line in `ChatWorkflow.chat`; it is not part of any prompt.
 
@@ -594,7 +595,7 @@ The call is `_reason_step(prompt, json_mode=True)`, so providers with a JSON mod
 
 ### 9.3 Response parsing (`iterative_step`)
 
-- The reply goes through `_clean_json` (fence unwrap, curly quotes, `json_repair`) and `_ResearchStep.model_validate_json` — a pydantic model with `reasoning`, `finding`, `answer`, `next_query`, all `str | None` because small models write `null` for an empty field.
+- The reply goes straight into `_ResearchStep.model_validate_json`, exactly as written (nothing unwraps fences, normalises quotes or repairs it; a fenced or malformed reply is a no-op step, below) — a pydantic model with `reasoning`, `finding`, `answer`, `next_query`, all `str | None` because small models write `null` for an empty field.
 - `reasoning = step.reasoning or ""`; `full_answer = step.finding or ""`.
 - `answer`, stripped, non-empty and not in `{INSUFFICIENT, NONE, NULL, N/A, UNKNOWN, NOT FOUND}` → `can_answer=True, final_answer=answer`.
 - Else `next_query` gets the same filter; when an answer was accepted `next_query` is forced to `None`.
@@ -608,7 +609,7 @@ Return dict: `{reasoning, full_answer, can_answer, final_answer, next_query, thi
 1. `all_docs` → `_dedupe_docs` (key: `original_obj.name` or `note_id` or `text`; first wins) → `_clear_unverified_links(docs)`: every gathered doc is kept (no cap: a cap applied here only trimmed the sources shown, since the answer is already written inside the loop); **any doc without a `rerank_score` key gets `linked_notes = []`** ("clear unverified linked_notes"). In practice every doc from `hybrid_search` has the key, so this only bites docs injected by other means. Because `rerank_score`s come from *different* reranker passes (one per sub-query) they are not strictly comparable, but they are treated as such here.
 2. `answer = final_answer or fallback message` (§6.3).
 3. `_extract_references(unique_docs) -> list[ChatSource]`: collect `linked_notes[*].id → title` across docs in order; one SQLite query `SELECT id, title FROM notes WHERE id IN (...)` overrides titles with the current note title (falls back to the graph title, then `"Untitled Note"`); dedupe by note id. Log `[Chat] Found N references for response`.
-4. The list is returned as `sources: [{id, title}]` on the result (and persisted in message `metadata.sources`); the answer text is left alone. Citations are per-note, not per-claim, and are derived purely from `REFERENCES` edges of the gathered docs — an answer can list a note whose content the LLM never saw (the note text itself is never retrieved; only node summaries are).
+4. The list is returned as `sources: [{id, title}]` on the result (and persisted in message `metadata.sources`); the answer text is left alone. Citations are per-note, not per-claim, and are derived from `REFERENCES` edges of the gathered docs and, for `passage` docs, the passage's own note — an answer can list a note whose content the LLM never saw (graph docs carry node summaries, not note text; only `passage` docs carry the note's own text).
 
 The `context` list in the result is `unique_docs` (full candidate dicts). The frontend ignores it; it is stored nowhere except in `_chat_status` for async jobs (and only `context_count` goes into message metadata).
 
@@ -633,7 +634,7 @@ Local mode keeps **one heavy GGUF resident at a time** (`LocalLlamaRuntime` + `L
 | candidate rerank; per-pair expansion rerank; expansion-doc rerank | reranker GGUF | `LocalGgufReranker.ensure_loaded` (calls `local_llama_runtime.unload()` first) | **chat + embed**, multimodal |
 | `iterative_step` | chat GGUF | `create_chat_completion` | reranker, embed |
 
-So one retrieval iteration in local mode is at minimum **chat → embed → rerank → chat** (three loads), and a full 3-iteration turn that answers on iteration 3 is roughly: rewrite (chat) → analyze (chat) → plan step (chat) → [analyze sub-query (chat) → embed → rerank → chat] × 2. The `analyze_query` cache only helps when the exact same query string recurs (e.g. the same question asked twice in a day, or a sub-query identical to the original). Model load time dominates wall time on machines with slow disks; the benchmark reports in `Results/` measured 2–4 min per HotPotQA question with Gemma 4 E4B and up to 10 iterations before the desktop build reduced `MAX_LOOP_ITERATIONS` to 3.
+So one retrieval iteration in local mode is at minimum **chat → embed → rerank → chat** (three loads), and a full 3-iteration turn that answers on iteration 3 is roughly: rewrite (chat) → analyze (chat) → [analyze (sub-)query (chat; cached for the question itself) → embed → rerank → chat] × 3. The `analyze_query` cache only helps when the exact same query string recurs (e.g. the same question asked twice in a day, or a sub-query identical to the original). Model load time dominates wall time on machines with slow disks; the benchmark reports in `Results/` measured 2–4 min per HotPotQA question with Gemma 4 E4B and up to 10 iterations before the desktop build reduced `MAX_LOOP_ITERATIONS` to 3.
 
 **Idle unload:** `MODEL_IDLE_SECONDS` (default 300; `0` = never) unloads whichever GGUF is resident after inactivity, so the first turn after a pause pays a cold chat load before the rewrite call.
 
@@ -701,7 +702,7 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 | `_merge_search_results(primary, secondary, seen_names)` | Append secondary rows whose name is unseen (entity → BM25 merge) |
 | `hybrid_search(query, top_k=50)` | One retrieval pass: analyse → embed → parallel entity/BM25/vector → merge → note grounding → candidates → rerank (top-K + threshold) → logs |
 | `_apply_reranker_logging(query, candidates, top_n, question_attribute, expected_entity_types, score_threshold)` | Score candidates with the GGUF reranker (query + hints), sort, slice, threshold; sets `rerank_score`/`reranker_rank` |
-| `retrieve_with_iterative_loop(query, top_k, progress_callback, conversation_history)` | The research loop: plan → (search → expand → rerank → reason) × N → answer or best finding |
+| `retrieve_with_iterative_loop(query, top_k, progress_callback, conversation_history)` | The research loop: (search → expand → rerank → reason) × N, starting with the question itself → `(answer or best finding, docs, thinking, answered)` |
 | `retrieval_service` (module) | Default-KB singleton built on import (module-level `graph_service`/`qdrant_service`/`meilisearch_service`); per-KB instances come from `KBContext._ensure_lazy` |
 
 ### 12.2 `backend/app/workflows/chat.py`
@@ -714,7 +715,7 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 | `_describe_loads(delta)` | `ModelLoadClock.describe` wrapper (working tree) |
 | `_clear_unverified_links(docs)` | Keep every gathered doc; clear `linked_notes` on docs without a rerank score |
 | `ChatWorkflow.__init__(retrieval=None, llm=None)` | Bind per-KB retrieval service and LLM (defaults: singletons) |
-| `ChatWorkflow._retrieve_context(user_query, history, progress_callback)` | Rewrite follow-up → `retrieve_with_iterative_loop(top_k=50)` → dedupe → clear unverified links; returns `(rewritten_query, final_answer or "", unique_docs, thinking)` |
+| `ChatWorkflow._retrieve_context(user_query, history, progress_callback)` | Rewrite follow-up → `retrieve_with_iterative_loop(top_k=50)` → dedupe → clear unverified links; returns `(rewritten_query, final_answer or "", unique_docs, thinking, answered)` |
 | `ChatWorkflow.chat(user_query, history, progress_callback)` | Full turn: retrieve (every gathered doc) → choose answer/fallback → `sources` (`ChatSource` list) → timing → result dict |
 | `ChatWorkflow.retrieve_for_query(user_query, history, progress_callback)` | Evidence only (max 12 docs), no answer; used by the finance path |
 | `ChatWorkflow._extract_references(docs)` | Unique `ChatSource(id, title)` entries from `linked_notes`, titles refreshed from SQLite `notes` |
@@ -821,8 +822,8 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | Unknown `?kb=` | 404 from `get_kb` | same |
 | Empty `query` | 422 (pydantic `min_length=1`) | same |
 | Kuzu unavailable / KB has no Kuzu path | `KBContext.graph` raises `RuntimeError` when the retrieval service is first built (`_ensure_lazy`) → job `Failed` | Error bubble; `api.log` traceback |
-| Qdrant down | `search_all_collections`/`get_nodes_content_by_ids` return `[]`/`{}` (availability check); entity nodes stay text-less and are dropped; vector channel empty | Usually ends in exhaustion → "couldn't find…" |
-| Meilisearch down | `search_nodes` returns `[]` | Keyword channel silently empty |
+| Qdrant down | `search_all_collections`/`get_nodes_content_by_ids` return `[]`/`{}` (availability check); entity nodes stay text-less and are dropped; vector channel empty. `search_passages` (Qdrant and Meilisearch) logs a warning and returns `[]` on any failure, like the node searches | Usually ends in exhaustion → "couldn't find…" |
+| Meilisearch down | `search_nodes` returns `[]`; `search_passages` returns `[]` only without a client (never connected) — an index call to a server that went away after connecting raises out of `hybrid_search` → job `Failed` | Keyword channel silently empty, or an error bubble |
 | Reranker GGUF not selected / load failure | `RerankerService.rerank` → `[]` → all scores 0 → `hybrid_search` returns `[]` under the default threshold | "I couldn't find any relevant information…"; `[Reranker] No GGUF selected` |
 | Chat GGUF not downloaded (local) | `ensure_chat_loaded` raises `RuntimeError("Local GGUF models are not downloaded…")` in the rewrite call → job `Failed` | Error bubble |
 | Per-KB pinned local model not downloaded | `resolve_chat_gguf` raises → `Failed` (PATCH normally prevents this) | Error bubble |
@@ -837,7 +838,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | Browser closed mid-job | Job continues under the lock and persists the answer | Appears on next load |
 | Frontend polls > 10 min | `fail()` client-side; backend unaffected | Error bubble, later the real answer appears after reload |
 | Two async chats at once (same or different KB) | Second waits on `_chat_job_lock` showing "Waiting for current chat to finish" | Stage text |
-| Chat concurrent with ingestion | No shared lock — model swap thrash, longer wall time; `LocalLlamaRuntime._lock` prevents corruption | Slow turns |
+| Chat concurrent with ingestion | No shared lock — ingestion's embedding calls swap with chat's models (extraction itself runs on the separate extraction `llama-server`, whose model memory is held alongside), longer wall time; `LocalLlamaRuntime._lock` prevents corruption | Slow turns |
 | Finance query (`looks_like_finance_query`) but Firefly not ready | `answer_finance_question` returns "I can't answer finance questions yet because …" with the note context attached | Answer text (no `sources` on this path) |
 
 ## 16. Invariants, locked decisions, and gotchas
@@ -856,7 +857,8 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 
 **Gotchas an assistant would get wrong**
 
-- `MAX_LOOP_ITERATIONS = 3` means **two** searches, not three; iteration 1 only plans.
+- `MAX_LOOP_ITERATIONS = 3` means up to **three** searches; iteration 1 searches the question itself (it used to only plan a query, giving two).
+- An exhausted loop's finding is shown labelled `"No definitive answer in your notes. Closest finding: …"` (`answered=False`), not as an answer.
 - `graph_expansion` docs are shown to the LLM but never enter `all_docs`/`context` themselves (name-dedup against their origin); their `linked_notes` are merged into the origin doc, which is how neighbour notes reach `sources`.
 - Meili results are typed `entity_match`, not a keyword type; the source can be told apart via `original_obj._source == "meili"`.
 - Vector name variants come from Kuzu without Qdrant enrichment and are usually dropped for lack of text.
@@ -907,5 +909,6 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | 2026-08-02/03 `3f21e08`, `fbcafe7` | Docker-free desktop: in-process GGUFs, Meilisearch replaces Typesense, `_chat_job_lock` serialises jobs on the event loop, `MAX_LOOP_ITERATIONS` lowered to 3 | Desktop UX; one resident model; SQLite sessions bound to one loop |
 | 2026-08-06/07 `b84ca73`, `8de5cda` | Concurrent entity/BM25/vector search, batched Kuzu/Qdrant lookups, `analyze_query` day-cache; frontend scans only the 5 most recent messages with id-keyed cache and abortable requests | Fewer round trips and model swaps |
 | working tree (2026-09) | Per-KB LLM override (provider + chat/ingestion model), `model_load_clock` timing line, dynamic output budget / `PromptTooLongError`, per-KB chat GGUF switching, `require_ai(kb)` | Attribute wall time to loads vs inference; let a KB pin a stronger/cloud model |
+| working tree (2026-10) | Note passages (section C) reranked with the graph candidates; the loop's first search is the question itself; `answered` flag and the "No definitive answer…" label; `edges_order` evidence layout; reranker scores from the last position's yes/no logits (`logits_all=False`, KV-prefix reuse) | Notes stay findable by their own text even when extraction missed a fact; the first step reads the question's own results instead of only planning; with `logits_all` on, reranking long passages was CPU-bound for minutes per question |
 
 Open discrepancies noted while writing (also listed in the report): docstring-only keyword fallback in `_apply_reranker_logging`; unused `_get_node_relationships`; `neighbor_node` type in logs; "person entities" comment on the untyped vector-variant expansion; broken chat export; hard-coded "Gemma4" label.

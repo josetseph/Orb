@@ -106,7 +106,7 @@ Notes:
 
 | Pattern | Used by | Behaviour |
 |---|---|---|
-| Starlette `BackgroundTasks` | `notes/{id}/ingest`, `/ingest`, `admin/reingest-all`, `notes/reingest-vault`, `admin/rebuild-communities`, `admin/build-temporal-digests`, `admin/reset-ingestion-data` | Tasks run **after the response is sent**, sequentially in the order added, on the request's event loop (sync callables are run in Starlette's threadpool). Ingestion tasks additionally serialise on `IngestionWorkflow._process_semaphore` (`INGESTION_PIPELINE_CONCURRENCY`, default 1). Progress is observed by polling `GET /api/v1/notes/{id}/status` or `GET /api/v1/admin/maintenance-status`. |
+| Starlette `BackgroundTasks` | `notes/{id}/ingest`, `/ingest`, `admin/reingest-all`, `notes/reingest-vault`, `admin/rebuild-communities`, `admin/build-temporal-digests`, `admin/reset-ingestion-data` | Tasks run **after the response is sent**, sequentially in the order added, on the request's event loop (sync callables are run in Starlette's threadpool). Ingestion tasks additionally wait on `IngestionWorkflow._process_semaphore` (`extraction_server.slots` per KB, 1–6 by RAM) and write the graph in submission order. Progress is observed by polling `GET /api/v1/notes/{id}/status` or `GET /api/v1/admin/maintenance-status`. |
 | `asyncio.create_task` + in-memory status dict | `POST /api/v1/chat/async` → `GET /api/v1/chat/status/{request_id}` | The job runs on the app event loop under a process-wide `asyncio.Lock` (`_chat_job_lock`), so at most one chat job executes at a time across all KBs; extra jobs report stage `"Waiting for current chat to finish"`. Status entries live in the module-level `OrderedDict` `_chat_status`; `_prune()` (run on every write and read) drops the oldest entries once there are more than 200 or the oldest is older than 1800 s. |
 | `asyncio.to_thread` | Vault scans, Kuzu/Qdrant/Meili calls, model downloads/loads, Firefly PHP scripts | Keeps blocking I/O off the event loop; the HTTP request still waits for completion. |
 | Synchronous long request | `POST /api/v1/setup/download-models`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services` | Multi-GB downloads / model loads complete before the response returns. The frontend calls `download-models` with `timeout: 0`. |
@@ -243,7 +243,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 
 | Method | Path | kb | Purpose | Anchor |
 |---|---|---|---|---|
-| GET | `/api/v1/admin/maintenance-status` | kb | Community/digest/ingestion job state | [#](#get-apiv1adminmaintenance-status) |
+| GET | `/api/v1/admin/maintenance-status` | kb | Community/digest/passage-backfill/ingestion job state | [#](#get-apiv1adminmaintenance-status) |
 | POST | `/api/v1/admin/rebuild-communities` | kb | Background Leiden rebuild | [#](#post-apiv1adminrebuild-communities) |
 | POST | `/api/v1/admin/build-temporal-digests` | kb | Background temporal digest build | [#](#post-apiv1adminbuild-temporal-digests) |
 | POST | `/api/v1/admin/reset-ingestion-data` | kb | Wipe graph/vectors/index, mark notes unprocessed | [#](#post-apiv1adminreset-ingestion-data) |
@@ -422,7 +422,7 @@ Changing the embed model invalidates existing vectors (logged warning: re-ingest
 
 #### POST /api/v1/setup/start-multimodal-services
 
-Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks Phonon-2 is downloaded (else returns `{"started": false, "mode": "in_process", "error": "Download the speech model (Phonon-2) on the Models page first", "models": {"asr", "marlin"}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Success:
+Query: `install_deps: bool = true`. Calls `services/multimodal_services.ensure_multimodal_services(install_deps=…)` in a thread. Despite the name, **no processes are started**: it checks Phonon-2 is downloaded (else returns `{"started": false, "mode": "in_process", "error": "Download the speech model (Phonon-2) on the Models page first", "models": {"asr", "marlin"}, "paths": {...}}`), then `ensure_multimodal_python_deps(install=install_deps)` which may run `pip install --upgrade torch transformers>=5.7.0 …` **into the running API interpreter** (long, blocking). Upgrading a package this process already imported (e.g. `transformers`, loaded by the speaker diarizer) cannot take effect until a restart: `ensure_multimodal_python_deps` then returns `restart_required: true`, `restart_needed()` stays true, and `multimodal_runtime._load_phonon` refuses with "Media packages were just updated: restart Orb to transcribe" instead of failing on mixed versions. `POST /setup/download-models` returns the same `restart_required`, and the Models page offers **Restart now** (the desktop bridge's `restartBackend`). Success:
 
 ```json
 {"started": true, "mode": "in_process", "already_running": false,
@@ -482,7 +482,7 @@ Response: `{"status": "ok", "data_dir": "<abs>", "models_dir": "<abs>", "default
 {"provider": "local", "model": "gemma-…", "ingestion_model": "gemma-…", "base_url": "http://127.0.0.1:8080"}
 ```
 
-`model` = `llm_service.get_chat_model() or settings.LLM_MODEL`; `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL` — ingestion runs on the chat model, so globally this equals `model`; the field is response-only.
+`model` = `llm_service.get_chat_model() or settings.LLM_MODEL`; `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL` — for a local provider the extraction model (`EXTRACTION_MODEL`; automatic → Gemma 4 12B when it fits and is downloaded, else the chat model), for cloud providers the chat model; the field is response-only.
 
 #### GET / PUT /api/v1/settings/local-runtime
 
@@ -490,9 +490,9 @@ The llama.cpp knobs shown in Models → Local runtime. `GET` returns the fourtee
 
 #### PATCH /api/v1/settings
 
-Body (`LLMSettings`, all optional): `provider`, `model`, `base_url` (there is no `ingestion_model` input; pydantic ignores it if sent). API keys are **never** accepted here — they go to `PUT /api/v1/credentials`, which keeps them in memory and lets the desktop shell hold the only on-disk copy as keychain ciphertext.
+Body (`LLMSettings`, all optional): `provider`, `model`, `base_url`, `extraction_model` (`""` automatic, `"chat"` the chat model, else a model ref; used only when ingestion runs on this device). There is no `ingestion_model` input; pydantic ignores it if sent. API keys are **never** accepted here — they go to `PUT /api/v1/credentials`, which keeps them in memory and lets the desktop shell hold the only on-disk copy as keychain ciphertext.
 
-Behaviour: loads `runtime_config.json`, applies each non-null field to both the overrides dict and live `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`), `runtime_config.save(overrides)` (only `MUTABLE_KEYS` are written). If `provider` or `base_url` **changed**, `llm_service.provider = …lower()` and `llm_service.init_clients()` (rebuilds provider clients). Model-only changes need no reinit. Response mirrors GET but reads `settings.CHAT_MODEL or settings.LLM_MODEL` directly, for both `model` and `ingestion_model`.
+Behaviour: loads `runtime_config.json`, applies each non-null field to both the overrides dict and live `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`, `EXTRACTION_MODEL`), `runtime_config.save(overrides)` (only `MUTABLE_KEYS` are written). If `provider` or `base_url` **changed**, `llm_service.provider = …lower()` and `llm_service.init_clients()` (rebuilds provider clients). Model-only changes need no reinit. Response mirrors GET but reads `settings.CHAT_MODEL or settings.LLM_MODEL` directly for `model`; `ingestion_model` is `llm_service.get_ingestion_model()`.
 
 Gotcha: an empty string is treated as "set" (only `None` is skipped), but `provider_changed` uses truthiness so `provider: ""` is persisted without a client reinit.
 
@@ -619,7 +619,7 @@ The frontend's `updateNoteOnUnload` sends this PUT with `fetch(..., keepalive: t
 
 Delegates to `_delete_note_impl`. Idempotent: unknown id → `{"status": "deleted", "id": …, "orphans_removed": 0, "already_gone": true}` (200, not 404).
 
-Steps: read body (thread) → collect `attachments/…` refs from markdown links/images → `delete_note_file` (best-effort) → delete `note_links` rows where source **or** target is the note → delete `notes` row → **commit** → best-effort graph cleanup: Cypher query for entity nodes referenced only by this note (orphans), `DETACH DELETE` the note node (`kind='note'`), `qdrant.delete_node`/`meili.delete_node` for the note and each orphan, `DETACH DELETE` each orphan → `remove_upload` for each referenced attachment. Every post-commit step logs and continues on failure. Response `{"status": "deleted", "id": "…", "orphans_removed": 2}`.
+Steps: read body (thread) → collect `attachments/…` refs from markdown links/images → `delete_note_file` (best-effort) → delete `note_links` rows where source **or** target is the note → delete `notes` row → **commit** → best-effort graph cleanup: Cypher query for entity nodes referenced only by this note (orphans), `DETACH DELETE` the note node (`kind='note'`), `qdrant.delete_node`/`meili.delete_node` for the note and each orphan, `qdrant.delete_note_contexts`, `qdrant.delete_note_passages` + `meili.delete_note_passages` (the note's own-text passages), `DETACH DELETE` each orphan → `remove_upload` for each referenced attachment. Every post-commit step logs and continues on failure. Response `{"status": "deleted", "id": "…", "orphans_removed": 2}`.
 
 Attachments referenced by **other** notes are still deleted if this note referenced them (no reference counting).
 
@@ -643,7 +643,7 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 `require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, commits, then `BackgroundTasks.add_task(kb.get_ingestion_workflow().process_note, NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
 
-`process_note` (`workflows/ingestion.py`): `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` → wait for semaphore slot → `"Starting ingestion"` → ingestion agent (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
+`process_note` (`workflows/ingestion.py`): take a ticket → `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` (a failure writing it ends the tracker entry and marks the note failed) → wait for a pipeline slot (`extraction_server.slots` per KB) → `"Starting ingestion"` → store the note's passages (Qdrant + Meili; failure fails the note) → ingestion agent (graph writes wait for every earlier-submitted note) (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
 
 #### POST /api/v1/ingest
 
@@ -911,11 +911,12 @@ Runs `rebuild_kb_note_links` and returns `{"notes": N, "links": M}`.
 ```json
 {"community_detection": {"running": false},
  "temporal_digests": {"running": false},
+ "passages": {"running": true, "done": 120, "total": 412},
  "ingestion": {"active": 0},
  "healthy": true}
 ```
 
-`community_detection.running` and `temporal_digests.running` are the per-KB workflow flags; `ingestion.active` is `ingestion_tracker.active_count(kb_id)`, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend sidebar polls this.
+`community_detection.running` and `temporal_digests.running` are the per-KB workflow flags; `passages` is the startup passage backfill for notes ingested before passages existed (`done`/`total` only while it runs; otherwise `{"running": false}`); `ingestion.active` is `ingestion_tracker.active_count(kb_id)`, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend activity indicator in the ribbon polls this.
 
 #### POST /api/v1/admin/rebuild-communities
 
@@ -1098,7 +1099,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 - **Autosave (`PUT /notes/{id}`) must never start ingestion.** Ingestion is only triggered by `/notes/{id}/ingest`, `/ingest`, `reingest-all`, `reingest-vault`.
 - **Vault deletes must go through `safe_vault_join`.** `_delete_note_impl` deliberately does not fall back to raw path joins when the safe delete fails.
 - **One chat job at a time.** `_chat_job_lock` serialises `chat/async` jobs process-wide; `AsyncSessionLocal` must be used from the app event loop, hence `asyncio.create_task` rather than a thread.
-- **One ingestion pipeline at a time per KB** (`INGESTION_PIPELINE_CONCURRENCY = 1`) so in-process GGUF/HF models, extraction, and graph writes do not overlap.
+- **Ordered ingestion per KB.** As many notes extract at once as the extraction server has slots (`slots_for_ram`: 1 below 20 GB RAM, up to 6), but each note writes the graph in submission order (tickets + `write_turn`), so the graph never depends on which extraction finished first.
 - **Firefly calls are globally serialised** by `_scope_lock`; every request carries `user_group_id`; list results are additionally filtered by PHP-reported ids. Never call the Firefly REST API without the KB scope.
 - **`delete_kb` never removes vaults outside `DATA_DIR/vaults`** or Kuzu files outside `DATA_DIR/kuzu`. (`kb/empty` does not have this protection — see gotchas.)
 - **API keys never travel through the API.** `PATCH /settings` and `runtime_config.MUTABLE_KEYS` exclude them.
@@ -1230,7 +1231,7 @@ Validation, in order:
 
 | Method | Path | Notes |
 |---|---|---|
-| `GET` | `/api/v1/models?kb=` | Everything the Models page renders in one read: `global` (system provider/model/base_url/configured), `kb` (the active KB's override + effective config), `local` (models_dir, `installed[]` from disk in any layout, `downloadable[]` from the catalog with a `downloaded` flag, hardware profile, auto-chosen embed/reranker), and `cloud` (stored endpoints, the two providers the UI offers, and `all_providers` — the native SDKs still used internally). Composes existing state; it does not duplicate any write path. |
+| `GET` | `/api/v1/models?kb=` | Everything the Models page renders in one read: `global` (system provider/model/ingestion_model/base_url/configured, plus `extraction_model` — `""` automatic, `"chat"`, or a model ref — and `extraction_auto`, the label automatic resolves to, `null` when it falls back to the chat model), `kb` (the active KB's override + effective config), `local` (models_dir, `installed[]` from disk in any layout, `downloadable[]` from the catalog with a `downloaded` flag, hardware profile, auto-chosen embed/reranker), and `cloud` (stored endpoints, the two providers the UI offers, and `all_providers` — the native SDKs still used internally). Composes existing state; it does not duplicate any write path. |
 | `POST` | `/api/v1/models/inspect` | `{path}` → describes a browsed-to GGUF file or folder (a folder resolves to the first GGUF shard inside it via `model_formats.loadable_path`): `ref`, `path`, `name`, `size_gb`, `warnings`; or 400 with the reason it cannot be used — missing file, unreadable GGUF, an embedding model, or a shard continuation. Called before anything is saved so failures are specific and early. |
 
 ### Credential routes (`api/credentials.py`)

@@ -42,7 +42,7 @@ Comprehensive, code-grounded documentation of the Orb repository: the Tauri desk
 | 15 | [Search indexes (Qdrant, Meilisearch)](15-search-indexes-qdrant-meilisearch.md) | Collections, vector params, payload schemas, search functions, dimension sync, Meili index settings and documents, embedding service, contract tests |
 | 16 | [Retrieval and chat](16-retrieval-and-chat.md) | Chat request lifecycle and polling, conversation persistence, multi-hop research loop, hybrid channels, fusion and rerank, context assembly, synthesis, tuning |
 | 17 | [Finance (Firefly III)](17-finance-firefly.md) | Runtime and token, per-KB administrations, request scoping, `FireflyService` methods and mappings, finance routes, frontend workspace |
-| 18 | [Frontend architecture](18-frontend-architecture.md) | Stack, conventions, build modes and the dev proxy, `fetch`-based API layer, providers, desktop bridge, sidebar, shared components, types, `lib/utils` helpers, patterns |
+| 18 | [Frontend architecture](18-frontend-architecture.md) | Stack, conventions, build modes and the dev proxy, `fetch`-based API layer, providers, desktop bridge, ribbon and file explorer, shared components, types, `lib/utils` helpers, patterns |
 | 19 | [Frontend notes editor](19-frontend-notes-editor.md) | Notes page controller and hooks, vault tree, autosave, ingestion controls, uploads and vault-relative attachment links, CodeMirror extensions (wikilinks, entities, media embeds, extraction blocks), read-only rendering |
 | 20 | [Frontend chat, graph and pages](20-frontend-chat-graph-and-pages.md) | Chat (sources chips, polling), 3D entity graph, 2D notes graph, and the settings sheet: Workspace, Models, Storage, About |
 | 21 | [Configuration reference](21-configuration-reference.md) | Every `ORB_*` env var with default, reader and effect; `paths.json` and `runtime_config.json` schemas; precedence |
@@ -85,7 +85,7 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 | Area | Finding | Doc |
 |---|---|---|
 | Retrieval | The GGUF cross-encoder is the only ranking signal and is mandatory: a missing or broken reranker fails the chat job with a visible error. | 16 |
-| Retrieval | `MAX_LOOP_ITERATIONS=3` gives at most two actual retrievals (iteration 1 only plans). | 16 |
+| Retrieval | `MAX_LOOP_ITERATIONS=3` used to give at most two actual retrievals (iteration 1 only planned); since 2026-10 the first iteration searches the question itself, so up to three. | 16 |
 | Ingestion | Re-ingest never deletes prior graph/vector data; `mention_count` grows. `is_similarity` / `created_at` on `SEMANTIC_REL` are never set. | 10, 14 |
 | Ingestion | L1 clustering threshold comment (0.50) disagrees with code (0.35). | 10, 21 |
 | Notes | `POST /api/v1/kb` response omits `slug` although the client needs it for `?kb=`. `kb/empty` lacks the `DATA_DIR` containment guard that `delete_kb` has. Deleting a KB orphans its `chat_conversations`. | 08, 09 |

@@ -53,6 +53,17 @@
         () => ({ ok: true }),
         (err) => ({ ok: false, error: String(err) }),
       ),
+    /** The newer release, `{version, notes}`, or null when up to date. */
+    checkUpdate: () => t.core.invoke("check_update"),
+    /** Download, install and relaunch; `onProgress` gets 0-100. Resolves only on failure. */
+    installUpdate: async (onProgress) => {
+      const unlisten = onProgress ? await t.event.listen("update-progress", (e) => onProgress(e.payload)) : null;
+      try {
+        await t.core.invoke("install_update");
+      } finally {
+        if (unlisten) unlisten();
+      }
+    },
     /** OS notification (macOS / Windows / Linux); asks for permission the first time. */
     notify: async (title, body) => {
       const n = t.notification;

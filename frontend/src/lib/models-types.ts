@@ -36,7 +36,14 @@ export interface DownloadableModel {
 }
 
 export interface ModelsPageState {
-  global: EffectiveLLM & { mode: "local" | "cloud"; configured: boolean };
+  global: EffectiveLLM & {
+    mode: "local" | "cloud";
+    configured: boolean;
+    /** On this device: "" automatic, "chat" the system model, else a model ref. */
+    extraction_model: string;
+    /** What automatic resolves to; null = the system model (the 12B does not fit or is not downloaded). */
+    extraction_auto: string | null;
+  };
   kb: (Pick<KBLLMConfig, "override" | "effective"> & { id: string; name: string }) | null;
   local: {
     models_dir: string;

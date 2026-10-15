@@ -372,14 +372,6 @@ export const api = {
 
   // ── Entity mention autocomplete ───────────────────────────────────────────
 
-  async searchEntities(
-    q: string,
-    kb = "default",
-    limit = 5,
-  ): Promise<{ node_id: string; name: string; node_type: string }[]> {
-    return http.get("/graph/entities/search", withKb(kb, { q, limit }));
-  },
-
   async scanTextEntities(
     text: string,
     kb = "default",
@@ -722,6 +714,7 @@ export const api = {
     provider?: string;
     model?: string;
     base_url?: string;
+    extraction_model?: string;
   }): Promise<{ provider: string; model: string; ingestion_model: string; base_url: string }> {
     return http.patch("/settings", data);
   },
@@ -779,6 +772,8 @@ export const api = {
   async getMaintenanceStatus(kb = "default"): Promise<{
     community_detection: { running: boolean };
     temporal_digests: { running: boolean };
+    /** Passages being indexed for notes ingested before passages existed. */
+    passages?: { running: boolean; done?: number; total?: number };
     ingestion?: {
       active: number;
     };

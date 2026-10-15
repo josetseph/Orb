@@ -63,9 +63,17 @@ class TestIterativeLoop:
             {"can_answer": False, "final_answer": None, "next_query": "sub", "reasoning": "", "full_answer": ""},
             {"can_answer": True, "final_answer": "42", "next_query": None, "reasoning": "r", "full_answer": "f", "thinking": None},
         ]
-        answer, docs, _ = _run_loop(svc, expansion, steps)
-        assert answer == "42" and len(docs) == 1
+        answer, docs, _, answered = _run_loop(svc, expansion, steps)
+        assert answer == "42" and answered and len(docs) == 1
         assert [n["id"] for n in docs[0]["linked_notes"]] == ["n1", "n2"]
+
+    def test_running_out_returns_the_finding_as_unanswered(self, svc):
+        steps = [
+            {"can_answer": False, "final_answer": None, "next_query": "sub", "reasoning": "", "full_answer": "Emma Bull is a writer"},
+            {"can_answer": False, "final_answer": None, "next_query": "sub2", "reasoning": "", "full_answer": ""},
+        ]
+        answer, _, _, answered = _run_loop(svc, [], steps)
+        assert answer == "Emma Bull is a writer" and not answered
 
     def test_runtime_error_propagates(self, svc):
         with pytest.raises(RuntimeError, match="context window"):

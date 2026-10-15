@@ -591,11 +591,8 @@ async def _extract_chunk(
     last_error: Exception | None = None
     for attempt in range(_MAX_EXTRACTION_ATTEMPTS):
         try:
-            # Free-form generate + JSON clean (not grammar-constrained sampling),
-            # which small models often empty out for nested relationship arrays.
-            raw, meta = await checkpoint.generate_with_meta(
-                llm, _build_extraction_prompt(text), temperature=0.1, json_mode=True
-            )
+            prompt = _build_extraction_prompt(text)
+            raw, meta = await checkpoint.generate_with_meta(llm, prompt, temperature=0.1, json_mode=True)
             tokens = count_tokens(text)
             model_name = llm.get_ingestion_model()
             if meta.get("truncated"):
@@ -619,11 +616,16 @@ async def _extract_chunk(
                         return merge_extractions(parts)
                 logger.warning(
                     "Extraction output truncated on a chunk too small to split — "
-                    "repairing the partial JSON"
+                    "parsing it as written"
                 )
             else:
                 record_success(model_name, tokens, budget)
-            return Extraction.model_validate_json(llm._clean_json(raw))
+            try:
+                return Extraction.model_validate_json(raw or "")
+            except ValueError:
+                # Saved replies replay on retry; an unusable one must not.
+                checkpoint.forget(llm, prompt, temperature=0.1)
+                raise
         except Exception as exc:  # pylint: disable=broad-exception-caught
             last_error = exc
             if attempt < _MAX_EXTRACTION_ATTEMPTS - 1:
@@ -647,7 +649,7 @@ async def _call_pass(llm, prompt: str, model_cls, label: str):
         )
         if meta.get("truncated"):
             logger.warning("[Extraction] %s truncated — result may be partial", label)
-        return model_cls.model_validate_json(llm._clean_json(raw))
+        return model_cls.model_validate_json(raw or "")
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning("[Extraction] %s failed: %s", label, exc)
         return model_cls()
@@ -1471,9 +1473,15 @@ async def summarization_node(state: IngestionState):
     }
 
 
-async def run_ingestion_agent(state: IngestionState) -> IngestionState:
-    """Run the four stages in order, stopping at the first that reports an error."""
+async def run_ingestion_agent(state: IngestionState, write_turn=None) -> IngestionState:
+    """Run the four stages in order, stopping at the first that reports an error.
+
+    ``write_turn``, when given, is awaited between extraction and the first write: with several
+    notes extracting at once, it holds this note back until every note submitted before it has written.
+    """
     for node in (multimodal_node, extraction_node, storage_node, summarization_node):
+        if node is storage_node and write_turn is not None:
+            await write_turn()
         state.update(await node(state))
         if state.get("errors"):
             break

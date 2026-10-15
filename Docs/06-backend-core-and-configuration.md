@@ -268,7 +268,11 @@ Every field below is an env var of the same name. "Consumer" is where `settings.
 
 **LLM — ingestion axis**
 
-No fields. Chat and ingestion share one provider and model: `llm.get_ingestion_model()` returns the per-KB `llm_ingestion_model` override or `get_chat_model()`, and `init_clients` uses the chat provider for ingestion. The former `INGESTION_PROVIDER`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL` and `INGESTION_GEMINI_MODEL` fields were removed.
+| Field | Type | Default | Consumer |
+|---|---|---|---|
+| `EXTRACTION_MODEL` | str | `""` | `llm.get_ingestion_model` when the ingestion provider is `local`: `""` automatic (`model_catalog.auto_extraction_model()` — Gemma 4 12B when it fits and is downloaded, else the chat model), `"chat"` the chat model, else a model ref. Run by the extraction `llama-server` ([12](12-local-models-and-inference.md) §7.5). `api/settings.py` (`extraction_model`), `runtime_config` |
+
+Chat and ingestion share one provider: `init_clients` uses the chat provider for ingestion (`ServerChatClient` when it is `local`). `llm.get_ingestion_model()` returns the per-KB `llm_ingestion_model` override, else (local) the extraction model above, else `get_chat_model()`. The former `INGESTION_PROVIDER`, `INGESTION_MODEL`, `INGESTION_LLM_MODEL` and `INGESTION_GEMINI_MODEL` fields were removed.
 
 **Embeddings axis**
 
@@ -343,7 +347,6 @@ The `TYPESENSE_*` env aliases and their validator (added in `fbcafe7`, 2026-08-0
 | Field | Type | Default | Consumer |
 |---|---|---|---|
 | `LOG_LEVEL` | str | `"INFO"` | `log.setup_logging` (`getattr(logging, LEVEL.upper(), INFO)`) |
-| `INGESTION_PIPELINE_CONCURRENCY` | int | `1` | `workflows/ingestion.py` `asyncio.Semaphore` around whole-note processing (FIFO when 1) |
 | `MULTIMEDIA_CONCURRENCY` | int | `1` | `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` around vision / Phonon-2 / Marlin work |
 | `LARGE_ATTACHMENT_TOKENS` | int | `20000` | `ingestion_agent.finish_attachment` (read at call time) — a non-image, non-recording attachment whose extracted text is larger becomes a notes block: a summary is graphed and the full text indexed for search, with no prompt; recordings always do ([11 §6.4](11-multimedia-enrichment.md)). One of `LOCAL_RUNTIME_KEYS` (`large_attachment_tokens`, ≥ 1000 via `api/settings.LocalRuntimeSettings`), edited in Models → Local runtime |
 
@@ -365,14 +368,14 @@ Other writers to `settings` at runtime (all in-process, none persisted except wh
 
 | Writer | Fields | Persisted? |
 |---|---|---|
-| `runtime_config.apply_to_settings` (startup, `PATCH /settings`) | `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL` (plus the local-runtime knobs) | yes → `runtime_config.json` |
+| `runtime_config.apply_to_settings` (startup, `PATCH /settings`) | `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`, `EXTRACTION_MODEL` (plus the local-runtime knobs) | yes → `runtime_config.json` |
 | `api/settings.update_runtime_settings` | same three LLM fields directly, then saves | yes |
 | `api_desktop.setup_paths` | via `sync_settings_paths`: `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` | paths → `paths.json` |
 | `paths.sync_settings_paths` | `DATA_DIR`, `MODELS_DIR`, `MODELS_PATH` | n/a (reads `paths.json`) |
 | `local_models.sync_embedding_infrastructure` | `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` | derived from `models_manifest.json` |
 | `local_models.ensure_chat_and_embed_models` | `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL`, `LLM_MODEL` | manifest |
 
-Because modules read `settings.<X>` at call time (not at import), most of these take effect immediately. The exceptions are values captured at import/construction: the SQLAlchemy engine URL (`database.py`), `asyncio.Semaphore` sizes (`INGESTION_PIPELINE_CONCURRENCY`, `MULTIMEDIA_CONCURRENCY`), Qdrant/Meili client hosts (captured when each `KBContext` is built), `LLMService.provider` (re-read only when `init_clients()` is re-run by `PATCH /settings`).
+Because modules read `settings.<X>` at call time (not at import), most of these take effect immediately. The exceptions are values captured at import/construction: the SQLAlchemy engine URL (`database.py`), `asyncio.Semaphore` sizes (the per-KB pipeline slots from `extraction_server.slots`, `MULTIMEDIA_CONCURRENCY`), Qdrant/Meili client hosts (captured when each `KBContext` is built), `LLMService.provider` (re-read only when `init_clients()` is re-run by `PATCH /settings`).
 
 ## 6. `backend/app/core/paths.py` — bootstrap path resolution
 
@@ -428,11 +431,11 @@ Env beats file for data/models dirs. **For the default vault it is the other way
 
 Persistent, user-mutable overrides for the provider settings, so the UI can change them. API keys are deliberately never stored here.
 
-- `MUTABLE_KEYS = frozenset(_SETTING_FOR)`: `provider`, `model`, `base_url` plus the fourteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs and `large_attachment_tokens`; each key is its lower-cased `Settings` attribute).
+- `MUTABLE_KEYS = frozenset(_SETTING_FOR)`: `provider`, `model`, `base_url`, `extraction_model` plus the fourteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs and `large_attachment_tokens`; each key is its lower-cased `Settings` attribute).
 - `_data_path()` → `resolve_data_dir() / "runtime_config.json"`, falling back to `<repo>/data/runtime_config.json` if `paths` import fails.
 - `load() -> dict`: returns only keys in `MUTABLE_KEYS`; any `OSError`/`JSONDecodeError` logs a warning (logger `RuntimeConfig` → `api.log`) and returns `{}`.
 - `save(overrides)`: filters to `MUTABLE_KEYS`, `mkdir -p`, writes `indent=2` JSON under a `threading.Lock`. Overwrites the whole file — callers first `load()` then merge (as `PATCH /settings` does).
-- `apply_to_settings(overrides)`: maps `provider→settings.LLM_PROVIDER`, `model→settings.CHAT_MODEL`, `base_url→settings.LLM_BASE_URL` and each local-runtime key to its upper-cased field (one loop over `_SETTING_FOR`); `None` values are skipped, except for the local-runtime keys where a stored `null` means "automatic".
+- `apply_to_settings(overrides)`: maps `provider→settings.LLM_PROVIDER`, `model→settings.CHAT_MODEL`, `base_url→settings.LLM_BASE_URL`, `extraction_model→settings.EXTRACTION_MODEL` and each local-runtime key to its upper-cased field (one loop over `_SETTING_FOR`); `None` values are skipped, except for the local-runtime keys where a stored `null` means "automatic".
 
 File example:
 
@@ -452,12 +455,12 @@ There is no schema validation of values (e.g. an unknown provider string is appl
 ```python
 DATABASE_URL = sqlite_url()
 engine = create_async_engine(DATABASE_URL, echo=False, future=True,
-                             poolclass=NullPool, connect_args={"check_same_thread": False})
+                             poolclass=NullPool, connect_args={"check_same_thread": False, "timeout": 30})
 ```
 
-- SQLite uses `aiosqlite` with `NullPool`: every session opens a fresh connection and closes it. Rationale (history `3f21e08`, `2655bb8`): SQLite + async + multiple threads (vault watcher, ingestion tracker, `kb_registry` raw `sqlite3`) behave best without a shared pool; `check_same_thread=False` is required because aiosqlite runs the connection in a worker thread.
+- SQLite uses `aiosqlite` with `NullPool`: every session opens a fresh connection and closes it. Rationale (history `3f21e08`, `2655bb8`): SQLite + async + multiple threads (vault watcher, ingestion tracker, `kb_registry` raw `sqlite3`) behave best without a shared pool; `check_same_thread=False` is required because aiosqlite runs the connection in a worker thread. `timeout=30`: sqlite3 waits 5 s for a write lock by default, and with many notes ingesting at once (a benchmark had 24 in flight) a status write timed out and that note was left "processing" forever; the engine now waits up to 30 s instead of failing (and a failed `"Queued for ingestion"` write now marks the note failed, doc 10 §4.4).
 - `ensure_data_layout()` runs before engine creation so the directory for `orb.db` exists.
-- A `connect` listener sets `PRAGMA foreign_keys=ON` per connection; no WAL/other PRAGMA setup is performed. Under concurrent writers (`vault_watcher` sync engine + async API), callers can hit `database is locked`; `GET /notes/{id}/status` maps that to `503 "Database temporarily unavailable, retry shortly"`.
+- A `connect` listener sets `PRAGMA foreign_keys=ON` per connection; no WAL/other PRAGMA setup is performed. Under concurrent writers (`vault_watcher` sync engine + async API), callers can still hit `database is locked` after the 30 s busy timeout; `GET /notes/{id}/status` maps that to `503 "Database temporarily unavailable, retry shortly"`.
 
 ### 8.2 Session factory and dependency
 
@@ -659,21 +662,21 @@ Both routes are KB-agnostic (no `?kb=`) and unauthenticated like the rest of the
 
 - `provider` = `settings.LLM_PROVIDER` (raw string; may be a deprecated alias the service maps to `local`).
 - `model` = `llm_service.get_chat_model() or settings.LLM_MODEL` — **this touches the lazy `llm_service` proxy and therefore constructs `LLMService` (and, for `local`, the `local_llama_runtime` accel detection) on first call.** It does not load a GGUF.
-- `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL` — for the global service this is always the chat model (read-only; there is no separate ingestion setting).
+- `ingestion_model` = `llm_service.get_ingestion_model() or settings.LLM_MODEL` — for a local provider the extraction model (`EXTRACTION_MODEL`, automatic → Gemma 4 12B when it fits and is downloaded), else the chat model.
 - `base_url` = `settings.LLM_BASE_URL`.
 
 ### `PATCH /api/v1/settings` — body `LLMSettings`
 
-`{"provider"?: str, "model"?: str, "base_url"?: str}` — all optional; only non-`None` fields are applied.
+`{"provider"?: str, "model"?: str, "base_url"?: str, "extraction_model"?: str}` — all optional; only non-`None` fields are applied (`extraction_model`: `""` automatic, `"chat"`, or a model ref).
 
 Algorithm:
 
 1. `overrides = runtime_config.load()` (existing file contents, filtered to `MUTABLE_KEYS`).
 2. `provider_changed = bool(body.provider and body.provider != settings.LLM_PROVIDER)`; `base_url_changed` likewise.
-3. For each provided field: write into `overrides` **and** assign to `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`).
+3. For each provided field: write into `overrides` **and** assign to `settings` (`LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`, `EXTRACTION_MODEL`).
 4. `runtime_config.save(overrides)` — persists to `DATA_DIR/runtime_config.json`.
 5. If provider or base_url changed: `llm_service.provider = settings.LLM_PROVIDER.lower()` then `llm_service.init_clients()` and log `"LLM clients reinitialized"`. `init_clients()` rebuilds both the chat and the ingestion client sets.
-6. Returns `{provider, model: CHAT_MODEL or LLM_MODEL, ingestion_model: CHAT_MODEL or LLM_MODEL, base_url}` (note: computed from `settings`, not from `get_chat_model()`, so for a cloud provider with only `GEMINI_MODEL` set this response shows `local-chat` while `GET` shows the Gemini model).
+6. Returns `{provider, model: CHAT_MODEL or LLM_MODEL, ingestion_model: llm_service.get_ingestion_model(), base_url}` (note: `model` is computed from `settings`, not from `get_chat_model()`, so for a cloud provider with only `GEMINI_MODEL` set this response shows `local-chat` while `GET` shows the Gemini model).
 
 What it never does: accept API keys (those go to `PUT /api/v1/credentials`, which stores them in the OS keychain — see [13](13-llm-providers-and-prompting.md)), validate the provider string, or change embedding/reranker settings (those follow the model manifest; see [12](12-local-models-and-inference.md)).
 

@@ -26,6 +26,7 @@ def test_maintenance_status_reads_kb_id():
     wf.kb_id = "research"
     wf._community_run_running = False
     wf._temporal_digest_running = False
+    wf._passage_backfill = None
     status = wf.get_maintenance_status()
     assert status["healthy"] is True
     assert "active" in status["ingestion"]
@@ -36,6 +37,7 @@ def test_missing_kb_id_would_raise():
     wf = _wf()
     wf._community_run_running = False
     wf._temporal_digest_running = False
+    wf._passage_backfill = None
     try:
         wf.get_maintenance_status()
     except AttributeError as exc:

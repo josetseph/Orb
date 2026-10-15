@@ -9,6 +9,8 @@ fn main() {
                 "save_setup",
                 "print_page",
                 "restart_backend",
+                "check_update",
+                "install_update",
             ]),
         ),
     )

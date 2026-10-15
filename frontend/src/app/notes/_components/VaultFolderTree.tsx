@@ -1,8 +1,6 @@
 import { useMemo, useState, type DragEvent } from "react";
 import {
   ChevronRight,
-  FileText,
-  Folder,
   FolderPlus,
   Paperclip,
   Plus,
@@ -10,7 +8,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Note } from "@/lib/types";
-import { buildFolderTree } from "../_lib/folder-tree";
+import { buildFolderTree, type NoteSort } from "../_lib/folder-tree";
 import type { FolderTreeNode, VaultFileEntry } from "../_lib/types";
 import { NoteStatusDot, noteStatus } from "./NoteStatusBadge";
 import { VaultFileRow } from "./VaultFileRow";
@@ -31,7 +29,9 @@ type VaultFolderTreeProps = {
   onMoveVaultFiles: (rels: string[], folder: string) => void;
   onToggleFolder: (path: string) => void;
   onSelectFolder: (path: string) => void;
-  onNoteSelect: (note: Note) => void;
+  /** `newTab`: ⌘/Ctrl-click or middle-click. */
+  onNoteSelect: (note: Note, newTab?: boolean) => void;
+  sort: NoteSort;
   onNoteContextMenu?: (note: Note, x: number, y: number) => void;
   onFolderContextMenu?: (path: string, x: number, y: number) => void;
   onMoveVaultFolder: (fromPath: string, folder: string) => void;
@@ -55,7 +55,6 @@ type VaultFolderTreeProps = {
  * collapsed state); rows off-screen skip layout via `content-visibility`.
  */
 type TreeRow =
-  | { key: string; kind: "vault-header" }
   | { key: string; kind: "folder"; node: FolderTreeNode; depth: number; count: number }
   | { key: string; kind: "note"; node: FolderTreeNode; depth: number }
   | { key: string; kind: "attachments-header" }
@@ -75,10 +74,6 @@ function countNotes(node: FolderTreeNode): number {
   return node.children.reduce((n, c) => n + countNotes(c), 0);
 }
 
-function shortDate(iso: string): string {
-  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
 export function VaultFolderTree({
   notes,
   vaultFolders,
@@ -88,6 +83,7 @@ export function VaultFolderTree({
   selectedFolder,
   selectedNoteId,
   selectedNoteIds,
+  sort,
   dragNoteId,
   dragFileRel,
   selectedFileRels,
@@ -122,9 +118,9 @@ export function VaultFolderTree({
     const noteFolders = vaultFolders.filter(
       (f) => f !== "attachments" && !f.startsWith("attachments/"),
     );
-    const tree = buildFolderTree(notes, noteFolders);
+    const tree = buildFolderTree(notes, noteFolders, sort);
 
-    const out: TreeRow[] = [{ key: "__vault__", kind: "vault-header" }];
+    const out: TreeRow[] = [];
 
     const walk = (node: FolderTreeNode, depth: number) => {
       if (!node.note) {
@@ -197,7 +193,7 @@ export function VaultFolderTree({
       }
     }
     return out;
-  }, [notes, vaultFolders, attachmentFiles, expandedFolders, attachmentsOpen]);
+  }, [notes, vaultFolders, attachmentFiles, expandedFolders, attachmentsOpen, sort]);
 
   const acceptVaultDrop = (e: DragEvent, folderPath: string) => {
     e.preventDefault();
@@ -295,8 +291,8 @@ export function VaultFolderTree({
         onFolderContextMenu(path, e.clientX, e.clientY);
       }}
       className={cn(
-        "group/folder flex w-full items-center gap-1 rounded-[6px] pr-1 kicker",
-        opts.selected ? "text-accent" : "hover:text-n-300",
+        "group/folder flex w-full items-center gap-1 rounded-md pr-1 text-[13px]",
+        opts.selected ? "bg-n-900 text-text" : "text-n-300 hover:bg-n-900",
         dragging && "ring-1 ring-accent/30",
         dragFolder === path && "opacity-50",
       )}
@@ -305,18 +301,18 @@ export function VaultFolderTree({
       <button
         type="button"
         onClick={opts.onClick}
-        className="flex min-w-0 flex-1 items-center gap-1.5 px-1 pb-1 pt-2.5 text-left"
+        className="flex min-w-0 flex-1 items-center gap-1.5 px-1 py-[5px] text-left"
         title={path || vaultName}
       >
         {opts.open !== undefined && (
           <ChevronRight
-            className={cn("h-3 w-3 shrink-0 text-n-600 transition-transform", opts.open && "rotate-90")}
+            className={cn("h-3.5 w-3.5 shrink-0 text-n-600 transition-transform", opts.open && "rotate-90")}
           />
         )}
         {opts.icon}
         <span className="truncate">{label}</span>
         {opts.count !== undefined && (
-          <span className="ml-auto text-[10px] normal-case tracking-normal text-n-600">{opts.count}</span>
+          <span className="ml-auto text-[11px] text-n-600 opacity-0 group-hover/folder:opacity-100">{opts.count}</span>
         )}
       </button>
       {folderActionButtons(path)}
@@ -325,18 +321,6 @@ export function VaultFolderTree({
 
   const renderRow = (row: TreeRow) => {
     switch (row.kind) {
-      case "vault-header":
-        return (
-          <div onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, "")}>
-            {folderHeader(vaultName, "", 0, {
-              selected: selectedFolder === "",
-              count: notes.length,
-              icon: <Folder className="h-3 w-3 shrink-0" />,
-              onClick: () => onSelectFolder(""),
-            })}
-          </div>
-        );
-
       case "folder": {
         const { node, depth } = row;
         return (
@@ -345,7 +329,7 @@ export function VaultFolderTree({
               open: expandedFolders.has(node.path),
               selected: selectedFolder === node.path,
               count: row.count,
-              icon: <Folder className="h-3 w-3 shrink-0" />,
+              icon: null,
               onClick: () => {
                 onToggleFolder(node.path);
                 onSelectFolder(node.path);
@@ -375,14 +359,17 @@ export function VaultFolderTree({
             onDragEnd={onDragNoteEnd}
             onDragOver={allowVaultDragOver}
             onDrop={(e) => acceptVaultDrop(e, parentFolder)}
-            onClick={() => onNoteSelect(note)}
+            onClick={(e) => onNoteSelect(note, e.metaKey || e.ctrlKey)}
+            onAuxClick={(e) => {
+              if (e.button === 1) onNoteSelect(note, true);
+            }}
             onContextMenu={(e) => {
               if (!onNoteContextMenu) return;
               e.preventDefault();
               onNoteContextMenu(note, e.clientX, e.clientY);
             }}
             className={cn(
-              "group/note flex w-full cursor-default items-start gap-2 rounded-md px-2 py-1.5 text-left",
+              "group/note flex w-full cursor-default items-start gap-1.5 rounded-md px-2 py-[5px] text-left",
               selected ? "bg-surface text-text shadow-sm" : "text-n-300 hover:bg-n-900",
               dragNoteId === note.id && "opacity-50",
               isChecked && "ring-1 ring-danger/40",
@@ -395,19 +382,13 @@ export function VaultFolderTree({
               onChange={() => onToggleNoteSelected(note.id)}
               onClick={(e) => e.stopPropagation()}
               className={cn(
-                "mt-1 h-3 w-3 shrink-0 accent-accent",
+                "mt-[3px] h-3 w-3 shrink-0 accent-accent",
                 !isChecked && "opacity-0 group-hover/note:opacity-100",
               )}
               aria-label={`Select ${note.title || "note"}`}
             />
-            <FileText className="mt-0.5 h-[15px] w-[15px] shrink-0 text-n-500" />
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px]">{note.title || node.name || "Untitled"}</div>
-              <div className="truncate text-[11px] text-n-500">
-                {shortDate(note.created_at)} · {status.label}
-              </div>
-            </div>
-            <span className="mt-1.5 shrink-0">
+            <div className="min-w-0 flex-1 truncate text-[13px]">{note.title || node.name || "Untitled"}</div>
+            <span className="mt-[5px] shrink-0" title={status.label}>
               <NoteStatusDot note={note} />
             </span>
           </div>
@@ -485,7 +466,15 @@ export function VaultFolderTree({
   };
 
   return (
-    <div className="min-h-10 w-full" onDragOver={allowVaultDragOver} onDrop={(e) => acceptVaultDrop(e, "")}>
+    <div
+      className="min-h-full w-full pb-6"
+      onDragOver={allowVaultDragOver}
+      onDrop={(e) => acceptVaultDrop(e, "")}
+      // Blank space is the vault root: new notes and folders go there.
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onSelectFolder("");
+      }}
+    >
       {rows.map((row) => (
         <div key={row.key} className="tree-row">
           {renderRow(row)}

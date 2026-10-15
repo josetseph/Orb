@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = "local"
     LLM_MODEL: str = "local-chat"
     CHAT_MODEL: str | None = None
+    # The model ingestion extracts with, run by llama-server (extraction_server): "" picks Gemma 4 12B
+    # when it fits and is downloaded, "chat" uses the chat model, anything else is a model ref.
+    EXTRACTION_MODEL: str = ""
 
     EMBEDDING_PROVIDER: str = "local"
     EMBEDDING_MODEL: str = "local-embed"
@@ -141,7 +144,6 @@ class Settings(BaseSettings):
     # Contributor Postgres only — leave unset for Orb desktop (SQLite).
 
     LOG_LEVEL: str = "INFO"
-    INGESTION_PIPELINE_CONCURRENCY: int = 1
     MULTIMEDIA_CONCURRENCY: int = 1
 
 

@@ -34,9 +34,6 @@ class _StubLLM:
     def get_ingestion_model(self):
         return "stub"
 
-    def _clean_json(self, raw: str) -> str:
-        return raw
-
     @staticmethod
     def _note_text(prompt: str) -> str:
         # The note is the last thing in the prompt, after the final blank line.

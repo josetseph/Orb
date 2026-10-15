@@ -48,6 +48,16 @@ function buildStatus(payload: Payload | null): StatusView {
       busy: true,
     };
   }
+  if (payload.passages?.running) {
+    const { done = 0, total = 0 } = payload.passages;
+    return {
+      tone: "digest",
+      label: "Indexing passages",
+      meta: total ? `${done}/${total}` : "running",
+      detail: "Making existing notes searchable by their own text. The graph is not touched.",
+      busy: true,
+    };
+  }
   if (payload.temporal_digests?.running) {
     return { tone: "digest", label: "Building digests", meta: "running", detail: "Temporal digest build in progress.", busy: true };
   }
@@ -78,6 +88,7 @@ function useMaintenanceStatus(kb: string) {
         data &&
           (Number(data.ingestion?.active || 0) > 0 ||
             data.community_detection?.running ||
+            data.passages?.running ||
             data.temporal_digests?.running),
       );
 
@@ -183,7 +194,7 @@ const DOT: Record<StatusTone, string> = {
 };
 
 /** Sidebar activity row with a popover of what is running. */
-export function ActivityStatus() {
+export function ActivityStatus({ compact = false }: { compact?: boolean }) {
   const { currentKB } = useKB();
   const { view, retry } = useMaintenanceStatus(currentKB);
   const [open, setOpen] = useState(false);
@@ -200,6 +211,21 @@ export function ActivityStatus() {
 
   return (
     <div ref={ref} className="relative">
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          data-tip={open ? undefined : `${view.label}${view.meta ? ` · ${view.meta}` : ""}`}
+          className="grid h-8 w-8 place-items-center rounded-md hover:bg-n-900"
+          aria-label={`${view.label}. ${view.detail}`}
+        >
+          {view.busy ? (
+            <Loader2 className="h-[15px] w-[15px] animate-spin text-accent-300" />
+          ) : (
+            <span className={cn("dot", DOT[view.tone])} />
+          )}
+        </button>
+      ) : (
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -217,6 +243,7 @@ export function ActivityStatus() {
           </span>
         )}
       </button>
+      )}
 
       {open && (
         <div className="popover absolute bottom-0 left-full z-40 ml-3 w-[300px] p-3">

@@ -7,6 +7,7 @@ import platform
 import shutil
 import sys
 from dataclasses import asdict, dataclass
+from functools import lru_cache
 from typing import Literal
 
 Role = Literal["chat", "embed", "reranker"]
@@ -57,7 +58,6 @@ CHAT_MODELS: list[ModelOption] = [
         min_ram_gb=9,
         size_gb=5.4,
         params="E4B",
-        recommended=True,
     ),
     ModelOption(
         "gemma4-12b-q4",
@@ -125,6 +125,8 @@ CHAT_MODELS: list[ModelOption] = [
         min_ram_gb=10,
         size_gb=5.5,
         params="9B",
+        # Retrieval study rounds 8-9: +0.03 (HotpotQA) / +0.065 (MuSiQue) F1 over E4B at about its speed.
+        recommended=True,
     ),
     ModelOption(
         "qwen35-27b-q4",
@@ -393,22 +395,43 @@ def chat_options_for_budget(
 def recommend_chat(fits: list[ModelOption]) -> ModelOption | None:
     if not fits:
         return None
-    # Prefer Gemma 4 E4B when it fits (historical Orb quality default);
-    # then 12B when the machine clearly has room.
+    # Qwen 3.5 9B answers best for its speed (retrieval study rounds 8-9); Gemma 4 E4B
+    # where it does not fit.
     for preferred in (
+        "qwen35-9b-q4",
         "gemma4-e4b-q4",
         "gemma4-12b-q4",
         "gemma4-e2b-q4",
         "qwen36-35b-a3b-q3",
         "qwen36-27b-q3",
         "qwen35-4b-q4",
-        "qwen35-9b-q4",
         "qwen36-27b-q4",
     ):
         for m in fits:
             if m.id == preferred:
                 return m
     return max(fits, key=lambda m: m.min_ram_gb)
+
+
+EXTRACTION_DEFAULT = "gemma4-12b-q4"
+
+
+@lru_cache(maxsize=1)
+def _extraction_default_fits() -> bool:
+    """The machine does not change while Orb runs."""
+    hw = hardware_profile()
+    total = hw["ram_gb"]
+    fits = chat_options_for_budget(hw["usable_model_gb"], pick_embed_for_budget(total), pick_rerank_for_budget(total))
+    return any(m.id == EXTRACTION_DEFAULT for m in fits)
+
+
+def auto_extraction_model() -> str | None:
+    """Gemma 4 12B when this machine fits it and it is downloaded, else None (extract with the
+    chat model). Retrieval study rounds 1-6: nothing smaller extracted as well."""
+    opt = get_option(EXTRACTION_DEFAULT)
+    if opt and _extraction_default_fits() and chat_model_downloaded(opt):
+        return opt.id
+    return None
 
 
 def chat_model_downloaded(opt: ModelOption) -> bool:

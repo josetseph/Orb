@@ -100,6 +100,7 @@ async def download_models(body: DownloadModelsInput | None = None):
     """
     from app.services.local_models import ensure_chat_and_embed_models, gguf_paths_if_present
     from app.services.multimodal_models import ensure_multimodal_models
+    from app.services.multimodal_services import restart_needed
 
     chat_id = body.chat_id if body else None
     include_mm = body.include_multimodal if body else True
@@ -156,6 +157,7 @@ async def download_models(body: DownloadModelsInput | None = None):
         "reranker": str(paths.get("reranker", "")),
         "multimodal": multimodal,
         "multimodal_error": multimodal_error,
+        "restart_required": restart_needed(),
         "progress": progress[-40:],
         "warning": (
             (

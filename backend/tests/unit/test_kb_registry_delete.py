@@ -85,4 +85,4 @@ def test_cleanup_stores_uses_a_client_without_recreating_collections(monkeypatch
             "kuzu_path": str(tmp_path / "elsewhere" / "kuzu_graph"),
         }
     )
-    assert deleted == ["c", "r", "x"]
+    assert deleted == ["c", "r", "x", "x_passages"]

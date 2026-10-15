@@ -146,7 +146,7 @@ Installers ship as macOS `.dmg`, Windows `.exe` and Linux `.deb` / `.rpm` from [
 brew install --cask josetseph/orb/orb
 ```
 
-Update later with `brew upgrade --cask orb`. Then launch Orb and complete the first-run wizard (step 4 below).
+Orb updates itself from Settings → About (it checks at launch and asks first). Then launch Orb and complete the first-run wizard (step 4 below).
 
 **Or download the disk image:**
 

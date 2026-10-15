@@ -2,6 +2,7 @@
 
 # pylint: disable=too-many-lines,import-outside-toplevel
 import asyncio
+import contextlib
 import re
 import threading
 import time
@@ -68,6 +69,10 @@ def cancel_ingestion(kb_id: str, note_id: str) -> bool:
     return True
 
 
+# Note passages searched beside the graph: the size the retrieval study measured.
+RAW_PASSAGE_CHARS = 1500
+
+
 def _passages(text: str, target_chars: int = 1200) -> list[str]:
     """Split a document into passages of about 300 tokens on paragraph breaks."""
     out: list[str] = []
@@ -106,18 +111,25 @@ class IngestionWorkflow:
         self._meili = meili or meilisearch_service
         # Per-KB LLM override (chat/ingestion model) or the global service.
         self._llm = llm or llm_service
-        # Per-KB concurrency / maintenance state (not process-global).
-        # Default concurrency is 1 so in-process GGUF/HF models, Gemma extraction,
-        # graph writes, and indexing do not overlap within a vault.
-        self._process_semaphore = asyncio.Semaphore(
-            settings.INGESTION_PIPELINE_CONCURRENCY
-        )
+        # Per-KB concurrency / maintenance state (not process-global). As many
+        # notes extract at once as the extraction server has slots; each still
+        # writes the graph in the order it was submitted (_pipeline_slot).
+        from app.services.extraction_server import extraction_server
+
+        self._concurrency = extraction_server.slots
+        self._process_semaphore = asyncio.Semaphore(self._concurrency)
+        self._next_ticket = 0
+        self._write_turn = 0
+        self._finished_tickets: set[int] = set()
+        self._turn_events: dict[int, asyncio.Event] = {}
         self._entity_locks = defaultdict(asyncio.Lock)
         self._community_run_state_lock = threading.Lock()
         self._community_run_seq = 0
         self._community_run_active_seq = 0
         self._community_run_running = False
         self._temporal_digest_running = False
+        # Passage backfill progress {"done", "total"} while it runs.
+        self._passage_backfill: dict | None = None
 
     async def process_note(self, note_input: NoteInput, note_id: str = None):
         """Run the full ingestion pipeline for a single note, cancellable by id.
@@ -129,7 +141,9 @@ class IngestionWorkflow:
         if not note_id:
             note_id = str(uuid.uuid4())
         key = (self.kb_id, note_id)
-        inner = asyncio.create_task(self._process_note(note_input, note_id))
+        ticket = self._next_ticket
+        self._next_ticket += 1
+        inner = asyncio.create_task(self._process_note(note_input, note_id, ticket))
         _running_ingestions[key] = inner
         try:
             return await inner
@@ -149,21 +163,73 @@ class IngestionWorkflow:
             )
             return {"note_id": note_id, "status": "cancelled"}
         finally:
+            self._finish_ticket(ticket)  # also when cancelled before it reached a pipeline slot
             if _running_ingestions.get(key) is inner:
                 del _running_ingestions[key]
 
-    async def _process_note(self, note_input: NoteInput, note_id: str):
+    def _turn_event(self, ticket: int) -> asyncio.Event:
+        return self._turn_events.setdefault(ticket, asyncio.Event())
+
+    def _finish_ticket(self, ticket: int) -> None:
+        """This note is done (written, failed or cancelled): let the next one in order write. Idempotent."""
+        if ticket < self._write_turn:
+            return
+        self._finished_tickets.add(ticket)
+        while self._write_turn in self._finished_tickets:
+            self._finished_tickets.discard(self._write_turn)
+            self._turn_events.pop(self._write_turn, None)
+            self._write_turn += 1
+        self._turn_event(self._write_turn).set()
+
+    @contextlib.asynccontextmanager
+    async def _pipeline_slot(self, ticket: int):
+        """A pipeline slot; yields the note's ``write_turn``.
+
+        With one slot it is held for the whole note. With more, a note gives its
+        slot up once extracted, so the next can start, then waits for its turn to
+        write: the graph never depends on which extraction finished first (entity
+        merges read what earlier notes wrote).
+        """
+        ordered = self._concurrency > 1
+        held = False
+
+        async def write_turn() -> None:
+            nonlocal held
+            if not ordered:
+                return
+            self._process_semaphore.release()
+            held = False
+            if self._write_turn != ticket:
+                await self._turn_event(ticket).wait()
+
+        try:
+            await self._process_semaphore.acquire()
+            held = True
+            yield write_turn
+        finally:
+            if held:
+                self._process_semaphore.release()
+            self._finish_ticket(ticket)
+
+    async def _process_note(self, note_input: NoteInput, note_id: str, ticket: int):
 
         # Register with the tracker BEFORE the semaphore so a running rebuild is
         # told to yield as soon as a note is queued, not only when it starts.
         await _tracker.begin_ingestion(self.kb_id)
-        await self._update_note_processing_status(
-            note_id, "Queued for ingestion", None
-        )
+        try:
+            await self._update_note_processing_status(
+                note_id, "Queued for ingestion", None
+            )
+        except Exception as exc:
+            # Before the slot, so neither the failure mark nor the tracker release below runs: do both here,
+            # or the note reads "processing" forever and ingestion never drains.
+            await _tracker.end_ingestion(kb_id=self.kb_id)
+            await self._mark_note_failed(note_id, reason=_failure_reason(exc))
+            raise
 
         # Wait for a pipeline slot.  Without this cap, sending 990 notes at once
         # spawns 990 concurrent coroutines that all hit the DB pool simultaneously.
-        async with self._process_semaphore:
+        async with self._pipeline_slot(ticket) as write_turn:
             await self._update_note_processing_status(
                 note_id, "Starting ingestion", None
             )
@@ -188,10 +254,12 @@ class IngestionWorkflow:
             t_start = time.perf_counter()
             load_before = model_load_clock.snapshot()
             try:
+                # Before extraction: a note whose extraction fails is still findable by its own text.
+                await asyncio.to_thread(self._store_passages, note_id, note_input.title, note_input.content)
                 saved = checkpoint.activate(self.kb_id, note_id)
                 if saved:
                     logger.info(f"[Ingestion] resuming note_id={note_id}: {saved} model call(s) replay from disk")
-                final_state = await run_ingestion_agent(initial_state)
+                final_state = await run_ingestion_agent(initial_state, write_turn=write_turn)
                 checkpoint.clear(self.kb_id, note_id)
                 t_end = time.perf_counter()
                 self._log_timing(note_id, t_end - t_start, load_before, final_state)
@@ -247,6 +315,38 @@ class IngestionWorkflow:
                 # (MODEL_IDLE_SECONDS in Settings, default 5 min) unloads them, and
                 # loading any other model evicts them anyway. Unloading here
                 # made every single-note ingest re-read multi-GB GGUFs.
+
+    def _store_passages(self, note_id: str, title: str | None, content: str | None) -> None:
+        """The note's own text as passages, searched beside the graph (vector and keyword).
+
+        Each passage starts with the note's title, so one deep in a long note still says what it
+        is about. Raises on failure: missing passages must not go unnoticed.
+        """
+        passages = _passages(content or "", RAW_PASSAGE_CHARS)
+        title = (title or "").strip() or (passages[0][:60] if passages else "")
+        passages = [f"{title}\n\n{p}" for p in passages]
+        vectors = embedding_service.embed_documents(passages) if passages else []
+        self._qdrant.replace_note_passages(note_id, title, passages, vectors)
+        self._meili.replace_note_passages(note_id, title, passages)
+
+    def backfill_passages(self, notes: list[tuple[str, str | None, str]]) -> bool:
+        """Passages for notes ingested before passages existing: ``(note_id, title, content)``.
+
+        True when every note was stored; failures are logged and retried on the next start.
+        """
+        ok = True
+        self._passage_backfill = {"done": 0, "total": len(notes)}
+        try:
+            for note_id, title, content in notes:
+                try:
+                    self._store_passages(note_id, title, content)
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    ok = False
+                    logger.warning(f"[Passages] backfill failed for note {note_id}: {exc}")
+                self._passage_backfill["done"] += 1
+        finally:
+            self._passage_backfill = None
+        return ok
 
     @staticmethod
     def _log_timing(note_id: str, total: float, load_before: dict, final_state: dict) -> None:
@@ -1214,7 +1314,7 @@ class IngestionWorkflow:
         raw = asyncio.run(
             self._llm.ingestion_generate(prompt, temperature=0.1, json_mode=True)
         )
-        got = _CommunityName.model_validate_json(self._llm._clean_json(raw or ""))
+        got = _CommunityName.model_validate_json(raw or "")
         return got.name.strip() or None, got.summary.strip() or None
 
     @staticmethod
@@ -2074,6 +2174,7 @@ class IngestionWorkflow:
         return {
             "community_detection": {"running": self._community_run_running},
             "temporal_digests": {"running": self._temporal_digest_running},
+            "passages": {"running": self._passage_backfill is not None, **(self._passage_backfill or {})},
             "ingestion": {"active": _tracker.active_count(self.kb_id)},
             "healthy": True,
         }

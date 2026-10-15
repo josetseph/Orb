@@ -12,7 +12,7 @@
 - Construction and caching of per-KB service objects (`KBContext`): `QdrantService`, `MeilisearchService`, lazily `GraphService`, `RetrievalService`, `IngestionWorkflow`, `ChatWorkflow`.
 - The default KB bootstrap (`id == "default"`) and the healing of mis-stored Kuzu directory paths.
 - Vault provisioning (`ensure_vault`), full vault wipe (`clear_vault_contents`), and the rule for which vault folders Orb may `rmtree`.
-- Vault ↔ SQLite reconciliation (`vault_sync.sync_vault_notes`), the one-time vault sweep it runs first (`migrate_vault_files`), and the folder/attachment listings used by the notes sidebar.
+- Vault ↔ SQLite reconciliation (`vault_sync.sync_vault_notes`), the one-time vault sweep it runs first (`migrate_vault_files`), and the folder/attachment listings used by the file explorer.
 - External edit detection (`vault_watcher`): a watchdog observer per vault that marks notes stale but never ingests.
 - `?kb=` request scoping (`app/api/deps.py:get_kb`).
 
@@ -86,7 +86,7 @@ Key consequences:
 |---|---|---|---|
 | `kb_id` | `str` | constructor | `"default"` or UUID |
 | `name` | `str` | constructor; mutated by `rename_kb` | display name |
-| `qdrant` | `QdrantService` | constructor | eager: `QdrantService.__init__` connects to Qdrant and runs `_ensure_collections()` (creates the three collections if missing, with dim checks) |
+| `qdrant` | `QdrantService` | constructor | eager: `QdrantService.__init__` connects to Qdrant and runs `_ensure_collections()` (creates the three graph collections and `<contexts>_passages` if missing, with dim checks) |
 | `meili` | `MeilisearchService` | constructor | eager: `MeilisearchService.__init__` connects and runs `_ensure_collection()` (creates index with `primaryKey: node_id` and applies searchable/filterable settings) |
 | `vault_path` | `str` | constructor; mutated by `set_vault_path` | absolute path string; `""` means "no vault" (routes return 400 `"No vault configured"`) |
 | `_graph` | `GraphService \| None` | constructor (default KB passes the singleton) or first access of `.graph` | `repr=False` |
@@ -343,7 +343,7 @@ The handler callbacks run **on watchdog's emitter thread** and do the SQLite wor
 | `on_created` (file) | `created` | upsert row (see below) |
 | `on_modified` (file) | `modified` | upsert row |
 | `on_deleted` (file) | `deleted` | if a row exists: `processing_stage = "External delete detected — review in Orb"`; row **kept** |
-| `on_moved` (file) | `modified` for `dest_path`, then `deleted` for `src_path` | new path gets a **new row** (title from filename); old row is marked externally deleted. **No rename tracking** — an external rename duplicates the note in the sidebar until the user deletes the stale row (in-app moves use `vault_ops.move_vault_file`, which updates `rel_path`). |
+| `on_moved` (file) | `modified` for `dest_path`, then `deleted` for `src_path` | new path gets a **new row** (title from filename); old row is marked externally deleted. **No rename tracking** — an external rename duplicates the note in the file explorer until the user deletes the stale row (in-app moves use `vault_ops.move_vault_file`, which updates `rel_path`). |
 
 Debounce: per `"<rel>:<event>"` key, events closer than **0.8 s** are dropped (editors that write temp files + rename produce bursts).
 
@@ -374,7 +374,7 @@ Design rule (module docstring): **"Does NOT auto-ingest."** Ingestion costs LLM 
 | Resource | Guard | Notes |
 |---|---|---|
 | `KBRegistry._metadata` / `_cache` | `threading.RLock` (`self._lock`) | held across SQLite writes and context construction (so `create_kb` blocks other registry calls while Qdrant/Meili connect). `get_kb_by_name` reads `_cache` for default without the lock. |
-| SQLite `orb.db` | none beyond SQLite's own file lock | Three writers: the async engine (`NullPool`, `check_same_thread=False`), the registry's ad-hoc `sqlite3` connections, and the watcher's sync engine. No WAL mode is set anywhere; concurrent writers rely on SQLite's default busy handling (`database is locked` is possible under OneDrive bursts + UI saves; `get_note_ingestion_status` maps `TimeoutError` to 503). |
+| SQLite `orb.db` | none beyond SQLite's own file lock | Three writers: the async engine (`NullPool`, `check_same_thread=False`, `timeout=30` busy wait), the registry's ad-hoc `sqlite3` connections, and the watcher's sync engine (plus a read-only `sqlite3` connection in the startup passage backfill). No WAL mode is set anywhere; concurrent writers rely on SQLite's default busy handling (`database is locked` is possible under OneDrive bursts + UI saves; `get_note_ingestion_status` maps `TimeoutError` to 503). |
 | Kuzu per KB | `GraphService._lock` (RLock) around every `conn.execute` | Kuzu itself is single-process; routes push graph work to `asyncio.to_thread` ("Kuzu holds a process-wide lock … inline they'd freeze chat streaming"). |
 | Qdrant / Meili | HTTP clients, no app-level lock | per-KB service instances; the default KB shares singletons with the retrieval/ingestion singletons. |
 | Vault files | none | Two in-app writers to the same `.md` (autosave + ingestion `_persist_note_body`) last-writer-wins; the frontend's autosave hook was reworked in `f8f527f` to avoid wiping in-flight keystrokes. Watcher and API do not coordinate beyond the self-write TTL. |
@@ -403,8 +403,8 @@ Startup wiring: `main.py` → `init_db()` (`create_all` for the ORM tables; `kno
 | Direction | Contract |
 |---|---|
 | Routers → `deps.get_kb` → registry | Every scoped route receives a `KBContext`; handlers must use `kb.kb_id` in SQL filters, `kb.vault_path` for files, `kb.qdrant/meili/graph` for stores. Never import the `graph_service`/`qdrant_service` singletons in routers (they are the default KB only). |
-| Registry → `QdrantService(col_cores, col_relationships, col_contexts)` | Constructor connects and ensures collections. `reset_all()` = delete + recreate. `client.delete_collection` used for teardown. `is_available()` gates cleanup. |
-| Registry → `MeilisearchService(index_name)` | Constructor ensures index (`primaryKey: node_id`). `reset_all()` = delete + recreate. `client.delete_index` for teardown. |
+| Registry → `QdrantService(col_cores, col_relationships, col_contexts)` | Constructor connects and ensures collections (including `<contexts>_passages`). `reset_all()` = delete + recreate (passages included). `client.delete_collection` used for teardown — the three graph collections and `<contexts>_passages`. `is_available()` gates cleanup. |
+| Registry → `MeilisearchService(index_name)` | Constructor ensures index (`primaryKey: node_id`). `reset_all()` = delete + recreate (also deletes `<index>_passages`, which the next ingest re-creates). `client.delete_index` for teardown — the node index and `<index>_passages`. |
 | Registry → `GraphService(db_path, qdrant)` | Opened lazily; `close()` before file deletion; `wipe_all_nodes()` for empty/reset. |
 | `firefly_service` → registry | reads `get_metadata(kb_id)["firefly_group_id"]`, writes `set_firefly_group` / `detach_firefly_group`. KB routes call `destroy_kb_administration` / `sync_kb_group_title`. |
 | `IngestionWorkflow` → registry | `_persist_note_body` re-resolves `kb_registry.get_kb(note.kb_id)` to find the vault; raises if the KB has no vault (bodies are never written to SQLite). |

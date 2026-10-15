@@ -23,7 +23,7 @@ Markers: **unused** = declared but never read in `backend/app`; **overridden** =
 pydantic-settings resolves each field as: **process environment** > **field default** (`extra="ignore"`; there is no `.env` file) (some defaults are themselves computed from `paths.json`). Then, in this order, code mutates the live object:
 
 1. `config.py` bottom: `MODELS_PATH := MODELS_DIR` (always). `KUZU_DB_PATH` is a read-only property, `<DATA_DIR>/kuzu/kuzu_graph`, not a setting.
-2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL` (and the local-runtime knobs) from `runtime_config.json` **win over env**.
+2. `main.startup_event`: `runtime_config.apply_to_settings()` — `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL`, `EXTRACTION_MODEL` (and the local-runtime knobs) from `runtime_config.json` **win over env**.
 3. `main.startup_event`: `local_models.sync_embedding_infrastructure()` — `EMBEDDING_DIMENSIONS`, `EMBEDDING_MODEL`, `MODEL_RERANKER_LOCAL` from the models manifest **win over env**.
 4. Later, at user action: `PATCH /api/v1/settings`, `POST /api/v1/setup/paths`, Setup model selection (`ensure_chat_and_embed_models` also sets `LLM_MODEL`).
 
@@ -83,7 +83,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
-| (none) | — | `database.py` always uses `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (`paths.sqlite_url()`; `sqlite_url(driver="pysqlite")` gives the vault watcher its sync engine URL) with `NullPool`, `check_same_thread=False`, `PRAGMA foreign_keys=ON` | The `DATABASE_BACKEND` / `DATABASE_*_URL` (Postgres) settings were removed with the Tauri migration | code |
+| (none) | — | `database.py` always uses `sqlite+aiosqlite:///<DATA_DIR>/orb.db` (`paths.sqlite_url()`; `sqlite_url(driver="pysqlite")` gives the vault watcher its sync engine URL) with `NullPool`, `check_same_thread=False`, `timeout=30` (sqlite3 busy wait for a write lock; default would be 5 s), `PRAGMA foreign_keys=ON` | The `DATABASE_BACKEND` / `DATABASE_*_URL` (Postgres) settings were removed with the Tauri migration | code |
 | `STORAGE_BACKEND`, `FILES_URL` | not `Settings` fields | nowhere in backend (`extra="ignore"`) | none; legacy (S3 vs local) | — |
 
 ### 3.3 LLM — chat/retrieval axis
@@ -104,7 +104,8 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 |---|---|---|---|---|
 | `EXTRACTION_CHUNK_TOKENS` | int \| None / `None` (learned, `4000` ceiling) | `Settings`, edited in Models → Local runtime — `workflows/extraction_chunking.chunk_token_budget` | Max input tokens per extraction chunk. Effective budget = `max(400, min(ceiling, (ctx − prompt_overhead − 64) / 3.5))`; values below `MIN_SPLIT_TOKENS=400` are raised to 400; non-int ignored | rarely |
 | `LARGE_ATTACHMENT_TOKENS` | int / `20000` | `Settings`, edited in Models → Local runtime (`large_attachment_tokens`, ≥ 1000) — `ingestion_agent.finish_attachment` | A non-image, non-recording attachment whose extracted text has more ingestion-model tokens than this becomes a `mode="notes"` block: a model-written summary is graphed and the full text indexed for search, with no prompt ([11 §6.4](11-multimedia-enrichment.md)); recordings always become notes whatever their size; images never | runtime (`runtime_config.json`, Models → Local runtime) |
-| `INGESTION_PIPELINE_CONCURRENCY` | int / `1` | `Settings`; `workflows/ingestion.IngestionWorkflow` (`asyncio.Semaphore`, captured at construction) | Whole-note pipeline parallelism (1 = FIFO) | env |
+| `EXTRACTION_MODEL` | str / `""` | `Settings`; `llm.get_ingestion_model` (local ingestion provider only), `api/models._global_state`, `api/settings.py`, `runtime_config` | The model the extraction `llama-server` runs: `""` automatic (`auto_extraction_model()` → `gemma4-12b-q4` when it fits the budget and is downloaded, else the chat model), `"chat"` the chat model, else a model ref. A per-KB `llm_ingestion_model` wins | runtime (`extraction_model`, Models page "Extraction model"), env |
+| (pipeline slots) | — / `slots_for_ram(total RAM)`: < 20 GB 1, < 40 2, < 80 4, else 6 | `extraction_server.slots` → `IngestionWorkflow.__init__` (captured at construction) and `llama-server -np` | Notes per KB extracting at once; graph writes stay in submission order. Not configurable — `INGESTION_PIPELINE_CONCURRENCY` was removed | code |
 | `MULTIMEDIA_CONCURRENCY` | int / `1` | `Settings`; `workflows/agents/ingestion_agent.py` module-level `asyncio.Semaphore` (import time) | Parallel vision / Phonon-2 / Marlin jobs | env |
 
 ### 3.5 Embeddings axis
@@ -153,12 +154,12 @@ All read in `backend/app/services/local_models.py` (and `model_catalog.py` for t
 |---|---|---|---|---|
 | `LLAMA_BACKEND` | `auto` \| `metal` \| `cuda` \| `vulkan` \| `cpu` / `auto` | `local_models.detect_llama_backend`, `model_catalog.detect_accel_backend` (only `ORB_` name) | Forces the llama.cpp accel path. `auto`: macOS → `metal` (`n_gpu_layers=-1`); Linux/Windows with `nvidia-smi` → `cuda` (-1); else `cpu` (0). Forced `cpu` → 0 layers, forced GPU → -1 | rarely |
 | `LLAMA_N_GPU_LAYERS` | int / per backend (-1 GPU, 0 CPU) | same | Overrides layer offload count | rarely |
-| `LLAMA_N_CTX` | int / `16384` | `_default_chat_n_ctx` → `_chat_kwargs`, `_remaining_output_budget` fallback, `llm.ingestion_context_tokens` | Chat GGUF context window. Raised automatically to `max_tokens + prompt_reserve` when an explicit `LLAMA_MAX_TOKENS` is set and `n_ctx` is smaller. Comment: 16k + `swa_full` fits ~24 GB Metal; 32k OOMs | runtime (`16384`) |
+| `LLAMA_N_CTX` | int / `16384` | `_default_chat_n_ctx` → `_chat_kwargs`, `_remaining_output_budget` fallback, `llm.ingestion_context_tokens`; `extraction_server` (`-c slots × LLAMA_N_CTX`) | Chat GGUF context window, and the context per extraction-server slot. Raised automatically to `max_tokens + prompt_reserve` when an explicit `LLAMA_MAX_TOKENS` is set and `n_ctx` is smaller. Comment: 16k + `swa_full` fits ~24 GB Metal; 32k OOMs | runtime (`16384`) |
 | `LLAMA_MAX_TOKENS` | int \| unset / **unset** (working tree; was `10240`) | `_default_chat_max_tokens` → `create_chat_completion`, `_chat_kwargs` | Explicit output cap. **When unset (new default), the runtime sizes `max_tokens` per call as `n_ctx − prompt_tokens − 32` (`_GEN_SAFETY_MARGIN`), raising `PromptTooLongError` if fewer than 256 tokens (`_MIN_OUTPUT_TOKENS`) would remain.** `0`/non-int → treated as unset. Supervisor now injects it **only if the parent env has it** (committed code injected `"10240"`) | runtime (pass-through only) |
 | `LLAMA_PROMPT_RESERVE` | int / `4096` | `_chat_kwargs` | Minimum context reserved for the prompt when computing `min_ctx = max_tokens + prompt_reserve` | runtime (`4096`) |
 | `LLAMA_SWA_FULL` | bool-ish / `true` | `_llama_metal_safe_kwargs` | `swa_full=False` only for `0`/`false`/`no`; otherwise `True` (required for stable Gemma 4 output; compact SWA causes "or the" ordinal loops, detected by `_ORDINAL_LOOP_RE` → `RepetitionLoopError`) | runtime (`true`) |
-| `LLAMA_FLASH_ATTN` | bool-ish / off | `_llama_metal_safe_kwargs` | `flash_attn=True` for `1`/`true`/`yes` | rarely |
-| `LLAMA_REPEAT_PENALTY` | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs | Sampling repeat penalty | runtime (`1.12`) |
+| `LLAMA_FLASH_ATTN` | bool-ish / off | `_llama_metal_safe_kwargs`; `extraction_server` (`-fa on|off`) | `flash_attn=True` for `1`/`true`/`yes` | rarely |
+| `LLAMA_REPEAT_PENALTY` | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs; `extraction_server` (`--repeat-penalty`) | Sampling repeat penalty | runtime (`1.12`) |
 | `LLAMA_N_THREADS` | int / llama.cpp default | `_chat_kwargs` | CPU threads | rarely |
 | `EMBED_N_CTX` | int / `8192` | `_load_embed_unlocked` | Embed GGUF context | runtime (`8192`) |
 | `RERANK_N_CTX` | int / `8192` | `LocalGGUFReranker.ensure_loaded` | Reranker GGUF context | runtime (`8192`) |
@@ -280,7 +281,8 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
 {
   "provider": "gemini",
   "model": "gemini-2.5-pro",
-  "base_url": "http://127.0.0.1:8080"
+  "base_url": "http://127.0.0.1:8080",
+  "extraction_model": ""
 }
 ```
 
@@ -289,8 +291,9 @@ All paths are stored absolute (`expanduser().resolve()`). The backend caches the
 | `provider` | `LLM_PROVIDER` | `PATCH /api/v1/settings` |
 | `model` | `CHAT_MODEL` | `PATCH /api/v1/settings` |
 | `base_url` | `LLM_BASE_URL` | `PATCH /api/v1/settings` |
+| `extraction_model` | `EXTRACTION_MODEL` | `PATCH /api/v1/settings` (Models page, local mode) |
 
-Only these three keys and the fourteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs and `large_attachment_tokens`, written by `PUT /api/v1/settings/local-runtime`, see [12](12-local-models-and-inference.md)) survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys — including an `ingestion_model` left by an older build — are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
+Only these four keys and the fourteen `LOCAL_RUNTIME_KEYS` (the llama.cpp knobs and `large_attachment_tokens`, written by `PUT /api/v1/settings/local-runtime`, see [12](12-local-models-and-inference.md)) survive `load()`/`save()` (`MUTABLE_KEYS`); unknown keys — including an `ingestion_model` left by an older build — are dropped on the next save. Applied at startup after `init_db`. No API keys, ever. A fallback location `<repo>/data/runtime_config.json` is used only if `paths` cannot be imported.
 
 ### 4.3 `MODELS_DIR/models_manifest.json` (pointer)
 
@@ -327,10 +330,12 @@ Reranker and multimodal models have no provider axis: always in-process GGUF / H
 
 ```
 1. self._ingestion_model_override   (per-KB `llm_ingestion_model` — "Use a different model for note ingestion")
-2. self.get_chat_model()            (§5.1)
+2. settings.EXTRACTION_MODEL        (ingestion provider local only; a model ref — "" goes to 3, "chat" skips to 4)
+3. auto_extraction_model()          (local, EXTRACTION_MODEL == "": "gemma4-12b-q4" when it fits and is downloaded, else None)
+4. self.get_chat_model()            (§5.1)
 ```
 
-Ingestion runs on the model selected for chat; there are no ingestion-specific settings. The removed `INGESTION_*` keys made the global service chat on `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded the manifest's download selection, so two different GGUFs were loaded.
+For cloud providers ingestion runs on the model selected for chat; on this device the extraction model applies (run by the extraction `llama-server`, [12](12-local-models-and-inference.md) §7.5). The removed `INGESTION_*` keys made the global service chat on `CHAT_MODEL` while ingestion fell through to the `"local-chat"` placeholder and loaded the manifest's download selection, so two different GGUFs were loaded.
 
 Caveats visible in the call sites: the Anthropic branches of `generate`/`ingestion_generate` pass `model=settings.ANTHROPIC_MODEL` directly (ignoring `CHAT_MODEL`); the Gemini ingestion branch uses `model or settings.GEMINI_MODEL`; `init_clients` log lines print the provider-specific key even when `CHAT_MODEL` is what will be used.
 
@@ -339,7 +344,7 @@ Caveats visible in the call sites: the Anthropic branches of `generate`/`ingesti
 ```
 chat provider      = (ctor provider | settings.LLM_PROVIDER).lower(); ollama/lm_studio → local
 ingestion provider = (ctor ingestion_provider | "").lower(); ollama/lm_studio → local
-                     "" → chat provider (clients aliased); no settings key
+                     "" → chat provider (clients aliased; a local one uses ServerChatClient); no settings key
 embedding provider = settings.EMBEDDING_PROVIDER: local|auto|"" → local; else ValueError
 ```
 

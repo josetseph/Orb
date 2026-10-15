@@ -597,7 +597,7 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 
 | Method & path | Body | Response | Side effects |
 |---|---|---|---|
-| `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running"}, "temporal_digests": {"running"}, "ingestion": {"active"}, "healthy": true}` | none; the per-KB workflow flags plus the tracker's active count |
+| `GET /api/v1/admin/maintenance-status` | — | `{"community_detection": {"running"}, "temporal_digests": {"running"}, "passages": {"running", "done"?, "total"?}, "ingestion": {"active"}, "healthy": true}` | none; the per-KB workflow flags, the passage-backfill progress, plus the tracker's active count |
 | `POST /api/v1/admin/rebuild-communities` | — | `{"status":"started","message":…}` | `BackgroundTasks` → `rebuild_leiden_communities()` for the KB |
 | `POST /api/v1/admin/build-temporal-digests` | `{"period": "month"|"week"|"year"|null}` | `{"status":"started","message":"… (period=…)"}` | `BackgroundTasks` → `build_temporal_digests(period)`; 409 while an ingestion is active |
 | `POST /api/v1/admin/reset-ingestion-data` | — | `{"status":"started",…}` | Synchronously `UPDATE notes SET processed=false, failed=false WHERE kb_id=…` and commit; then in background `kb.graph.wipe_all_nodes()`, `kb.qdrant.reset_all()`, `kb.meili.reset_all()`. Tables/collections/indexes are recreated empty; Kuzu tables are **not** dropped (schema stays). |
@@ -610,7 +610,7 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 | `DATA_DIR` | `Settings` (from `paths.json`) | platform app-support dir | Root for `kuzu/` — the only input that actually determines Kuzu file locations |
 | `KUZU_DB_PATH` | `Settings` (read-only property) | `DATA_DIR/kuzu/kuzu_graph` | Default-KB DB file, derived from `DATA_DIR`; not settable. |
 | `TEMPORAL_DIGEST_PERIOD` | `Settings` | `"month"` | Default bucket granularity (`month`/`week`/`year`) |
-| `INGESTION_PIPELINE_CONCURRENCY` | `Settings` | `1` | Per-KB semaphore around `process_note`; with 1, graph writes for a KB never interleave between notes |
+| (pipeline slots) | `extraction_server.slots` | `slots_for_ram`: 1 below 20 GB RAM, up to 6 | Per-KB semaphore around `process_note`; with more than one slot notes extract in parallel but each waits for its turn (`write_turn`) before `storage_node`, so graph writes for a KB still follow submission order. Replaces the removed `INGESTION_PIPELINE_CONCURRENCY` |
 | `EMBEDDING_*` | `Settings` | see [15](15-search-indexes-qdrant-meilisearch.md) | Community/digest summaries are embedded via `embedding_service.embed_documents`; a dims mismatch makes those Qdrant writes fail (warn-only inside `GraphService`) |
 
 Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.apply_to_settings` at startup) can flip the boolean flags at runtime because the workflow reads `settings.*` on each call (`from app.core.config import settings as _settings` inside the methods). See [21-configuration-reference.md](21-configuration-reference.md).
