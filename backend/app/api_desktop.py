@@ -90,6 +90,28 @@ async def model_catalog(chat_id: str | None = None):
     return recommend_stack(chat_id)
 
 
+# Downloads in flight, keyed by what they fetch. The Models page rejoins them after
+# navigating away; a second request for the same thing waits for the first instead
+# of starting over (which deleted the running download's .partial file).
+_downloads: dict[str, dict] = {}
+
+
+def _download_key(body: "DownloadModelsInput | None") -> str:
+    if body and body.multimodal_only:
+        return "media"
+    return f"chat:{(body.chat_id if body else None) or 'selected'}"
+
+
+@router.get("/api/v1/setup/downloads")
+async def downloads_in_flight():
+    """Running downloads: ``{key: {"model", "percent"}}``; key ``chat:<id>`` or ``media``."""
+    return {
+        key: {"model": job["model"], "percent": job["percent"]}
+        for key, job in _downloads.items()
+        if not job["task"].done()
+    }
+
+
 @router.post("/api/v1/setup/download-models")
 async def download_models(body: DownloadModelsInput | None = None):
     """Download chat/embed/rerank GGUFs (+ Phonon-2/Marlin weights and the vision projector).
@@ -97,7 +119,19 @@ async def download_models(body: DownloadModelsInput | None = None):
     Does not install multimodal Python deps — that is a separate step
     (``start-multimodal-services`` prepares the in-process runtime). Keeping
     this endpoint to file downloads avoids long pip installs hanging Setup.
+    The download runs as its own task, so it finishes even when the page that
+    asked for it is gone; asking again while it runs waits for the same one.
     """
+    key = _download_key(body)
+    job = _downloads.get(key)
+    if job is None or job["task"].done():
+        job = {"model": None, "percent": 0}
+        job["task"] = asyncio.create_task(_download_models(body, job))
+        _downloads[key] = job
+    return await asyncio.shield(job["task"])
+
+
+async def _download_models(body: "DownloadModelsInput | None", job: dict) -> dict:
     from app.services.local_models import ensure_chat_and_embed_models, gguf_paths_if_present
     from app.services.multimodal_models import ensure_multimodal_models
     from app.services.multimodal_services import restart_needed
@@ -109,6 +143,7 @@ async def download_models(body: DownloadModelsInput | None = None):
 
     def on_progress(label: str, pct: int) -> None:
         progress.append({"model": label, "percent": pct})
+        job["model"], job["percent"] = label, pct
 
     paths: dict = {}
     if multimodal_only:

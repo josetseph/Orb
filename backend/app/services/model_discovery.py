@@ -185,17 +185,24 @@ clear_cache = _read.cache_clear
 def discover_chat_models(models_dir: Path | None = None) -> list[LocalModel]:
     """Every local chat GGUF under MODELS_DIR, sorted by name.
 
-    Embedding models are excluded outright — the header's ``pooling_type``
-    identifies them, and they cannot chat.
+    Excluded, since none of them can chat: embedding models (the header's
+    ``pooling_type``), vision projectors (architecture ``clip``; they sit
+    beside the model they serve), and the files Orb's catalog downloads as
+    embedders or rerankers (a reranker GGUF's header is a chat model's).
     """
+    from app.services.model_catalog import EMBED_MODELS, RERANK_MODELS
+
+    not_chat = {m.hf_file for m in (*EMBED_MODELS, *RERANK_MODELS)}
     root = (models_dir or resolve_models_dir()).resolve()
     models: list[LocalModel] = []
     for path in scan_dir_for_gguf(root):
+        if path.name in not_chat:
+            continue
         info = _cached_metadata(path)
         if info is None:
             continue
-        if info.is_embedding_model:
-            logger.debug("Skipping embedding model %s", path.name)
+        if info.is_embedding_model or info.architecture == "clip":
+            logger.debug("Skipping %s: not a chat model", path.name)
             continue
         models.append(describe_local_model(info, root))
     models.sort(key=lambda m: m.label.lower())

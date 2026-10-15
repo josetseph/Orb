@@ -146,6 +146,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | GET | `/api/v1/setup/status` | – | Paths, model readiness | [#](#get-apiv1setupstatus) |
 | GET | `/api/v1/setup/model-catalog` | – | Hardware profile + chat model options | [#](#get-apiv1setupmodel-catalog) |
 | POST | `/api/v1/setup/download-models` | – | Download GGUFs (+ Phonon-2, speaker diarizer, Marlin, vision projector) — blocking | [#](#post-apiv1setupdownload-models) |
+| GET | `/api/v1/setup/downloads` | – | Downloads still running: `{key: {"model", "percent"}}`, key `chat:<id>` / `chat:selected` / `media` | [#](#post-apiv1setupdownload-models) |
 | POST | `/api/v1/setup/select-chat-model` | – | Persist model selection, resize Qdrant | [#](#post-apiv1setupselect-chat-model) |
 | POST | `/api/v1/setup/start-multimodal-services` | – | Verify/install in-process multimodal deps | [#](#post-apiv1setupstart-multimodal-services) |
 | GET | `/api/v1/setup/multimodal-status` | – | Phonon-2 / Marlin readiness | [#](#get-apiv1setupmultimodal-status) |
@@ -386,6 +387,8 @@ Query: `chat_id: str | None`. Calls `services/model_catalog.recommend_stack(chat
 `ModelOption` is `dataclasses.asdict` of `model_catalog.ModelOption` (fields include `id`, `hf_path`, `embedding_dims`, size info — see [Local models](12-local-models-and-inference.md)). `selected_chat` reflects the `selection.chat_id` saved in the models manifest; `suggested_chat` is `chat_id` if valid, else the hardware recommendation. Pure read; no side effects.
 
 #### POST /api/v1/setup/download-models
+
+The download runs as its own asyncio task (`_downloads`, keyed `chat:<chat_id or selected>` or `media`) and the request awaits it through `asyncio.shield`, so it finishes even when the page that started it is gone. A second request for the same key while it runs awaits the same task instead of starting a new one (which used to delete the running download's `.partial`). `GET /api/v1/setup/downloads` lists the running ones with the last progress label and percent; the Models page polls it every 2 s while any run, shows the percentage on the button, and reloads when the last finishes (`test_download_jobs.py`).
 
 Body (optional, `DownloadModelsInput`): `include_multimodal: bool = true`, `chat_id: str | null`, `multimodal_only: bool = false`.
 

@@ -28,6 +28,8 @@ export default function ModelsPage() {
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [needsRestart, setNeedsRestart] = useState(false);
+  // Downloads run in the backend and outlive this page; this mirrors them.
+  const [inflight, setInflight] = useState<Record<string, { model: string | null; percent: number }>>({});
 
   // Per-KB draft
   const [kbMode, setKbMode] = useState<Mode | "inherit">("inherit");
@@ -79,6 +81,29 @@ export default function ModelsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Poll while anything downloads; when the last one finishes, reload what is on disk.
+  const downloading = Object.keys(inflight).length > 0;
+  useEffect(() => {
+    let alive = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const now = await api.getDownloads();
+        if (!alive) return;
+        setInflight(now);
+        if (Object.keys(now).length > 0) timer = window.setTimeout(poll, 2000);
+        else if (downloading) void load();
+      } catch {
+        if (alive) timer = window.setTimeout(poll, 5000);
+      }
+    };
+    void poll();
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [downloading, load]);
 
   function flash(key: string) {
     setSaved(key);
@@ -211,6 +236,7 @@ export default function ModelsPage() {
   async function downloadMedia() {
     setBusy("media");
     setError(null);
+    setInflight((d) => ({ ...d, media: d.media ?? { model: null, percent: 0 } }));
     try {
       const res = await api.downloadModels(true, undefined, { multimodalOnly: true });
       // The packages were updated under the running backend; new versions load on restart.
@@ -227,6 +253,7 @@ export default function ModelsPage() {
   async function download(id: string) {
     setBusy(`dl-${id}`);
     setError(null);
+    setInflight((d) => ({ ...d, [`chat:${id}`]: d[`chat:${id}`] ?? { model: null, percent: 0 } }));
     try {
       await api.downloadModels(false, id);
       flash(`dl-${id}`);
@@ -493,11 +520,18 @@ export default function ModelsPage() {
                   <button
                     type="button"
                     onClick={() => void download(m.id)}
-                    disabled={busy === `dl-${m.id}`}
+                    disabled={Boolean(inflight[`chat:${m.id}`])}
                     className="btn btn-secondary btn-sm"
-                    title="Download"
+                    title={inflight[`chat:${m.id}`] ? "Downloading — continues if you leave this page" : "Download"}
                   >
-                    {busy === `dl-${m.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
+                    {inflight[`chat:${m.id}`] ? (
+                      <>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {inflight[`chat:${m.id}`].percent > 0 && `${inflight[`chat:${m.id}`].percent}%`}
+                      </>
+                    ) : (
+                      <Download className="h-3.5 w-3.5" />
+                    )}
                   </button>
                 )}
               </SettingRow>
@@ -544,8 +578,15 @@ export default function ModelsPage() {
             {(local?.media ?? []).some((m) => !m.installed) && (
               <div className="flex shrink-0 items-center gap-2">
                 <SavedTick show={saved === "media"} />
-                <button type="button" onClick={() => void downloadMedia()} disabled={busy === "media"} className="btn btn-secondary btn-sm">
-                  {busy === "media" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Download media models"}
+                <button type="button" onClick={() => void downloadMedia()} disabled={Boolean(inflight.media)} className="btn btn-secondary btn-sm">
+                  {inflight.media ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      {inflight.media.percent > 0 && `${inflight.media.model ?? ""} ${inflight.media.percent}%`}
+                    </>
+                  ) : (
+                    "Download media models"
+                  )}
                 </button>
               </div>
             )}

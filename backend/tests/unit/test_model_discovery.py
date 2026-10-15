@@ -207,3 +207,12 @@ class TestInspectChatModel:
         path = make_model(tmp_path / "M-00002-of-00003.gguf")
         _, error = md.inspect_chat_model(path)
         assert "first shard" in error
+
+
+def test_projectors_and_catalog_rerankers_are_not_chat_models(tmp_path):
+    make_model(tmp_path / "gguf" / "Chat-Q4_K_M.gguf", name="Chat")
+    make_model(tmp_path / "gguf" / "mmproj-Chat-f16.gguf", name="Chat", extra={"general.architecture": "clip"})
+    # A reranker GGUF's header is a chat model's; Orb knows it from its own catalog.
+    make_model(tmp_path / "gguf" / "Qwen3-Reranker-4B.Q4_K_M.gguf", name="Qwen3 Reranker 4B")
+    md.clear_cache()
+    assert [m.path.rsplit("/", 1)[-1] for m in md.discover_chat_models(tmp_path)] == ["Chat-Q4_K_M.gguf"]

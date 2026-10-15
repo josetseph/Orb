@@ -477,6 +477,11 @@ export const api = {
     });
   },
 
+  /** Downloads still running in the backend: key `chat:<id>` or `media`. */
+  async getDownloads(): Promise<Record<string, { model: string | null; percent: number }>> {
+    return http.get("/setup/downloads");
+  },
+
   async selectChatModel(chatId: string) {
     return http.post("/setup/select-chat-model", { chat_id: chatId });
   },
