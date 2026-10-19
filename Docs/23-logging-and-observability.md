@@ -135,6 +135,7 @@ Plain `logging.getLogger(name)`. Passing a name that is not in `COMPONENT_LOG_FI
 | `DATA_DIR/logs/firefly.log` | `php artisan serve` output | same; Laravel's own logs are under `DATA_DIR/firefly/app/storage/logs/` |
 | `DATA_DIR/logs/multimodal.log` | The background multimodal-prep child (`ensure_multimodal_services`) | same |
 | `DATA_DIR/logs/llama-server.log` | The extraction `llama-server` (local ingestion; doc 12 §7.5) — load errors, slot activity | `extraction_server._start_locked` opens it in append mode (`"ab"`), stderr merged; not rotated. Start / idle-stop / stale-kill lines come from logger `ExtractionServer`, routed to `llm.log` |
+| `DATA_DIR/logs/shell.log` | The Tauri shell: Rust panics (message, `file:line`, backtrace) from the panic hook set in `main.rs` setup, and `runtime::shell_log` lines (e.g. a main window that could not be created) | `runtime::append_log`, append-only, not rotated. The shell's stderr goes nowhere when launched from Finder, so this is the only record of a shell crash |
 | `DATA_DIR/boot-status.json` | `{"status": "<last status() message>", "ts": …}` — sidecar download/boot progress, ending with `Ready` | `desktop_runtime.status()` rewrites it atomically; `GET /api/v1/admin/maintenance-status` returns it as `boot` until it says `Ready`, and the UI status indicator shows it |
 | crash dialog text | last lines of `backend.log` | `runtime.rs` shows an error dialog with the log path and tail after the runtime has died more than three times in a minute |
 

@@ -116,6 +116,7 @@ leaves nothing behind.
 - The UI is a remote origin to Tauri. `capabilities/remote-ui.json` grants it exactly
   those plugin commands and nothing else; `save_setup` additionally refuses calls
   from any page that is not the bundled one.
+- Nothing in the shell panics in an event callback: a panic inside a macOS callback cannot unwind and aborts the whole app (a 2026-10-18 crash: `abort()` under tao's `handle_nonuser_event`). `ensure_window` returns `Option` and logs a failed window build to `logs/shell.log` instead of `expect`ing; the runtime's mutexes recover from poisoning (`PoisonError::into_inner`); a panic hook writes any panic, with location and backtrace, to `logs/shell.log`.
 - macOS keeps running with no windows so a Dock click reopens instantly
   (`RunEvent::Reopen`).
 

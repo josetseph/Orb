@@ -8,7 +8,7 @@ use std::{
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Mutex,
+        Mutex, PoisonError,
     },
     thread,
     time::{Duration, Instant},
@@ -246,20 +246,20 @@ fn spawn(app: &AppHandle) -> std::io::Result<()> {
         cmd.creation_flags(0x0800_0000 | 0x0000_0200); // CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
     }
     let child = cmd.spawn()?;
-    *app.state::<Runtime>().child.lock().unwrap() = Some(child);
+    *app.state::<Runtime>().child.lock().unwrap_or_else(PoisonError::into_inner) = Some(child);
     Ok(())
 }
 
 fn child_pid(app: &AppHandle) -> Option<u32> {
     let state = app.state::<Runtime>();
-    let guard = state.child.lock().unwrap();
+    let guard = state.child.lock().unwrap_or_else(PoisonError::into_inner);
     guard.as_ref().map(Child::id)
 }
 
 /// Some(status) once the child has exited.
 fn child_exited(app: &AppHandle) -> Option<i32> {
     let state = app.state::<Runtime>();
-    let mut guard = state.child.lock().unwrap();
+    let mut guard = state.child.lock().unwrap_or_else(PoisonError::into_inner);
     match guard.as_mut().map(Child::try_wait) {
         Some(Ok(Some(status))) => Some(status.code().unwrap_or(-1)),
         Some(Ok(None)) => None,
@@ -294,17 +294,19 @@ fn kill_child(app: &AppHandle) {
     if child_exited(app).is_none() {
         kill_tree(pid, true);
     }
-    *app.state::<Runtime>().child.lock().unwrap() = None;
+    *app.state::<Runtime>().child.lock().unwrap_or_else(PoisonError::into_inner) = None;
 }
 
 // ── Boot / watch / stop ──────────────────────────────────────────────────────
 
 pub fn boot(app: AppHandle) {
-    let window = ensure_window(&app);
     if first_run(&app) {
-        let _ = window.show(); // the bundled page shows the setup form
+        if let Some(window) = ensure_window(&app) {
+            let _ = window.show(); // the bundled page shows the setup form
+        }
         return;
     }
+    let _ = ensure_window(&app);
     if let Err(problem) = check_saved_folders(&app) {
         fail(&app, &problem);
         return;
@@ -342,7 +344,7 @@ fn watch(app: AppHandle) {
     if state.quitting.load(Ordering::SeqCst) {
         return;
     }
-    let mut restarts = state.restarts.lock().unwrap();
+    let mut restarts = state.restarts.lock().unwrap_or_else(PoisonError::into_inner);
     restarts.retain(|t| t.elapsed() < Duration::from_secs(60));
     if restarts.len() >= MAX_RESTARTS_PER_MINUTE {
         drop(restarts);
@@ -351,7 +353,7 @@ fn watch(app: AppHandle) {
     }
     restarts.push(Instant::now());
     drop(restarts);
-    *state.child.lock().unwrap() = None;
+    *state.child.lock().unwrap_or_else(PoisonError::into_inner) = None;
     start(app);
 }
 
@@ -423,7 +425,7 @@ fn fail(app: &AppHandle, message: &str) {
 /// Back to the setup form, filled in with the current folders.
 fn open_setup(app: &AppHandle) {
     app.state::<Runtime>().setup_requested.store(true, Ordering::SeqCst);
-    let window = ensure_window(app);
+    let Some(window) = ensure_window(app) else { return };
     let page = if cfg!(windows) { "http://tauri.localhost/index.html" } else { "tauri://localhost/index.html" };
     if let Ok(url) = Url::parse(page) {
         let _ = window.navigate(url);
@@ -453,9 +455,13 @@ fn embed_player(url: &Url) -> bool {
         }
 }
 
-pub fn ensure_window(app: &AppHandle) -> WebviewWindow {
+/// The main window, created when there is none. `None` when creating it
+/// failed: this runs inside macOS event callbacks, where a panic cannot unwind
+/// and aborts the app (a Dock click while the old window was still being torn
+/// down did that), so the failure is logged and the next attempt tries again.
+pub fn ensure_window(app: &AppHandle) -> Option<WebviewWindow> {
     if let Some(window) = app.get_webview_window("main") {
-        return window;
+        return Some(window);
     }
     let opener = app.clone();
     WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -478,14 +484,33 @@ pub fn ensure_window(app: &AppHandle) -> WebviewWindow {
             false
         })
         .build()
-        .expect("main window")
+        .map_err(|e| shell_log(app, &format!("could not create the main window: {e}")))
+        .ok()
+        .or_else(|| app.get_webview_window("main"))
+}
+
+/// One line in DATA_DIR/logs/shell.log: the shell's own events and errors
+/// (its stderr goes nowhere when launched from Finder).
+pub fn shell_log(app: &AppHandle, message: &str) {
+    append_log(&data_dir(app).join("logs").join("shell.log"), message);
+}
+
+pub fn append_log(path: &Path, message: &str) {
+    let _ = fs::create_dir_all(path.parent().unwrap_or(Path::new(".")));
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(path) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(file, "[{now}] {message}");
+    }
 }
 
 /// Point the window at the UI (unless it is already there) and show it.
 fn open_ui(app: &AppHandle) {
     let app = app.clone();
     let _ = app.clone().run_on_main_thread(move || {
-        let window = ensure_window(&app);
+        let Some(window) = ensure_window(&app) else { return };
         let target = app_url();
         let already = window
             .url()
@@ -526,7 +551,9 @@ pub fn enable_text_checking() {
 #[cfg(target_os = "macos")]
 pub fn show_main(app: &AppHandle) {
     if setup_needed(app) {
-        let _ = ensure_window(app).show();
+        if let Some(window) = ensure_window(app) {
+            let _ = window.show();
+        }
     } else if let Err(problem) = check_saved_folders(app) {
         fail(app, &problem);
     } else {

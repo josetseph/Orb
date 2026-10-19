@@ -1547,7 +1547,10 @@ class RetrievalService:
         # expansion reranking. hybrid_search runs its own analysis per sub-query
         # (type pre-filter + initial reranking). This call covers the expansion
         # docs which are reranked outside hybrid_search.
-        _progress("Analyzing question", "Gemma4")
+        from app.services.model_catalog import model_label
+
+        answering = model_label(llm.get_chat_model())
+        _progress("Analyzing question", answering)
         _loop_qa = llm.analyze_query(query)
         _loop_question_attr = _loop_qa.get("question_attribute") or None
         logger.info(f"  [IterLoop] question_attribute={_loop_question_attr!r}")
@@ -1643,7 +1646,7 @@ class RetrievalService:
             # ── LLM iterative step ────────────────────────────────────────────
             _progress(
                 f"Reasoning over retrieved context ({iteration + 1}/{settings.MAX_LOOP_ITERATIONS})",
-                "Gemma4",
+                answering,
             )
             result = await llm.iterative_step(
                 original_question=query,
@@ -1699,7 +1702,7 @@ class RetrievalService:
             current_query = next_q
 
         # ── Loop exhausted: synthesize from accumulated steps ─────────────────
-        _progress("Synthesizing final answer", "Gemma4")
+        _progress("Synthesizing final answer", answering)
         # Rather than returning None (which forces an expensive fallback re-run),
         # convert accumulated steps into sub_results for final_synthesis_from_sub_results.
         _t_total = time.perf_counter() - _t_start

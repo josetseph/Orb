@@ -97,12 +97,18 @@ function useMaintenanceStatus(kb: string) {
       timer = window.setTimeout(poll, active ? 4000 : 30000);
     };
 
+    // One chain only: a poll asked for while one is in flight is dropped (that
+    // one schedules the next). Without this, every return to the window started
+    // a second chain, and after a day the app polled many times a second.
+    let inFlight = false;
     const poll = async () => {
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
+      window.clearTimeout(timer);
       if (document.visibilityState === "hidden") {
         schedule(false);
         return;
       }
+      inFlight = true;
       try {
         const data = await api.getMaintenanceStatus(kb);
         if (cancelled) return;
@@ -114,14 +120,13 @@ function useMaintenanceStatus(kb: string) {
         setFailed((err as { response?: unknown } | null)?.response ? "error" : "offline");
         // Retry sooner while down so a restart shows up without a wait.
         timer = window.setTimeout(poll, 5000);
+      } finally {
+        inFlight = false;
       }
     };
 
     const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        window.clearTimeout(timer);
-        void poll();
-      }
+      if (document.visibilityState === "visible") void poll();
     };
 
     document.addEventListener("visibilitychange", onVisibility);

@@ -287,6 +287,24 @@ def get_option(model_id: str) -> ModelOption | None:
     return ALL_MODELS.get(model_id)
 
 
+def model_label(ref: str | None) -> str | None:
+    """A model ref as people read it: the catalog label for a catalog id or file,
+    else the file or model name ("local-chat" is the Setup selection's chat model)."""
+    name = (ref or "").strip()
+    if name in ("", "local-chat"):
+        try:
+            from app.services.local_models import load_manifest
+
+            name = ((load_manifest().get("selection") or {}).get("chat_id") or "").strip()
+        except Exception:  # pylint: disable=broad-exception-caught
+            return None
+    file = name.replace("\\", "/").rsplit("/", 1)[-1]
+    opt = get_option(name) or next((m for m in ALL_MODELS.values() if m.hf_file == file), None)
+    if opt:
+        return opt.label
+    return file.removesuffix(".gguf") or None
+
+
 # ── Hardware ──────────────────────────────────────────────────────────────────
 
 

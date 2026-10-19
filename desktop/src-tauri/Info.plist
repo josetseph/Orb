@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Merged into Orb.app's Info.plist by Tauri. Without it macOS refuses the
+	     microphone outright, so voice notes cannot record. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Orb records voice notes into your notes.</string>
+</dict>
+</plist>

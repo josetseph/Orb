@@ -95,7 +95,9 @@ class ChatWorkflow:  # pylint: disable=too-few-public-methods
             if progress_callback:
                 progress_callback(stage, model)
 
-        _progress("Planning retrieval", "Gemma4")
+        from app.services.model_catalog import model_label
+
+        _progress("Planning retrieval", model_label(self._llm.get_chat_model()))
         final_answer, all_docs, thinking, answered = (
             await self._retrieval.retrieve_with_iterative_loop(
                 rewritten_query,

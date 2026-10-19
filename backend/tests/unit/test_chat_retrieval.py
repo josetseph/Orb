@@ -47,6 +47,7 @@ class TestRerankerMandatory:
 def _run_loop(svc, expansion, step):
     llm = type("L", (), {})()
     llm.analyze_query = lambda q: {}
+    llm.get_chat_model = lambda: "qwen35-9b-q4"
     llm.iterative_step = AsyncMock(side_effect=step)
     svc._llm_override = llm
     with patch.object(svc, "hybrid_search", AsyncMock(return_value=[_cand("origin", [{"id": "n1", "title": "T1"}])])), \

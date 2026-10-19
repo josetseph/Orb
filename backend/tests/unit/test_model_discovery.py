@@ -216,3 +216,12 @@ def test_projectors_and_catalog_rerankers_are_not_chat_models(tmp_path):
     make_model(tmp_path / "gguf" / "Qwen3-Reranker-4B.Q4_K_M.gguf", name="Qwen3 Reranker 4B")
     md.clear_cache()
     assert [m.path.rsplit("/", 1)[-1] for m in md.discover_chat_models(tmp_path)] == ["Chat-Q4_K_M.gguf"]
+
+
+def test_progress_label_names_the_model_answering():
+    from app.services.model_catalog import model_label
+
+    assert model_label("gguf/Qwen_Qwen3.5-9B-Q4_K_M.gguf") == "Qwen 3.5 9B (Q4)"
+    assert model_label("qwen35-9b-q4") == "Qwen 3.5 9B (Q4)"
+    assert model_label("/Volumes/x/My-Model.gguf") == "My-Model"
+    assert model_label("gpt-4o") == "gpt-4o"
