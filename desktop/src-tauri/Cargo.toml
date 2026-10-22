@@ -23,7 +23,16 @@ objc2 = "0.6.4"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSDictionary", "NSString", "NSUserDefaults", "NSValue"] }
 
 [profile.release]
+# Line tables into a separate orb.dSYM (build.py keeps one per build), so a
+# crash report's Orb frames can be decoded; the shipped binary stays stripped.
+debug = "line-tables-only"
+split-debuginfo = "packed"
 strip = true
 lto = true
 codegen-units = 1
 opt-level = "s"
+
+# Tests throw and catch a real Objective-C exception.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2 = { version = "0.6.4", features = ["exception"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSString"] }

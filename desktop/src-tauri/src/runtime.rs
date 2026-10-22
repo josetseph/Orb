@@ -526,6 +526,62 @@ fn open_ui(app: &AppHandle) {
     });
 }
 
+/// Record every Objective-C exception (name, reason, call stack) in shell.log
+/// as it is thrown. One that escapes AppKit or WebKit into the event loop's
+/// Rust frames aborts the app with nothing but "panic in a function that cannot
+/// unwind", so this is the only place its cause is written down. Exceptions
+/// WebKit throws and catches itself are recorded too; the log is append-only.
+#[cfg(target_os = "macos")]
+pub fn log_objc_exceptions(log: PathBuf) {
+    use objc2::runtime::AnyObject;
+    use objc2::msg_send;
+    use objc2_foundation::NSString;
+    use std::sync::OnceLock;
+
+    type Preprocessor = extern "C" fn(*mut AnyObject) -> *mut AnyObject;
+    static LOG: OnceLock<PathBuf> = OnceLock::new();
+    static PREVIOUS: OnceLock<Option<Preprocessor>> = OnceLock::new();
+    extern "C" {
+        fn objc_setExceptionPreprocessor(f: Preprocessor) -> Option<Preprocessor>;
+    }
+
+    extern "C" fn record(exception: *mut AnyObject) -> *mut AnyObject {
+        // Never unwind out of here: this runs inside objc_exception_throw.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            if exception.is_null() {
+                return;
+            }
+            // SAFETY: `exception` is the NSException being thrown; description and
+            // callStackSymbols are plain NSObject/NSException accessors.
+            let (what, stack) = unsafe {
+                let what: *mut NSString = msg_send![exception, description];
+                let name: *mut NSString = msg_send![exception, name];
+                let symbols: *mut AnyObject = msg_send![exception, callStackSymbols];
+                let stack: *mut NSString = if symbols.is_null() {
+                    std::ptr::null_mut()
+                } else {
+                    msg_send![symbols, description]
+                };
+                let text = |p: *mut NSString| if p.is_null() { String::new() } else { (*p).to_string() };
+                (format!("{}: {}", text(name), text(what)), text(stack))
+            };
+            if let Some(path) = LOG.get() {
+                append_log(path, &format!("Objective-C exception {what}\n{stack}"));
+            }
+        }));
+        match PREVIOUS.get().copied().flatten() {
+            Some(previous) => previous(exception),
+            None => exception,
+        }
+    }
+
+    if LOG.set(log).is_ok() {
+        // SAFETY: installs a C callback with the runtime's expected signature.
+        let previous = unsafe { objc_setExceptionPreprocessor(record) };
+        let _ = PREVIOUS.set(previous);
+    }
+}
+
 /// Note editing gets WebKit's spelling and grammar underlines by default.
 /// Registered, not written, so unticking "Check Grammar With Spelling" in the
 /// editor's context menu (which WebKit saves under the same keys) still sticks.
@@ -595,6 +651,24 @@ mod tests {
         assert!(err.contains("Orb installer"), "{err}");
         let err = usable_dir("notes vault", &Path::new(&volume).join("attachments"), false).unwrap_err();
         assert!(err.contains("Read-only file system"), "{err}");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn objective_c_exceptions_are_recorded() {
+        use objc2::msg_send;
+        use objc2_foundation::{NSArray, NSString};
+        let log = std::env::temp_dir().join(format!("orb-objc-{}.log", std::process::id()));
+        log_objc_exceptions(log.clone());
+        let empty = NSArray::<NSString>::new();
+        // SAFETY: the out-of-range read throws NSRangeException, caught right here.
+        let caught = objc2::exception::catch(std::panic::AssertUnwindSafe(|| unsafe {
+            let _: *mut NSString = msg_send![&*empty, objectAtIndex: 5usize];
+        }));
+        assert!(caught.is_err(), "the read should have thrown");
+        let text = fs::read_to_string(&log).unwrap_or_default();
+        let _ = fs::remove_file(&log);
+        assert!(text.contains("Objective-C exception NSRangeException"), "{text}");
     }
 
     #[cfg(target_os = "macos")]

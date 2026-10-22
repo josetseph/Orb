@@ -86,6 +86,16 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: python3 desktop/build.py dist
 
+      # Decodes this build's crash reports (the shipped binary is stripped). Kept
+      # with the run, not published in the release.
+      - name: Keep the macOS dSYM
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v6
+        with:
+          name: dsym-${{ matrix.name }}
+          path: desktop/src-tauri/target/dsyms/
+          if-no-files-found: warn
+
       - uses: actions/upload-artifact@v6
         with:
           name: orb-${{ matrix.name }}
@@ -104,6 +114,7 @@ jobs:
       - uses: actions/download-artifact@v6
         with:
           path: bundles
+          pattern: orb-*  # installers only; the dsym-* artifacts stay with the run
           merge-multiple: true
       # The in-app updater reads releases/latest/download/latest.json.
       - name: Update feed

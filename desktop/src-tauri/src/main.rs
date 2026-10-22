@@ -28,6 +28,8 @@ fn main() {
             // A panic in a macOS event callback cannot unwind and aborts the app
             // with no message anywhere; record where it happened.
             let log = runtime::data_dir(app.handle()).join("logs").join("shell.log");
+            #[cfg(target_os = "macos")]
+            runtime::log_objc_exceptions(log.clone());
             std::panic::set_hook(Box::new(move |info| {
                 let trace = std::backtrace::Backtrace::force_capture();
                 runtime::append_log(&log, &format!("panic: {info}\n{trace}"));

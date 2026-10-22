@@ -238,6 +238,22 @@ TAURI = [_TAURI_BIN] if _TAURI_BIN else ["cargo", "tauri"]
 BUNDLES = {"linux": "deb,rpm", "win32": "nsis"}
 
 
+def keep_dsym(version: str) -> None:
+    """Keep this build's orb.dSYM as target/dsyms/orb-<version>-<uuid>.dSYM: the shipped
+    binary is stripped, and a crash report is decoded with the dSYM of the same UUID
+    (`atos -o <dSYM> -l <load address> <addresses>`)."""
+    dsym = HERE / "src-tauri" / "target" / "release" / "orb.dSYM"
+    if not dsym.is_dir():
+        return
+    out = subprocess.run(["dwarfdump", "--uuid", str(dsym)], capture_output=True, text=True, check=False).stdout
+    uuid = out.split()[1] if out.startswith("UUID:") else "unknown"
+    kept = HERE / "src-tauri" / "target" / "dsyms" / f"orb-{version}-{uuid}.dSYM"
+    shutil.rmtree(kept, ignore_errors=True)
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(dsym, kept)
+    print(f"dSYM: {kept}")
+
+
 def dist(extra: list[str]) -> None:
     check()
     # The resource map lives here, not in tauri.conf.json: tauri-build would
@@ -268,6 +284,7 @@ def dist(extra: list[str]) -> None:
     bundle = HERE / "src-tauri" / "target" / "release" / "bundle"
     app = bundle / "macos" / "Orb.app"
     version = json.loads((HERE / "src-tauri" / "tauri.conf.json").read_text())["version"]
+    keep_dsym(version)
     arch = {"arm64": "aarch64", "x86_64": "x64"}.get(os.uname().machine, os.uname().machine)
     out = bundle / "dmg" / f"Orb_{version}_{arch}.dmg"
     staging = bundle / "dmg-staging"
