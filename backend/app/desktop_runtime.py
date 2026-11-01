@@ -507,6 +507,9 @@ def start_search_engines(data_dir: Path, master_key: str) -> None:
             f"127.0.0.1:{PORTS['meili']}",
             "--master-key",
             master_key,
+            # Meili's default is 2/3 of total RAM; on a 1.5 TB host that made every write take 4.5 s instead of 0.3 s
+            "--max-indexing-memory",
+            "2GiB",
         ],
         log=_log_path(data_dir, "meilisearch"),
     )

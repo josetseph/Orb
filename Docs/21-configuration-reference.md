@@ -136,7 +136,7 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | `MEILI_PORT` | int / `7700` | same | Port (desktop `17470`) | runtime |
 | `MEILI_MASTER_KEY` | str / `orb-dev-key` | same | API key. Desktop: `desktop_runtime.resolve_meili_master_key` → env `MEILI_MASTER_KEY`, else `DATA_DIR/meili_master_key` (random for fresh installs, `orb-dev-key` when a Meili DB already exists) | runtime |
 | `MEILI_INDEX_NAME` | str / `orb_nodes` | `Settings`; `meilisearch_service` default, `kb_registry` default row | Index for the default KB; others `<slug>_nodes` | code |
-| `MEILI_ENV`, `MEILI_DB_PATH` | Meili's own env | Meili binary | Not used: the runtime passes `--db-path DATA_DIR/meilisearch --master-key …` as CLI args | — |
+| `MEILI_ENV`, `MEILI_DB_PATH` | Meili's own env | Meili binary | Not used: the runtime passes `--db-path DATA_DIR/meilisearch --master-key … --max-indexing-memory 2GiB` as CLI args | — |
 
 ### 3.8 Kuzu
 
