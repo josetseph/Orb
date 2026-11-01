@@ -60,6 +60,7 @@ async def put_local_runtime(body: LocalRuntimeSettings):
     import asyncio
 
     from app.core import runtime_config
+    from app.services.extraction_server import embedding_server
     from app.services.local_models import local_gguf_reranker, local_llama_runtime
 
     overrides = {**runtime_config.load(), **body.model_dump()}
@@ -67,6 +68,7 @@ async def put_local_runtime(body: LocalRuntimeSettings):
     runtime_config.apply_to_settings(overrides)
     await asyncio.to_thread(local_llama_runtime.unload)
     await asyncio.to_thread(local_gguf_reranker.unload)
+    await asyncio.to_thread(embedding_server.stop)  # its -c is EMBED_N_CTX
     return _local_runtime_state()
 
 
