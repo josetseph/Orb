@@ -12,7 +12,7 @@
 
 - The per-KB Kuzu database file (`DATA_DIR/kuzu/<slug>/kuzu_graph`, default KB: `DATA_DIR/kuzu/kuzu_graph`) and its `.wal`.
 - Schema bootstrap (idempotent DDL in `_SCHEMA_STMTS`) and a process-wide `threading.RLock` per `GraphService` instance that serialises every Cypher statement.
-- Structural facts only: which node IDs exist, their `kind`/`name`/`type`, which note REFERENCES which entity, SEMANTIC_REL edges with their provenance (`note_id`, timestamps, `mention_count` — the score columns are schema-only), community membership (MEMBER_OF / CONTAINS). No layout is persisted; `get_full_3d_graph` computes one per request.
+- Structural facts only: which node IDs exist, their `kind`/`name`/`type`, which note REFERENCES which entity, SEMANTIC_REL edges with their provenance (`note_id`, `note_ids`, timestamps, `mention_count` — the score columns are schema-only), community membership (MEMBER_OF / CONTAINS). No layout is persisted; `get_full_3d_graph` computes one per request.
 - The 3D layout algorithms (`backend/app/utils/graph_layout.py`) whose outputs are persisted to Kuzu.
 - The `GET /api/v1/graph/*` visualisation/autocomplete endpoints and the `/api/v1/admin/*` maintenance endpoints that drive rebuilds.
 
@@ -99,8 +99,9 @@ erDiagram
         STRING relationship_id "uuid4; key for Qdrant node_relationships point"
         STRING ingested_at "ISO-8601 naive UTC"
         STRING last_updated "ISO-8601 naive UTC"
-        INT64 mention_count
+        INT64 mention_count "= size(note_ids)"
         STRING note_id "first note that asserted the edge"
+        STRING_LIST note_ids "every note asserting the edge"
     }
 ```
 
@@ -156,7 +157,7 @@ It is applied in one place: `KBRegistry._load`, which repairs each row on startu
 1. `self._qdrant = qdrant or qdrant_service` — the injected per-KB `QdrantService` is used for every name→id resolution and content join. Passing the wrong instance silently mixes KBs.
 2. Path resolution: `Path(db_path or settings.KUZU_DB_PATH).expanduser()`; relative paths are anchored at `REPO_ROOT`; `parent.mkdir(parents=True, exist_ok=True)`.
 3. `self.db = kuzu.Database(str(path))`; `self.conn = kuzu.Connection(self.db)`; `self._lock = threading.RLock()`. (The pre-`DATA_DIR` `REPO_ROOT/data/kuzu_graph` file is no longer moved into place — `_migrate_legacy_db_path` was removed 2026-09-19; copy it by hand if such an install still exists.)
-4. `_init_schema()` runs each statement of `_SCHEMA_STMTS` under the lock; exceptions whose text contains `already exist` are ignored, anything else is logged at WARNING and **not raised** (so a broken schema surfaces later as query failures).
+4. `_init_schema()` runs each statement of `_SCHEMA_STMTS` under the lock; exceptions whose text contains `already exist` are ignored, anything else is logged at WARNING and **not raised** (so a broken schema surfaces later as query failures). Then the `note_ids` migration: `ALTER TABLE SEMANTIC_REL ADD note_ids STRING[]`; if that raises (column already there) `_init_schema` returns. Otherwise every existing edge is backfilled once: `note_ids` = the notes that `REFERENCES` both endpoints, plus `r.note_id` if it is not among them (too many keeps an edge a little longer; too few would drop one a note still asserts), and `mention_count = size(note_ids)`; logs `"[Graph] Edges now record every note asserting them"`.
 
 There is **one connection per service** used for both reads and writes; Kuzu's own concurrency model is not relied on — the `RLock` in `execute_query` serialises everything. `RLock` (not `Lock`) because `_init_schema` and callers such as `wipe_all_nodes` nest `execute_query` calls on the same thread.
 
@@ -197,7 +198,7 @@ CREATE REL TABLE IF NOT EXISTS CONTAINS(FROM Node TO Node)
 CREATE REL TABLE IF NOT EXISTS SEMANTIC_REL(FROM Node TO Node,
     rel_type STRING, confidence DOUBLE, strength DOUBLE, relevance DOUBLE,
     edge_weight DOUBLE, relationship_id STRING, ingested_at STRING,
-    last_updated STRING, mention_count INT64, note_id STRING)
+    last_updated STRING, mention_count INT64, note_id STRING, note_ids STRING[])
 ```
 
 `pos_x/pos_y/pos_z`, `is_similarity` and `created_at` were dropped from the DDL; a database created earlier keeps them as empty columns (`IF NOT EXISTS` never alters), and nothing reads or writes them.
@@ -297,8 +298,8 @@ Steps:
 3. No per-edge score is computed. `confidence`, `strength`, `relevance` and `edge_weight` remain in the DDL (kept from 033589d's symbolic ranking era) but the writer no longer sets them; no query or ranker reads them.
 4. Resolve ids: if `source_id`/`target_id` not passed, `resolve_node_id(name.lower().strip())` via Qdrant. Either missing → return `{"action": "failed", "reason": "unresolvable IDs", …}` without touching Kuzu.
 5. Look for an existing edge with the same `(source_id, target_id, rel_type)` (`LIMIT 1`).
-6. **Reinforce** (exists): `last_updated = now`, `mention_count = coalesce(mention_count,0)+1`, and `relationship_id` only filled when currently NULL. `note_id`, `ingested_at` unchanged → provenance is *first* asserting note.
-7. **Create** (absent): `MERGE` both endpoints as `Node` (`ON CREATE SET kind='indexable'` — no name/type; normally they already exist from `query_nodes`), then `CREATE (source)-[r:SEMANTIC_REL]->(target)` setting `rel_type, relationship_id, ingested_at = last_updated = now, mention_count = 1, note_id`.
+6. **Reinforce** (exists): `last_updated = now`; `note_ids` gets `note_id` appended unless it is already there (or `note_id` is NULL); `relationship_id` only filled when currently NULL; then a second statement sets `mention_count = size(note_ids)` — asserting it again (a re-ingest, a resumed write) does not count twice. `note_id`, `ingested_at` unchanged → `note_id` stays the *first* asserting note.
+7. **Create** (absent): `MERGE` both endpoints as `Node` (`ON CREATE SET kind='indexable'` — no name/type; normally they already exist from `query_nodes`), then `CREATE (source)-[r:SEMANTIC_REL]->(target)` setting `rel_type, relationship_id, ingested_at = last_updated = now, mention_count = 1 (0 when no note_id), note_id, note_ids = [note_id]` (`[]` when `note_id` is NULL).
 8. Return `{"action": "created"|"reinforced", "source", "target", "relationship_type", "natural_language", "relationship_id"}`.
 
 `now` is `datetime.utcnow().isoformat()` — a naive ISO string with microseconds and no `Z`.
@@ -317,7 +318,8 @@ An edge is identified by the triple `(source.id, target.id, rel_type)` and is **
 |---|---|---|
 | `confidence` | schema-only (never written since 2026-09-19; NULL on every edge) | `_hop_query` still returns `coalesce(r.confidence, 1.0)` as `confidence_path` and the var-length query `coalesce(r.confidence, 0.0)` — so retrieval always sees the fallback constants and does nothing with them (the in-code comment "Confidence filtering is done in Python below" is stale; see §18). |
 | `strength`, `relevance`, `edge_weight` | schema-only (never written since 2026-09-19) | not read by any query today |
-| `mention_count` | reinforcement counter | `clear_note_contribution` decrements it for the note's own edges and deletes at 0 |
+| `note_ids` | every note asserting the edge, each once | `create_or_update_relationship` (append), `clear_note_contribution` (remove; delete the edge when it held only this note) |
+| `mention_count` | `size(note_ids)` | kept in step with `note_ids` by both writers |
 | `note_id` | first asserting note | not read by any query today (REFERENCES.note_id is what evidence lookups use) |
 
 ## 8. Note ↔ entity linkage (`REFERENCES`)
@@ -341,7 +343,7 @@ SET r.note_id = $note_id
 Properties of this contract:
 - Direction is always **note → entity**.
 - `MERGE` on the edge makes re-ingestion idempotent for entities still mentioned.
-- **Re-ingest takes back what the note asserted before.** `GraphService.clear_note_contribution(note_id)` runs at the start of `_write_ontology`: it deletes the note's `REFERENCES` edges and un-counts its `SEMANTIC_REL` assertions (deleting edges no other note restated), and `delete_orphan_entities` sweeps entities nothing references any more once the new extraction is written. An edge records only its first asserting note, so a note that merely reinforced one is not un-counted (a `ponytail:` comment marks the upgrade path).
+- **Re-ingest takes back what the note asserted before.** `GraphService.clear_note_contribution(note_id)` runs at the start of `_write_ontology`: it deletes the note's `REFERENCES` edges, deletes the `SEMANTIC_REL` edges whose `note_ids` hold only this note (returning their `relationship_id`s so the Qdrant points go too), sets `mention_count = size(note_ids) - 1` on the other edges holding it, then removes the note from their `note_ids` (`list_filter`, the id bound with `WITH $note_id AS nid` because Kuzu takes no parameter inside a lambda). Only edges holding the note are touched. `delete_orphan_entities` sweeps entities nothing references any more once the new extraction is written. Edges a note only reinforced are un-counted too, so a re-ingest or a resumed ingestion lands on the same counts.
 - `ON MATCH SET note.kind = 'note'` repairs a note id that was previously created as a bare `indexable` stub (possible via `create_or_update_relationship`'s endpoint MERGE if an entity name collided with a note id — unlikely but handled).
 - `_update_node_summary` (the per-entity context accumulator) also MERGEs indexable nodes (`MERGE (n:Node {id}) ON CREATE SET n.kind='indexable' SET n.name, n.type`) but never creates `REFERENCES`; an entity reached only through that path has no note evidence.
 
@@ -601,7 +603,7 @@ Calls 13.4, then for each found entity `kb.graph.get_related_nodes(name, max_dep
 | `POST /api/v1/admin/rebuild-communities` | — | `{"status":"started","message":…}` | `BackgroundTasks` → `rebuild_leiden_communities()` for the KB |
 | `POST /api/v1/admin/build-temporal-digests` | `{"period": "month"|"week"|"year"|null}` | `{"status":"started","message":"… (period=…)"}` | `BackgroundTasks` → `build_temporal_digests(period)`; 409 while an ingestion is active |
 | `POST /api/v1/admin/reset-ingestion-data` | — | `{"status":"started",…}` | Synchronously `UPDATE notes SET processed=false, failed=false WHERE kb_id=…` and commit; then in background `kb.graph.wipe_all_nodes()`, `kb.qdrant.reset_all()`, `kb.meili.reset_all()`. Tables/collections/indexes are recreated empty; Kuzu tables are **not** dropped (schema stays). |
-| `POST /api/v1/admin/reingest-all` | — | `{"status":"queued","notes_queued":n,…}` | `require_ai()`; for every note in the KB with `processed=false OR failed=true`, `BackgroundTasks.add_task(wf.process_note, NoteInput(content=note_body, created_at, title), note.id)` |
+| `POST /api/v1/admin/reingest-all` | — | `{"status":"queued","notes_queued":n,…}` | `require_ai()`; for every note in the KB with `processed=false OR failed=true`, an `ingest_note` job (`jobs.enqueue_ingest`), committed together, then `jobs.wake()` ([10](10-ingestion-pipeline.md) §4.5) |
 
 ## 14. Configuration & env vars
 
@@ -672,7 +674,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 5. **`POST /admin/build-temporal-digests` answers 409 while an ingestion is active** instead of a `started` that would no-op.
 7. **Unit tests.** `backend/tests/unit/test_graph_queries.py` covers `get_related_nodes` (depth 1 and the depth>1 Cypher shape); the tests for `find_paths_between_nodes` / `min_confidence` (removed in da75dfc) were deleted on 2026-09-19. `test_graph_layout.py` is current.
 8. **`get_related_nodes` depth>1 is undirected, unfiltered and has no `edge_direction`**; the "Confidence filtering is done in Python below" comment describes removed code. Depth 1 returns `coalesce(confidence,1.0)`, depth>1 `coalesce(confidence,0.0)`.
-9. **Reinforcement is first-write-wins** for `relationship_id`, `note_id`, `ingested_at`; only `mention_count` and `last_updated` evolve.
+9. **Reinforcement is first-write-wins** for `relationship_id`, `note_id`, `ingested_at`; only `note_ids`, `mention_count` (= `size(note_ids)`) and `last_updated` evolve.
 10. **Re-ingest removes the note's own REFERENCES first** (`clear_note_contribution`) and sweeps the entities it alone kept alive (`delete_orphan_entities`).
 11. **Notes are "indexable" for name lookup** (`kind IN ['indexable','note']`), so `find_nodes_by_name("meeting")` can return note titles.
 12. **`get_node_detail.community_id` is an arbitrary one** of the node's up-to-three communities (`OPTIONAL MATCH … LIMIT 1`), while `get_full_3d_graph.community_id` is the finest level.

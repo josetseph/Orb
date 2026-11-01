@@ -6,7 +6,7 @@ import asyncio
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,6 +18,7 @@ from app.models.wikilink import NoteLink
 from app.schemas.extraction import NoteInput
 from pydantic import BaseModel
 from app.schemas.note import BatchDeleteNotesInput, CreateNoteInput, MoveNoteInput
+from app.services import jobs
 from app.services.ai_gate import require_ai
 from app.services.kb_registry import KBContext
 from app.services.local_storage import remove_upload, vault_rel_from_url
@@ -160,7 +161,6 @@ async def dismiss_note_failure(
 @router.post("/api/v1/notes/{note_id}/ingest")
 async def ingest_existing_note(
     note_id: str,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     kb: KBContext = Depends(get_kb),
 ):
@@ -177,17 +177,9 @@ async def ingest_existing_note(
     note.failed = False
     note.processing_stage = "Queued for ingestion"
     note.processing_model = None
+    await jobs.enqueue_ingest(db, kb.kb_id, note_id, note_body(note, kb))
     await db.commit()
-
-    note_data = NoteInput(
-        content=note_body(note, kb),
-        created_at=note.created_at.isoformat() if note.created_at else None,
-        title=(note.title or "").strip() or None,
-    )
-
-    background_tasks.add_task(
-        kb.get_ingestion_workflow().process_note, note_data, note_id
-    )
+    jobs.wake()
 
     return {
         "note_id": note_id,
@@ -201,10 +193,14 @@ async def cancel_note_ingestion(
     note_id: str, db: AsyncSession = Depends(get_db), kb: KBContext = Depends(get_kb)
 ):
     """Stop this note's ingestion; the note goes back to plain "Saved"."""
-    from app.workflows.ingestion import cancel_ingestion
-
-    await _get_note_or_404(db, kb, note_id)
-    stopped = cancel_ingestion(kb.kb_id, note_id)
+    note = await _get_note_or_404(db, kb, note_id)
+    stopped = await jobs.cancel(kb.kb_id, note_id)
+    if stopped and not note.processed:
+        # A running pipeline writes this too; one still queued never would.
+        note.failed = False
+        note.processing_stage = "Saved"
+        note.processing_model = None
+        await db.commit()
     return {"note_id": note_id, "status": "cancelling" if stopped else "not_running"}
 
 
@@ -215,13 +211,39 @@ class ProcessAttachmentInput(BaseModel):
     force: bool = False
 
 
-# ponytail: unbounded per-process dict; entries are tiny and a restart clears
-# it. Move to SQLite if a per-note history ever matters.
-_attachment_jobs: dict[tuple[str, str, str], dict] = {}
+def _attachment_target(note_id: str, url: str) -> str:
+    return f"{note_id} {url}"
+
+
+def prepare_attachment(job):
+    """The job worker's entry for one attachment. Its transcription windows, page reads
+    and model calls are saved as it goes, so a resume does only what is left."""
+    from app.services import ingestion_checkpoint
+    from app.services.kb_registry import kb_registry
+
+    kb = kb_registry.get_kb(job.kb_id)
+    payload = job.payload or {}
+    if kb is None or not payload.get("url"):
+        return None
+    key = (job.kb_id, jobs.memo_key(job.kind, job.target_id))
+
+    async def run() -> str:
+        ingestion_checkpoint.activate(*key)
+        try:
+            await _run_attachment_job(kb, payload["note_id"], payload["url"])
+        except asyncio.CancelledError:
+            raise  # a shutdown keeps the saved steps; a cancel already dropped them
+        except BaseException:
+            ingestion_checkpoint.clear(*key)
+            raise
+        ingestion_checkpoint.clear(*key)
+        return "done"
+
+    return run
 
 
 async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
-    """Extract one attachment, replace its block in the vault .md, unload models."""
+    """Extract one attachment, replace its block in the vault .md, unload models. Raises on failure."""
     from app.core.database import AsyncSessionLocal
     from app.workflows.agents.ingestion_agent import (
         classify_attachment,
@@ -235,7 +257,6 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
     )
     from app.services.multimedia import multimedia_service
 
-    key = (kb.kb_id, note_id, url)
     wf = kb.get_ingestion_workflow()
 
     async def _noop_status(_stage: str, _model: str | None = None) -> None:
@@ -286,14 +307,13 @@ async def _run_attachment_job(kb: KBContext, note_id: str, url: str) -> None:
             if not produced:
                 raise ValueError("Extraction produced no text")
             await wf._persist_note_body(note_id, content)  # pylint: disable=protected-access
-        _attachment_jobs[key] = {"status": "done", "error": None}
     except asyncio.CancelledError:
         # The model call already in a thread runs to completion; its output is dropped.
-        logger.info(f"Attachment processing cancelled for {url}")
-        _attachment_jobs[key] = {"status": "cancelled", "error": None}
+        logger.info(f"Attachment processing stopped for {url}")
+        raise
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.error(f"Attachment processing failed for {url}: {exc}")
-        _attachment_jobs[key] = {"status": "failed", "error": str(exc)}
+        raise
     finally:
         try:
             if kind in ("audio", "video"):
@@ -330,15 +350,17 @@ async def process_note_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found in this note")
     if key in extraction_srcs(body) and not payload.force:
         return {"note_id": note_id, "url": payload.url, "status": "already_processed"}
-    job_key = (kb.kb_id, note_id, payload.url)
-    if _attachment_jobs.get(job_key, {}).get("status") == "running":
-        return {"note_id": note_id, "url": payload.url, "status": "running"}
-    # A real task (not a BackgroundTask) so it can be cancelled by url.
-    _attachment_jobs[job_key] = {
-        "status": "running",
-        "error": None,
-        "task": asyncio.create_task(_run_attachment_job(kb, note_id, payload.url)),
-    }
+    # Written down first: a quit mid-transcription resumes at the next undecoded window.
+    await jobs.enqueue(
+        db,
+        jobs.ATTACHMENT,
+        kb.kb_id,
+        _attachment_target(note_id, payload.url),
+        jobs.input_hash(payload.url),
+        payload={"note_id": note_id, "url": payload.url},
+    )
+    await db.commit()
+    jobs.wake()
     return {"note_id": note_id, "url": payload.url, "status": "running"}
 
 
@@ -351,11 +373,8 @@ async def cancel_note_attachment(
 ):
     """Stop one attachment's transcribe / describe / extract job."""
     await _get_note_or_404(db, kb, note_id)
-    job = _attachment_jobs.get((kb.kb_id, note_id, payload.url))
-    task = job.get("task") if job else None
-    if job is None or job.get("status") != "running" or task is None or task.done():
+    if not await jobs.cancel(kb.kb_id, _attachment_target(note_id, payload.url), kind=jobs.ATTACHMENT):
         return {"note_id": note_id, "url": payload.url, "status": "not_running"}
-    task.cancel()
     return {"note_id": note_id, "url": payload.url, "status": "cancelling"}
 
 
@@ -363,13 +382,14 @@ async def cancel_note_attachment(
 async def note_attachment_jobs(
     note_id: str, db: AsyncSession = Depends(get_db), kb: KBContext = Depends(get_kb)
 ):
-    """Status of every per-attachment job started for this note this session."""
+    """Status of each attachment job for this note (the newest per attachment)."""
     await _get_note_or_404(db, kb, note_id)
+    shown = {"queued": "running", "running": "running"}
     return {
         "jobs": {
-            url: {"status": job["status"], "error": job.get("error")}
-            for (kb_id, nid, url), job in _attachment_jobs.items()
-            if kb_id == kb.kb_id and nid == note_id
+            job.payload["url"]: {"status": shown.get(job.state, job.state), "error": job.last_error}
+            for job in await jobs.for_kind(jobs.ATTACHMENT, kb.kb_id)
+            if (job.payload or {}).get("note_id") == note_id
         }
     }
 
@@ -377,7 +397,6 @@ async def note_attachment_jobs(
 @router.post("/api/v1/ingest")
 async def ingest_note(
     note_data: NoteInput,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     kb: KBContext = Depends(get_kb),
 ):
@@ -406,18 +425,16 @@ async def ingest_note(
         ),
         kb_id=kb.kb_id,
     )
-    persist_note_body(new_note, kb, note_data.content or "")
+    persist_note_body(new_note, kb, note_data.content or "", title=note_data.title)
     db.add(new_note)
     await db.flush()
     await refresh_note_links(db, kb.kb_id, note_id, note_data.content or "")
+    if not note_data.skip_ingestion:
+        await jobs.enqueue_ingest(db, kb.kb_id, note_id, note_data.content or "")
     await db.commit()
 
     if not note_data.skip_ingestion:
-        if note_data.created_at is None:
-            note_data.created_at = c_at.isoformat()
-        background_tasks.add_task(
-            kb.get_ingestion_workflow().process_note, note_data, note_id
-        )
+        jobs.wake()
         status = "processing_started"
     else:
         status = "saved_without_ingestion"
@@ -700,6 +717,10 @@ async def _delete_note_impl(
             "already_gone": True,
         }
 
+    await jobs.cancel(kb.kb_id, note_id)
+    for job in await jobs.for_kind(jobs.ATTACHMENT, kb.kb_id):
+        if job.state in jobs.ACTIVE and (job.payload or {}).get("note_id") == note_id:
+            await jobs.cancel(kb.kb_id, job.target_id, kind=jobs.ATTACHMENT)
     body = await asyncio.to_thread(note_body, note_obj, kb)
     rel_path = note_obj.rel_path
     attached_rels = _attachment_rels_from_note_body(body)

@@ -15,7 +15,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.log import get_logger
 from app.models.note import Note
-from app.schemas.extraction import NoteInput
+from app.services import jobs
 from app.services.ai_gate import require_ai
 from app.services.kb_registry import KBContext
 from app.services.note_files import note_body
@@ -132,7 +132,6 @@ async def reset_ingestion_data(
 
 @router.post("/api/v1/admin/reingest-all")
 async def reingest_all(
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     kb: KBContext = Depends(get_kb),
 ):
@@ -147,14 +146,10 @@ async def reingest_all(
     )
     notes = result.scalars().all()
 
-    wf = kb.get_ingestion_workflow()
     for note in notes:
-        note_data = NoteInput(
-            content=note_body(note, kb),
-            created_at=note.created_at.isoformat() if note.created_at else None,
-            title=note.title,
-        )
-        background_tasks.add_task(wf.process_note, note_data, note.id)
+        await jobs.enqueue_ingest(db, kb.kb_id, note.id, note_body(note, kb))
+    await db.commit()
+    jobs.wake()
 
     logger.info(f"[Admin] reingest-all: queued {len(notes)} notes for KB '{kb.kb_id}'")
     return {

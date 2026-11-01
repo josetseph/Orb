@@ -1,12 +1,15 @@
-"""Resume a failed ingestion from the model call that broke, not from the top.
+"""Resume a failed or interrupted ingestion from the step that broke, not from the top.
 
-Every model call the pipeline makes for a note is memoised on disk under
-DATA_DIR/ingestion_cache/<kb>/<note>/, keyed by the model and the prompt. A
-retry after a 503 or a cancel replays the calls that already succeeded from
-the cache — the prompts are deterministic, so chunk 7 of 12 gets the same
-prompt it got last time — and only pays for the rest. The note's cache is
-deleted when its ingestion completes, so a deliberate re-ingest starts clean
-and the folder never outlives the failure it was saved for.
+Every expensive step the pipeline takes for a note is memoised on disk under
+DATA_DIR/ingestion_cache/<kb>/<note>/, keyed by everything that decides its
+result: each model call (provider, model, messages, settings — see
+``LLMService._chat``), each image read by the vision model, each window of a
+transcription. A retry after a 503, a cancel or a crash replays the steps that
+already succeeded — the inputs are deterministic, so chunk 7 of 12 gets the
+same prompt it got last time — and only pays for the rest. Only successes are
+saved; a reply a caller rejects is ``forget``-ed. The note's folder is deleted
+when its ingestion completes, so a deliberate re-ingest starts clean and the
+folder never outlives the failure it was saved for.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import json
 import shutil
 from contextvars import ContextVar
 from pathlib import Path
+from typing import Any, Callable
 
 from app.core.log import get_logger
 from app.core.paths import resolve_data_dir
@@ -31,55 +35,78 @@ def _dir(kb_id: str, note_id: str) -> Path:
 
 
 def activate(kb_id: str, note_id: str) -> int:
-    """Route this task's model calls through the note's cache; returns calls already saved."""
+    """Route this task's steps through the note's cache; returns steps already saved."""
     _active.set((kb_id, note_id))
     d = _dir(kb_id, note_id)
     return sum(1 for p in d.glob("*.json")) if d.is_dir() else 0
 
 
 def clear(kb_id: str, note_id: str) -> None:
-    """Drop the note's saved calls — its ingestion finished."""
+    """Drop the note's saved steps — its ingestion finished."""
     shutil.rmtree(_dir(kb_id, note_id), ignore_errors=True)
 
 
-def _slot(llm, prompt: str, temperature: float) -> Path | None:
+def _slot(kind: str, parts: list) -> Path | None:
     key = _active.get()
     if key is None:
         return None
-    digest = hashlib.sha256(
-        f"{llm.get_ingestion_model()}\n{temperature}\n{prompt}".encode("utf-8")
-    ).hexdigest()
-    return _dir(*key) / f"{digest}.json"
+    digest = hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return _dir(*key) / f"{kind}-{digest}.json"
 
 
-async def generate_with_meta(
-    llm, prompt: str, temperature: float = 0.1, json_mode: bool = False
-) -> tuple[str, dict]:
-    """``llm.ingestion_generate_with_meta`` with a replay from disk when the call was already made."""
-    slot = _slot(llm, prompt, temperature)
+def memo(kind: str, parts: list, compute: Callable[[], Any], keep: Callable[[Any], bool] = bool) -> Any:
+    """``compute()`` once per ingestion: inside one, the result (JSON) is saved keyed by
+    ``kind`` and ``parts`` and replayed on a retry. Outside one it simply runs.
+
+    ``keep`` says which results count as a success worth saving.
+    """
+    slot = _slot(kind, parts)
     if slot is not None and slot.exists():
         try:
-            saved = json.loads(slot.read_text(encoding="utf-8"))
-            return saved["raw"], saved["meta"]
+            return json.loads(slot.read_text(encoding="utf-8"))["value"]
         except (OSError, ValueError, KeyError):
-            pass  # unreadable checkpoint: just make the call again
-    raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=temperature, json_mode=json_mode)
-    if slot is not None:
+            pass  # unreadable (a crash mid-write): just run the step again
+    value = compute()
+    if slot is not None and keep(value):
         try:
             slot.parent.mkdir(parents=True, exist_ok=True)
-            slot.write_text(json.dumps({"raw": raw, "meta": meta}), encoding="utf-8")
-        except OSError as exc:
+            slot.write_text(json.dumps({"value": value}), encoding="utf-8")
+        except (OSError, TypeError, ValueError) as exc:
             logger.warning("Could not save ingestion checkpoint: %s", exc)
-    return raw, meta
+    return value
 
 
-def forget(llm, prompt: str, temperature: float = 0.1) -> None:
-    """Drop a saved reply that turned out unusable, so a retry asks the model again."""
-    slot = _slot(llm, prompt, temperature)
+def forget(kind: str, parts: list) -> None:
+    """Drop a saved result that turned out unusable, so a retry runs the step again."""
+    slot = _slot(kind, parts)
     if slot is not None:
         slot.unlink(missing_ok=True)
 
 
-async def generate(llm, prompt: str, temperature: float = 0.1, json_mode: bool = False) -> str:
-    raw, _ = await generate_with_meta(llm, prompt, temperature=temperature, json_mode=json_mode)
-    return raw
+def chat_parts(provider, model, messages, temperature, max_tokens, json_mode) -> list:
+    """What decides a model reply — the key ``LLMService._chat`` saves it under."""
+    return [provider, model, messages, temperature, max_tokens, json_mode]
+
+
+def forget_reply(llm, prompt: str, temperature: float, json_mode: bool = True) -> None:
+    """``forget`` for an ingestion-model reply to ``prompt`` that a caller could not use."""
+    forget(
+        "llm",
+        chat_parts(
+            getattr(llm, "ingestion_provider", None),
+            llm.get_ingestion_model(),
+            [{"role": "user", "content": prompt}],
+            temperature,
+            None,
+            json_mode,
+        ),
+    )
+
+
+def file_digest(path: str) -> str:
+    """Content key for a file a step reads (an image, a page render)."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()

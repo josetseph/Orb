@@ -15,7 +15,10 @@ Relationship tables:
         rel_type STRING, confidence DOUBLE, strength DOUBLE,
         relevance DOUBLE, edge_weight DOUBLE, relationship_id STRING,
         ingested_at STRING, last_updated STRING, mention_count INT64,
-        note_id STRING)
+        note_id STRING, note_ids STRING[])
+
+  ``note_ids`` are the notes asserting the edge (``note_id`` the first of them),
+  so a note re-ingested or resumed takes back exactly what it said.
 
   ``pos_x/pos_y/pos_z``, ``is_similarity`` and ``created_at`` may still exist
   in databases created before they were dropped; nothing reads or writes them.
@@ -84,7 +87,8 @@ _SCHEMA_STMTS = [
         ingested_at STRING,
         last_updated STRING,
         mention_count INT64,
-        note_id STRING
+        note_id STRING,
+        note_ids STRING[]
     )""",
 ]
 
@@ -113,6 +117,28 @@ class GraphService:
             except Exception as exc:  # pylint: disable=broad-exception-caught
                 if "already exist" not in str(exc).lower():
                     logger.warning(f"[Graph] Schema init: {exc}")
+        try:
+            with self._lock:
+                self.conn.execute("ALTER TABLE SEMANTIC_REL ADD note_ids STRING[]")
+        except Exception:  # pylint: disable=broad-exception-caught
+            return  # already there
+        # Edges from before note_ids: every note referencing both ends may have
+        # asserted it, plus the one recorded. Too many keeps an edge a little
+        # longer; too few would drop one a note still asserts.
+        with self._lock:
+            self.conn.execute(
+                """
+                MATCH (a:Node)-[r:SEMANTIC_REL]->(b:Node)
+                OPTIONAL MATCH (n:Node)-[:REFERENCES]->(a), (n)-[:REFERENCES]->(b)
+                WITH r, collect(DISTINCT n.id) AS ids
+                SET r.note_ids = CASE
+                    WHEN r.note_id IS NULL OR list_contains(ids, r.note_id) THEN ids
+                    ELSE list_append(ids, r.note_id)
+                END
+                """
+            )
+            self.conn.execute("MATCH ()-[r:SEMANTIC_REL]->() SET r.mention_count = size(r.note_ids)")
+        logger.info("[Graph] Edges now record every note asserting them")
 
     def close(self) -> None:
         """Close the Kuzu database connection."""
@@ -612,7 +638,10 @@ class GraphService:
                 MATCH (source:Node {id: $source_id})-[r:SEMANTIC_REL]->(target:Node {id: $target_id})
                 WHERE r.rel_type = $rel_type
                 SET r.last_updated = $ingestion_time,
-                    r.mention_count = coalesce(r.mention_count, 0) + 1,
+                    r.note_ids = CASE
+                        WHEN $note_id IS NULL OR list_contains(r.note_ids, $note_id) THEN r.note_ids
+                        ELSE list_append(coalesce(r.note_ids, CAST([] AS STRING[])), $note_id)
+                    END,
                     r.relationship_id = CASE
                         WHEN r.relationship_id IS NULL THEN $relationship_id
                         ELSE r.relationship_id
@@ -624,7 +653,17 @@ class GraphService:
                     "rel_type": relationship_type,
                     "ingestion_time": ingestion_time,
                     "relationship_id": relationship_id,
+                    "note_id": note_id,
                 },
+            )
+            # Asserting it again (a re-ingest, a resumed write) does not count twice.
+            self.execute_query(
+                """
+                MATCH (source:Node {id: $source_id})-[r:SEMANTIC_REL]->(target:Node {id: $target_id})
+                WHERE r.rel_type = $rel_type
+                SET r.mention_count = size(r.note_ids)
+                """,
+                {"source_id": source_id, "target_id": target_id, "rel_type": relationship_type},
             )
         else:
             self.execute_query(
@@ -644,8 +683,9 @@ class GraphService:
                     r.relationship_id = $relationship_id,
                     r.ingested_at = $ingestion_time,
                     r.last_updated = $ingestion_time,
-                    r.mention_count = 1,
-                    r.note_id = $note_id
+                    r.mention_count = CASE WHEN $note_id IS NULL THEN 0 ELSE 1 END,
+                    r.note_id = $note_id,
+                    r.note_ids = CASE WHEN $note_id IS NULL THEN CAST([] AS STRING[]) ELSE [$note_id] END
                 """,
                 {
                     "source_id": source_id,
@@ -695,10 +735,7 @@ class GraphService:
         self.execute_query(
             "MATCH (:Node {id: $note_id})-[r:REFERENCES]->(:Node) DELETE r", params
         )
-        # ponytail: an edge records only its first asserting note, so a note that
-        # merely reinforced one is not un-counted here; keep note_ids as a list
-        # on the edge if mention_count ever has to be exact.
-        gone = "WHERE r.note_id = $note_id AND coalesce(r.mention_count, 1) <= 1"
+        gone = "WHERE list_contains(r.note_ids, $note_id) AND size(r.note_ids) <= 1"
         relationship_ids = [
             r["rid"]
             for r in self.execute_query(
@@ -712,8 +749,15 @@ class GraphService:
             f"MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) {gone} DELETE r", params
         )
         self.execute_query(
-            "MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) WHERE r.note_id = $note_id "
-            "SET r.mention_count = r.mention_count - 1",
+            "MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) WHERE list_contains(r.note_ids, $note_id) "
+            "SET r.mention_count = size(r.note_ids) - 1",
+            params,
+        )
+        # Kuzu takes no parameter inside a lambda: bind it first.
+        self.execute_query(
+            "WITH $note_id AS nid MATCH (:Node)-[r:SEMANTIC_REL]->(:Node) "
+            "WHERE list_contains(r.note_ids, nid) "
+            "SET r.note_ids = list_filter(r.note_ids, x -> x <> nid)",
             params,
         )
         return {"entity_ids": entity_ids, "relationship_ids": relationship_ids}

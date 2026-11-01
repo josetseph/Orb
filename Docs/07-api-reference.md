@@ -13,7 +13,7 @@ The API layer **owns**:
 - Route definitions, parameter parsing and Pydantic validation (`backend/app/api/*.py`, `backend/app/api_desktop.py`, `backend/app/schemas/*.py`).
 - Translating service exceptions into HTTP status codes.
 - Request-scoped concerns: the `X-Request-Id` trace header, CORS, KB resolution via `?kb=`, the AI-availability gate (`require_ai`).
-- Scheduling background work (`BackgroundTasks`, `asyncio.create_task`) and keeping the in-memory chat job status table.
+- Scheduling background work (durable `jobs` rows via `services/jobs.py`, `BackgroundTasks` for maintenance) and keeping the in-memory chat job status table.
 - A small amount of orchestration that has not been pushed into services (note deletion with graph/index cleanup in `api/notes.py`, KB emptying in `api/kb.py`, the Meilisearch content fallback for node detail in `api/graph.py`).
 
 The API layer does **not** own: vault file semantics (`services/vault.py`, `services/vault_ops.py`, `services/note_files.py`), KB registry state (`services/kb_registry.py`), chat persistence (`services/chat_store.py`), the ingestion/chat workflows (`workflows/`), model downloading/loading (`services/local_models.py`, `services/multimodal_*`), or the Firefly proxy (`services/firefly_service.py`).
@@ -106,8 +106,9 @@ Notes:
 
 | Pattern | Used by | Behaviour |
 |---|---|---|
-| Starlette `BackgroundTasks` | `notes/{id}/ingest`, `/ingest`, `admin/reingest-all`, `notes/reingest-vault`, `admin/rebuild-communities`, `admin/build-temporal-digests`, `admin/reset-ingestion-data` | Tasks run **after the response is sent**, sequentially in the order added, on the request's event loop (sync callables are run in Starlette's threadpool). Ingestion tasks additionally wait on `IngestionWorkflow._process_semaphore` (`extraction_server.slots` per KB, 1–6 by RAM) and write the graph in submission order. Progress is observed by polling `GET /api/v1/notes/{id}/status` or `GET /api/v1/admin/maintenance-status`. |
-| `asyncio.create_task` + in-memory status dict | `POST /api/v1/chat/async` → `GET /api/v1/chat/status/{request_id}` | The job runs on the app event loop under a process-wide `asyncio.Lock` (`_chat_job_lock`), so at most one chat job executes at a time across all KBs; extra jobs report stage `"Waiting for current chat to finish"`. Status entries live in the module-level `OrderedDict` `_chat_status`; `_prune()` (run on every write and read) drops the oldest entries once there are more than 200 or the oldest is older than 1800 s. |
+| Durable job (`services/jobs.py`, `jobs` table in `orb.db`) | `notes/{id}/ingest`, `/ingest`, `admin/reingest-all`, `notes/reingest-vault` (`ingest_note`); `chat/async` (`answer`); `notes/{id}/attachments/process` (`attachment`) | The route adds the row with `jobs.enqueue` / `enqueue_ingest` **in the same commit** as its status change, then `jobs.wake()`. One worker (started in `startup_event`) marks every queued row `running` (`attempts += 1`) and prepares/starts them in id order on the app event loop. A row still `running` at the next start resumes (`jobs.recover`); its finished model calls replay from `DATA_DIR/ingestion_cache/` ([10](10-ingestion-pipeline.md) §4.5). Ingestion jobs additionally wait on `IngestionWorkflow._process_semaphore` (`extraction_server.slots` per KB, 1–6 by RAM) and write the graph in queue order. Progress is observed by polling `GET /api/v1/notes/{id}/status`, `chat/status`, or `attachments/jobs`. |
+| Starlette `BackgroundTasks` | `admin/rebuild-communities`, `admin/build-temporal-digests`, `admin/reset-ingestion-data` | Tasks run **after the response is sent**, sequentially in the order added, on the request's event loop (sync callables are run in Starlette's threadpool). Not durable: a restart drops them. Progress via `GET /api/v1/admin/maintenance-status`. |
+| In-memory chat status dict | `POST /api/v1/chat/async` → `GET /api/v1/chat/status/{request_id}` | The `answer` job runs under a process-wide `asyncio.Lock` (`_chat_job_lock`), so at most one chat job executes at a time across all KBs; extra jobs report stage `"Waiting for current chat to finish"`. Status entries live in the module-level `OrderedDict` `_chat_status`; `_prune()` (run on every write and read) drops the oldest entries once there are more than 200 or the oldest is older than 1800 s. A `request_id` this process never ran (after a restart) is answered from its job row. |
 | `asyncio.to_thread` | Vault scans, Kuzu/Qdrant/Meili calls, model downloads/loads, Firefly PHP scripts | Keeps blocking I/O off the event loop; the HTTP request still waits for completion. |
 | Synchronous long request | `POST /api/v1/setup/download-models`, `POST /api/v1/setup/start-local-llm`, `POST /api/v1/setup/start-multimodal-services` | Multi-GB downloads / model loads complete before the response returns. The frontend calls `download-models` with `timeout: 0`. |
 
@@ -123,7 +124,7 @@ There is **no streaming (SSE/WebSocket)** anywhere. "Streaming" chat in the UI i
 
 ### 3.10 Startup / shutdown side effects
 
-`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path` + `_sqlite_repairs`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `base_url` and the local-runtime knobs), mark notes left mid-ingest by the previous run as `"Ingestion failed (interrupted)"`, then hand `_background_startup` to the default executor so `/health` answers immediately: `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing; also heals stale GGUF selection paths and starts the `orb-mmproj` projector-download thread), `start_vault_watchers()` (best-effort), and `_migrate_stores()` (one-time per-KB store scrubs gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`, see [14](14-graph-storage-kuzu.md)). `shutdown_event`: `stop_vault_watchers()`.
+`startup_event`: `init_db()` (SQLAlchemy `create_all` + ensure `ix_notes_kb_rel_path` + `_sqlite_repairs`), load `DATA_DIR/runtime_config.json` overrides and apply to `settings` (`provider`, `model`, `base_url` and the local-runtime knobs), `jobs.recover()` (interrupted jobs back to `queued`; after 3 attempts `failed`, their notes `"Ingestion failed (interrupted repeatedly)"`), mark notes left mid-ingest **with no active job** as `"Ingestion failed (interrupted)"`, `jobs.start()` (the worker), then hand `_background_startup` to the default executor so `/health` answers immediately: `sync_embedding_infrastructure()` (best-effort Qdrant collection sizing; also heals stale GGUF selection paths and starts the `orb-mmproj` projector-download thread), `start_vault_watchers()` (best-effort), and `_migrate_stores()` (one-time per-KB store scrubs gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`, see [14](14-graph-storage-kuzu.md)). `shutdown_event`: `stop_vault_watchers()`.
 
 ---
 
@@ -221,6 +222,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 | GET | `/api/v1/chat/conversations/{conversation_id}/export` | – | Export markdown/json (**currently broken**, see section) | [#](#get-apiv1chatconversationsconversation_idexport) |
 | POST | `/api/v1/chat/async` | kb | Start chat job, returns immediately | [#](#post-apiv1chatasync) |
 | GET | `/api/v1/chat/status/{request_id}` | – | Poll job progress / result | [#](#get-apiv1chatstatusrequest_id) |
+| GET | `/api/v1/chat/conversations/{conversation_id}/pending` | kb | Request id of the answer still being written, if any | [#](#get-apiv1chatconversationsconversation_idpending) |
 
 ### Knowledge graph (Kuzu / Qdrant / Meili)
 
@@ -244,7 +246,7 @@ Anchors point at the detailed sections below. `kb` = accepts `?kb=<name|slug>`.
 
 | Method | Path | kb | Purpose | Anchor |
 |---|---|---|---|---|
-| GET | `/api/v1/admin/maintenance-status` | kb | Community/digest/passage-backfill/ingestion job state | [#](#get-apiv1adminmaintenance-status) |
+| GET | `/api/v1/admin/maintenance-status` | kb | Community/digest/passage-backfill/vector-rebuild/ingestion job state | [#](#get-apiv1adminmaintenance-status) |
 | POST | `/api/v1/admin/rebuild-communities` | kb | Background Leiden rebuild | [#](#post-apiv1adminrebuild-communities) |
 | POST | `/api/v1/admin/build-temporal-digests` | kb | Background temporal digest build | [#](#post-apiv1adminbuild-temporal-digests) |
 | POST | `/api/v1/admin/reset-ingestion-data` | kb | Wipe graph/vectors/index, mark notes unprocessed | [#](#post-apiv1adminreset-ingestion-data) |
@@ -294,9 +296,9 @@ sequenceDiagram
     API-->>UI: note JSON (processed=false)
     UI->>API: POST /api/v1/notes/{id}/ingest?kb=X
     API->>API: require_ai()
-    API->>DB: processed=false, failed=false, stage="Queued for ingestion"
+    API->>DB: processed=false, failed=false, stage="Queued for ingestion" + jobs row (ingest_note), one commit
     API-->>UI: {status:"processing_started"}
-    API->>WF: BackgroundTasks → process_note(NoteInput, id)
+    API->>WF: jobs.wake() → worker → process_note(NoteInput from the vault file, id)
     loop poll
         UI->>API: GET /api/v1/notes/{id}/status
         API->>DB: SELECT processed, failed, stage, model
@@ -311,11 +313,11 @@ sequenceDiagram
     participant UI as chat-context.tsx
     participant API as api/chat.py
     participant CS as chat_store
-    participant Job as _run_chat_job_serialized (asyncio.Task)
+    participant Job as job worker → prepare_answer → _run_chat_job_serialized
     UI->>API: POST /api/v1/chat/async {query, request_id, conversation_id}
     API->>API: require_ai()
     API->>CS: ensure_conversation, get_recent_history(24), add_message(user), maybe_set_title
-    API->>Job: asyncio.create_task(...)
+    API->>Job: jobs.enqueue(answer, payload {conversation_id, query, history}) + commit, jobs.wake()
     API-->>UI: {request_id, conversation_id, stage:"Queued", done:false}
     Job->>Job: acquire _chat_job_lock (global)
     Job->>Job: finance query? → firefly_service.answer_finance_question : ChatWorkflow.chat
@@ -622,7 +624,7 @@ The frontend's `updateNoteOnUnload` sends this PUT with `fetch(..., keepalive: t
 
 Delegates to `_delete_note_impl`. Idempotent: unknown id → `{"status": "deleted", "id": …, "orphans_removed": 0, "already_gone": true}` (200, not 404).
 
-Steps: read body (thread) → collect `attachments/…` refs from markdown links/images → `delete_note_file` (best-effort) → delete `note_links` rows where source **or** target is the note → delete `notes` row → **commit** → best-effort graph cleanup: Cypher query for entity nodes referenced only by this note (orphans), `DETACH DELETE` the note node (`kind='note'`), `qdrant.delete_node`/`meili.delete_node` for the note and each orphan, `qdrant.delete_note_contexts`, `qdrant.delete_note_passages` + `meili.delete_note_passages` (the note's own-text passages), `DETACH DELETE` each orphan → `remove_upload` for each referenced attachment. Every post-commit step logs and continues on failure. Response `{"status": "deleted", "id": "…", "orphans_removed": 2}`.
+Steps: `jobs.cancel(kb_id, note_id)` (stops a queued or running ingestion and drops its saved steps), then cancels the note's active attachment jobs → read body (thread) → collect `attachments/…` refs from markdown links/images → `delete_note_file` (best-effort) → delete `note_links` rows where source **or** target is the note → delete `notes` row → **commit** → best-effort graph cleanup: Cypher query for entity nodes referenced only by this note (orphans), `DETACH DELETE` the note node (`kind='note'`), `qdrant.delete_node`/`meili.delete_node` for the note and each orphan, `qdrant.delete_note_contexts`, `qdrant.delete_note_passages` + `meili.delete_note_passages` (the note's own-text passages), `DETACH DELETE` each orphan → `remove_upload` for each referenced attachment. Every post-commit step logs and continues on failure. Response `{"status": "deleted", "id": "…", "orphans_removed": 2}`.
 
 Attachments referenced by **other** notes are still deleted if this note referenced them (no reference counting).
 
@@ -644,15 +646,15 @@ Body (`MoveNoteInput`): `folder: str = ""` (`""` = vault root). **404** unknown/
 
 #### POST /api/v1/notes/{note_id}/ingest
 
-`require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, commits, then `BackgroundTasks.add_task(kb.get_ingestion_workflow().process_note, NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
+`require_ai()` (503). **404** unknown/wrong KB. Sets `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None`, adds an `ingest_note` job (`jobs.enqueue_ingest`, `input_hash` = sha256 of the body) in the same commit, then `jobs.wake()`. An active job for the note with the same body is kept; one with another body is cancelled (`superseded`). When the worker starts it, `jobs._prepare` re-reads the row and the vault body and calls `process_note(NoteInput(content=<body>, created_at=<iso>, title=<title or None>), note_id, resumed=attempts > 1)`. Always force re-ingests. Response `{"note_id": "…", "status": "processing_started", "message": "Note ingestion has been queued"}`.
 
-`process_note` (`workflows/ingestion.py`): take a ticket → `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` (a failure writing it ends the tracker entry and marks the note failed) → wait for a pipeline slot (`extraction_server.slots` per KB) → `"Starting ingestion"` → store the note's passages (Qdrant + Meili; failure fails the note) → ingestion agent (graph writes wait for every earlier-submitted note) (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
+`process_note` (`workflows/ingestion.py`): take a ticket → `ingestion_tracker.begin_ingestion()` → stage `"Queued for ingestion"` (`"Queued to resume"` when `resumed`; a failure writing it ends the tracker entry and marks the note failed) → wait for a pipeline slot (`extraction_server.slots` per KB) → `"Starting ingestion"` (`"Resuming ingestion"`) → store the note's passages (Qdrant + Meili; failure fails the note) → ingestion agent (graph writes wait for every earlier-submitted note) (multimedia enrichment, LLM extraction, Kuzu/Qdrant/Meili writes) → mark processed → maybe queue Leiden recompute → `end_ingestion`. Models stay resident afterwards; the idle watcher (`MODEL_IDLE_SECONDS`, default 5 min) unloads them.
 
 #### POST /api/v1/ingest
 
 Legacy combined endpoint for batch scripts. Body (`NoteInput`): `content: str` (required), `created_at: str | null`, `title: str | null`, `skip_ingestion: bool = false`. `require_ai()` unless `skip_ingestion`. `created_at` is parsed with `datetime.fromisoformat` (naive → UTC); a non-ISO string → **422** `"created_at: …"`.
 
-Creates the row and vault file **without a title** (`persist_note_body(new_note, kb, content)` — file becomes `Untitled.md`/`Untitled N.md`, `title` column `NULL`; the `title` field is only forwarded to the pipeline, which may set it later). Stage `"Queued for ingestion"` or `"Saved"`. Refreshes wikilinks, commits, then queues `process_note` unless skipped (filling `created_at` on the `NoteInput` if absent).
+Creates the row and vault file **without a title** (`persist_note_body(new_note, kb, content)` — file becomes `Untitled.md`/`Untitled N.md`, `title` column `NULL`). Stage `"Queued for ingestion"` or `"Saved"`. Refreshes wikilinks and, unless skipped, adds an `ingest_note` job in the same commit, then `jobs.wake()`. The job builds its `NoteInput` from the row and vault file, so the body's `title` is not used at all (the row has none) and `created_at` is the row's.
 
 ```json
 {"note_id": "…", "status": "processing_started" | "saved_without_ingestion", "content": "…", "created_at": "…", "processed": false}
@@ -660,7 +662,7 @@ Creates the row and vault file **without a title** (`persist_note_body(new_note,
 
 #### POST /api/v1/notes/{note_id}/ingest/cancel
 
-No body. Cancels the note's running or queued ingestion task (`workflows/ingestion.cancel_ingestion(kb_id, note_id)`); the pipeline's cancellation handler puts the note back to plain `"Saved"`. Response `{"note_id", "status": "cancelling" | "not_running"}` — `not_running` when no task exists or it already finished. A model call already executing in a worker thread runs to completion; its output is discarded. **404** unknown note.
+No body. `jobs.cancel(kb_id, note_id)`: marks the note's active `ingest_note` job `cancelled` (`last_error="cancelled by the user"`), calls `workflows/ingestion.cancel_ingestion(kb_id, note_id)` and deletes its saved steps (`ingestion_checkpoint.clear`). A running pipeline's cancellation handler puts the note back to plain `"Saved"`; for a job still queued (no pipeline yet) the route itself sets `failed=False, processing_stage="Saved", processing_model=None` when the note is not processed. Response `{"note_id", "status": "cancelling" | "not_running"}` — `not_running` when the note had no active job. A model call already executing in a worker thread runs to completion; its output is discarded. **404** unknown note.
 
 #### POST /api/v1/notes/{note_id}/dismiss-failure
 
@@ -672,22 +674,22 @@ Body `ProcessAttachmentInput {url: str, force: bool = false}`. Runs ONE linked a
 
 - Gated by `require_ai` (**503** when no model is configured). **404** unknown note, and **404** `Attachment not found in this note` when `url` is not linked from the body (compared by `attachment_key`, so the legacy `/vault-files/<kb>/…` form and the vault-relative form match).
 - Already has a block and `force` is false → `{"status": "already_processed"}`, nothing runs. `force: true` removes the old block first (`remove_extraction`) and replaces it.
-- Otherwise starts an `asyncio` task (not a `BackgroundTask`, so it can be cancelled by url), records it in the in-process `_attachment_jobs[(kb_id, note_id, url)]` and answers `{"note_id", "url", "status": "running"}`; a second call while it runs answers the same without starting another.
+- Otherwise adds an `attachment` job (`target_id = "<note_id> <url>"` via `_attachment_target`, `input_hash` of the url, payload `{note_id, url}`), commits, `jobs.wake()`, and answers `{"note_id", "url", "status": "running"}`; a second call while one is active keeps that job (same hash). The worker runs it through `prepare_attachment` → `_run_attachment_job` with `ingestion_checkpoint` active under `DATA_DIR/ingestion_cache/<kb>/attachment-<16 hex>/`, so transcription windows, page/image reads and model calls already done replay after a quit; the folder is cleared when the job ends (done or failed), kept on shutdown.
 - The job holds `multimedia_concurrency_limit`, so it queues behind a running ingest's multimedia phase. Afterwards it unloads the speech model (audio/video) and Marlin (video).
 - **Recordings and long documents.** The extracted text goes through the same `finish_attachment` rule as a full ingest ([11 §6.4](11-multimedia-enrichment.md)): an audio file always gets a `mode="notes"` block (model-written notes, then `## Transcript`), and any other non-image attachment over `LARGE_ATTACHMENT_TOKENS` gets one too (`## Summary`, then `## Full text`). Nothing is asked. A video handled here is one combined section and follows the document rule, not the recording rule. The summary is an ingestion-model call, so the job can take noticeably longer than the extraction alone; the block is graphed and indexed on the note's next ingest.
-- Poll `attachments/jobs` for the outcome; `_attachment_jobs` is per process and cleared by a restart.
+- Poll `attachments/jobs` for the outcome; job rows survive a restart and are pruned 30 days after they finish.
 
 #### POST /api/v1/notes/{note_id}/attachments/cancel
 
-Body `ProcessAttachmentInput` (`url`; `force` ignored). Cancels that attachment's running job. Response `{"note_id", "url", "status": "cancelling" | "not_running"}`; the job then records `cancelled`. As with ingestion, a model call already in a thread finishes and its output is dropped. **404** unknown note.
+Body `ProcessAttachmentInput` (`url`; `force` ignored). `jobs.cancel(kb_id, _attachment_target(note_id, url), kind="attachment")`: marks the active job `cancelled`, cancels its task if running and deletes its saved steps. Response `{"note_id", "url", "status": "cancelling" | "not_running"}`. As with ingestion, a model call already in a thread finishes and its output is dropped. **404** unknown note.
 
 #### GET /api/v1/notes/{note_id}/attachments/jobs
 
-Response `{"jobs": {"<url>": {"status": "running" | "done" | "failed" | "cancelled", "error": str | null}}}` — every job started for this note since the backend started, keyed by the `url` the client sent. The editor polls it and reloads the note when a job turns `done`. **404** unknown note.
+Response `{"jobs": {"<url>": {"status": "running" | "done" | "failed" | "cancelled", "error": str | null}}}` — from the `jobs` table (`jobs.for_kind("attachment", kb_id)` filtered on `payload.note_id`), the newest row per `url`; `queued` is reported as `running`, `error` is `last_error`. The editor polls it and reloads the note when a job turns `done`. **404** unknown note.
 
 #### POST /api/v1/notes/reingest-vault
 
-(`api_desktop.py`.) `require_ai()`. Selects **all** notes in the KB, sets `processed=False, failed=False, processing_stage="Queued for vault re-ingest", processing_model=None`, commits; reads all bodies in a thread; queues one `process_note` BackgroundTask per note. Response `{"status": "queued", "count": N}`. Compare `admin/reingest-all`, which only queues unprocessed/failed notes.
+(`api_desktop.py`.) `require_ai()`. Selects **all** notes in the KB, sets `processed=False, failed=False, processing_stage="Queued for vault re-ingest", processing_model=None`, reads all bodies in a thread; adds one `ingest_note` job per note (`enqueue_ingest`) and commits stage and jobs together, then `jobs.wake()`. Response `{"status": "queued", "count": N}`. Compare `admin/reingest-all`, which only queues unprocessed/failed notes.
 
 ---
 
@@ -798,7 +800,7 @@ Query: `format: str = "markdown"` (`"json"` for JSON). Reads the rows through `c
 
 Body (`ChatInput`): `query: str` (min length 1), `request_id: str | null` (client-chosen job id; UUID4 generated if absent), `conversation_id: str | null` (`null` → a new conversation; an unknown, deleted or other-KB id → **404** `Conversation not found`). There is no synchronous chat route any more.
 
-Flow: `require_ai()` → `chat_store.ensure_conversation(conversation_id, kb_id)` → `get_recent_history` (the conversation's rolling summary, then the last `CHAT_HISTORY_MAX_MESSAGES`=24 messages, user/assistant only, **before** the new message) → `add_message(user)` → `maybe_set_title_from_first_message` (if title is still `"New Chat"`, use the first 72 chars, ellipsised at 69) → seeds `_chat_status[request_id] = {"stage": "Queued", "model": None, "done": False, "conversation_id"}` → `asyncio.create_task(_run_chat_job_serialized(...))` (task kept in `_chat_tasks` to avoid GC) → returns. **The user message and title are written before the response.** The job runs `_answer_chat_query` and then `add_message(assistant, thinking, metadata)`.
+Flow: `require_ai()` → `chat_store.ensure_conversation(conversation_id, kb_id)` → `get_recent_history` (the conversation's rolling summary, then the last `CHAT_HISTORY_MAX_MESSAGES`=24 messages, user/assistant only, **before** the new message) → `add_message(user)` → `maybe_set_title_from_first_message` (if title is still `"New Chat"`, use the first 72 chars, ellipsised at 69) → seeds `_chat_status[request_id] = {"stage": "Queued", "model": None, "done": False, "conversation_id"}` → `jobs.enqueue(session, "answer", kb_id, request_id, input_hash(conversation_id, query), payload={conversation_id, query, history})` + commit → `jobs.wake()` → returns. **The user message, title and job row are written before the response.** The worker runs the job through `prepare_answer` → `_run_chat_job_serialized(..., resumed=attempts > 1)` with `ingestion_checkpoint` active under `DATA_DIR/ingestion_cache/<kb>/answer-<request_id>/`: every model call of the answer is saved, so an answer cut off by a quit or crash resumes at the next start and replays the finished agent-loop steps (if the notes changed meanwhile the prompts differ and it simply starts over). The folder is cleared when the job ends (done or failed), kept on shutdown. The job runs `_answer_chat_query` and then `add_message(assistant, thinking, metadata)`.
 
 `_answer_chat_query`: if `firefly_service.looks_like_finance_query(query)` (keyword match on `balance`, `transaction(s)`, `spending`, `spent`, `income`, `expense(s)`, `budget`, `cash`, `account(s)`, `finance`, `financial`, `report`, `net worth`, `savings`) it runs `ChatWorkflow.retrieve_for_query` (retrieval only, up to 12 docs) then `firefly_service.answer_finance_question(query, kb, note_docs, rewritten_query)`; otherwise `ChatWorkflow.chat(query, history, progress_callback)`.
 
@@ -818,18 +820,22 @@ Route errors: 503 (AI), 404 (conversation), 422. Immediate response:
 {"request_id": "…", "conversation_id": "…", "stage": "Queued", "model": null, "done": false}
 ```
 
-`_run_chat_job_serialized`: if `_chat_job_lock` is held, stage becomes `"Waiting for current chat to finish"`; then under the lock `_run_chat_job` runs `_answer_chat_query`, stores the assistant message, and writes the final status. On exception: `{"stage": "Failed", "done": true, "error": "<str(exc) or class name>"}` (the user message remains in the conversation with no assistant reply).
+`_run_chat_job_serialized`: if `_chat_job_lock` is held, stage becomes `"Waiting for current chat to finish"`; then under the lock `_run_chat_job` (first stage `"Starting chat request"`, or `"Resuming answer"` when resumed) runs `_answer_chat_query`, stores the assistant message, and writes the final status. On exception: `{"stage": "Failed", "done": true, "error": "<str(exc) or class name>"}` and the exception is re-raised so the job row records `failed` (the user message remains in the conversation with no assistant reply).
 
 #### GET /api/v1/chat/status/{request_id}
 
-No `kb`. Returns `{"request_id": …, **_chat_status.get(request_id, {"stage": "Waiting", "model": None, "done": False})}`:
+No `kb`. Returns `{"request_id": …, **_chat_status.get(request_id, {"stage": "Waiting", "model": None, "done": False})}`. When `_chat_status` has no entry (this process never ran it — the backend restarted) but an `answer` job row exists, the row answers: active → `{"stage": "Resuming answer", "done": false}`; `done` → `{"stage": "Complete", "done": true, "result": {"conversation_id"}}` (no answer text — it is in the stored messages); otherwise `{"stage": "Failed", "done": true, "error": last_error or state}`; each with `model: null` and the payload's `conversation_id`:
 
 ```json
 {"request_id": "…", "stage": "Complete", "model": null, "done": true, "conversation_id": "…",
  "result": {…the chat result shape shown under POST /api/v1/chat/async…}}
 ```
 
-or `{"…", "stage": "Failed", "done": true, "error": "…"}`. Unknown ids look like a pending job (`"Waiting"`), never 404. Intermediate `stage`/`model` values come from the workflow's `progress_callback` (e.g. `"Planning retrieval"` with model `"Gemma4"`, `"Selecting best evidence"`, `"Formatting answer"`, `"Checking finance data and notes"`). The frontend (`chat-context.tsx`) polls this until `done`.
+or `{"…", "stage": "Failed", "done": true, "error": "…"}`. Unknown ids (no status, no job row) look like a pending job (`"Waiting"`), never 404. Intermediate `stage`/`model` values come from the workflow's `progress_callback` (e.g. `"Planning retrieval"` with model `"Gemma4"`, `"Selecting best evidence"`, `"Formatting answer"`, `"Checking finance data and notes"`). The frontend (`chat-context.tsx`) polls this until `done`.
+
+#### GET /api/v1/chat/conversations/{conversation_id}/pending
+
+`?kb=`. The answer still being written in this conversation: `jobs.active_for("answer", kb_id, "conversation_id", conversation_id)` → `{"request_id": "…" | null}` (the oldest queued/running `answer` job whose payload names the conversation). `chat-context.tsx` calls it when a conversation is opened and, given an id, polls `chat/status` for it — how an answer survives switching conversations or a restart.
 
 ---
 
@@ -915,11 +921,12 @@ Runs `rebuild_kb_note_links` and returns `{"notes": N, "links": M}`.
 {"community_detection": {"running": false},
  "temporal_digests": {"running": false},
  "passages": {"running": true, "done": 120, "total": 412},
+ "vectors": {"running": false},
  "ingestion": {"active": 0},
  "healthy": true}
 ```
 
-`community_detection.running` and `temporal_digests.running` are the per-KB workflow flags; `passages` is the startup passage backfill for notes ingested before passages existed (`done`/`total` only while it runs; otherwise `{"running": false}`); `ingestion.active` is `ingestion_tracker.active_count(kb_id)`, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend activity indicator in the ribbon polls this.
+`community_detection.running` and `temporal_digests.running` are the per-KB workflow flags; `passages` is the startup passage backfill for notes ingested before passages existed (`done`/`total` only while it runs; otherwise `{"running": false}`); `vectors` is the startup re-embed of the KB's Qdrant collections for a new embedder (`main._rebuild_vectors` → `QdrantService.reembed`; same `done`/`total` shape; search and ingestion wait until it ends); `ingestion.active` is `ingestion_tracker.active_count(kb_id)`, so the numbers are for the KB in `?kb=`. `healthy` is a constant `true`. The frontend activity indicator in the ribbon polls this.
 
 #### POST /api/v1/admin/rebuild-communities
 
@@ -937,7 +944,7 @@ No body. Immediately `UPDATE notes SET processed=0, failed=0 WHERE kb_id=…` an
 
 #### POST /api/v1/admin/reingest-all
 
-`require_ai()`. Selects notes in the KB where `processed == False OR failed == True`, queues `process_note` per note (bodies read **inline** on the event loop via `note_body` — unlike `reingest-vault`). Response `{"status": "queued", "notes_queued": N, "message": "Queued N notes for ingestion."}`. Does not reset `processing_stage` before queuing (the pipeline sets it).
+`require_ai()`. Selects notes in the KB where `processed == False OR failed == True`, adds an `ingest_note` job per note (`jobs.enqueue_ingest`; bodies read **inline** on the event loop via `note_body` — unlike `reingest-vault`), commits, `jobs.wake()`. Response `{"status": "queued", "notes_queued": N, "message": "Queued N notes for ingestion."}`. Does not reset `processing_stage` before queuing (the pipeline sets it).
 
 ---
 
@@ -1067,6 +1074,7 @@ Every `api.*` method maps to an existing route. Mapping and notes:
 |---|---|---|
 | `startChat` | `POST /chat/async` | `conversation_id` sent as `undefined` (omitted) when null |
 | `getChatStatus` | `GET /chat/status/{id}` | no `kb` |
+| `getPendingAnswer(id, kb)` | `GET /chat/conversations/{id}/pending?kb=` | sends `kb` |
 | `listChatConversations` | `GET /chat/conversations` | |
 | `getChatMessages(id, kb)` | `GET /chat/conversations/{id}/messages?kb=` | sends `kb` |
 | `deleteChatConversation(id, kb)` | `DELETE /chat/conversations/{id}?kb=` | sends `kb` |
@@ -1101,7 +1109,8 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 - **Notes bodies live on disk.** Every note-returning route reads the vault file; there is no body column in SQLite.
 - **Autosave (`PUT /notes/{id}`) must never start ingestion.** Ingestion is only triggered by `/notes/{id}/ingest`, `/ingest`, `reingest-all`, `reingest-vault`.
 - **Vault deletes must go through `safe_vault_join`.** `_delete_note_impl` deliberately does not fall back to raw path joins when the safe delete fails.
-- **One chat job at a time.** `_chat_job_lock` serialises `chat/async` jobs process-wide; `AsyncSessionLocal` must be used from the app event loop, hence `asyncio.create_task` rather than a thread.
+- **One chat job at a time.** `_chat_job_lock` serialises `chat/async` jobs process-wide; `AsyncSessionLocal` must be used from the app event loop, hence the job worker's `asyncio` tasks rather than a thread.
+- **Long work is written down first.** Ingestion, chat answers and attachment processing are `jobs` rows added in the same commit as the status change; never start them with `BackgroundTasks` or a bare `asyncio.create_task` ([27](27-development-guide.md) "Long work resumes").
 - **Ordered ingestion per KB.** As many notes extract at once as the extraction server has slots (`slots_for_ram`: 1 below 20 GB RAM, up to 6), but each note writes the graph in submission order (tickets + `write_turn`), so the graph never depends on which extraction finished first.
 - **Firefly calls are globally serialised** by `_scope_lock`; every request carries `user_group_id`; list results are additionally filtered by PHP-reported ids. Never call the Firefly REST API without the KB scope.
 - **`delete_kb` never removes vaults outside `DATA_DIR/vaults`** or Kuzu files outside `DATA_DIR/kuzu`. (`kb/empty` does not have this protection — see gotchas.)
@@ -1156,7 +1165,7 @@ Every `api.ts` method that omits `kb` relies on the server default of `"default"
 - **Add a KB-scoped route:** define it in the matching `backend/app/api/<domain>.py` with the full path string, take `kb: KBContext = Depends(get_kb)`, keep blocking work in `asyncio.to_thread`, map service exceptions to `HTTPException`, and add a one-line method to `frontend/src/lib/api.ts` using `withKb`/`kbQuery`. Update the summary table above.
 - **Add a new router module:** create `backend/app/api/<name>.py` with `router = APIRouter()` and register it in `register_all_routers` (mind the ordering rule in 3.1).
 - **Add a Finance resource:** add a `_normalize_<x>` + `list_/create_/delete_` trio in `services/firefly_service.py` using `_list_scoped_resources`/`_run_scoped`, then thin routes in `api_desktop.py` wrapped with `_finance_error`. Prefer a Pydantic body over `dict`.
-- **Add a long-running job:** follow `chat/async` (task + status dict) if the client needs a result, or `BackgroundTasks` if progress is visible through existing state (note flags, maintenance status).
+- **Add a long-running job:** add a kind to `services/jobs.py` (`_prepare` returns the coroutine function that runs it), enqueue it from the route in the same commit as its status change, and wrap its expensive steps in `ingestion_checkpoint.memo` ([27](27-development-guide.md) "Long work resumes"). `BackgroundTasks` remains only for the maintenance rebuilds, which are not resumable.
 - **Change response shapes:** the frontend types in `frontend/src/lib/types.ts` are hand-maintained; there is no OpenAPI codegen. FastAPI's auto docs at `/docs` reflect only the Pydantic bodies, not the dict responses.
 - **New runtime setting:** add the key to `runtime_config.MUTABLE_KEYS`, `apply_to_settings`, and `LLMSettings`; never accept secrets.
 

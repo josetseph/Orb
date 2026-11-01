@@ -99,85 +99,21 @@ export function ChatProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const selectConversation = useCallback(
-    async (conversationId: string, kb: string) => {
-      try {
-        const rows = await api.getChatMessages(conversationId, kb);
-        setActiveConversationId(conversationId);
-        setMessages(rows.map(toMessage));
-      } catch {
-        setActiveConversationId(conversationId);
-        setMessages([]);
-      }
-    },
-    [],
-  );
-
-  const startNewConversation = useCallback(() => {
-    setActiveConversationId(null);
-    setMessages([]);
-  }, []);
-
-  const deleteActiveConversation = useCallback(
-    async (kb: string) => {
-      if (!activeConversationId) {
-        startNewConversation();
-        return;
-      }
-      try {
-        await api.deleteChatConversation(activeConversationId, kb);
-      } catch {
-        return;
-      }
-      const remaining = conversations.filter(
-        (c) => c.id !== activeConversationId,
-      );
-      setConversations(remaining);
-      if (remaining.length > 0) {
-        await selectConversation(remaining[0].id, kb);
-      } else {
-        startNewConversation();
-      }
-      await loadConversations(kb);
-    },
-    [
-      activeConversationId,
-      conversations,
-      loadConversations,
-      selectConversation,
-      startNewConversation,
-    ],
-  );
-
-  const initializeForKb = useCallback(
-    async (kb: string) => {
-      const rows = await loadConversations(kb);
-      if (rows.length > 0) await selectConversation(rows[0].id, kb);
-      else startNewConversation();
-    },
-    [loadConversations, selectConversation, startNewConversation],
-  );
-
-  const sendMessage = useCallback(
-    (text: string, kb: string) => {
-      if (!text.trim() || isLoading) return;
-
+  /**
+   * Poll one answer until it is done. `start` sends the question first; without
+   * it the answer is already being written (or resumed after a restart).
+   */
+  const followAnswer = useCallback(
+    (
+      requestId: string,
+      kb: string,
+      start?: () => Promise<{ conversation_id?: string }>,
+    ) => {
       pollCleanupRef.current?.();
       const generation = ++sendGenerationRef.current;
-
-      const userMessage: Message = {
-        id: `local-user-${Date.now()}`,
-        role: "user",
-        content: text,
-        timestamp: new Date(),
-      };
-
-      setMessages((prev) => [...prev, userMessage]);
       setIsLoading(true);
-      setLoadingStage("Starting chat request");
       setLoadingModel(null);
 
-      const requestId = crypto.randomUUID();
       let interval: number | null = null;
       let conversationId = activeConversationIdRef.current;
       let attempts = 0;
@@ -221,15 +157,19 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         if (finished || isStale()) return;
         finished = true;
         stopPolling();
-        const assistantMessage: Message = {
-          id: `local-assistant-${Date.now()}`,
-          role: "assistant",
-          content: answer || "I couldn't generate a response.",
-          timestamp: new Date(),
-          thinking: thinking || undefined,
-          sources,
-        };
-        setMessages((prev) => [...prev, assistantMessage]);
+        // A resumed answer finished in an earlier run has no text here: the
+        // stored messages below carry it.
+        if (answer !== undefined) {
+          const assistantMessage: Message = {
+            id: `local-assistant-${Date.now()}`,
+            role: "assistant",
+            content: answer || "I couldn't generate a response.",
+            timestamp: new Date(),
+            thinking: thinking || undefined,
+            sources,
+          };
+          setMessages((prev) => [...prev, assistantMessage]);
+        }
         if (resultConversationId) {
           setActiveConversationId(resultConversationId);
           conversationId = resultConversationId;
@@ -293,22 +233,122 @@ export function ChatProvider({ children }: { children: ReactNode }) {
 
       pollCleanupRef.current = stopPolling;
 
-      api
-        .startChat(text, kb, requestId, activeConversationIdRef.current)
+      const begin = () => {
+        interval = window.setInterval(poll, POLL_INTERVAL_MS);
+        poll();
+      };
+      if (!start) {
+        begin();
+        return;
+      }
+      start()
         .then((started) => {
           if (finished || isStale()) return;
           if (started.conversation_id) {
             conversationId = started.conversation_id;
             setActiveConversationId(started.conversation_id);
           }
-          interval = window.setInterval(poll, POLL_INTERVAL_MS);
-          poll();
+          begin();
         })
         .catch(() => {
           fail();
         });
     },
-    [isLoading, loadConversations],
+    [loadConversations],
+  );
+
+  const selectConversation = useCallback(
+    async (conversationId: string, kb: string) => {
+      // Stop following the open answer; it is still written, and picked up
+      // again below when its conversation is reopened.
+      pollCleanupRef.current?.();
+      sendGenerationRef.current += 1;
+      setIsLoading(false);
+      setLoadingStage(null);
+      try {
+        const rows = await api.getChatMessages(conversationId, kb);
+        setActiveConversationId(conversationId);
+        activeConversationIdRef.current = conversationId;
+        setMessages(rows.map(toMessage));
+      } catch {
+        setActiveConversationId(conversationId);
+        setMessages([]);
+        return;
+      }
+      // An answer still being written (or resumed after a restart): follow it.
+      const pending = await api.getPendingAnswer(conversationId, kb).catch(() => null);
+      if (pending?.request_id && activeConversationIdRef.current === conversationId) {
+        setLoadingStage("Resuming answer");
+        followAnswer(pending.request_id, kb);
+      }
+    },
+    [followAnswer],
+  );
+
+  const startNewConversation = useCallback(() => {
+    setActiveConversationId(null);
+    setMessages([]);
+  }, []);
+
+  const deleteActiveConversation = useCallback(
+    async (kb: string) => {
+      if (!activeConversationId) {
+        startNewConversation();
+        return;
+      }
+      try {
+        await api.deleteChatConversation(activeConversationId, kb);
+      } catch {
+        return;
+      }
+      const remaining = conversations.filter(
+        (c) => c.id !== activeConversationId,
+      );
+      setConversations(remaining);
+      if (remaining.length > 0) {
+        await selectConversation(remaining[0].id, kb);
+      } else {
+        startNewConversation();
+      }
+      await loadConversations(kb);
+    },
+    [
+      activeConversationId,
+      conversations,
+      loadConversations,
+      selectConversation,
+      startNewConversation,
+    ],
+  );
+
+  const initializeForKb = useCallback(
+    async (kb: string) => {
+      const rows = await loadConversations(kb);
+      if (rows.length > 0) await selectConversation(rows[0].id, kb);
+      else startNewConversation();
+    },
+    [loadConversations, selectConversation, startNewConversation],
+  );
+
+  const sendMessage = useCallback(
+    (text: string, kb: string) => {
+      if (!text.trim() || isLoading) return;
+
+      const userMessage: Message = {
+        id: `local-user-${Date.now()}`,
+        role: "user",
+        content: text,
+        timestamp: new Date(),
+      };
+
+      setMessages((prev) => [...prev, userMessage]);
+      setLoadingStage("Starting chat request");
+      const requestId = crypto.randomUUID();
+      followAnswer(requestId, kb, () =>
+        api.startChat(text, kb, requestId, activeConversationIdRef.current),
+      );
+    },
+    [isLoading, followAnswer],
   );
 
   return (

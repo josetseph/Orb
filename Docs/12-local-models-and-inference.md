@@ -36,10 +36,10 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 
 | Path | Purpose | Key exports |
 |---|---|---|
-| `backend/app/services/model_catalog.py` | Static `ModelOption` catalog, RAM/accelerator probing, budget filtering and recommendation. Deliberately avoids importing `settings`/`local_models` at module level so it can run early. | `ModelOption`, `CHAT_MODELS`, `EMBED_MODELS`, `RERANK_MODELS`, `ALL_MODELS`, `get_option`, `total_ram_gb`, `detect_accel_backend`, `hardware_profile`, `pick_embed_for_budget`, `pick_rerank_for_budget`, `chat_options_for_budget`, `recommend_chat`, `recommend_stack` |
-| `backend/app/services/local_models.py` | GGUF download + manifest + in-process llama-cpp runtime (chat/embed), GGUF reranker, residency manager, backend detection, OpenAI-compat shim. | `CHAT_MODEL_ID`/`EMBED_MODEL_ID`/`RERANK_MODEL_ID`, `load_manifest`/`save_manifest`/`models_manifest_path`, `download_file`, `ensure_gguf`, `save_selection`, `sync_embedding_infrastructure`, `resolve_selected_hf_paths`, `ensure_chat_and_embed_models`, `gguf_paths_if_present`, `reranker_gguf_path`, `detect_llama_backend`, `release_accelerator_memory`, `model_idle_seconds`, `RepetitionLoopError`, `LocalOpenAICompat`, `LocalLlamaEmbeddings`, `LocalLlamaRuntime` + singleton `local_llama_runtime`, `LocalGgufReranker` + singleton `local_gguf_reranker` |
-| `backend/app/services/extraction_server.py` | Pinned llama.cpp release (`BUILD = "b11617"`) downloaded on first use; one on-demand `llama-server` for local ingestion with `slots_for_ram` parallel slots, idle stop, stale-pid cleanup; OpenAI-shaped `ServerChatClient` that turns `json_object` into llama.cpp's JSON grammar. | `extraction_server` (`ExtractionServer`), `ServerChatClient`, `slots_for_ram`, `binary`, `has_vision`, `BUILD`, `IDLE_SECONDS` |
-| `backend/app/services/embedding.py` | Thin provider-agnostic façade over `LocalLlamaEmbeddings`; adds the Qwen3 query instruction prefix. | `EmbeddingService`, singleton `embedding_service` |
+| `backend/app/services/model_catalog.py` | Static `ModelOption` catalog, RAM/accelerator probing, budget filtering and recommendation. Deliberately avoids importing `settings`/`local_models` at module level so it can run early. | `ModelOption`, `CHAT_MODELS`, `EMBED_MODELS`, `RERANK_MODELS`, `ALL_MODELS`, `get_option`, `total_ram_gb`, `detect_accel_backend`, `hardware_profile`, `EMBED_DEFAULT`, `pick_embed_for_budget`, `served_embedder`, `vector_threshold`, `pick_rerank_for_budget`, `chat_options_for_budget`, `recommend_chat`, `recommend_stack` |
+| `backend/app/services/local_models.py` | GGUF download + manifest + in-process llama-cpp runtime (chat/embed), GGUF reranker, residency manager, backend detection, OpenAI-compat shim. | `CHAT_MODEL_ID`/`EMBED_MODEL_ID`/`RERANK_MODEL_ID`, `load_manifest`/`save_manifest`/`models_manifest_path`, `download_file`, `ensure_gguf`, `save_selection`, `sync_embedding_infrastructure`, `resolve_selected_hf_paths`, `ensure_chat_and_embed_models`, `switch_to_default_embedder`, `gguf_paths_if_present`, `reranker_gguf_path`, `detect_llama_backend`, `release_accelerator_memory`, `model_idle_seconds`, `RepetitionLoopError`, `LocalOpenAICompat`, `LocalLlamaEmbeddings`, `LocalLlamaRuntime` + singleton `local_llama_runtime`, `LocalGgufReranker` + singleton `local_gguf_reranker` |
+| `backend/app/services/extraction_server.py` | Pinned llama.cpp release (`BUILD = "b11617"`) downloaded on first use; one on-demand `llama-server` for local ingestion with `slots_for_ram` parallel slots, idle stop, stale-pid cleanup; OpenAI-shaped `ServerChatClient` that turns `json_object` into llama.cpp's JSON grammar; a second instance serves the embedder. | `extraction_server` (`ExtractionServer`), `embedding_server` (`ExtractionServer(embedding=True)`), `ServerChatClient`, `slots_for_ram`, `binary`, `has_vision`, `BUILD`, `IDLE_SECONDS` |
+| `backend/app/services/embedding.py` | Thin provider-agnostic façade over `LocalLlamaEmbeddings`, or `_ServerEmbeddings` (OpenAI embeddings API on `embedding_server`) for a served embedder; adds the Qwen3 query instruction or EmbeddingGemma's task prompts. | `EmbeddingService`, singleton `embedding_service` |
 | `backend/app/services/reranker.py` | Async façade over `local_gguf_reranker` (runs it in a thread, normalises result dicts, never raises). | `RerankerService`, singleton `reranker_service` |
 | `backend/app/services/multimodal_models.py` | HF snapshot paths under `MODELS_DIR`, readiness check, `snapshot_download` with NAS staging. | `multimodal_model_path`, `is_hf_snapshot_ready`, `ensure_hf_snapshot`, `ensure_multimodal_models` |
 | `backend/app/services/multimodal_runtime.py` | Lazy in-process Phonon-2 / Marlin, speaker labelling, audio decoding, exclusive residency hooks. | `MultimodalRuntime`, singleton `multimodal_runtime` |
@@ -51,7 +51,7 @@ Historically (commit `a8587e6`, 2026-06) these models ran as separate HTTP sidec
 **Moving `MODELS_DIR`.** `manifest.json` stores absolute `chat_path` / `embed_path` / `reranker_path`. When the models directory moves (external drive → local disk), those point at files that are no longer there, and the user is told a model "is not downloaded" while it sits in the new directory under the same name. `selected_gguf(path)` resolves a selection: the recorded path when it exists, else the same **basename** under the current `resolve_models_dir()/gguf` (logged when it happens), else `None`. `gguf_paths_if_present` and `reranker_gguf_path` both go through it, so a move degrades to a log line rather than a false "missing model". The manifest itself is repaired once per boot: `sync_embedding_infrastructure()` (called from `main` at startup) runs `_heal_selection_paths(sel)`, which resolves `chat_path`/`embed_path`/`reranker_path` through `selected_gguf`, compares the **stored** form (`store_model_path`) and saves any that changed, then `_prune_missing_ggufs()` drops `manifest["gguf"]` records whose file no longer exists (logged as `Manifest dropped deleted GGUFs`) — reads never rewrite the manifest. Likewise, when a manifest predates recorded selections, `gguf_paths_if_present` guesses the env-default filenames under `MODELS_DIR/gguf` once and persists that guess into `selection.chat_path`/`embed_path`, so the guess never runs again.
 
 | `backend/app/services/ai_gate.py` | `ai_is_configured()` reports ready when `gguf_paths_if_present()` is truthy (or a cloud key / `LLM_BASE_URL` exists). | `ai_is_configured`, `require_ai` (details in [13](13-llm-providers-and-prompting.md)) |
-| `backend/app/main.py` | Startup hook calls `sync_embedding_infrastructure()` after applying runtime-config overrides. | `startup_event` |
+| `backend/app/main.py` | Startup hook calls `sync_embedding_infrastructure()` after applying runtime-config overrides, then `_rebuild_vectors()` (switch to `EMBED_DEFAULT`, re-embed every KB from stored text; §9.4). | `startup_event`, `_rebuild_vectors` |
 | `backend/app/workflows/ingestion.py` | Consumes the model-load clock for per-note `[Timing]` lines; passes a per-KB `llm` into the agent (see §13.2). Older revisions unloaded all models after a batch drained — that block has been removed. | — |
 | `backend/requirements.txt` | `llama-cpp-python>=0.3.0`, `huggingface_hub>=0.34.0,<1.0`, `av` (video probing). | — |
 | `backend/requirements-multimodal.txt` | torch / `transformers>=5.7.0` / accelerate / einops / safetensors / librosa / pydub / timm / qwen-vl-utils / av / `pyannote.audio>=4.0` / `fermion-research==0.2.9` / soundfile / scipy / zstandard, plus mlx, mlx-audio, mlx-lm under a `sys_platform == 'darwin' and platform_machine == 'arm64'` marker — installed on demand, mirrors `_MULTIMODAL_PIP`. | — |
@@ -142,7 +142,7 @@ Key point: the frontend **never** calls `/setup/start-local-llm` or `/setup/star
 | Consumer | Calls | Which runtime method | Model made resident |
 |---|---|---|---|
 | `LLMService` (provider `local`) via `LocalOpenAICompat.chat.completions.create` | `LocalLlamaRuntime.create_chat_completion` | `ensure_chat_loaded()` | chat GGUF |
-| `EmbeddingService.embed_query / embed_documents` | `LocalLlamaRuntime.embed / embed_batch` | `ensure_embed_loaded()` | embed GGUF |
+| `EmbeddingService.embed_query / embed_documents` | `LocalLlamaRuntime.embed / embed_batch`; EmbeddingGemma 2: `embedding_server` (llama-server, §7.5) | `ensure_embed_loaded()`; served: `url_for(gguf)` | embed GGUF |
 | `RerankerService.rerank` (retrieval) | `LocalGgufReranker.rerank` (in `asyncio.to_thread`) | `ensure_loaded()` | reranker GGUF |
 | `LLMService` ingestion calls (ingestion provider `local`) via `ServerChatClient` | `extraction_server.url_for(gguf)` → HTTP `/v1/chat/completions` | starts/swaps the `llama-server` child (§7.5) | the extraction GGUF, in a separate process (not part of the residency manager) |
 | `LLMService.describe_image` (ingestion provider `local`) | `ServerChatClient` with an `image_url` part | same | the extraction GGUF **with** its `mmproj` projector (`--mmproj`) |
@@ -161,7 +161,7 @@ Every one of these `ensure_*`/`_load_*` methods first evicts all *other* familie
 class ModelOption:
     id: str                 # stable catalog id, persisted in manifest.json
     role: Literal["chat", "embed", "reranker"]
-    family: Literal["gemma4", "qwen35", "qwen36", "qwen3-embed", "qwen3-rerank"]
+    family: Literal["gemma4", "qwen35", "qwen36", "qwen3-embed", "embeddinggemma", "qwen3-rerank"]
     label: str              # UI label
     hf_repo: str            # "org/repo"
     hf_file: str            # single GGUF filename inside the repo
@@ -170,6 +170,7 @@ class ModelOption:
     params: str             # display-only ("E4B", "35B-A3B", ...)
     embedding_dims: int | None = None   # embed role only
     recommended: bool = False
+    vector_threshold: float | None = None   # embed role: pre-rerank cosine cutoff; None = settings.VECTOR_PRE_RERANK_THRESHOLD (0.45)
     @property hf_path -> f"{hf_repo}/{hf_file}"   # the "model_id" string used by ensure_gguf
 ```
 
@@ -197,9 +198,17 @@ Embedding (`EMBED_MODELS`):
 
 | id | label | hf_repo | hf_file | min_ram_gb | size_gb | dims | recommended |
 |---|---|---|---|---|---|---|---|
-| `qwen3-embed-0.6b-q8` | Qwen3 Embedding 0.6B (Q8) | `Qwen/Qwen3-Embedding-0.6B-GGUF` | `Qwen3-Embedding-0.6B-Q8_0.gguf` | 2 | 0.6 | **1024** | yes |
+| `qwen3-embed-0.6b-q8` | Qwen3 Embedding 0.6B (Q8) | `Qwen/Qwen3-Embedding-0.6B-GGUF` | `Qwen3-Embedding-0.6B-Q8_0.gguf` | 2 | 0.6 | **1024** | |
 | `qwen3-embed-4b-q4` | Qwen3 Embedding 4B (Q4) | `Qwen/Qwen3-Embedding-4B-GGUF` | `Qwen3-Embedding-4B-Q4_K_M.gguf` | 5 | 2.5 | **2560** | |
 | `qwen3-embed-8b-q4` | Qwen3 Embedding 8B (Q4) | `Qwen/Qwen3-Embedding-8B-GGUF` | `Qwen3-Embedding-8B-Q4_K_M.gguf` | 8 | 4.8 | **4096** | |
+| `embeddinggemma-2-q8` | EmbeddingGemma 2 (Q8) | `ggml-org/embeddinggemma-2-GGUF` | `embeddinggemma-2-Q8_0.gguf` | 1 | 0.31 | **768** | **yes** (`EMBED_DEFAULT`; `vector_threshold=0.69`) |
+
+`EMBED_DEFAULT = "embeddinggemma-2-q8"` is the embedder on every machine. Retrieval study (50 HotpotQA questions): F1 0.882 vs Qwen3 Embedding 4B's 0.884, recall 1.0 for both, ~30 % faster per question, at an eighth of the size. llama-cpp-python cannot load it, so it runs on its own `llama-server` (§9.2). Its cosine similarities run higher than Qwen3's (at 0.45 nearly every vector passed), hence its own pre-rerank cutoff. The three Qwen3 rows stay in the catalog but are no longer picked.
+
+| Helper | Behaviour |
+|---|---|
+| `served_embedder(ref)` | `ref` is a catalog id or a GGUF path (matched on `hf_file`); `True` when the option's family is `embeddinggemma`, i.e. it runs on `embedding_server`, not in-process. |
+| `vector_threshold(embed_id)` | the option's `vector_threshold`, else `settings.VECTOR_PRE_RERANK_THRESHOLD` (0.45). Retrieval passes `settings.EMBEDDING_MODEL`. |
 
 Reranker (`RERANK_MODELS`) — note the different quantiser (`mradermacher`) and the `.Q4_K_M` (dot, not dash) filename convention:
 
@@ -225,7 +234,7 @@ The env-default `CHAT_MODEL_ID` / `EMBED_MODEL_ID` / `RERANK_MODEL_ID` constants
 
 ```
 _fits(opt, budget)           := min(opt.min_ram_gb, opt.size_gb * 1.35) <= budget
-pick_embed_for_budget(total) := 8B if total>=48 ; 4B if total>=24 ; else 0.6B      # TOTAL ram, not usable
+pick_embed_for_budget(total) := EMBED_DEFAULT (EmbeddingGemma 2) at every RAM tier
 pick_rerank_for_budget(total):= 8B if total>=48 ; 4B if total>=24 ; else 0.6B
 chat_options_for_budget(usable, embed, rerank):
     reserve = min(2.5, embed.size_gb*0.5 + rerank.size_gb*0.5)
@@ -239,7 +248,7 @@ auto_extraction_model(): "gemma4-12b-q4" (EXTRACTION_DEFAULT) when it is in
                       and chat_model_downloaded(it); else None (extract with the chat model)
 ```
 
-Embed and reranker tiers are **not user-selectable**; they are derived from total RAM only. Worked examples: a 16 GB Apple Silicon Mac → usable 14.1, embed 0.6B, rerank 0.6B, reserve 0.5, budget 13.6 → all chats up to `gemma4-12b-q4` (min(11, 10.4)=10.4) fit, `qwen35-9b-q4` fits, 27B/31B do not; suggested `qwen35-9b-q4`. A 32 GB Mac → embed 4B (2560 dims), rerank 4B, budget ≈ 25.7 → 27B/31B do **not** fit (`min(28, 24.3)=24.3 <= 25.7` → actually fits; `qwen36-35b-a3b-q4` min(32,30.1)=30.1 does not). A 64 GB machine → embed 8B (4096 dims), rerank 8B.
+Embed and reranker are **not user-selectable**; the embedder is always EmbeddingGemma 2, the reranker tier is derived from total RAM only. Worked examples: a 16 GB Apple Silicon Mac → usable 14.1, embed EmbeddingGemma 2 (0.31), rerank 0.6B, reserve 0.36, budget 13.7 → all chats up to `gemma4-12b-q4` (min(11, 10.4)=10.4) fit, `qwen35-9b-q4` fits, 27B/31B do not; suggested `qwen35-9b-q4`. A 32 GB Mac → embed EmbeddingGemma 2 (768 dims), rerank 4B, reserve 1.4, budget ≈ 26.8 → 27B/31B fit (`min(28, 24.3)=24.3`); `qwen36-35b-a3b-q4` min(32,30.1)=30.1 does not. A 64 GB machine → embed EmbeddingGemma 2, rerank 8B.
 
 ### 4.5 `recommend_stack(chat_id=None)` — response contract of `GET /api/v1/setup/model-catalog`
 
@@ -252,7 +261,7 @@ Embed and reranker tiers are **not user-selectable**; they are derived from tota
   "chat_options": [ {ModelOption fields..., "fits_budget": true|false}, ... ],   // ALWAYS the full CHAT_MODELS list
   "suggested_chat": {ModelOption} | null,       // get_option(chat_id) if valid, else recommend_chat(fits)
   "selected_chat":  {ModelOption} | null,       // manifest.json selection.chat_id if valid
-  "budget_note": "Usable ~28 GB of 32 GB RAM (backend=metal). Qwen3 embed + reranker are sized automatically ..."
+  "budget_note": "Usable ~28 GB of 32 GB RAM (backend=metal). The search embedder (EmbeddingGemma 2) and reranker are chosen automatically ..."
 }
 ```
 
@@ -267,7 +276,7 @@ MODELS_DIR/
 ├── manifest.json                       # selection + download records + runtime descriptor (below)
 ├── gguf/                               # every GGUF, flat, named by hf_file
 │   ├── google_gemma-4-E4B-it-Q4_K_M.gguf
-│   ├── Qwen3-Embedding-0.6B-Q8_0.gguf
+│   ├── embeddinggemma-2-Q8_0.gguf
 │   ├── Qwen3-Reranker-0.6B.Q4_K_M.gguf
 │   ├── mmproj-google_gemma-4-E4B-it-f16.gguf   # vision projector for the selected chat GGUF (ensure_mmproj)
 │   └── <name>.gguf.partial             # transient: in-flight download (only when not staging)
@@ -287,11 +296,11 @@ There is no Pydantic model; the file is a free-form dict read via `load_manifest
 {
   "selection": {                       // written by save_selection / ensure_chat_and_embed_models / LocalLlamaRuntime.load
     "chat_id": "gemma4-e4b-q4",        // catalog ids ("" if catalog lookup failed)
-    "embed_id": "qwen3-embed-0.6b-q8",
+    "embed_id": "embeddinggemma-2-q8",
     "reranker_id": "qwen3-rerank-0.6b-q4",
-    "embedding_dims": 1024,            // int; corrected by the dimension probe in LocalLlamaRuntime.load
+    "embedding_dims": 768,             // int; corrected by the dimension probe in LocalLlamaRuntime.load (skipped for a served embedder)
     "chat_path": "/…/gguf/google_gemma-4-E4B-it-Q4_K_M.gguf",     // absolute; only after a download
-    "embed_path": "/…/gguf/Qwen3-Embedding-0.6B-Q8_0.gguf",
+    "embed_path": "/…/gguf/embeddinggemma-2-Q8_0.gguf",
     "reranker_path": "/…/gguf/Qwen3-Reranker-0.6B.Q4_K_M.gguf"
   },
   "gguf": {                            // one record per successfully downloaded file (ensure_gguf)
@@ -418,7 +427,7 @@ All constructions go through `_construct_llama(Llama, **kwargs)` → `_llama_met
 | Model | `model_path` | `embedding` | `n_ctx` | `n_gpu_layers` | `n_threads` | other |
 |---|---|---|---|---|---|---|
 | chat | selected chat GGUF | `False` | `max(LLAMA_N_CTX (16384), LLAMA_MAX_TOKENS (10240) + LLAMA_PROMPT_RESERVE (4096))` | from backend detection | `LLAMA_N_THREADS` if set | `verbose=False`, `swa_full`, `flash_attn?` |
-| embed | selected embed GGUF | `True` | `EMBED_N_CTX` (8192) | same | same | same as chat minus `n_ctx` |
+| embed | selected embed GGUF | `True` | `EMBED_N_CTX` (16384) | same | same | same as chat minus `n_ctx` |
 | reranker | selected reranker GGUF | (default False) | `RERANK_N_CTX` (8192) | `accel["n_gpu_layers"]` | — | `logits_all=False`, `verbose=False`, `swa_full`, `flash_attn?` |
 
 `n_batch` is **not** set anywhere (llama-cpp-python default, 512). The chat `n_ctx` floor rule means the defaults give `max(16384, 14336) = 16384`; if you raise `LLAMA_MAX_TOKENS` to 16384 the context is silently raised to 20480 (logged at INFO). The embed model inherits `n_gpu_layers`/`n_threads` from `_chat_kwargs()`.
@@ -466,7 +475,7 @@ Idle watcher: the first `_touch()` (or a reranker load) starts a single daemon t
 
 ### 7.5 Extraction server (`extraction_server.py`)
 
-In-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `llama-server` with parallel slots it cost nothing measurable. So when a KB's **ingestion** provider is `local`, `LLMService.init_clients` sets `i_chat_client = ServerChatClient()` (no Gemini/Anthropic twins) and every ingestion call — extraction, renames, titles, image naming and `describe_image` — goes to a `llama-server` running the extraction model (`get_ingestion_model()`, doc 13 §5.2). Chat, embeddings and the reranker stay in-process.
+In-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `llama-server` with parallel slots it cost nothing measurable. So when a KB's **ingestion** provider is `local`, `LLMService.init_clients` sets `i_chat_client = ServerChatClient()` (no Gemini/Anthropic twins) and every ingestion call — extraction, renames, titles, image naming and `describe_image` — goes to a `llama-server` running the extraction model (`get_ingestion_model()`, doc 13 §5.2). Chat and the reranker stay in-process; embeddings with EmbeddingGemma 2 go to a second instance, `embedding_server` (below).
 
 - **Binary.** `binary()` returns `DATA_DIR/bin/llama.cpp-b11617/**/llama-server[.exe]`, downloading the pinned release from `github.com/ggml-org/llama.cpp/releases/download/b11617` on first use (staged in `llama.cpp-b11617.partial`, extracted, renamed into place). Asset per machine (`_assets`): macOS `bin-macos-arm64|x64` (Metal); Windows / Linux with `nvidia-smi` on `PATH` → the CUDA build (`win-cuda-12.4-x64` / `ubuntu-cuda-12.8-x64`) **plus** its `cudart` archive (on Windows the runtime DLLs are moved beside the binary), else the Vulkan build.
 - **Start** (`url_for(gguf)`, under a lock, blocking until `/health` is 200, up to 10 minutes): reuses a running server with the same GGUF, else stops it and starts one on a free loopback port with `-m <gguf> -ngl 999 -np <slots> -c <slots × LLAMA_N_CTX> --jinja --chat-template-kwargs {"enable_thinking": false} --reasoning-format auto --no-webui -fa on|off (LLAMA_FLASH_ATTN) --repeat-penalty LLAMA_REPEAT_PENALTY --cache-ram 0`, plus `--mmproj <projector>` when `find_mmproj(gguf)` finds one (image descriptions without a second copy of the model). `--reasoning-format auto` because with `none` Gemma 4 12B's replies began with the empty thinking block its template opens; `--cache-ram 0` because the host-RAM prompt cache can restore an unrelated conversation into a slot under concurrent load (llama.cpp #27148). Output goes to `DATA_DIR/logs/llama-server.log`; the pid to `DATA_DIR/llama-server.pid`.
@@ -478,6 +487,7 @@ In-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `
 - **Vision.** `has_vision(model)` = a projector exists beside the GGUF (a catalog download through `ensure_chat_and_embed_models` fetches it with the GGUF; the `orb-mmproj` boot thread back-fills it for the selected chat model and for the automatic extraction model); `LLMService.describe_image` checks it first and raises "… has no vision projector (mmproj-*.gguf) beside it, so it cannot read images…".
 - **Measured** on the maintainer's 24 GB Mac: Gemma 4 12B at ~10 tok/s with and without the grammar (no per-token cost), and two parallel requests finished in the wall time of one.
 - The server is **outside the residency manager** (§11): while it runs, its model's memory is held alongside whatever is resident in-process; the idle stop is what returns it.
+- **Embedding server.** `embedding_server = ExtractionServer(embedding=True)` runs the embedder llama-cpp-python cannot load (EmbeddingGemma 2, `served_embedder`): `-m <gguf> -ngl 999 --embedding -np 1 -c/-b/-ub EMBED_N_CTX --no-webui` (the whole input in one micro-batch, since a non-causal model cannot split a text across batches), pid `DATA_DIR/llama-server-embed.pid`, log `logs/llama-server-embed.log`, same binary, stale-pid cleanup and 5-minute idle stop. `desktop_runtime.stop_sidecars` stops it with the extraction server.
 
 Test: `tests/unit/test_extraction_server.py` (submission-ordered writes, one slot = one note at a time, `slots_for_ram`, release assets per platform, `json_object` → grammar, extraction-model choice).
 
@@ -508,20 +518,22 @@ Prompt budgeting: before every generation the runtime estimates the prompt size 
 
 - `embed(text)` → under one lock hold `ensure_embed_loaded()` then `self._embed.create_embedding(input=text)` (check and use together; `embed_batch` and `describe_image` do the same, and `LocalGgufReranker.rerank` scores the whole list under its lock, reloading if the model was unloaded before it got the lock; the reranker unloads its peers before taking its own lock so the lock order matches the runtime's); accepts both the OpenAI-shaped `{"data":[{"embedding":[...]}]}` and the legacy `{"embedding": [...]}` return forms; raises `RuntimeError("Unexpected embedding response…")` otherwise.
 - `embed_batch(texts)` (added in `8de5cda`, 2026-08-07): one `create_embedding(input=texts)` call for the whole list — one residency check, one lock acquisition, one llama call. **Fail-closed rule:** if `len(data) != len(texts)` it raises `RuntimeError("Unexpected batch embedding response … expected N vectors, got M")` rather than returning a shorter list, because "a length mismatch would silently mis-pair vectors with texts downstream". Empty input returns `[]` without loading anything.
-- Vectors are returned exactly as llama.cpp produces them. llama-cpp-python normalises pooled embeddings to unit length by default when `embedding=True`; Orb performs **no additional normalisation, truncation (Matryoshka) or dtype conversion**. Batch size is whatever the caller passes (ingestion batches per note / per NL-context group; see [10](10-ingestion-pipeline.md)); there is no internal chunking, so a batch whose total tokens exceed `EMBED_N_CTX` (8192) fails inside llama.cpp.
-- Dimension is a property of the GGUF (1024 / 2560 / 4096 for the three Qwen3 tiers). `LocalLlamaRuntime.load` probes it once by embedding the literal string `"dimension probe"`.
+- Vectors are returned exactly as llama.cpp produces them. llama-cpp-python normalises pooled embeddings to unit length by default when `embedding=True`; Orb performs **no additional normalisation, truncation (Matryoshka) or dtype conversion**. Batch size is whatever the caller passes (ingestion batches per note / per NL-context group; see [10](10-ingestion-pipeline.md)); there is no internal chunking, so a batch whose total tokens exceed `EMBED_N_CTX` (16384) fails inside llama.cpp.
+- Dimension is a property of the GGUF (768 for EmbeddingGemma 2; 1024 / 2560 / 4096 for the three Qwen3 tiers). `LocalLlamaRuntime.load` probes it once by embedding the literal string `"dimension probe"` — except for a served embedder (`served_embedder(embed_path)`), which does not load in-process; its size comes from the catalog.
 
 ### 9.2 `EmbeddingService` (`embedding.py`)
 
 ```python
-embedding_service = EmbeddingService()     # constructed at import; binds LocalLlamaEmbeddings(local_llama_runtime)
+embedding_service = EmbeddingService()     # constructed at import; binds LocalLlamaEmbeddings(local_llama_runtime),
+                                           # or _ServerEmbeddings when served_embedder(settings.EMBEDDING_MODEL)
 embedding_service.embed_query(text, custom_instruction=None) -> list[float]
 embedding_service.embed_documents(texts) -> list[list[float]]
 embedding_service.reconfigure()            # re-read settings.EMBEDDING_MODEL, rebind
 ```
 
 - Constructor validates `settings.EMBEDDING_PROVIDER`: `ollama`/`lm_studio` → warning + `local`; anything other than `local|auto|""` → `ValueError("Unsupported EMBEDDING_PROVIDER…")` at import time (this would crash API startup).
-- `is_qwen3 = "qwen3" in basename(settings.EMBEDDING_MODEL).lower()`. With the default `EMBEDDING_MODEL="local-embed"` this is **False** until `sync_embedding_infrastructure` / `ensure_chat_and_embed_models` sets `EMBEDDING_MODEL` to the catalog id (`qwen3-embed-…`) — but `is_qwen3` is only recomputed in `__init__` and `reconfigure()`. On a normal desktop start the order is: import (`local-embed`, `is_qwen3=False`) → startup `sync_embedding_infrastructure()` sets `EMBEDDING_MODEL=qwen3-embed-0.6b-q8` → `sync_embedding_infrastructure` ends by calling `embedding_service.reconfigure()`, so `is_qwen3` is `True` from then on (`test_model_sync.py`).
+- **Served embedder.** `_configure_embeddings` binds `_ServerEmbeddings` when `served_embedder(settings.EMBEDDING_MODEL)` (EmbeddingGemma 2): each call resolves the embed GGUF from `gguf_paths_if_present()`, wraps the request in `embedding_server.begin()/end()`, and calls the OpenAI embeddings API on `embedding_server.url_for(gguf)` (`timeout=600`, `max_retries=0`). Same fail-closed rule as `embed_batch`: a count mismatch raises `RuntimeError("llama-server returned N embeddings for M texts")`; vectors are re-ordered by `index`.
+- `is_qwen3 = "qwen3" in basename(settings.EMBEDDING_MODEL).lower()`, `is_gemma = "embeddinggemma" in …`, both recomputed in `_configure_embeddings`. With the default `EMBEDDING_MODEL="local-embed"` this is **False** until `sync_embedding_infrastructure` / `ensure_chat_and_embed_models` sets `EMBEDDING_MODEL` to the catalog id (`qwen3-embed-…`) — but `is_qwen3` is only recomputed in `__init__` and `reconfigure()`. On a normal desktop start the order is: import (`local-embed`, `is_qwen3=False`) → startup `sync_embedding_infrastructure()` sets `EMBEDDING_MODEL=<embed_id>` → `sync_embedding_infrastructure` ends by calling `embedding_service.reconfigure()`, so `is_qwen3` / `is_gemma` are right from then on (`test_model_sync.py`).
 - Query instruction (Qwen3 embedding convention, applied to queries only, never to documents):
 
   ```
@@ -529,7 +541,8 @@ embedding_service.reconfigure()            # re-read settings.EMBEDDING_MODEL, r
   ```
 
   `custom_instruction` lets retrieval substitute a task-specific instruction, but no current caller passes it — `retrieval.py` calls `embedding_service.embed_query(enriched_query)` with the default instruction.
-- `embed_documents` never prefixes. Ingestion (`workflows/ingestion.py`) and community summaries (`graph.py`) call it directly.
+- EmbeddingGemma task prompts (model card; notes carry no separate title, hence `none`): queries get `"task: search result | query: "`, documents `"title: none | text: "`.
+- `embed_documents` prefixes nothing for Qwen3 and the document prompt for EmbeddingGemma. Ingestion (`workflows/ingestion.py`) and community summaries (`graph.py`) call it directly.
 
 ### 9.3 `sync_embedding_infrastructure(*, dims=None, embed_id=None) -> dict`
 
@@ -541,7 +554,16 @@ The contract that keeps `settings.EMBEDDING_DIMENSIONS`, `settings.EMBEDDING_MOD
 4. Default collections: `qdrant_service.ensure_vector_size(dims)`; per-KB: for each `kb_registry.list_kbs()` entry with all three `qdrant_col_*` names (skipping `default`), build a throw-away `QdrantService(col_cores, col_relationships, col_contexts)` and `ensure_vector_size(dims)`. Kuzu is deliberately **never** opened here ("touch Qdrant only, never open Kuzu").
 5. Returns `{"embedding_dims", "embed_id", "synced_kbs": [...], "errors": [...]}` — errors are collected per KB, never raised.
 
-`QdrantService.ensure_vector_size(n)` (see [15](15-search-indexes-qdrant-meilisearch.md)) adopts `n` as `EMBEDDING_DIMENSIONS` and **recreates any collection whose vector size differs** (data loss for that collection — hence the re-ingest warning). Conversely `QdrantService._prepare_vector` raises `ValueError("Embedding dim X != EMBEDDING_DIMENSIONS Y…")` on every upsert whose vector length differs, so a dims mismatch fails closed at write time instead of silently corrupting a collection. Together these form the **dims-mismatch fail-closed rule**: resizing only happens at startup/selection/load; ingest never resizes.
+`QdrantService.ensure_vector_size(n)` (see [15](15-search-indexes-qdrant-meilisearch.md)) adopts `n` as `EMBEDDING_DIMENSIONS` and recreates an **empty** collection whose vector size differs; a non-empty mismatched set is left alone (logged) for `QdrantService.reembed` (§9.4). Conversely `QdrantService._prepare_vector` raises `ValueError("Embedding dim X != EMBEDDING_DIMENSIONS Y…")` on every upsert whose vector length differs, so a dims mismatch fails closed at write time instead of silently corrupting a collection. Together these form the **dims-mismatch fail-closed rule**: resizing only happens at startup/selection/load; ingest never resizes.
+
+### 9.4 Switching to EmbeddingGemma 2 and the vector rebuild
+
+`main._background_startup` → `_rebuild_vectors()`, right after `sync_embedding_infrastructure()`:
+
+1. `qdrant_service.vectors_ready.clear()` — ingestion (`_process_note`, status "Waiting for the search index rebuild") and `hybrid_search` wait on this event.
+2. `switch_to_default_embedder()` (`local_models.py`): only for a set-up install (selection has `chat_id`/`chat_path`) whose `embed_id != EMBED_DEFAULT` — `ensure_gguf` downloads EmbeddingGemma 2, `save_selection(..., embedding_dims=768)`, records `embed_path`, `sync_embedding_infrastructure(dims=768, embed_id=…)`. Failure is logged ("deferred to next start").
+3. For each KB: `kb.qdrant.reembed(embedding_service.embed_documents, progress)` rebuilds every collection whose vector size ≠ `EMBEDDING_DIMENSIONS` from the text its points store (doc 15); progress lands in the KB workflow's `_vector_rebuild` (`maintenance-status.vectors`, Activity "Rebuilding search index n/total"). No LLM call, no re-ingest; Kuzu and Meilisearch are untouched. A failure is logged per KB and retried next start.
+4. `vectors_ready.set()` in `finally`.
 
 ## 10. Reranker (`LocalGgufReranker` + `RerankerService`)
 
@@ -588,6 +610,7 @@ Previously it called `self._model(prompt, max_tokens=1, temperature=0.0, logprob
 |---|---|---|
 | `RERANKER_TOP_K` | `10` | `top_n` for `_apply_reranker_logging` |
 | `RERANKER_SCORE_THRESHOLD` | `0.05` | minimum `rerank_score` to keep a candidate |
+| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | pre-rerank cosine cutoff when the embedder's `ModelOption.vector_threshold` is unset (EmbeddingGemma 2 uses 0.69; `vector_threshold(settings.EMBEDDING_MODEL)`) |
 | `MODEL_RERANKER_LOCAL` | `"qwen3-reranker-0.6b"` (overwritten with the catalog id by sync) | log label only |
 
 ## 11. Exclusive residency manager
@@ -690,7 +713,7 @@ Transcription is **Phonon-2** (`FermionResearch/Phonon-2`, a quantized NVIDIA Pa
 `transcribe_audio_path(path) -> str`:
 
 1. Decode once with `_load_audio_mono_16k` (system `ffmpeg`+`ffprobe` via pydub when both are found on `PATH` + `/opt/homebrew/bin`, `/usr/local/bin`, `/usr/bin`, `~/bin`; else PyAV `AudioResampler(format="flt", layout="mono", rate=16000)`); empty → `""`. The samples are written to a temporary 16 kHz mono WAV for Phonon (its word timings come only from a file path) and kept in memory for the diarizer.
-2. Under `_lock`, `_load_phonon()` (after `_unload_ggufs()` / `_unload_except("asr")`; `asr_engine.load_phonon`, ~1 GB, ~14 s, recorded as `asr`) — kept for the rest of the ingestion batch and unloaded with the phase. Not downloaded → `RuntimeError("Phonon-2 is not downloaded. Download the media models on the Models page.")`; transcription never downloads. Then `asr_engine.transcribe_with_phonon(speech, wav)` → `speech.transcribe_detailed(wav)`: punctuated text plus word timings, so there is no forced aligner and no punctuation pass. `truncated` (a segment ran out of token budget) raises `RuntimeError` rather than returning a short transcript; fermion's `SystemExit` for bad input is converted to `RuntimeError` (`_unwrap`). No word timings → the plain text is returned.
+2. Under `_lock`, `_load_phonon()` (after `_unload_ggufs()` / `_unload_except("asr")`; `asr_engine.load_phonon`, ~1 GB, ~14 s, recorded as `asr`) — kept for the rest of the ingestion batch and unloaded with the phase. Not downloaded → `RuntimeError("Phonon-2 is not downloaded. Download the media models on the Models page.")`; transcription never downloads. Then `asr_engine.transcribe_with_phonon(speech, wav)` → fermion's `segment.transcribe_windows` with the engine's one-window decode, each window memoised by `ingestion_checkpoint` so a resumed job decodes only the windows left (fallback `speech.transcribe_detailed(wav)`, doc 11 §5.3): punctuated text plus word timings, so there is no forced aligner and no punctuation pass. `truncated` (a segment ran out of token budget) raises `RuntimeError` rather than returning a short transcript; fermion's `SystemExit` for bad input is converted to `RuntimeError` (`_unwrap`). No word timings → the plain text is returned.
 3. **Speaker labels** (`ASR_SPEAKERS`, default on; requires the `diarizer` snapshot — else "Speaker labels skipped" and timed but unlabelled lines): `asr_engine.speaker_turns` runs the pyannote community-1 pipeline on `mps`/`cuda` when available (else CPU) over the decoded waveform, releasing the accelerator cache afterwards (segmentation step `ASR_DIARIZE_STEP`, `max_speakers=ASR_MAX_SPEAKERS`); `timed_lines` attributes words by midpoint (nearest turn in gaps) into `[MM:SS] Speaker N: …` lines, speakers numbered by first appearance; with no turns the lines are still timed, just unlabelled. `untimed` is the stamp-free, paragraph-per-speaker form the notes summariser reads (doc 11 §5.3, §6.4).
 
 `unload("asr")` drops the Phonon-2 handle.
@@ -716,7 +739,7 @@ Transcription is **Phonon-2** (`FermionResearch/Phonon-2`, a quantized NVIDIA Pa
 | Resident model | Approx. RAM / unified memory |
 |---|---|
 | Chat GGUF | `size_gb` + KV cache. With `swa_full=True` and `n_ctx=16384` Gemma 4 E4B ≈ 5.4 GB weights + ~3–4 GB KV; 12B ≈ 7.7 + ~5 GB. Source comment: "16k + swa_full fits ~24GB Metal; 32k + swa_full OOMs". |
-| Embed GGUF | 0.6 – 4.8 GB weights + small KV (`n_ctx` 8192, no generation). |
+| Embed GGUF | 0.31 GB (EmbeddingGemma 2, in `llama-server-embed`, outside the residency manager); Qwen3 0.6 – 4.8 GB in-process. Small KV (`n_ctx` 8192, no generation). |
 | Reranker GGUF | 0.4 – 5 GB weights + KV for `RERANK_N_CTX`. Loaded with `logits_all=False`, so only the last position's logits are kept (the old `logits_all=True` buffer of `n_ctx × vocab` floats is gone). |
 | Extraction `llama-server` (§7.5) | the extraction GGUF + KV for `slots × LLAMA_N_CTX`, in its own process, held until 300 s idle. |
 | Phonon-2 / Marlin | see §12.7 |
@@ -781,7 +804,7 @@ Rows named `LLAMA_*`, `EMBED_N_CTX`, `RERANK_N_CTX`, `MODEL_IDLE_SECONDS`, `EXTR
 | `LLAMA_FLASH_ATTN` | `false` | same; `extraction_server` | `flash_attn=True` when on; `-fa on|off` for the extraction server |
 | `LLAMA_REPEAT_PENALTY` | `1.12` | `_default_repeat_penalty`; `extraction_server` | chat sampling; `--repeat-penalty` for the extraction server |
 | `LLAMA_N_THREADS` | unset (llama default) | `_chat_kwargs` | CPU threads for chat/embed |
-| `EMBED_N_CTX` | `8192` | `_load_embed_unlocked` | embed model context |
+| `EMBED_N_CTX` | `16384` | `_load_embed_unlocked`, `embedding_server` (`-c`/`-b`/`-ub`) | embed model context |
 | `RERANK_N_CTX` | `8192` | `LocalGgufReranker.ensure_loaded` | reranker context; a query + document prompt longer than this raises |
 | `MODEL_IDLE_SECONDS` | `300` | `model_idle_seconds` | idle unload for chat/embed/reranker; `0` = never |
 | `LARGE_ATTACHMENT_TOKENS` (ORB-only) | `20000` | `ingestion_agent.finish_attachment` | documents with more extracted tokens are summarised for the graph and indexed in full for search, with no prompt; recordings always are (doc 11 §6.4). UI row: "Summarize documents over (tokens)" |
@@ -794,7 +817,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | Field | Default | Notes |
 |---|---|---|
 | `EMBEDDING_PROVIDER` | `local` | only `local|auto|""` accepted (`ollama|lm_studio` coerced) |
-| `EMBEDDING_MODEL` | `local-embed` | overwritten at runtime with the catalog id; drives `is_qwen3` |
+| `EMBEDDING_MODEL` | `local-embed` | overwritten at runtime with the catalog id; drives `is_qwen3` / `is_gemma`, `served_embedder` and `vector_threshold` |
 | `EMBEDDING_DIMENSIONS` | `1024` | overwritten by `sync_embedding_infrastructure`; enforced on every Qdrant upsert |
 | `MODEL_RERANKER_LOCAL` | `qwen3-reranker-0.6b` | overwritten with the catalog id; label only |
 | `RERANKER_TOP_K`, `RERANKER_SCORE_THRESHOLD` | `10`, `0.05` | retrieval policy |
@@ -810,22 +833,22 @@ Settings fields (`app/core/config.py`) touched by this layer:
 |---|---|
 | `LLMService` → runtime | `local_llama_runtime.make_chat_client()` returns an OpenAI-shaped shim; `LLMService._chat` calls `chat.completions.create(model=…, messages=…, temperature?, max_tokens?)`; `model` is passed through `resolve_chat_gguf` (per-KB pinning). Only `.choices[0].message.content` and `.choices[0].finish_reason` are consumed. `LLMService.ingestion_count_tokens` / `ingestion_context_tokens` read `count_tokens` / `_default_chat_n_ctx`. |
 | Ingestion / graph → `EmbeddingService` | `embed_documents(list[str]) -> list[list[float]]` (same order, same length or exception). Vectors must be `EMBEDDING_DIMENSIONS` long or `QdrantService._prepare_vector` raises. |
-| Retrieval → `EmbeddingService.embed_query` | single vector with the Qwen3 instruction prefix when `is_qwen3`. |
+| Retrieval → `EmbeddingService.embed_query` | single vector with the Qwen3 instruction prefix when `is_qwen3`, EmbeddingGemma's query prompt when `is_gemma`. |
 | Retrieval → `RerankerService.rerank` | async; returns `[]` on any failure; items carry `index`, `relevance_score`, `document`. |
 | Multimedia → `multimodal_runtime` | `transcribe_audio_path(path) -> str`, `caption_video_path(path) -> {scene, events, elapsed_seconds}`, `unload(family)`; both raise `RuntimeError` when weights are missing. |
 | `LLMService` (ingestion provider `local`) → `ServerChatClient` | OpenAI-shaped `chat.completions.create` against the extraction `llama-server` (§7.5); `describe_image` sends one completion with an image part and raises first when `has_vision(model)` is false. (`LocalLlamaRuntime.describe_image` was removed.) |
 | Setup API → this layer | see §6.3. |
-| `main.startup_event` → `sync_embedding_infrastructure()` | after `runtime_config` overrides are applied; failures logged, never fatal. |
+| `main.startup_event` → `sync_embedding_infrastructure()` → `_rebuild_vectors()` | after `runtime_config` overrides are applied; failures logged, never fatal. |
 | `ai_gate.provider_is_configured("local")` → `gguf_paths_if_present()` | "local AI is available" ⇔ chat+embed paths from the manifest exist. |
 | `kb_registry` / `api/kb.py` → `model_catalog.downloaded_chat_models`, `chat_model_downloaded`, `get_option` | only downloaded chat GGUFs may be pinned per KB. |
 | `desktop_runtime.py` → env | sets `ORB_MODELS_DIR`, `LLM_PROVIDER`, `EMBEDDING_PROVIDER`. The llama.cpp knobs come from `runtime_config.json`, not env. |
 
 ## 16. Invariants, constraints and locked decisions
 
-1. **In-process only — except the extraction server.** No Ollama, LM Studio or HTTP model sidecars; the single exception is Orb's own pinned `llama-server` for local ingestion (§7.5), which Orb downloads, starts and stops itself. `EMBEDDING_PROVIDER`/`LLM_PROVIDER` values `ollama`/`lm_studio` are coerced to `local` with a warning; do not add HTTP embedding providers back. (Locked in `3f21e08`.)
+1. **In-process only — except the extraction server.** No Ollama, LM Studio or HTTP model sidecars; the exceptions are Orb's own pinned `llama-server` for local ingestion and its embedding instance for EmbeddingGemma 2 (§7.5), which Orb downloads, starts and stops itself. `EMBEDDING_PROVIDER`/`LLM_PROVIDER` values `ollama`/`lm_studio` are coerced to `local` with a warning; do not add HTTP embedding providers back. (Locked in `3f21e08`.)
 2. **At most one heavy model resident in-process.** Every loader evicts all others first (the extraction server's model is outside this rule and is stopped after 300 s idle). Do not add a code path that holds chat and embed (or a GGUF and an HF model) simultaneously — the RAM budget in the catalog assumes exclusivity.
 3. **`swa_full=True` by default for chat.** Compact SWA causes Gemma 4 ordinal/"or the" collapse; keep the default and the repetition guard together.
-4. **Embedding dims are global across KBs.** Every KB's Qdrant collections share `EMBEDDING_DIMENSIONS`; that is why embed/rerank/multimodal are *not* per-KB configurable (only chat/ingestion models are). Changing the embed model recreates collections and requires re-ingest.
+4. **Embedding dims are global across KBs.** Every KB's Qdrant collections share `EMBEDDING_DIMENSIONS`; that is why embed/rerank/multimodal are *not* per-KB configurable (only chat/ingestion models are). Changing the embed model rebuilds every collection from stored text at the next start (`_rebuild_vectors`, §9.4); no re-ingest.
 5. **Never resize Qdrant during ingest.** `ensure_vector_size` runs only from `sync_embedding_infrastructure` (startup / selection / load). `_prepare_vector` fails closed on mismatch.
 6. **Batch embedding fails closed on length mismatch.** Do not "fix" `_embed_batch_unlocked` to pad or truncate.
 7. **`gguf_paths_if_present()` is the single readiness oracle** for local AI (setup status, ai_gate, runtime loads). Keep manifest `selection.*_path` semantics intact.
@@ -849,7 +872,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 | llama-server download fails / binary exits while loading / not healthy in 10 min | `RuntimeError` from `url_for` → the ingestion call fails (extraction retries, then the note fails); details in `DATA_DIR/logs/llama-server.log`. |
 | Backend crashed with the extraction server running | the orphan keeps the model's memory until the next start, when `_kill_stale()` stops it (pid file + process-name check). |
 | Gemma 4 repetition cascade | abort stream, retry ≤ 3 with fresh sample, then `RuntimeError("LLM repetition loop persisted after 3 attempts")`. Deterministic `temperature=0` calls will repeat the same loop. |
-| Embed dims changed (model upgrade) | collections recreated (data loss), warning "re-ingest notes so vectors match"; ingest upserts with stale dims raise `ValueError`. |
+| Embed dims changed (model upgrade) | empty collections recreated; non-empty ones rebuilt by `QdrantService.reembed` at startup from stored text (resumable from `DATA_DIR/reembed/`); ingestion and search wait on `vectors_ready`; upserts with stale dims raise `ValueError`. |
 | Reranker GGUF changed | `sync_embedding_infrastructure` unloads the stale in-memory reranker; next rerank loads the new one. |
 | Multimodal deps missing | `ensure_multimodal_services` → `{started:false, error}`; transcription and Marlin raise at ingest time. Image description is unaffected — it goes through the extraction model's projector on the extraction server or the cloud provider. |
 | Extraction GGUF has no matching `mmproj` | text works; `describe_image` raises "… has no vision projector …" and image/PDF-image attachments fail their note. The `orb-mmproj` boot thread fetches the projector for catalog models when the repo publishes one. |
@@ -863,14 +886,14 @@ Settings fields (`app/core/config.py`) touched by this layer:
 
 - **`model` in a chat request is not a no-op for local any more.** It selects a GGUF via `resolve_chat_gguf`. Passing a catalog id that is not downloaded raises.
 - **`LLAMA_MAX_TOKENS` is unset by default**; `desktop_runtime.py` sets no default for it (per-call sizing).
-- **`EmbeddingService.is_qwen3` is computed at construction and in `reconfigure()` only.** `sync_embedding_infrastructure` (startup, `save_selection`, `ensure_chat_and_embed_models`) therefore calls `reconfigure()` at its end; any new code path that sets `settings.EMBEDDING_MODEL` must do the same or query-instruction prefixing stays off.
+- **`EmbeddingService.is_qwen3` / `is_gemma` and the in-process vs served binding are computed at construction and in `reconfigure()` only.** `sync_embedding_infrastructure` (startup, `save_selection`, `ensure_chat_and_embed_models`) therefore calls `reconfigure()` at its end; any new code path that sets `settings.EMBEDDING_MODEL` must do the same or query-instruction prefixing stays off.
 - `/setup/status` reports *files on disk*; what is resident is `local.runtime` in `GET /api/v1/models` (`LocalLlamaRuntime.status()`).
 - `/setup/start-local-llm` ends with the **reranker** resident, not chat.
 - Two independent backend detectors exist (`local_models.detect_llama_backend` and `model_catalog.detect_accel_backend`); keep them in step.
 - `hf_path` is a property → absent from API JSON; the UI never sees repo/file combined.
 - `_min_expected_gguf_bytes` matches by `hf_file` *or* `hf_path`; renaming a catalog file breaks integrity checks for already-downloaded files (they will be re-downloaded under the new name).
 - `recommend_stack` returns the **full** chat list with `fits_budget` flags; do not filter it server-side, the UI relies on seeing tight options.
-- Embed/rerank tiers depend on **total** RAM, chat options on **usable** RAM.
+- The embedder is EmbeddingGemma 2 on every machine; rerank tiers depend on **total** RAM, chat options on **usable** RAM.
 - `download_file` reports progress only when the server sends `Content-Length`; HF snapshot downloads report 1 % and 100 % only.
 - `_openaiish_chat_response` never sets `usage` on the streaming path; token accounting for local is unavailable.
 - Multimodal `unload("asr")` / `unload("marlin")` do not call `release_accelerator_memory()`; only `unload(None)` does.
@@ -880,7 +903,7 @@ Settings fields (`app/core/config.py`) touched by this layer:
 
 ## 19. Extension points
 
-- **Add a GGUF model**: append a `ModelOption` to `CHAT_MODELS` / `EMBED_MODELS` / `RERANK_MODELS` in `model_catalog.py` with an accurate `size_gb` (≤ real size), `min_ram_gb`, and for embed models `embedding_dims`. Chat models appear in the Setup list automatically; embed/rerank tiers require editing `pick_embed_for_budget` / `pick_rerank_for_budget`; put preferred ids into `recommend_chat`'s ordered list. If a new family needs different sampling defaults, extend `_llama_metal_safe_kwargs` / `_default_repeat_penalty` rather than the call sites.
+- **Add a GGUF model**: append a `ModelOption` to `CHAT_MODELS` / `EMBED_MODELS` / `RERANK_MODELS` in `model_catalog.py` with an accurate `size_gb` (≤ real size), `min_ram_gb`, and for embed models `embedding_dims`. Chat models appear in the Setup list automatically; the embedder is `EMBED_DEFAULT` (plus `vector_threshold` if its similarity scale differs; set `family` so `served_embedder` routes it to llama-server when llama-cpp-python cannot load it), rerank tiers require editing `pick_rerank_for_budget`; put preferred ids into `recommend_chat`'s ordered list. If a new family needs different sampling defaults, extend `_llama_metal_safe_kwargs` / `_default_repeat_penalty` rather than the call sites.
 - **Change context / sampling policy**: `_chat_kwargs`, `_default_*` helpers, `_GEN_SAFETY_MARGIN`, `_MIN_OUTPUT_TOKENS`.
 - **Add a multimodal family**: `settings.MODEL_<X>_HF/LOCAL`, `_hf_repo_and_dir` in `multimodal_models.py`, a `_load_<x>` + public method in `MultimodalRuntime` that calls `_unload_ggufs()` and `_unload_except("<x>")` and records into `model_load_clock`, add the family to `unload()`/`status()`, and to `ensure_multimodal_models`; update `_deps_importable` if new imports are needed.
 - **Expose more runtime status**: `GET /api/v1/models` already returns `local_llama_runtime.status()` as `local.runtime`; add `local_gguf_reranker.loaded`, `multimodal_runtime.status()`, `model_load_clock.snapshot()` beside it.

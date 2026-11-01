@@ -48,6 +48,16 @@ function buildStatus(payload: Payload | null): StatusView {
       busy: true,
     };
   }
+  if (payload.vectors?.running) {
+    const { done = 0, total = 0 } = payload.vectors;
+    return {
+      tone: "digest",
+      label: "Rebuilding search index",
+      meta: total ? `${done}/${total}` : "running",
+      detail: "Re-embedding your notes for the new search model. Search and ingestion resume when it is done; nothing is re-extracted.",
+      busy: true,
+    };
+  }
   if (payload.passages?.running) {
     const { done = 0, total = 0 } = payload.passages;
     return {
@@ -89,6 +99,7 @@ function useMaintenanceStatus(kb: string) {
           (Number(data.ingestion?.active || 0) > 0 ||
             data.community_detection?.running ||
             data.passages?.running ||
+            data.vectors?.running ||
             data.temporal_digests?.running),
       );
 

@@ -170,6 +170,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 |---|---|---|
 | `startChat(query, kb, requestId?, conversationId?)` | `POST /chat/async?kb=` body `{query, request_id, conversation_id}` | `conversation_id` becomes `undefined` (omitted) when null/empty. Caller supplies `request_id` (UUID) so polling can start immediately. |
 | `getChatStatus(requestId): ChatStatus` | `GET /chat/status/{requestId}` | No `kb`. |
+| `getPendingAnswer(conversationId, kb): {request_id: string \| null}` | `GET /chat/conversations/{id}/pending?kb=` | The answer still being written in that conversation (survives a backend restart). |
 | `listChatConversations(kb): ChatConversation[]` | `GET /chat/conversations?kb=` | |
 | `getChatMessages(conversationId, kb): ChatMessageRecord[]` | `GET /chat/conversations/{id}/messages?kb=` | |
 | `deleteChatConversation(conversationId, kb)` | `DELETE /chat/conversations/{id}?kb=` | |
@@ -274,7 +275,7 @@ Method signature → HTTP call. `kb` defaults to `"default"` everywhere it appea
 
 | Method | Call | Notes |
 |---|---|---|
-| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running}, temporal_digests:{running}, passages?:{running, done?, total?}, ingestion?:{active}, boot?:{status,ts?}, healthy?}` |
+| `getMaintenanceStatus(kb)` | `GET /admin/maintenance-status?kb=` | `{community_detection:{running}, temporal_digests:{running}, passages?:{running, done?, total?}, vectors?:{running, done?, total?}, ingestion?:{active}, boot?:{status,ts?}, healthy?}` |
 | `rebuildCommunities(kb)` | `POST /admin/rebuild-communities?kb=` `{}` | |
 | `buildTemporalDigests(period?, kb)` | `POST /admin/build-temporal-digests?kb=` `{period: period ?? null}` | |
 | `resetIngestionData(kb)` | `POST /admin/reset-ingestion-data?kb=` `{}` | |
@@ -416,7 +417,7 @@ Actions:
 |---|---|
 | `initializeForKb(kb)` | Lists conversations; if any, selects the **first** (most recent per backend ordering) and loads its messages; else clears. Called by the chat page whenever `currentKB` changes after hydration. |
 | `loadConversations(kb)` | Refresh list only; on error sets `[]`. |
-| `selectConversation(id, kb)` | Loads messages; on error still switches `activeConversationId` and shows an empty list (the `kb` param is unused — `_kb`). |
+| `selectConversation(id, kb)` | Stops following the open answer, loads messages (on error still switches `activeConversationId` and shows an empty list), then `getPendingAnswer(id, kb)` and, given a `request_id`, follows it (`followAnswer`) with stage `"Resuming answer"`. |
 | `startNewConversation()` | `activeConversationId=null`, `messages=[]`. |
 | `deleteActiveConversation(kb)` | If nothing active → behaves like new conversation. Else `DELETE`, removes from local list, selects the next remaining conversation or clears, then reloads the list. Errors abort silently. |
 | `sendMessage(text, kb)` | The async request/poll state machine below. |
@@ -429,8 +430,8 @@ sequenceDiagram
   participant CP as ChatProvider
   participant API as FastAPI
   UI->>CP: sendMessage(text, kb)
-  CP->>CP: cancel previous poll, generation++
-  CP->>CP: push optimistic user message, isLoading=true, stage="Starting chat request"
+  CP->>CP: push optimistic user message, stage="Starting chat request"
+  CP->>CP: followAnswer(request_id, kb, start): cancel previous poll, generation++, isLoading=true
   CP->>API: POST /chat/async {query, request_id: uuid, conversation_id}
   API-->>CP: {conversation_id?}
   CP->>CP: setInterval(poll, 1000) + immediate poll
@@ -452,6 +453,7 @@ Constants: `POLL_INTERVAL_MS = 1000`, `POLL_MAX_ATTEMPTS = 600`, `POLL_MAX_CONSE
 
 Edge cases:
 - `sendMessage` is a no-op while `isLoading` is true or `text` is blank — there is no queue.
+- `selectConversation(id, kb)` stops following the current answer (the backend keeps writing it), loads the messages, then asks `api.getPendingAnswer(id, kb)`; a `request_id` → stage `"Resuming answer"` and `followAnswer(request_id, kb)` without a POST. That is how an answer still being written — or resumed by the backend after a restart — is picked up again when its conversation is opened. A status that ends `done` with no `answer` (finished in an earlier run) adds no optimistic message; the server message refresh shows it.
 - If the final `getChatMessages` refresh fails, the optimistic messages remain (server ids are never learned for that turn, so "thinking" toggles keyed by message id still work because the local id is stable).
 - Because `ChatProvider` is global, switching KB on `/kb` does not reset chat state; the chat page's `initializeForKb` effect does that on next visit.
 - Conversation title comes only from the server list; the UI never renames.
@@ -595,7 +597,7 @@ Rule of thumb used across pages: `resolveFileUrl(raw, currentKB)` is the canonic
 
 | Condition | Next poll in |
 |---|---|
-| Any job active (`ingestion.active > 0`, `community_detection.running`, `passages.running`, `temporal_digests.running`) | 4 000 ms |
+| Any job active (`ingestion.active > 0`, `community_detection.running`, `passages.running`, `vectors.running`, `temporal_digests.running`) | 4 000 ms |
 | Idle | 30 000 ms |
 | Request failed | 5 000 ms (so a restart shows up quickly) |
 | `document.visibilityState === "hidden"` | skip the request, reschedule in 30 s |
@@ -611,6 +613,7 @@ Displayed state (`buildStatus`) — first match wins:
 | `idle` (busy bar) | `boot.status` verbatim | `boot.status` present (desktop runtime still starting services) | "Local services are still starting. Notes work now; …" |
 | `ingest` (pulsing) | Ingesting N note(s) | `ingestion.active > 0` | "Extracting entities and links into the graph." |
 | `community` (pulsing) | Rebuilding communities | `community_detection.running` | meta shows `pending_nodes` when > 0 |
+| `digest` (pulsing) | Rebuilding search index | `vectors.running` (the startup re-embed for a new embedder) | meta `done/total` (or "running" without a total); "Re-embedding your notes for the new search model. Search and ingestion resume when it is done; nothing is re-extracted." |
 | `digest` (pulsing) | Indexing passages | `passages.running` (the startup passage backfill) | meta `done/total` (or "running" without a total); "Making existing notes searchable by their own text. The graph is not touched." |
 | `digest` (pulsing) | Building digests | `temporal_digests.running` | |
 | `idle` | Ready | otherwise | "No ingestion or community jobs running." |

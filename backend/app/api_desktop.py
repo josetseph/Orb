@@ -6,7 +6,7 @@ import asyncio
 import functools
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -21,7 +21,7 @@ from app.core.paths import (
     save_paths_file,
 )
 from app.models.note import Note
-from app.schemas.extraction import NoteInput
+from app.services import jobs
 from app.services.firefly_service import firefly_service
 from app.services.kb_registry import KBContext, kb_registry
 from app.services.note_files import note_body
@@ -376,7 +376,6 @@ async def rebuild_notes_graph(
 
 @router.post("/api/v1/notes/reingest-vault")
 async def reingest_vault(
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     kb: KBContext = Depends(get_kb),
 ):
@@ -390,20 +389,13 @@ async def reingest_vault(
         n.failed = False
         n.processing_stage = "Queued for vault re-ingest"
         n.processing_model = None
-    await db.commit()
-
     # Read all bodies off the event loop — one sync file read per note inline
     # would stall every other request for the duration of a large vault scan.
     bodies = await asyncio.to_thread(lambda: [note_body(n, kb) for n in notes])
     for n, body in zip(notes, bodies):
-        payload = NoteInput(
-            content=body,
-            created_at=n.created_at.isoformat() if n.created_at else None,
-            title=n.title,
-        )
-        background_tasks.add_task(
-            kb.get_ingestion_workflow().process_note, payload, n.id
-        )
+        await jobs.enqueue_ingest(db, kb.kb_id, n.id, body)
+    await db.commit()
+    jobs.wake()
     return {"status": "queued", "count": len(notes)}
 
 

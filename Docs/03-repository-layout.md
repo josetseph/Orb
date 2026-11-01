@@ -65,6 +65,7 @@ backend/
 │   ├── models/                 SQLAlchemy ORM (metadata only — bodies live in vault .md; knowledge_bases is raw DDL in kb_registry.py)
 │   │   ├── note.py             notes
 │   │   ├── chat.py             chat_conversations, chat_messages
+│   │   ├── job.py              jobs (durable queue: ingest_note / answer / attachment)
 │   │   └── wikilink.py         note_links
 │   ├── schemas/                Pydantic request / extraction schemas
 │   │   ├── note.py             CreateNoteInput, MoveNoteInput, MoveVaultFileInput, …
@@ -82,7 +83,7 @@ backend/
 │   │   ├── graph.py            Kuzu GraphService (schema, writes, queries, communities, digests)
 │   │   ├── qdrant_service.py   Qdrant collections (cores / relationships / isolated contexts)
 │   │   ├── meilisearch_service.py  per-KB keyword index
-│   │   ├── embedding.py        in-process GGUF embeddings
+│   │   ├── embedding.py        GGUF embeddings (EmbeddingGemma 2 via llama-server; Qwen3 in-process)
 │   │   ├── reranker.py         in-process GGUF cross-encoder reranker
 │   │   ├── retrieval.py        hybrid multi-hop retrieval loop
 │   │   ├── chat_store.py       conversation / message persistence
@@ -100,7 +101,8 @@ backend/
 │   │   ├── multimodal_services.py  readiness + on-demand pip install of torch/transformers
 │   │   ├── multimedia.py       attachment discovery + PDF / image / audio / video / doc enrichment
 │   │   ├── ingestion_tracker.py    in-flight ingestion counter + cancel signals for a running rebuild
-│   │   ├── ingestion_checkpoint.py resume a failed ingestion from the model call that broke
+│   │   ├── jobs.py             durable job queue: enqueue, cancel, recover at start, one worker
+│   │   ├── ingestion_checkpoint.py memo: save each model call / image read / ASR window so a job resumes
 │   │   ├── extraction_budget.py    learn how large an extraction chunk each model handles
 │   │   ├── firefly_service.py  Firefly III HTTP client, per-KB administration scoping
 │   │   └── ai_gate.py          AI readiness, derived from real configuration
@@ -117,6 +119,8 @@ backend/
 │   │   ├── test_vault_folders.py            folder moves, the attachments/ boundary, link stripping
 │   │   ├── test_desktop_runtime.py          Meili key, atomic boot status, Firefly .env quoting
 │   │   ├── test_note_created_at.py          created_at validation on note create/update/ingest
+│   │   ├── test_jobs_resume.py              jobs table: resume, give up, supersede, cancel, answers, attachments
+│   │   ├── test_resume.py                   kill the pipeline at each step; resume reaches the same stores
 │   │   └── test_ingestion_community_names.py community naming JSON + member-fit check
 ├── requirements.txt            base deps (FastAPI, SQLAlchemy, kuzu, qdrant, meilisearch, llama-cpp-python, …)
 ├── requirements-dev.txt        pytest + pytest-asyncio (pinned)

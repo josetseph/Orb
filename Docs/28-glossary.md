@@ -48,6 +48,8 @@
 | **vault_watcher** | watchdog observer for external edits; marks notes stale, never auto-ingests. | [08](08-knowledge-bases-and-vaults.md) |
 | **Self-write** | A file write performed by Orb itself; recorded for ~12 s so the watcher ignores it. | [08](08-knowledge-bases-and-vaults.md) |
 | **Processing stage** | Human-readable ingestion status string on `notes.processing_stage` (e.g. "Queued for ingestion"). | [10](10-ingestion-pipeline.md) |
+| **Job** | A row of the `jobs` table in `orb.db` (`services/jobs.py`): long work (`ingest_note`, `answer`, `attachment`) written down before it starts, drained by one worker, resumed after a crash; given up after 3 interrupted attempts. | [10](10-ingestion-pipeline.md) |
+| **Saved steps (`ingestion_cache`)** | `ingestion_checkpoint.memo`: each model call, image read, transcription window and Marlin caption of a running job saved under `DATA_DIR/ingestion_cache/<kb>/<key>/`, so a retry or resume replays them instead of paying again. | [10](10-ingestion-pipeline.md), [22](22-data-directory-layout.md) |
 
 ## Ingestion and enrichment
 
@@ -82,7 +84,7 @@
 | **Node.kind** | `note | indexable | community | temporal_digest` — replaces Neo4j labels after the Kuzu migration (the module docstring lists only the first three). | [14](14-graph-storage-kuzu.md) |
 | **Indexable** | A graph node that represents an extracted entity (as opposed to a note or community). | [14](14-graph-storage-kuzu.md) |
 | **REFERENCES** | Rel table: note → entity, carries `note_id`. | [14](14-graph-storage-kuzu.md) |
-| **SEMANTIC_REL** | Rel table for LLM-extracted relationships (`rel_type`, temporal fields, `mention_count`; legacy score columns are schema-only). | [14](14-graph-storage-kuzu.md) |
+| **SEMANTIC_REL** | Rel table for LLM-extracted relationships (`rel_type`, temporal fields, `note_ids` — every note asserting it — and `mention_count = size(note_ids)`; legacy score columns are schema-only). | [14](14-graph-storage-kuzu.md) |
 | **Relationship types (`RELATIONSHIP_TYPES`)** | The closed vocabulary of `SEMANTIC_REL.rel_type`: 42 snake_case predicates in `schemas/extraction.py` (`works_at`, `part_of`, `located_in`, `knows`, …) headed by the catch-all `related_to`. Listed in the extraction prompts; anything the model returns off the list is coerced to `related_to` by the schema, never fuzzy-matched. Edges written with the old default `relates_to` were renamed once by `main._migrate_stores`. | [10](10-ingestion-pipeline.md), [14](14-graph-storage-kuzu.md) |
 | **Bi-temporal (historical)** | Feb 2026 design (`033589d`) where relationships carried `valid_from/valid_to/is_active` and "evolved" over time. Removed in `da75dfc` (2026-05-28) in favour of temporal digests; `SEMANTIC_REL.created_at` and `is_similarity` remain as never-set leftover columns. | [14](14-graph-storage-kuzu.md), [25](25-development-history.md) |
 | **Symbolic ranking (historical)** | Graph-structure-based reranking introduced in `033589d` to replace a neural reranker; itself replaced by the current GGUF cross-encoder reranker. Not present in today's code. | [25](25-development-history.md) |

@@ -29,12 +29,15 @@ Under the desktop app nothing injects `ORB_DATA_DIR`/`ORB_MODELS_DIR`: the runti
 
 ```
 DATA_DIR/                                   (e.g. ~/Library/Application Support/Orb/data)
-├── orb.db                                  SQLite: notes, note_links, knowledge_bases, chat_conversations, chat_messages
+├── orb.db                                  SQLite: notes, note_links, knowledge_bases, chat_conversations, chat_messages, jobs
 ├── runtime_config.json                     {"provider","model","base_url","extraction_model", llama.cpp knobs} (MUTABLE_KEYS only)
 ├── meili_master_key                        random base64url key (mode 0600) or "orb-dev-key" for pre-hardening installs
 ├── .stores-migrated-v1-<kb_id>             marker per KB: main._migrate_stores ran (see §9.1)
 ├── .passages-v1-<kb_id>                    marker per KB: main._backfill_passages stored every note's passages (see §9.1)
 ├── llama-server.pid                        pid of the running extraction llama-server (removed when it stops; stale ones are cleaned up at the next start)
+├── llama-server-embed.pid                  same, for the embedding llama-server (EmbeddingGemma 2)
+├── ingestion_cache/<kb_id>/<key>/<kind>-<sha256>.json   saved steps of an unfinished job (key: note id, answer-<16 hex>, attachment-<16 hex>); deleted when the job ends (see §3)
+├── reembed/<collection>.jsonl              transient: new vectors of a collection being re-embedded for a new embedder (.partial while written); deleted once upserted (see §9.1)
 ├── kuzu/
 │   ├── kuzu_graph                          default KB Kuzu database FILE
 │   ├── kuzu_graph.wal                      its write-ahead log (may be absent)
@@ -57,6 +60,7 @@ DATA_DIR/                                   (e.g. ~/Library/Application Support/
 │   ├── database.log       graph.log         llm.log           retrieval.log    finance.log
 │   ├── backend.log        qdrant.log        meilisearch.log   firefly.log      multimodal.log (process stdio; each rolls to `.log.1` past 10 MB at spawn; backend.log = runtime + API, written by the shell)
 │   ├── llama-server.log                                                                   (extraction server stdio, appended by extraction_server; not rotated)
+│   ├── llama-server-embed.log                                                             (embedding server stdio, appended by embedding_server; not rotated)
 │   └── *.log.1 … *.log.5                                                                  (rotated backups)
 ├── bin/
 │   ├── .tmp/                               download scratch (archives, extracted trees) — transient
@@ -104,6 +108,9 @@ Legend for "safe to delete?": **Yes** = regenerated or purely cache; **Yes (lose
 | `DATA_DIR/bin/.tmp/` | `ensure_binaries` | during downloads | Yes — scratch |
 | `DATA_DIR/bin/llama.cpp-b11617/` (`.partial` while downloading) | `extraction_server.binary()` | first local ingestion | Yes (while no ingestion runs) — re-downloaded from GitHub on the next ingest (needs network) |
 | `DATA_DIR/llama-server.pid`, `DATA_DIR/logs/llama-server.log` | `extraction_server` | first extraction-server start | Yes — the pid file only matters while a server runs (deleting it then leaves an orphan the next start cannot find) |
+| `DATA_DIR/llama-server-embed.pid`, `DATA_DIR/logs/llama-server-embed.log` | `embedding_server` (`extraction_server.py`) | first embedding call | Yes — as for the extraction server's |
+| `DATA_DIR/ingestion_cache/<kb_id>/<key>/` | `services/ingestion_checkpoint.py` (`memo`), activated per job by `process_note` (key = note id), `chat.prepare_answer` (`answer-<16 hex>`), `notes.prepare_attachment` (`attachment-<16 hex>`) | first model call / image read / ASR window / Marlin caption of a job | Yes — only costs time: a retry or resume pays again for the steps that were saved. Deleted when the job ends (an ingestion after the agent returns, an answer or attachment on done or failure, any kind on a user cancel); kept across a quit so the resumed job replays them. Files are `{"value": …}` JSON keyed by `<kind>-<sha256(parts)>` (`llm`, `image`, `asr`, `video`) |
+| `DATA_DIR/reembed/<collection>.jsonl` | `QdrantService.reembed` | a startup vector rebuild (embedder changed) | **Not while a rebuild is unfinished** — once the old collection is dropped, the file holds that collection's only copy of the vectors and payloads; the next start resumes from it. Empty otherwise. |
 | `DATA_DIR/.passages-v1-<kb_id>` | `main._backfill_passages` | first start after passages existed, once every note's passages were stored | Yes — the backfill re-embeds and re-stores every note's passages at the next start |
 | `DATA_DIR/firefly/php/` | `desktop_runtime.ensure_php_runtime` | first launch | Yes — re-downloaded/re-seeded from bundled resources or GitHub (static-php-cli `PHP_BIN_VERSION`) |
 | `DATA_DIR/firefly/app/` (except `storage/`) | `desktop_runtime.ensure_firefly_app` | first launch / version change (`.orb-firefly-version`) | Yes — re-seeded; `storage/` is stashed and restored across upgrades |
@@ -125,7 +132,8 @@ MODELS_DIR/                                 (e.g. ~/Library/Application Support/
 ├── manifest.json                           model bookkeeping (schema below)
 ├── gguf/
 │   ├── google_gemma-4-E4B-it-Q4_K_M.gguf   chat (default CHAT_MODEL_ID; Setup may pick another catalog entry)
-│   ├── Qwen3-Embedding-0.6B-Q8_0.gguf      embeddings (EMBED_MODEL_ID default; 4B/8B variants selectable)
+│   ├── embeddinggemma-2-Q8_0.gguf          embeddings (EMBED_DEFAULT, every machine; served by the embedding llama-server)
+│   ├── Qwen3-Embedding-*.gguf             older installs' embedder; no longer picked (safe to delete after the vector rebuild)
 │   ├── Qwen3-Reranker-0.6B.Q4_K_M.gguf     cross-encoder reranker (RERANK_MODEL_ID default)
 │   ├── <other catalog GGUFs>.gguf          any additional chat models downloaded (per-KB pins can only use these)
 │   ├── mmproj-<chat stem>-f16.gguf         vision projector paired to a chat GGUF by name only (find_mmproj: mmproj-<stem>-*.gguf beside it)
@@ -272,7 +280,10 @@ Every repair that used to run on each read now runs once and leaves a marker (or
 | Kuzu path repair | `kb_registry._load` | none — idempotent; persisted with `UPDATE knowledge_bases SET kuzu_path` when `normalize_kuzu_path` changes it | Directory-shaped `kuzu_path` → `…/kuzu_graph` file path. Removed from `get_kb`/`graph`/`_build_context`/`_cleanup_stores`. |
 | `llm_provider` coercion | `kb_registry._load` | none — idempotent `UPDATE knowledge_bases SET llm_provider='local' WHERE llm_provider IN ('ollama','lm_studio')` | Deprecated provider names in KB rows. |
 | Attachments boundary (invariant enforced after the sweep, not a migration) | `local_storage.store_upload`, `vault_ops.move_vault_file`, the vault tree UI | none | Uploads land in `attachments/<note folder>/`; `move_vault_file` raises `ValueError("Cannot move across the attachments/ boundary")` (→ 400) for attachment → note folder, note → `attachments/`, and folder moves crossing it; the tree offers file drops only on `attachments` / `attachments/<sub>`. Note moves never move attachments, because links are vault-root-relative. |
+| Vector rebuild | `main._rebuild_vectors()` right after `sync_embedding_infrastructure` in `_background_startup`, per KB | none — `QdrantService.reembed` picks collections whose vector size ≠ `EMBEDDING_DIMENSIONS`, or that have a `DATA_DIR/reembed/<collection>.jsonl` left (resume) | `switch_to_default_embedder()` moves the selection to EmbeddingGemma 2 (768 dims); every stale cores/rels/contexts/passages collection is re-embedded from its stored text into the dump file, dropped, recreated and refilled from it. Kuzu and Meilisearch untouched; ingestion and search wait on `vectors_ready`. Failure deferred to next start. |
 | Passage backfill | `main._backfill_passages()` after `_migrate_stores` in `_background_startup`, per KB | `DATA_DIR/.passages-v1-<kb_id>`, touched only when every note's passages were stored (a failure defers the KB to the next start) | Stores title-prefixed passages of every note with a vault file (Qdrant `<contexts>_passages`, Meili `<index>_passages`) for notes ingested before passages existed; the graph is untouched. Progress in `maintenance-status.passages` |
+| Job recovery | `main.startup_event` → `jobs.recover()` before the worker starts | none — runs every start | `jobs` rows left `running` → `queued` (or `failed` after 3 attempts, their notes `"Ingestion failed (interrupted repeatedly)"`); finished rows older than 30 days deleted. Notes mid-pipeline with no active job → `"Ingestion failed (interrupted)"`. |
+| `SEMANTIC_REL.note_ids` | `GraphService._init_schema` on every graph open | the column itself: `ALTER TABLE SEMANTIC_REL ADD note_ids STRING[]` fails once it exists, and the backfill is skipped | Backfills each edge's `note_ids` from the notes that `REFERENCES` both ends plus `r.note_id`, then `mention_count = size(note_ids)` ([14](14-graph-storage-kuzu.md)). |
 | Store scrub | `main._migrate_stores()` at the end of `_background_startup`, per KB | `DATA_DIR/.stores-migrated-v1-<kb_id>`, touched **only after** all three steps succeeded (an unreachable Qdrant/Kuzu leaves it absent, so the KB is retried next boot) | Kuzu: `SEMANTIC_REL {rel_type:'relates_to'}` → `'related_to'` (closed vocabulary default rename); Qdrant: `QdrantService.strip_facts_prefixes()` removes legacy `FACTS: …. ` prefixes from `node_cores` descriptions; Kuzu: `kind='note'` nodes with NULL/`''`/`Unknown`/`Untitled` names are backfilled from `orb.db` (`notes.title`, else the `rel_path` stem). |
 
 

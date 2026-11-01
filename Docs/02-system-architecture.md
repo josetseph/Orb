@@ -55,7 +55,7 @@ Ports are resolved in `desktop_runtime.py`, overridable with `ORB_API_PORT`, `OR
 
 Boot order in `desktop_runtime.py`: free stale listeners on the port block → start uvicorn immediately → in a background thread, Qdrant + Meilisearch (download binaries first if missing) → Firefly install/migrate/boot → multimodal readiness check. Progress is written to `DATA_DIR/boot-status.json`, exposed by `/api/v1/admin/maintenance-status` and shown in the UI's status indicator; `QdrantService` / `MeilisearchService` reconnect on use once their sidecar is listening. Details: [04-desktop-shell.md](04-desktop-shell.md).
 
-There are **no third-party model HTTP sidecars**. Phonon-2, Marlin, chat, embed and rerank all load in the uvicorn process; the one child process is Orb's own extraction `llama-server` (pinned llama.cpp build, `DATA_DIR/bin/llama.cpp-b11617/`, log `logs/llama-server.log`, random loopback port), started on demand by the API for local ingestion and stopped after 300 s idle or by `stop_sidecars`. This is a locked decision ([26](26-decisions-and-constraints.md)).
+There are **no third-party model HTTP sidecars**. Phonon-2, Marlin, chat and rerank all load in the uvicorn process; the child processes are Orb's own `llama-server`s (pinned llama.cpp build, `DATA_DIR/bin/llama.cpp-b11617/`, random loopback ports): the extraction server (log `logs/llama-server.log`), started on demand by the API for local ingestion, and the embedding server for EmbeddingGemma 2 (log `logs/llama-server-embed.log`), started on the first embedding call; each stops after 300 s idle or by `stop_sidecars`. This is a locked decision ([26](26-decisions-and-constraints.md)).
 
 ---
 
@@ -145,12 +145,13 @@ sequenceDiagram
   API->>V: write <vault>/<rel_path>.md (title ↔ filename sync), update SQLite row
   API->>API: rebuild note_links for this note
   API-->>UI: note (processing_stage = "Queued for ingestion")
-  API->>AG: BackgroundTask: run agent(note_id)
+  API->>API: jobs.enqueue_ingest → row in orb.db `jobs` (same commit), jobs.wake()
+  API->>AG: job worker (jobs._drain): process_note(note_id) → run agent
   AG->>MM: multimodal node — discover [📎]/[🎤]/![]() → PDF / vision projector / Phonon-2 / Marlin → append enrichment blocks to the .md
   AG->>LLM: extraction node — nodes + relationships (Extraction schema, provider JSON mode, reply validated as written — no repair; relationship_type from the closed RELATIONSHIP_TYPES vocabulary)
   AG->>IW: storage node — resolve entities by exact normalised name (Qdrant node_cores → Kuzu fallback), merge, write; prior data is never deleted on re-ingest
-  IW->>QD: upsert cores / relationships / isolated contexts (embeddings via in-process GGUF)
-  IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(mention_count, ingested_at)
+  IW->>QD: upsert cores / relationships / isolated contexts (embeddings via the embedding llama-server)
+  IW->>KZ: MERGE Node(kind=note|indexable), REFERENCES, SEMANTIC_REL(note_ids, mention_count, ingested_at)
   IW->>ME: add documents (name, type, contexts, rel text)
   AG->>AG: summarization node — mark processed, stage = done
   IW->>TR: note finished → end_ingestion (counter only; community recompute and temporal digests run from the Setup button / admin endpoints)
@@ -158,7 +159,7 @@ sequenceDiagram
 
 Every LLM call that expects structured output passes `json_mode=True` to `LLMService._chat`, which asks the provider for a JSON object structurally — `response_format={"type": "json_object"}` for openai/openai_compat/huggingface/local (llama.cpp's JSON grammar), `response_mime_type="application/json"` for Gemini; Anthropic stays prompt-driven — and the reply is validated with `<Schema>.model_validate_json` exactly as written; nothing repairs it, so a malformed reply is a failed call (doc 13 §6.2). Relationship types are a closed vocabulary: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates) is listed in the extraction prompts, and anything off-list is coerced to `related_to`.
 
-Before the agent runs, the note's own text is stored as title-prefixed passages in Qdrant and Meilisearch (searched beside the graph; a note whose extraction fails is still findable). Concurrency: each KB extracts as many notes at once as the extraction `llama-server` has slots (`slots_for_ram`: 1 below 20 GB RAM, up to 6), but graph writes happen in submission order; `MULTIMEDIA_CONCURRENCY` (default 1) serialises heavy model jobs within a note; graph/Qdrant writes are batched and offloaded with `asyncio.to_thread`. Stage strings are written to `notes.processing_stage` and polled by the UI through `GET /notes/{id}/status`. Details: [10-ingestion-pipeline.md](10-ingestion-pipeline.md), [11-multimedia-enrichment.md](11-multimedia-enrichment.md).
+Before the agent runs, the note's own text is stored as title-prefixed passages in Qdrant and Meilisearch (searched beside the graph; a note whose extraction fails is still findable). Concurrency: each KB extracts as many notes at once as the extraction `llama-server` has slots (`slots_for_ram`: 1 below 20 GB RAM, up to 6), but graph writes happen in submission order; `MULTIMEDIA_CONCURRENCY` (default 1) serialises heavy model jobs within a note; graph/Qdrant writes are batched and offloaded with `asyncio.to_thread`. Stage strings are written to `notes.processing_stage` and polled by the UI through `GET /notes/{id}/status`. Ingestion, chat answers and attachment processing are durable `jobs` rows (`services/jobs.py`): a job left `running` by a crash or quit is queued again at the next start, and the model calls, image reads and transcription windows it already finished replay from `DATA_DIR/ingestion_cache/` (`ingestion_checkpoint.memo`) instead of running again. Details: [10-ingestion-pipeline.md](10-ingestion-pipeline.md), [11-multimedia-enrichment.md](11-multimedia-enrichment.md).
 
 External edits to vault files (e.g. via Obsidian or cloud sync) are noticed by `vault_watcher`, which refreshes metadata and marks the note stale but **never auto-ingests**.
 
@@ -168,7 +169,7 @@ External edits to vault files (e.g. via Obsidian or cloud sync) are noticed by `
 
 ```mermaid
 flowchart TD
-  Q[POST /chat/async ?kb=] --> J[job registry + _chat_job_lock<br/>stages: Queued → … → Complete/Failed]
+  Q[POST /chat/async ?kb=] --> J[answer job row in orb.db jobs → worker<br/>_chat_job_lock · in-memory stages: Queued → … → Complete/Failed]
   J --> H[chat_store: load conversation history<br/>trim to CHAT_HISTORY_MAX_MESSAGES]
   H --> L[RetrievalService.retrieve_with_iterative_loop<br/>≤ MAX_LOOP_ITERATIONS = 3]
   subgraph iter["each iteration: hybrid_search"]
@@ -200,7 +201,7 @@ Model residency during one chat on a fully local setup: embed GGUF (query vector
 |---|---|---|---|
 | Chat | llama-cpp-python GGUF (Metal / CUDA / Vulkan / CPU) | Qwen 3.5 9B where it fits, else Gemma 4 E4B (`recommend_chat` in `model_catalog.py`) | `local_models.py` |
 | Ingestion extraction | llama.cpp `llama-server` (pinned build `b11617`, downloaded into `DATA_DIR/bin/`), parallel slots, JSON grammar; started on demand, stopped after 300 s idle | `EXTRACTION_MODEL`: automatic = Gemma 4 12B when it fits and is downloaded, else the chat model | `extraction_server.py` |
-| Embeddings | llama-cpp-python GGUF, `EMBEDDING_DIMENSIONS` = 1024 | Qwen3-Embedding-0.6B | `local_models.py` via `embedding.py` |
+| Embeddings | GGUF on the embedding `llama-server`, `EMBEDDING_DIMENSIONS` = 768 | EmbeddingGemma 2 (every machine; startup re-embeds older vaults from stored text) | `embedding.py`, `extraction_server.embedding_server` |
 | Reranker | llama-cpp-python GGUF cross-encoder (yes/no logits) | Qwen3-Reranker-0.6B | `local_models.py` via `reranker.py` |
 | Image description / OCR | the ingestion model: locally the extraction model on the extraction server with its `mmproj-<model stem>-*.gguf` vision projector (`--mmproj`, paired by name only), or the cloud provider | same as extraction | `extraction_server.py` / `local_models.py` (`find_mmproj`, `ensure_mmproj`) / `llm.py` |
 | Speech-to-text | Phonon-2 (English) — `fermion-research`, MLX on Apple Silicon, CPU elsewhere; optional pyannote speaker labels | `fermion/speech/FermionResearch__Phonon-2/` | `asr_engine.py` via `multimodal_runtime.py` |

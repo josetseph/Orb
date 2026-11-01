@@ -288,7 +288,7 @@ def get_kb(kb: str = Query(default="default", description="Knowledge base name o
 - Matching is by **name (case-insensitive) or slug**; `id` UUIDs are *not* accepted here (they are accepted by `DELETE`/`PATCH /api/v1/kb/{kb_id}` path params and by `/vault-files/{kb_id}/…`, which tries `get_kb(id)` first and then `get_kb_by_name`).
 - Because a request that omits `?kb=` silently hits `default`, every frontend call goes through `withKb(kb, …)`/`kbQuery(kb)` in `frontend/src/lib/api.ts`, and `useKB()` already holds the stored KB on the first render.
 - `frontend/src/lib/kb-context.tsx`: `localStorage["orb_current_kb"]` = `{"slug","name"}` JSON (`slug` required; a value without one is ignored). `currentKB` is the slug. Nothing validates that the stored slug still exists; a deleted KB yields 404s until the user picks another KB.
-- Background tasks capture the `KBContext` object at request time (`kb.get_ingestion_workflow().process_note`), so ingestion continues on the right KB even if the user switches KBs in the UI. The ingestion workflow re-resolves `kb_registry.get_kb(note.kb_id)` when persisting the enriched body.
+- Ingestion jobs carry `kb_id` in their `jobs` row; the worker resolves `kb_registry.get_kb(job.kb_id)` when the job starts (`jobs._prepare`), so ingestion continues on the right KB even if the user switches KBs in the UI (and a job whose KB was deleted meanwhile is dropped). The ingestion workflow re-resolves `kb_registry.get_kb(note.kb_id)` when persisting the enriched body.
 
 ## 9. `vault_sync` — reconciling vault files with SQLite
 

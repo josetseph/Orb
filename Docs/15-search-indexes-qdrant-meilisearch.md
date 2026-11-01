@@ -14,7 +14,7 @@
 
 **Note passages.** Both stores also hold each note's own text, split into passages (`<contexts collection>_passages` in Qdrant, `<index>_passages` in Meilisearch, §4.8 / §5.5a). They are written by ingestion before extraction (doc 10 §6.0), searched beside the graph by `hybrid_search` section C (doc 16), and are not derived from the graph.
 
-**EmbeddingService owns** the query/document embedding calls (in-process GGUF via `llama-cpp-python`), including the Qwen3 instruction prefix rule.
+**EmbeddingService owns** the query/document embedding calls (EmbeddingGemma 2 on its own `llama-server`; Qwen3 in-process via `llama-cpp-python`), including each model's prompt rule.
 
 **Not owned here:** graph structure (Kuzu, [14](14-graph-storage-kuzu.md)); the decision of what text to embed (ingestion, [10](10-ingestion-pipeline.md)); score fusion/reranking ([16](16-retrieval-and-chat.md)); model download/loading (`local_models.py`, [12](12-local-models-and-inference.md)) except the `sync_embedding_infrastructure` entry point that resizes collections; process supervision of the Qdrant/Meilisearch binaries ([04](04-desktop-shell.md)).
 
@@ -24,11 +24,11 @@
 |---|---|---|
 | `backend/app/services/qdrant_service.py` | `QdrantService`: client, collection bootstrap, dims guard, upserts, scrolls, searches, deletes | `QdrantService`, `qdrant_service` (default-KB singleton) |
 | `backend/app/services/meilisearch_service.py` | `MeilisearchService`: client, index bootstrap/settings, add/update/delete/search | `MeilisearchService`, `meilisearch_service`, `_SEARCHABLE`, `_FILTERABLE` |
-| `backend/app/services/embedding.py` | `EmbeddingService`: provider validation, Qwen3 query instruction, `embed_query`/`embed_documents` | `EmbeddingService`, `embedding_service` |
+| `backend/app/services/embedding.py` | `EmbeddingService`: provider validation, served vs in-process binding, Qwen3 query instruction / EmbeddingGemma task prompts, `embed_query`/`embed_documents` | `EmbeddingService`, `embedding_service` |
 | `backend/app/services/local_models.py` | `LocalLlamaEmbeddings`, `sync_embedding_infrastructure`, `save_selection`, manifest `embedding_dims`, dimension probe after load | `sync_embedding_infrastructure`, `load_manifest`, `LocalLlamaEmbeddings` |
 | `backend/app/services/kb_registry.py` | Per-KB collection/index names, `QdrantService`/`MeilisearchService` construction, deletion cleanup | `KBRegistry.create_kb`, `_build_context`, `_cleanup_stores` |
 | `backend/app/core/config.py` | `QDRANT_*`, `MEILI_*`, `EMBEDDING_*`, `VECTOR_*` | `settings` |
-| `backend/app/main.py` | Startup hook calling `sync_embedding_infrastructure()` | `startup_event` |
+| `backend/app/main.py` | Startup hook calling `sync_embedding_infrastructure()`, then `_rebuild_vectors()` (§7.4) | `startup_event`, `_rebuild_vectors` |
 | `backend/app/api/admin.py`, `backend/app/api/kb.py` | `reset_all` callers (reset-ingestion-data; KB empty) | — |
 | `backend/app/api/graph.py` | Meili consumers (`search_nodes`, `get_node`) | — |
 | `backend/app/workflows/ingestion.py` | All Qdrant/Meili **writes** | `_write_ontology`, `_update_node_summary`, `rebuild_leiden_communities`, `build_temporal_digests` |
@@ -48,13 +48,13 @@ flowchart LR
         LC["rebuild_leiden_communities<br/>community cores + membership NL + Meili"]
         TD["build_temporal_digests<br/>digest cores + Meili"]
     end
-    EMB["EmbeddingService<br/>(GGUF in-process)"]
+    EMB["EmbeddingService<br/>(EmbeddingGemma 2, llama-server)"]
     Writers -- "embed_documents()" --> EMB
     EMB -- vectors --> Writers
     subgraph QD["Qdrant (127.0.0.1:17433 desktop / 6333 default)"]
         C1["&lt;slug&gt;_node_cores<br/>1 point per node (uuid5(node_id))"]
         C2["&lt;slug&gt;_node_relationships<br/>1 point per relationship (uuid5(relationship_id))"]
-        C3["&lt;slug&gt;_node_isolated_contexts<br/>N points per node (uuid4), parent_node_id"]
+        C3["&lt;slug&gt;_node_isolated_contexts<br/>N points per node (uuid5 of content), parent_node_id"]
     end
     subgraph ML["Meilisearch (127.0.0.1:17470 desktop / 7700 default)"]
         IX["&lt;slug&gt;_nodes index<br/>primaryKey node_id"]
@@ -113,7 +113,7 @@ client.create_collection(
                                 distance=Distance.COSINE))
 ```
 
-- **Single unnamed dense vector** per point; size = `EMBEDDING_DIMENSIONS` (default 1024 = Qwen3-Embedding-0.6B; 768/other after a model switch — see §7).
+- **Single unnamed dense vector** per point; size = `EMBEDDING_DIMENSIONS` (768 = EmbeddingGemma 2, the embedder on every machine; the settings default 1024 is Qwen3-Embedding-0.6B — see §7).
 - **`Distance.COSINE`** → scores in `[-1, 1]`, practically `[0, 1]`; thresholds in §4.7 are cosine similarities.
 - **No** HNSW overrides, **no** on-disk flag, **no** quantization, **no** sharding/replication, and **no payload indexes** are created. Every payload filter (`name`, `parent_node_id`, `type`, `community_level`, `period_key`, `note_created_at`, `is_community_rel`, `source_node_id`, `target_node_id`) runs as an unindexed full scan on the Qdrant side. This is acceptable at personal-KB scale but is the first thing to add if `find_node_ids_by_names` or the contexts date filters become slow.
 
@@ -123,7 +123,10 @@ client.create_collection(
 |---|---|---|
 | `*_node_cores` | `str(uuid.uuid5(uuid.NAMESPACE_OID, node_id))` | deterministic; one point per node; re-upsert overwrites; `retrieve(ids=[uuid5(node_id)])` is the O(1) content lookup |
 | `*_node_relationships` | `str(uuid.uuid5(uuid.NAMESPACE_OID, relationship_id))` | deterministic per Kuzu `SEMANTIC_REL.relationship_id` or `community_rel_<cid>_<nid>` |
-| `*_node_isolated_contexts` | `str(uuid.uuid4())` | random; a node's contexts are found only by the `parent_node_id` payload filter |
+| `*_node_isolated_contexts` | `_point_id(note_id, node_id, content)` for a context written with a `note_id` (`append_node_item`); `_point_id(node_id, index, content)` for an indexed document's passages (`upsert_node_items`); `uuid4` only for a context appended without a `note_id` | content-derived, so a resumed or repeated write overwrites instead of duplicating; a node's contexts are still found by the `parent_node_id` payload filter |
+| `<contexts>_passages` | `_point_id(note_id, "passage", index)` | one point per passage slot; `replace_note_passages` deletes the note's passages first anyway |
+
+`_point_id(*parts) = str(uuid.uuid5(uuid.NAMESPACE_OID, "/".join(str(p) for p in parts)))` — "a point id derived from what the point holds, so writing it again replaces it" ([10](10-ingestion-pipeline.md) §4.5).
 
 The `node_id` itself (`node_<uuid4>`, note id, `community_l…`, `digest_…`) is **not** a valid Qdrant id, hence the uuid5 derivation; anything that needs to address a core point must derive the id the same way (`get_node_content_by_id`, `get_nodes_content_by_ids`, `delete_node` do).
 
@@ -175,8 +178,8 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 | `upsert_node_cores` | `(cores: list[dict]) -> bool` | batch variant, one `client.upsert`; same field names per dict; empty list → `True`; unavailable → `False` | `_write_ontology` stub seeding (fail → ingest aborted) |
 | `upsert_node_relationship` | `(relationship_id, natural_language, nl_vector, source_node_id, target_node_id, is_community_rel=False) -> None` | single point; errors warn-only | none currently (batch used) |
 | `upsert_node_relationships` | `(rels: list[dict]) -> bool` | batch; `True` when all points stored (empty list → `True`), `False` on rejection with `_last_upsert_error` set | `_write_ontology` (`False` ⇒ abort), `_commit_community` |
-| `append_node_item` | `(collection_name, node_id, content, vector, note_created_at=None) -> bool` | one uuid4 point `{parent_node_id, content[, note_created_at]}`; never touches existing points | `_update_node_summary` per new context; `False` count → `RuntimeError` in caller |
-| `upsert_node_items` | `(collection_name, node_id, items) -> None` | delete-by-filter `parent_node_id==node_id` then insert all items (`content`, `vector`, extra keys) — full replace | `_index_documents` (an indexed document's passages) |
+| `append_node_item` | `(collection_name, node_id, content, vector, note_created_at=None, note_id=None) -> bool` | one point `{parent_node_id, content[, note_id][, note_created_at]}`, id `_point_id(note_id, node_id, content)` (uuid4 without `note_id`); never touches other points — the same note writing the same context again overwrites its own point | `_update_node_summary` per new context; `False` count → `RuntimeError` in caller |
+| `upsert_node_items` | `(collection_name, node_id, items) -> None` | delete-by-filter `parent_node_id==node_id` then insert all items (`content`, `vector`, extra keys), ids `_point_id(node_id, i, content)` — full replace | `_index_documents` (an indexed document's passages) |
 | `delete_node` | `(node_id) -> None` | deletes core point `uuid5(node_id)`, all `*_node_isolated_contexts` with `parent_node_id==node_id`, and every `*_node_relationships` point whose `source_node_id` or `target_node_id` is the node | `api/notes.py` (note + orphans), `_write_ontology` (re-ingest orphans), `rebuild_leiden_communities` (old communities), `build_temporal_digests` (old digests) |
 | `delete_relationships` | `(relationship_ids) -> None` | deletes the `uuid5(relationship_id)` points | `_write_ontology` (edges dropped by `clear_note_contribution`) |
 | `delete_community_relationships` | `() -> None` | delete-by-filter `is_community_rel == True` in rels | `GraphService.clear_all_communities` |
@@ -200,15 +203,15 @@ Legacy payload fields nothing writes or reads any more: `facts`, `potential_ques
 
 ### 4.8 Note passages (`<contexts>_passages`)
 
-Payload `{note_id, title, index, content}` (+ vector = `embed_documents(content)`; `content` already starts with `"<title>\n\n"`), point id `uuid4`. Part of the per-KB collection set: created and dim-checked by `_ensure_collections`, deleted by `reset_all`.
+Payload `{note_id, title, index, content}` (+ vector = `embed_documents(content)`; `content` already starts with `"<title>\n\n"`), point id `_point_id(note_id, "passage", index)` (uuid5). Part of the per-KB collection set: created and dim-checked by `_ensure_collections`, deleted by `reset_all`.
 
 | Function | Signature | Behaviour | Callers |
 |---|---|---|---|
 | `replace_note_passages` | `(note_id, title, texts, vectors) -> None` | delete-by-filter `note_id == note_id`, then `_upsert_batched` one point per passage. **Raises** when Qdrant is unavailable (`RuntimeError("Qdrant unavailable: note passages not stored")`) or a write fails | `IngestionWorkflow._store_passages` (ingest, backfill) |
-| `search_passages` | `(query_vector, limit, min_score) -> list[payload + score]` | `query_points(passages, limit, score_threshold=min_score)`; `[]` when unavailable or the collection does not exist yet | `hybrid_search` section C (`limit=500`, `VECTOR_PRE_RERANK_THRESHOLD`) |
+| `search_passages` | `(query_vector, limit, min_score) -> list[payload + score]` | `query_points(passages, limit, score_threshold=min_score)`; `[]` when unavailable or the collection does not exist yet | `hybrid_search` section C (`limit=500`, `vector_threshold(EMBEDDING_MODEL)`) |
 | `delete_note_passages` | `(note_id) -> None` | `replace_note_passages(note_id, "", [], [])`; errors warn-only | `api/notes.py` note delete |
 
-**Score semantics and thresholds.** Scores are raw cosine similarities from Qdrant. Retrieval passes `limit=500` per collection ("a large ceiling … the score_threshold is the only real filter") and `min_score` = `settings.VECTOR_PRE_RERANK_THRESHOLD` (**0.45**). Every collection is queried with the same vector and threshold, so a context sentence, a relationship sentence and a merged-core passage compete on equal footing; retrieval then maps each hit to a node via `node_id` / `parent_node_id` / `source_node_id` / `target_node_id` and de-duplicates. `isolated_contexts` strings returned by the content getters have the note date appended as `" - <date>"` when present — consumers that display or re-embed them see that suffix.
+**Score semantics and thresholds.** Scores are raw cosine similarities from Qdrant. Retrieval passes `limit=500` per collection ("a large ceiling … the score_threshold is the only real filter") and `min_score` = `vector_threshold(settings.EMBEDDING_MODEL)` (`model_catalog.py`): the embedder's `ModelOption.vector_threshold` — **0.69** for EmbeddingGemma 2, whose similarities run higher (at 0.45 nearly every vector passed) — else `settings.VECTOR_PRE_RERANK_THRESHOLD` (**0.45**, tuned for Qwen3). Every collection is queried with the same vector and threshold, so a context sentence, a relationship sentence and a merged-core passage compete on equal footing; retrieval then maps each hit to a node via `node_id` / `parent_node_id` / `source_node_id` / `target_node_id` and de-duplicates. `isolated_contexts` strings returned by the content getters have the note date appended as `" - <date>"` when present — consumers that display or re-embed them see that suffix.
 
 ## 5. Meilisearch
 
@@ -258,7 +261,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 | `name` | all | entity name (lowercase), community/digest display name |
 | `type` | all | entity type / `"community"` / `"temporal_digest"` |
 | `isolated_contexts` | `_update_node_summary` / `_reindex_node` (the node's context list), `build_temporal_digests` (`[summary]`) | **a JSON array of strings** (`index_node(..., isolated_contexts: list[str])` stores `list(isolated_contexts)`). `api/graph.py._apply_meili_content` reads it as a list and wraps a pre-array string document in a one-element list. |
-| `relationship_natural_language` | `_update_node_summary` (all NL sentences for the node joined by `" "`), `update_nodes_community` (refreshed after community rebuild, includes membership sentences) | one string |
+| `relationship_natural_language` | `_update_node_summary` / `_reindex_node` (all NL sentences for the node, **sorted**, joined by `" "` — Qdrant's order is arbitrary, the document must not be), `update_nodes_community` (refreshed after community rebuild, includes membership sentences, also sorted) | one string |
 | `community_level` | `_commit_community` for community docs only | int |
 
 `index_node` omits `isolated_contexts` / `relationship_natural_language` / `community_level` when falsy/None; because `add_documents` on an existing primary key **replaces** the document (not merge), an `index_node` call without contexts wipes previously stored contexts. `_update_node_summary` guards against this by re-reading the existing document (`get_node`) when it has no contexts to write; `update_nodes_community` likewise reads-then-writes the full doc.
@@ -306,7 +309,8 @@ class EmbeddingService:
     embedding_model: str = settings.EMBEDDING_MODEL
     query_instruction = "Instruct: Given a question, retrieve relevant context.\nQuery: "
     is_qwen3: bool                              # "qwen3" in basename(EMBEDDING_MODEL).lower()
-    embeddings: LocalLlamaEmbeddings            # over local_llama_runtime
+    is_gemma: bool                              # "embeddinggemma" in basename(EMBEDDING_MODEL).lower()
+    embeddings: _ServerEmbeddings | LocalLlamaEmbeddings   # served_embedder(EMBEDDING_MODEL) ? embedding_server : local_llama_runtime
     def reconfigure() -> None
     def embed_query(text, custom_instruction=None) -> list[float]
     def embed_documents(texts) -> list[list[float]]
@@ -314,9 +318,9 @@ embedding_service = EmbeddingService()          # module singleton
 ```
 
 - **Provider validation at construction:** `EMBEDDING_PROVIDER` `"ollama"`/`"lm_studio"` → WARNING "deprecated; using in-process local" and coerced to local; anything other than `local`/`auto`/`""` → `ValueError("Unsupported EMBEDDING_PROVIDER… Orb uses in-process GGUF embeddings only")` at import time (the backend will not start).
-- **Instruction handling:** `embed_query` prefixes the text with `custom_instruction or query_instruction` **only when `is_qwen3`**; `embed_documents` never adds a prefix. This asymmetry is deliberate for Qwen3-Embedding ("query gets 'Instruct: …\nQuery: ' prefix, documents do not"). retrieval calls `embed_query(enriched_query)` without `custom_instruction`.
-- **No caching** of vectors in this class. (Retrieval caches *query analysis*, not embeddings; ingestion de-duplicates texts before embedding.) Batching is the caller's job: `embed_documents` maps to `LocalLlamaRuntime.embed_batch`.
-- `reconfigure()` re-binds after a model download/selection (`is_qwen3` recomputed).
+- **Instruction handling:** for Qwen3 (`is_qwen3`) `embed_query` prefixes the text with `custom_instruction or query_instruction` and `embed_documents` adds nothing — deliberate for Qwen3-Embedding ("query gets 'Instruct: …\nQuery: ' prefix, documents do not"). For EmbeddingGemma (`is_gemma`) both sides get the model card's task prompt: queries `"task: search result | query: "`, documents `"title: none | text: "`. retrieval calls `embed_query(enriched_query)` without `custom_instruction`.
+- **No caching** of vectors in this class. (Retrieval caches *query analysis*, not embeddings; ingestion de-duplicates texts before embedding.) Batching is the caller's job: `embed_documents` is one embeddings request to `embedding_server` (served) or one `LocalLlamaRuntime.embed_batch` (in-process); both fail on a count mismatch.
+- `reconfigure()` re-binds after a model download/selection (`is_qwen3` / `is_gemma` and the served binding recomputed).
 - `LocalLlamaEmbeddings` (`local_models.py`) is a thin LangChain-style shim: `embed_query → runtime.embed(text)`, `embed_documents → runtime.embed_batch(texts)`; the runtime enforces "one heavy GGUF resident at a time" ([12](12-local-models-and-inference.md)).
 
 ## 7. Embedding-dimension synchronisation & the fail-closed rule
@@ -355,14 +359,25 @@ Rationale in code: avoid "split-brain cores@1024 + contexts@768". Recreation is 
 
 ### 7.4 What happens on a model switch
 
-`save_selection` logs `"Embed model changed A → B (dims X → Y). Qdrant collections were resized; re-ingest notes so vectors match."` — but per §7.2 they are only resized if empty. With existing data the log line is optimistic: collections stay at the old size, the ERROR from `_ensure_collections` fires on every service construction, and every ingest fails with the `ValueError` until the user resets the KB's ingestion data. Vectors from different models are never mixed.
+`save_selection` logs `"Embed model changed A → B (dims X → Y). Qdrant collections were resized; re-ingest notes so vectors match."` — but per §7.2 they are only resized if empty. With existing data, collections stay at the old size and the ERROR from `_ensure_collections` fires; the rebuild below then fixes them at startup without a re-ingest. Vectors from different models are never mixed.
+
+**Startup rebuild** (`main._rebuild_vectors`, after `sync_embedding_infrastructure`): clears `vectors_ready`, calls `switch_to_default_embedder()` (moves a set-up install whose `embed_id != EMBED_DEFAULT` to EmbeddingGemma 2, 768 dims; doc 12 §9.4), then per KB `kb.qdrant.reembed(embedding_service.embed_documents, progress)`, and sets `vectors_ready` in `finally`.
+
+`vectors_ready` (module-level `threading.Event`, set by default): `hybrid_search` and ingestion's `_process_note` wait on it, so nothing queries or writes a collection of the other size mid-rebuild.
+
+`QdrantService.reembed(embed, progress=None) -> int` (points rewritten):
+- Picks every collection (cores, rels, contexts, passages) whose vector size ≠ `EMBEDDING_DIMENSIONS`, plus any with a leftover dump file; scrolls all its points (payloads, no vectors).
+- Text per point (`_reembed_text`, as each writer embeds it): rels → `natural_language`; contexts and passages → `content`; cores → `name` for `type == "document"`, else `description` or `name`. Points with no text are dropped.
+- Embeds in batches of 64, writing `{id, payload, vector}` lines to `DATA_DIR/reembed/<collection>.jsonl.partial`, renamed to `.jsonl` when complete; only then drops the collection, recreates it at the new size (COSINE), upserts from the file and deletes it. An interrupted run resumes from the file on the next start.
+- `progress(done, total)` across all stale collections → `maintenance-status.vectors` (doc 07), Activity "Rebuilding search index n/total".
+- No LLM calls, no re-ingest; Kuzu and Meilisearch untouched. Raises `RuntimeError("Qdrant unavailable: vectors not rebuilt")` without a client; `_rebuild_vectors` logs it and retries next start.
 
 ## 8. Lifecycle: KB create / delete / empty / reset
 
 | Event | Qdrant | Meilisearch | Code |
 |---|---|---|---|
 | **Backend import** | default `QdrantService()` constructed → `_ensure_collections` for `node_cores`/`node_relationships`/`node_isolated_contexts` | default `MeilisearchService()` → `orb_nodes` index + settings | module singletons |
-| **Startup** | `sync_embedding_infrastructure()` → `ensure_vector_size` on default + every registered KB (constructs a temporary `QdrantService` per KB, which itself runs `_ensure_collections`) | untouched | `main.startup_event` |
+| **Startup** | `sync_embedding_infrastructure()` → `ensure_vector_size` on default + every registered KB (constructs a temporary `QdrantService` per KB, which itself runs `_ensure_collections`); then `_rebuild_vectors` → `reembed` per KB (§7.4) | untouched | `main.startup_event` |
 | **KB create** | `KBRegistry.create_kb` → `_build_context` → `QdrantService(col_cores=…, col_relationships=…, col_contexts=…)` → collections created immediately | `MeilisearchService(index_name=f"{slug}_nodes")` → index + settings created immediately | `kb_registry.py` |
 | **KB load at startup** | `_load` → `_build_context` per row (collections re-ensured) | same | `kb_registry.py` |
 | **KB delete** | `_cleanup_stores`: temporary `QdrantService` then `client.delete_collection` ×4 (cores, rels, contexts, passages), errors ignored (pass `create_collections=False` so the constructor does not first re-create the collections it is about to delete; `kb_registry.py` does not yet) | `client.delete_index` + `wait_for_task(…, 10000)` for the node index and `<index>_passages` | `KBRegistry.delete_kb(wipe_indexes=True)` |
@@ -374,7 +389,7 @@ Rationale in code: avoid "split-brain cores@1024 + contexts@768". Recreation is 
 | **Note re-ingest** | `delete_relationships(ids of edges no other note restated)`; `delete_node(orphan_id)` for entities only this note kept alive; `delete_note_contexts(note_id)` | `delete_node` per orphan; re-indexed nodes rewritten | `_write_ontology`, `_update_neighborhoods` |
 | **Community rebuild** | `delete_community_relationships()`; `delete_node(old_cid)`; new cores + rels | `delete_node(old_cid)`; `index_node` per community; `update_nodes_community` batch | `rebuild_leiden_communities` |
 | **Digest rebuild** | `delete_node(old_did)`; `upsert_node_core` | `delete_node`; `index_node` | `build_temporal_digests` |
-| **Model change** | §7 | untouched | `save_selection` |
+| **Model change** | §7; rebuilt from stored text at next start | untouched | `save_selection`, `switch_to_default_embedder` |
 
 Neither store has a notion of KB besides the name prefix; nothing prevents two KBs with the same slug from sharing collections, but slugs are unique in SQLite (`slug TEXT NOT NULL UNIQUE`).
 
@@ -387,8 +402,8 @@ Neither store has a notion of KB besides the name prefix; nothing prevents two K
 | `QDRANT_COLLECTION_NODE_CORES` / `_NODE_RELATIONSHIPS` / `_NODE_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | default-KB collection names (persisted into the registry row on first run; changing env later does not rename) |
 | `EMBEDDING_DIMENSIONS` | `1024` | vector size for new collections and the `_prepare_vector` guard; **overwritten at runtime** by the models manifest / probe / `sync_embedding_infrastructure` |
 | `EMBEDDING_PROVIDER` | `local` | must be `local`/`auto`/empty (or deprecated `ollama`/`lm_studio`); anything else aborts startup |
-| `EMBEDDING_MODEL` | `local-embed` | display/`is_qwen3` detection (`"qwen3"` substring → instruction prefix); set to the catalog id by `sync_embedding_infrastructure` |
-| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `min_score` for every collection search |
+| `EMBEDDING_MODEL` | `local-embed` | display/`is_qwen3`/`is_gemma` detection (prompt prefixes), `served_embedder`, `vector_threshold`; set to the catalog id by `sync_embedding_infrastructure` |
+| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `min_score` for every collection search when the embedder has no `vector_threshold` (EmbeddingGemma 2: 0.69) |
 | `MEILI_HOST` / `MEILI_PORT` | `127.0.0.1` / `7700` | client URL; desktop injects port **17470** (`ORB_MEILI_PORT`) |
 | `MEILI_MASTER_KEY` | `orb-dev-key` | API key; desktop supplies the persisted/random key |
 | `MEILI_INDEX_NAME` | `orb_nodes` | default-KB index uid |
@@ -437,7 +452,7 @@ None of these are in `runtime_config.MUTABLE_KEYS` (`provider, model, base_url` 
 8. **Meilisearch documents are whole-document replaces**; always read-modify-write when updating a subset of fields (as `update_nodes_community` does).
 9. **Every Meili write waits for its task** so the next read is consistent; keep the `wait_for_task` calls.
 10. **Only the local GGUF embedding provider exists.** `EMBEDDING_PROVIDER` other than local/auto is a startup error by design.
-11. **Documents are embedded without instruction; queries with (Qwen3 only).** Keep the asymmetry; do not prefix documents.
+11. **Qwen3: documents are embedded without instruction, queries with. EmbeddingGemma: both get the model card's task prompt.** Keep each model's convention; `reembed` goes through `embed_documents`, so rebuilt vectors carry the same document prompt.
 12. **Store work runs off the event loop** (`asyncio.to_thread`) — both clients are synchronous.
 13. Pins: `qdrant-client==1.17.1`, `meilisearch==0.34.1` (`query_points`, `FilterSelector`, `wait_for_task(timeout_in_ms=…)` APIs are version-specific).
 

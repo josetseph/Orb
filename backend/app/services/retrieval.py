@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import List
 
 from app.core.config import settings
+from app.services.model_catalog import vector_threshold
 from app.core.log import get_logger
 from app.services.graph import GraphService, graph_service
 from app.services.qdrant_service import QdrantService, qdrant_service
@@ -660,7 +661,7 @@ class RetrievalService:
         # The reranker re-scores all candidates — use the lower pre-rerank
         # threshold so borderline-but-relevant nodes aren't discarded before
         # the reranker even sees them.
-        _threshold = settings.VECTOR_PRE_RERANK_THRESHOLD
+        _threshold = vector_threshold(settings.EMBEDDING_MODEL)
         _contexts_filter: Filter | None = None
         _period_key_filter: str | None = None
         _day_only: bool = False
@@ -920,6 +921,10 @@ class RetrievalService:
 
         Returns node summaries as primary evidence, not chunked note snippets.
         """
+        from app.services.qdrant_service import vectors_ready
+
+        # A new embedder's vectors are being rebuilt: the query vector would not match the stored ones.
+        await asyncio.to_thread(vectors_ready.wait)
         from app.services.embedding import embedding_service
 
         logger.info(
@@ -1324,7 +1329,7 @@ class RetrievalService:
         # candidates (the reranker scores the union, so there are no fusion weights to tune).
         # ponytail: no date filter on passages; add note_created_at to their payload if dated queries need it.
         passage_hits = await asyncio.to_thread(
-            self._qdrant.search_passages, full_vector, 500, settings.VECTOR_PRE_RERANK_THRESHOLD
+            self._qdrant.search_passages, full_vector, 500, vector_threshold(settings.EMBEDDING_MODEL)
         )
         seen_passages = {(h["note_id"], h["index"]) for h in passage_hits}
         for hit in await asyncio.to_thread(self._meili.search_passages, query, 50):

@@ -11,8 +11,10 @@ import time
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.api.deps import get_kb
+from app.core.database import AsyncSessionLocal
 from app.core.log import get_logger
 from app.schemas.chat import ChatInput, CreateConversationInput
+from app.services import jobs
 from app.services.ai_gate import require_ai
 from app.services.chat_store import chat_store
 from app.services.firefly_service import firefly_service
@@ -44,7 +46,6 @@ def _get_status(request_id: str, default: dict) -> dict:
     _prune()
     return _chat_status[request_id][1] if request_id in _chat_status else default
 _chat_job_lock = asyncio.Lock()
-_chat_tasks: set[asyncio.Task] = set()
 
 
 async def _answer_chat_query(
@@ -115,12 +116,13 @@ async def delete_chat_conversation(
     return {"status": "deleted", "conversation_id": conversation_id}
 
 
-async def _run_chat_job(
+async def _run_chat_job(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request_id: str,
     query: str,
     kb: KBContext,
     conversation_id: str,
     history: list[dict],
+    resumed: bool = False,
 ) -> None:
     """Run a long chat request after the browser has received a request id."""
     from app.schemas.chat import ChatTurn
@@ -137,7 +139,9 @@ async def _run_chat_job(
             "conversation_id": conversation_id,
         })
 
-    _progress("Starting chat request")
+    _progress("Resuming answer" if resumed else "Starting chat request")
+    if resumed and await chat_store.has_reply(conversation_id, request_id):
+        return  # the reply was saved just before the app stopped
     try:
         result = await _answer_chat_query(query, kb, history_turns, _progress)
         assistant = await chat_store.add_message(
@@ -149,6 +153,7 @@ async def _run_chat_job(
                 "rewritten_query": result.get("rewritten_query"),
                 "context_count": len(result.get("context") or []),
                 "sources": result.get("sources") or [],
+                "request_id": request_id,
             },
         )
         result["request_id"] = request_id
@@ -170,14 +175,16 @@ async def _run_chat_job(
             "conversation_id": conversation_id,
             "error": str(exc) or exc.__class__.__name__,
         })
+        raise  # the job records the failure
 
 
-async def _run_chat_job_serialized(
+async def _run_chat_job_serialized(  # pylint: disable=too-many-arguments,too-many-positional-arguments
     request_id: str,
     query: str,
     kb: KBContext,
     conversation_id: str,
     history: list[dict],
+    resumed: bool = False,
 ) -> None:
     """Run chat on the app event loop (same loop as AsyncSessionLocal)."""
     if _chat_job_lock.locked():
@@ -190,7 +197,7 @@ async def _run_chat_job_serialized(
             "conversation_id": conversation_id,
         })
     async with _chat_job_lock:
-        await _run_chat_job(request_id, query, kb, conversation_id, history)
+        await _run_chat_job(request_id, query, kb, conversation_id, history, resumed)
         # Messages that just left the history window get folded into the
         # running summary. After the answer is out, so nobody waits on it.
         try:
@@ -225,17 +232,18 @@ async def start_chat(
         "done": False,
         "conversation_id": conversation_id,
     })
-    task = asyncio.create_task(
-        _run_chat_job_serialized(
+    # Written down before any retrieval: a quit or crash mid-answer resumes it.
+    async with AsyncSessionLocal() as session:
+        await jobs.enqueue(
+            session,
+            jobs.ANSWER,
+            kb.kb_id,
             request_id,
-            body.query,
-            kb,
-            conversation_id,
-            history_payload,
+            jobs.input_hash(conversation_id, body.query),
+            payload={"conversation_id": conversation_id, "query": body.query, "history": history_payload},
         )
-    )
-    _chat_tasks.add(task)
-    task.add_done_callback(_chat_tasks.discard)
+        await session.commit()
+    jobs.wake()
     return {
         "request_id": request_id,
         "conversation_id": conversation_id,
@@ -248,7 +256,63 @@ async def start_chat(
 @router.get("/api/v1/chat/status/{request_id}")
 async def get_chat_status(request_id: str):
     """Return current progress for a non-streaming chat request."""
+    if request_id not in _chat_status:
+        # Not run by this process (it was restarted): the job row says where it stands.
+        job = await jobs.get(jobs.ANSWER, request_id)
+        if job is not None:
+            cid = (job.payload or {}).get("conversation_id")
+            if job.state in jobs.ACTIVE:
+                status = {"stage": "Resuming answer", "model": None, "done": False, "conversation_id": cid}
+            elif job.state == "done":
+                status = {"stage": "Complete", "model": None, "done": True, "conversation_id": cid,
+                          "result": {"conversation_id": cid}}
+            else:
+                status = {"stage": "Failed", "model": None, "done": True, "conversation_id": cid,
+                          "error": job.last_error or job.state}
+            return {"request_id": request_id, **status}
     return {
         "request_id": request_id,
         **_get_status(request_id, {"stage": "Waiting", "model": None, "done": False}),
     }
+
+
+@router.get("/api/v1/chat/conversations/{conversation_id}/pending")
+async def get_pending_answer(conversation_id: str, kb: KBContext = Depends(get_kb)):
+    """The answer still being written in this conversation, if any — to follow after a reopen."""
+    job = await jobs.active_for(jobs.ANSWER, kb.kb_id, "conversation_id", conversation_id)
+    return {"request_id": job.target_id if job else None}
+
+
+def prepare_answer(job):
+    """The job worker's entry for an answer: its model calls are saved as it goes, so a
+    resume replays the finished agent-loop steps instead of paying for them again. If the
+    notes changed meanwhile the prompts differ, nothing replays, and it simply starts over."""
+    from app.services import ingestion_checkpoint
+    from app.services.kb_registry import kb_registry
+
+    kb = kb_registry.get_kb(job.kb_id)
+    payload = job.payload or {}
+    if kb is None or not payload.get("query"):
+        return None
+    key = (job.kb_id, jobs.memo_key(job.kind, job.target_id))
+
+    async def run() -> str:
+        ingestion_checkpoint.activate(*key)
+        try:
+            await _run_chat_job_serialized(
+                job.target_id,
+                payload["query"],
+                kb,
+                payload["conversation_id"],
+                payload.get("history") or [],
+                resumed=job.attempts > 1,
+            )
+        except asyncio.CancelledError:
+            raise  # shutdown: the saved calls are what the resume replays
+        except BaseException:
+            ingestion_checkpoint.clear(*key)  # a retry is a new question
+            raise
+        ingestion_checkpoint.clear(*key)
+        return "done"
+
+    return run

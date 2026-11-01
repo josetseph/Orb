@@ -232,13 +232,13 @@ Full shapes in [07 §Notes](07-api-reference.md#notes-apinotespy-plus-reingest-v
 | Route | File | SQLite | `note_links` | Graph/indexes | Ingestion |
 |---|---|---|---|---|---|
 | `POST /api/v1/notes` (`CreateNoteInput {title?, content, created_at?, folder?}`) | `persist_note_body` → new `.md` at `unique_md_path(title, folder)` | new row: `id=uuid4`, `content=""`, `processed=False`, `processing_stage="Saved"`, `title` (blank → NULL), `created_at` parsed | `refresh_note_links` from the body | none | none |
-| `POST /api/v1/ingest` (legacy `NoteInput {content, created_at?, title?, skip_ingestion?}`) | as above, root folder, filename from `title` or `Untitled` | `processing_stage="Queued for ingestion"` (or `Saved`) | refreshed | none yet | background `process_note` unless `skip_ingestion`; `require_ai()` |
+| `POST /api/v1/ingest` (legacy `NoteInput {content, created_at?, title?, skip_ingestion?}`) | as above, root folder, filename from `title` or `Untitled` | `processing_stage="Queued for ingestion"` (or `Saved`) | refreshed | none yet | `ingest_note` job (same commit) unless `skip_ingestion`; `require_ai()` |
 | `GET /api/v1/notes` | reads every body (in a thread) | `sync_vault_notes` first (unless `sync_vault=false`) | none | none | none |
 | `GET /api/v1/notes/{id}` / `/status` | body read / none | none | none | none | none |
 | `PUT /api/v1/notes/{id}` (`CreateNoteInput`) | `persist_note_body` (title passed through) → `rename_note_file_for_title` if `title` present → file may move | `title`, `created_at` (if given), `updated_at=now`, watcher stages reset to `Saved` (unprocessed notes only; `Queued*`/`Starting*` kept) | refreshed from the new body | none (**never re-ingests**) | none |
 | `POST /api/v1/notes/{id}/move` (`{folder}`) | `move_note_to_folder` | `rel_path` | not refreshed (bodies of other notes rewritten) | none | none |
-| `POST /api/v1/notes/{id}/ingest` | none | `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None` | none | by the pipeline | background `process_note(NoteInput(content=note_body, created_at, title), note_id)`; `require_ai()` |
-| `POST /api/v1/notes/reingest-vault` | bodies read in a thread | all notes of the KB → `Queued for vault re-ingest` | none | by the pipeline | one background task per note |
+| `POST /api/v1/notes/{id}/ingest` | none | `processed=False, failed=False, processing_stage="Queued for ingestion", processing_model=None` | none | by the pipeline | `ingest_note` job in the same commit (`jobs.enqueue_ingest`; the worker calls `process_note(NoteInput(content=note_body, created_at, title), note_id)`, [10](10-ingestion-pipeline.md) §4.5); `require_ai()` |
+| `POST /api/v1/notes/reingest-vault` | bodies read in a thread | all notes of the KB → `Queued for vault re-ingest` | none | by the pipeline | one `ingest_note` job per note, committed with the stages |
 | `DELETE /api/v1/notes/{id}` / `POST /api/v1/notes/batch-delete {ids}` (≤100) | see 7.1 | see 7.1 | see 7.1 | see 7.1 | none |
 
 Handlers filter by `Note.kb_id == kb.kb_id` (a note id from another KB is a 404), except `move_note` which loads by id and then compares `kb_id`.
@@ -442,12 +442,12 @@ Phantom nodes are deduped by `missing:<raw target_title>` (case-sensitive raw te
 |---|---|
 | `processed` | `True` only by `IngestionWorkflow._mark_note_processed`. Reset to `False` by: `POST /notes/{id}/ingest`, `reingest-vault`, `admin/reset-ingestion-data`, `admin/reingest-all`, and the **vault watcher** on external modification of a processed note. |
 | `failed` | `True` only by `_mark_note_failed`; cleared by the same resets and by `_mark_note_processed`. |
-| `processing_stage` | Free text shown in the UI. Writers: routes — `"Saved"` (create, autosave reset, watcher new file), `"Queued for ingestion"` (ingest), `"Queued for vault re-ingest"`; watcher — `"Changed on disk — re-ingest when ready"`, `"External delete detected — review in Orb"`; pipeline via `_update_note_processing_status(stage, model)` — per-phase strings (e.g. multimedia/extraction/indexing phases, `Starting…`), then `"Ingestion complete"` or `"Ingestion failed"`. |
+| `processing_stage` | Free text shown in the UI. Writers: routes — `"Saved"` (create, autosave reset, watcher new file), `"Queued for ingestion"` (ingest), `"Queued for vault re-ingest"`; watcher — `"Changed on disk — re-ingest when ready"`, `"External delete detected — review in Orb"`; pipeline via `_update_note_processing_status(stage, model)` — per-phase strings (e.g. multimedia/extraction/indexing phases, `Starting…`, or `"Queued to resume"` / `"Resuming ingestion"` for a job resumed after a restart), then `"Ingestion complete"` or `"Ingestion failed"`; startup — `"Ingestion failed (interrupted repeatedly)"` (job given up after 3 interrupted attempts), `"Ingestion failed (interrupted)"` (mid-pipeline with no job); cancel of a still-queued job — `"Saved"`. |
 | `processing_model` | Set together with the stage by the pipeline to the in-process model name currently running; `None` at rest, on queue, on completion and on failure. |
 
 Derived `status` in `GET /api/v1/notes/{id}/status`: `completed` if `processed`, else `failed` if `failed`, else `processing` (so an un-ingested `Saved` note reports `processing` — the UI must look at `processing_stage`).
 
-Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and never touches stages starting with `Queued`/`Starting` (a queued ingest must not be relabelled `Saved` by autosave); the watcher likewise leaves `Queued*`/`Starting*` alone. Pipeline writes go through a separate `AsyncSessionLocal` session per update (`_update_note_fields`), so they interleave with request sessions at the SQLite level.
+Ordering guards: `PUT` only rewrites the stage for **unprocessed** notes and never touches stages starting with `Queued`/`Starting` (a queued ingest must not be relabelled `Saved` by autosave); the watcher leaves the stage alone while the note has an active (`queued`/`running`) job (`jobs.has_active_sync`). Pipeline writes go through a separate `AsyncSessionLocal` session per update (`_update_note_fields`), so they interleave with request sessions at the SQLite level.
 
 ## 14. Invariants and locked decisions
 

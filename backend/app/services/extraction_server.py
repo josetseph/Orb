@@ -127,9 +127,14 @@ def _free_port() -> int:
 
 
 class ExtractionServer:
-    """One llama-server process; ``url_for`` starts it (or swaps its model) on demand."""
+    """One llama-server process; ``url_for`` starts it (or swaps its model) on demand.
 
-    def __init__(self) -> None:
+    ``embedding``: the embedder's own server instead (EmbeddingGemma 2, which
+    llama-cpp-python cannot load), one slot, embeddings endpoint only.
+    """
+
+    def __init__(self, embedding: bool = False) -> None:
+        self._embedding = embedding
         self._lock = threading.Lock()
         self._proc: subprocess.Popen | None = None
         self._model: Path | None = None
@@ -146,7 +151,7 @@ class ExtractionServer:
 
     @property
     def _pid_file(self) -> Path:
-        return Path(settings.DATA_DIR) / "llama-server.pid"
+        return Path(settings.DATA_DIR) / ("llama-server-embed.pid" if self._embedding else "llama-server.pid")
 
     def url_for(self, gguf: Path) -> str:
         """The base URL of a server running ``gguf``; blocks while it loads."""
@@ -174,6 +179,15 @@ class ExtractionServer:
 
         exe = binary()
         self._port = _free_port()
+        if self._embedding:
+            slots = 1
+            cmd = [
+                str(exe), "-m", str(gguf), "--host", "127.0.0.1", "--port", str(self._port), "-ngl", "999",
+                # The whole input in one micro-batch: a non-causal model cannot split a text across batches.
+                "--embedding", "-np", "1", "-c", str(settings.EMBED_N_CTX),
+                "-b", str(settings.EMBED_N_CTX), "-ub", str(settings.EMBED_N_CTX), "--no-webui",
+            ]
+            return self._launch(exe, gguf, slots, cmd)
         slots = self.slots
         cmd = [
             str(exe), "-m", str(gguf), "--host", "127.0.0.1", "--port", str(self._port),
@@ -191,7 +205,10 @@ class ExtractionServer:
         mmproj = find_mmproj(gguf)
         if mmproj:
             cmd += ["--mmproj", str(mmproj)]  # image descriptions, without a second copy of the model
-        log = Path(settings.DATA_DIR) / "logs" / "llama-server.log"
+        return self._launch(exe, gguf, slots, cmd)
+
+    def _launch(self, exe: Path, gguf: Path, slots: int, cmd: list[str]) -> None:
+        log = Path(settings.DATA_DIR) / "logs" / ("llama-server-embed.log" if self._embedding else "llama-server.log")
         log.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Starting llama-server: %s, %d slots", gguf.name, slots)
         with open(log, "ab") as out:
@@ -261,6 +278,7 @@ class ExtractionServer:
 
 
 extraction_server = ExtractionServer()
+embedding_server = ExtractionServer(embedding=True)
 
 
 def _gguf_for(model: str | None) -> Path:

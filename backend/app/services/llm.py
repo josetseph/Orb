@@ -8,6 +8,7 @@ from typing import Optional
 
 from app.core.config import settings
 from app.core.log import get_logger
+from app.services import ingestion_checkpoint as checkpoint
 from app.services.credentials import (
     InvalidEndpointError,
     credentials,
@@ -245,11 +246,44 @@ class LLMService:
 
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
-    def _chat(  # pylint: disable=too-many-locals,too-many-branches
+    def _chat(
         self,
         messages: list[dict],
         *,
         model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        ingestion: bool = False,
+        json_mode: bool = False,
+    ) -> tuple[str, dict]:
+        """``_complete``, saved inside an ingestion so a retry replays it (ingestion_checkpoint).
+        An empty reply is a failure and is never saved."""
+        provider = self.ingestion_provider if ingestion else self.provider
+        model = model or (self.get_ingestion_model() if ingestion else self.get_chat_model())
+        text, meta = checkpoint.memo(
+            "llm",
+            checkpoint.chat_parts(provider, model, messages, temperature, max_tokens, json_mode),
+            lambda: list(
+                self._complete(
+                    messages,
+                    provider=provider,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    ingestion=ingestion,
+                    json_mode=json_mode,
+                )
+            ),
+            keep=lambda reply: bool(reply[0]),
+        )
+        return text, meta
+
+    def _complete(  # pylint: disable=too-many-locals,too-many-branches
+        self,
+        messages: list[dict],
+        *,
+        provider: str,
+        model: str,
         temperature: float | None = None,
         max_tokens: int | None = None,
         ingestion: bool = False,
@@ -267,8 +301,6 @@ class LLMService:
         can (OpenAI-style ``response_format``, Gemini ``response_mime_type``,
         llama.cpp's JSON grammar). Replies are parsed as written: one that is not valid JSON for its schema fails.
         """
-        provider = self.ingestion_provider if ingestion else self.provider
-        model = model or (self.get_ingestion_model() if ingestion else self.get_chat_model())
         system = "\n\n".join(m["content"] for m in messages if m["role"] == "system")
         user = "\n\n".join(m["content"] for m in messages if m["role"] == "user")
         if json_mode and "JSON" not in system + user:
@@ -1020,10 +1052,17 @@ class LLMService:
         projector, or a cloud endpoint through its image input. A text-only
         model raises with a message naming the fix.
         """
-        from app.services.multimedia import image_data_url
-
         model = self.get_ingestion_model()
         provider = getattr(self, "ingestion_provider", self.provider)
+        return checkpoint.memo(
+            "image",
+            [provider, model, self.IMAGE_DESCRIBE_PROMPT, checkpoint.file_digest(image_path)],
+            lambda: self._describe_image(image_path, provider, model),
+        )
+
+    def _describe_image(self, image_path: str, provider: str, model: str | None) -> str:
+        from app.services.multimedia import image_data_url
+
         prompt = self.IMAGE_DESCRIBE_PROMPT
         data_url = image_data_url(image_path)
         logger.info(

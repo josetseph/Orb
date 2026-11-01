@@ -30,7 +30,7 @@ This slice does **not** own (only consumes):
 
 | Path | Purpose | Key exports |
 |---|---|---|
-| `backend/app/api/chat.py` | FastAPI router: conversations CRUD, `POST /api/v1/chat/async`, `GET /api/v1/chat/status/{request_id}`; in-memory job registry (bounded) and global job lock | `router`, `_chat_status: OrderedDict[str, (written_at, dict)]`, `_set_status`, `_get_status`, `_prune`, `_chat_job_lock: asyncio.Lock`, `_chat_tasks: set[asyncio.Task]`, `_answer_chat_query`, `_run_chat_job`, `_run_chat_job_serialized` |
+| `backend/app/api/chat.py` | FastAPI router: conversations CRUD, `POST /api/v1/chat/async`, `GET /api/v1/chat/status/{request_id}`; in-memory job registry (bounded) and global job lock | `router`, `_chat_status: OrderedDict[str, (written_at, dict)]`, `_set_status`, `_get_status`, `_prune`, `_chat_job_lock: asyncio.Lock`, `_answer_chat_query`, `prepare_answer` (job-worker entry), `get_pending_answer`, `_run_chat_job`, `_run_chat_job_serialized` |
 | `backend/app/api_desktop.py` (chat export section) | `GET /api/v1/chat/conversations/{conversation_id}/export` (markdown/json) — **currently broken**, see §4.6 | `export_chat` |
 | `backend/app/schemas/chat.py` | Pydantic wire schemas | `ChatTurn{role,content}`, `CreateConversationInput{title?}`, `ChatInput{query(min 1), request_id?, conversation_id?}` |
 | `backend/app/models/chat.py` | SQLAlchemy ORM models | `ChatConversation`, `ChatMessage` |
@@ -58,7 +58,7 @@ sequenceDiagram
     participant UI as chat-context.tsx
     participant API as api/chat.py
     participant CS as chat_store (SQLite)
-    participant JOB as _run_chat_job_serialized (asyncio.Task)
+    participant JOB as job worker → prepare_answer → _run_chat_job_serialized
     participant WF as ChatWorkflow
     participant RS as RetrievalService
     participant LLM as llm_service
@@ -68,11 +68,12 @@ sequenceDiagram
     API->>CS: get_recent_history(conversation_id) (≤ CHAT_HISTORY_MAX_MESSAGES, excludes the new turn)
     API->>CS: add_message(user, query); maybe_set_title_from_first_message
     API->>API: _chat_status[request_id] = {stage:"Queued", done:false, conversation_id}
+    API->>API: jobs.enqueue(answer, request_id, payload{conversation_id, query, history}) + commit, jobs.wake()
     API-->>UI: {request_id, conversation_id, stage:"Queued", done:false}
-    API->>JOB: asyncio.create_task(...)
+    JOB->>JOB: ingestion_checkpoint.activate(kb, "answer-<16 hex>")
     JOB->>JOB: if _chat_job_lock.locked(): stage "Waiting for current chat to finish"
     JOB->>JOB: async with _chat_job_lock
-    JOB->>API: stage "Starting chat request"
+    JOB->>API: stage "Starting chat request" ("Resuming answer" after a restart)
     JOB->>WF: _answer_chat_query → finance? : ChatWorkflow.chat(query, history, progress)
     WF->>LLM: rewrite_follow_up_query(history, query)  (sync, no stage emitted)
     WF->>RS: retrieve_with_iterative_loop(rewritten, top_k=50, progress, history)
@@ -137,8 +138,9 @@ All chat routes except `status` and `export` take the `kb` query parameter via `
 | POST | `/api/v1/chat/conversations` | kb | `chat_store.create_conversation(kb_id, title)`; body `{title?}` optional |
 | GET | `/api/v1/chat/conversations/{id}/messages` | kb | 404 if conversation missing/deleted/other KB; else all messages ascending by `created_at` |
 | DELETE | `/api/v1/chat/conversations/{id}` | kb | Soft delete (`deleted_at = now`); 404 if no row matched; returns `{"status":"deleted","conversation_id"}` |
-| POST | `/api/v1/chat/async` | kb + `require_ai()` | Persists the user turn, registers a job, returns immediately |
-| GET | `/api/v1/chat/status/{request_id}` | none | Reads `_chat_status[request_id]`; unknown id → `{"stage":"Waiting","model":null,"done":false}` |
+| POST | `/api/v1/chat/async` | kb + `require_ai()` | Persists the user turn, writes an `answer` job row, returns immediately |
+| GET | `/api/v1/chat/status/{request_id}` | none | Reads `_chat_status[request_id]`; not there → the `answer` job row (after a restart); neither → `{"stage":"Waiting","model":null,"done":false}` |
+| GET | `/api/v1/chat/conversations/{id}/pending` | kb | `{request_id}` of the conversation's queued/running `answer` job, or `null` (§4.4) |
 | GET | `/api/v1/chat/conversations/{id}/export?format=markdown\|json` | none (desktop router) | Broken (500) — see §4.6 |
 
 `require_ai(kb)` (`services/ai_gate.py`) raises **503** `{"error":"ai_not_configured","message":...}` unless AI is usable. Resolution order: if the KB pins its own `llm_provider` (per-KB LLM override, see §5.5), the gate passes iff that provider is configured (`provider_is_configured`: local → chat+embed GGUFs on disk; `openai_compat` → the KB's own `llm_base_url` (or the system one) is non-empty; other cloud → its API key set). Otherwise the gate asks whether anything is reachable at all: chat+embed GGUFs on disk, **or** any cloud provider key in the credential store, **or** a non-empty `LLM_BASE_URL`.
@@ -160,7 +162,9 @@ Removed (2026-09-20): it bypassed `_chat_job_lock` and never set `done`, and the
 
 **Job registry.** `_chat_status` is a module-level `OrderedDict` keyed by `request_id`, holding `(written_at, entry)`. Entries are written through `_set_status` by `start_chat`, `_run_chat_job_serialized` and `_run_chat_job`, read through `_get_status` by `get_chat_status`; both call `_prune()`, which pops the oldest entries while there are more than 200 or the oldest is older than 1800 s. The final `"Complete"` entry embeds the whole `result` (including `context` docs with `original_obj` payloads), so a finished job's result disappears from `chat/status` after 30 minutes or 200 newer jobs.
 
-**Task lifetime.** `start_chat` does `task = asyncio.create_task(_run_chat_job_serialized(...))`, adds it to `_chat_tasks` (a strong-reference set so the task is not garbage-collected mid-flight) and removes it via `add_done_callback(_chat_tasks.discard)`. The job runs on the **app event loop** — the same loop as `AsyncSessionLocal` — which is why it is a task and not a thread (the docstring: "Run chat on the app event loop (same loop as AsyncSessionLocal)"). Commit `4408a72` originally ran jobs in a threadpool; this was changed when SQLite/aiosqlite sessions needed to stay on one loop.
+**Job lifetime.** `start_chat` writes the answer down before any retrieval: `jobs.enqueue(session, "answer", kb_id, request_id, input_hash(conversation_id, query), payload={"conversation_id", "query", "history"})`, commits, `jobs.wake()` ([10](10-ingestion-pipeline.md) §4.5). The job worker calls `prepare_answer(job)`, whose `run()` activates `ingestion_checkpoint` under `DATA_DIR/ingestion_cache/<kb>/answer-<16 hex>/` and awaits `_run_chat_job_serialized(request_id, query, kb, conversation_id, history, resumed=job.attempts > 1)`. Every `LLMService._chat` call of the answer (rewrite, query analysis, each `iterative_step`, summary) is saved there; a quit or crash mid-answer leaves the row `running`, `jobs.recover` queues it at the next start and the resumed run replays the finished calls (if the notes changed meanwhile the prompts differ, nothing replays, and it starts over). On success or failure the folder is cleared; `_run_chat_job` re-raises a failure so the row records `failed`; a shutdown (`CancelledError`) keeps the folder for the resume. The job runs on the **app event loop** — the same loop as `AsyncSessionLocal` — which is why it is a task and not a thread (the docstring: "Run chat on the app event loop (same loop as AsyncSessionLocal)"). Commit `4408a72` originally ran jobs in a threadpool; this was changed when SQLite/aiosqlite sessions needed to stay on one loop.
+
+**After a restart.** `_chat_status` is empty, so `get_chat_status` answers a `request_id` from `jobs.get("answer", request_id)`: active → `{stage: "Resuming answer", done: false}`; `done` → `{stage: "Complete", done: true, result: {conversation_id}}` (no answer text: the client reloads the stored messages); else `{stage: "Failed", done: true, error: last_error or state}`. `GET /api/v1/chat/conversations/{id}/pending` (`jobs.active_for("answer", kb_id, "conversation_id", id)`) returns the `request_id` of an answer still being written, so the UI can follow it when the conversation is reopened (§13.2).
 
 **Serialisation.** `_chat_job_lock = asyncio.Lock()` is process-global: **at most one async chat job executes at a time across all KBs.** If the lock is already held when a job starts, the job first publishes stage `"Waiting for current chat to finish"` and then awaits the lock. There is no queue position, no fairness guarantee beyond `asyncio.Lock`'s FIFO wakeups, and no timeout.
 
@@ -179,7 +183,7 @@ Terminal states:
 
 `get_chat_status` returns `{"request_id": ..., **entry}`. The frontend treats `done && error` as failure and `done && !error` as success, reading only `result.answer`, `result.thinking`, `result.conversation_id`.
 
-**Cancellation and timeouts.** There are none on the backend: no cancel endpoint, no per-stage timeout, no deadline on the LLM calls. The frontend gives up after `POLL_MAX_ATTEMPTS = 600` polls (~10 minutes) or 8 consecutive polling errors, but the backend job keeps running to completion and will still persist the assistant message. Reloading the page mid-job likewise leaves the job running; the answer shows up in the conversation once `getChatMessages` is refetched.
+**Cancellation and timeouts.** There are none on the backend: no cancel endpoint for answers, no per-stage timeout, no deadline on the LLM calls (`jobs.cancel(kb, request_id, kind="answer")` exists but no route calls it). The frontend gives up after `POLL_MAX_ATTEMPTS = 600` polls (~10 minutes) or 8 consecutive polling errors, but the backend job keeps running to completion and will still persist the assistant message. Reloading the page mid-job likewise leaves the job running; reopening the conversation follows it again through `/pending`.
 
 ### 4.5 Stage strings, in emission order
 
@@ -189,7 +193,7 @@ The progress callback signature is `(stage: str, model: str | None) -> None`. St
 |---|---|---|---|
 | 1 | `Queued` | null | `start_chat` |
 | 2 | `Waiting for current chat to finish` | null | `_run_chat_job_serialized` (only if lock held) |
-| 3 | `Starting chat request` | null | `_run_chat_job` (the follow-up rewrite LLM call happens under this stage — no stage of its own) |
+| 3 | `Starting chat request` (`Resuming answer` when the job resumed after a restart) | null | `_run_chat_job` (the follow-up rewrite LLM call happens under this stage — no stage of its own) |
 | 3a | `Checking finance data and notes` | – | `_answer_chat_query` (finance queries only) |
 | 4 | `Planning retrieval` | `"Gemma4"` | `ChatWorkflow._retrieve_context` |
 | 5 | `Analyzing question` | `"Gemma4"` | `retrieve_with_iterative_loop` |
@@ -252,7 +256,7 @@ Both tables live in the main SQLite database (`DATA_DIR/orb.db`, engine from `ba
 | `role` | String | `"user"` or `"assistant"` (not enforced by a CHECK) |
 | `content` | Text | the answer text (no references block; sources live in `metadata`) |
 | `thinking` | Text, nullable | model chain-of-thought captured from the terminating loop step |
-| `metadata` (attr `metadata_json`) | JSON, nullable | `{"rewritten_query": str|null, "context_count": int, "sources": [{id, title}]}` for assistant turns; null for user turns. `_message_to_dict` surfaces `metadata.sources` as the message's `sources` field |
+| `metadata` (attr `metadata_json`) | JSON, nullable | `{"rewritten_query": str|null, "context_count": int, "sources": [{id, title}], "request_id": str}` for assistant turns (`request_id` lets a resumed answer see its reply was already saved: `chat_store.has_reply`); null for user turns. `_message_to_dict` surfaces `metadata.sources` as the message's `sources` field |
 | `created_at` | DateTime(tz) | ordering key everywhere |
 
 ORM relationship `ChatConversation.messages` is `cascade="all, delete-orphan"`, ordered by `ChatMessage.created_at`. Nothing in the app loads it (the store queries messages directly).
@@ -369,7 +373,7 @@ The **enriched query** used for embedding is `f"{query} {question_attribute}"` (
 
 ### 7.2 Embedding
 
-`embedding_service.embed_query(enriched_query)` (`services/embedding.py`) → `LocalLlamaEmbeddings.embed_query` → `local_llama_runtime.embed(text)`. For Qwen3 embedding models (`is_qwen3` = `"qwen3"` in the basename of `EMBEDDING_MODEL`) the text is prefixed with `"Instruct: Given a question, retrieve relevant context.\nQuery: "`. This call forces the **embed GGUF** to be resident (unloading chat/reranker; §10). Timing is logged as `[⏱️ Timing] Total query embedding: Xs`.
+`hybrid_search` first waits on `qdrant_service.vectors_ready` (cleared while the startup rebuild re-embeds a vault for a new embedder, doc 15 §7.4 — a query vector would not match the stored ones). Then `embedding_service.embed_query(enriched_query)` (`services/embedding.py`). With EmbeddingGemma 2, the embedder on every machine, the text is prefixed with `"task: search result | query: "` and embedded by the embedding `llama-server` (`_ServerEmbeddings`, doc 12 §7.5), which leaves the in-process models alone. With a Qwen3 embedder (`is_qwen3`) the prefix is `"Instruct: Given a question, retrieve relevant context.\nQuery: "` and the call goes `LocalLlamaEmbeddings.embed_query` → `local_llama_runtime.embed(text)`, forcing the **embed GGUF** resident (unloading chat/reranker; §10). Timing is logged as `[⏱️ Timing] Total query embedding: Xs`.
 
 ### 7.3 The three branches run concurrently
 
@@ -401,7 +405,7 @@ Each branch's exception is caught and replaced with `[]` plus a warning (`[Entit
 
 #### Vector branch (`_vector_branch` → `_search_qdrant_multi_collection`)
 
-See §7.4 — searches `node_cores`, `node_relationships`, `node_isolated_contexts` one after another (a sequential loop inside `QdrantService.search_all_collections`; a `ponytail:` comment marks the thread-pool upgrade path) with `limit=500` per collection and `score_threshold` = `VECTOR_PRE_RERANK_THRESHOLD` (0.45). The comment in code is explicit: the 500 ceiling exists only because the Qdrant API requires a limit; "the score_threshold is the only real filter".
+See §7.4 — searches `node_cores`, `node_relationships`, `node_isolated_contexts` one after another (a sequential loop inside `QdrantService.search_all_collections`; a `ponytail:` comment marks the thread-pool upgrade path) with `limit=500` per collection and `score_threshold` = `vector_threshold(settings.EMBEDDING_MODEL)` — 0.69 for EmbeddingGemma 2, else `VECTOR_PRE_RERANK_THRESHOLD` (0.45). The comment in code is explicit: the 500 ceiling exists only because the Qdrant API requires a limit; "the score_threshold is the only real filter".
 
 ### 7.4 Vector search details and temporal handling
 
@@ -467,7 +471,7 @@ Build order and types:
 
 - **A. Entity nodes** (`entity_nodes`, incl. Meili rows and Person name variants): skipped if `_get_node_text(node)` is empty; `type="entity_match"`; `linked_notes = node_to_notes[lower_name]`.
 - **B. Vector nodes** (incl. vector variants): same text check; `type="community_summary"` when `entity_type.lower() == "community"` else `"vector_match"`.
-- **C. Note passages** (the notes' own text, doc 10 §6.0): `qdrant.search_passages(full_vector, 500, VECTOR_PRE_RERANK_THRESHOLD)` plus `meili.search_passages(query, 50)`, joined and de-duplicated on `(note_id, index)` (vector hits first). Each becomes `{"text": content, "_rerank_text": content, "type": "passage", "original_obj": {"name": "<title> (passage n)", "node_id": note_id, "summary": content}, "linked_notes": [{"id": note_id, "title": title}]}` — a distinct name because docs are merged by name and a note's title is often an entity's. They are reranked together with the graph candidates (the reranker scores the union, so there are no fusion weights to tune). No date filter applies to passages. The log line reads `Prepared N candidates (E entity + V vector + P passage)`.
+- **C. Note passages** (the notes' own text, doc 10 §6.0): `qdrant.search_passages(full_vector, 500, vector_threshold(settings.EMBEDDING_MODEL))` plus `meili.search_passages(query, 50)`, joined and de-duplicated on `(note_id, index)` (vector hits first). Each becomes `{"text": content, "_rerank_text": content, "type": "passage", "original_obj": {"name": "<title> (passage n)", "node_id": note_id, "summary": content}, "linked_notes": [{"id": note_id, "title": title}]}` — a distinct name because docs are merged by name and a note's title is often an entity's. They are reranked together with the graph candidates (the reranker scores the union, so there are no fusion weights to tune). No date filter applies to passages. The log line reads `Prepared N candidates (E entity + V vector + P passage)`.
 - No candidate type `neighbor_node` is produced any more, although the summary log line still counts it.
 
 `_get_node_text(node)` = `summary` or `description` or `" ".join(isolated_contexts)`. `_build_node_text(node, [])` renders the root line: `"{name} is a {entity_type}. {text}"` when a type exists; else the text itself if it already starts with the name; else `"{name}. {text}"`. There is **no scoring fusion** across channels: vector scores, Meili pseudo-scores and entity matches are never combined numerically. Channel precedence only decides *which entry survives name-dedup*; the reranker alone decides the final order. (`_log_retrieval_details` is one JSON debug line per retrieval — type, score, name, linked notes and the text sent to the LLM per candidate.)
@@ -630,11 +634,11 @@ Local mode keeps **one heavy GGUF resident at a time** (`LocalLlamaRuntime` + `L
 |---|---|---|---|
 | follow-up rewrite | chat GGUF | `_reason_step_sync` → `create_chat_completion` → `ensure_chat_loaded` | embed, reranker, multimodal |
 | `analyze_query` (loop, then each `hybrid_search`) | chat GGUF | `_chat` (`json_mode=True`) | — if chat already resident |
-| `embed_query` | embed GGUF | `local_llama_runtime.embed` → `ensure_embed_loaded` | **chat**, reranker, multimodal |
+| `embed_query` | embed GGUF | EmbeddingGemma 2: `embedding_server` (separate `llama-server`, started on demand, 5-min idle stop); Qwen3: `local_llama_runtime.embed` → `ensure_embed_loaded` | EmbeddingGemma 2: nothing; Qwen3: **chat**, reranker, multimodal |
 | candidate rerank; per-pair expansion rerank; expansion-doc rerank | reranker GGUF | `LocalGgufReranker.ensure_loaded` (calls `local_llama_runtime.unload()` first) | **chat + embed**, multimodal |
 | `iterative_step` | chat GGUF | `create_chat_completion` | reranker, embed |
 
-So one retrieval iteration in local mode is at minimum **chat → embed → rerank → chat** (three loads), and a full 3-iteration turn that answers on iteration 3 is roughly: rewrite (chat) → analyze (chat) → [analyze (sub-)query (chat; cached for the question itself) → embed → rerank → chat] × 3. The `analyze_query` cache only helps when the exact same query string recurs (e.g. the same question asked twice in a day, or a sub-query identical to the original). Model load time dominates wall time on machines with slow disks; the benchmark reports in `Results/` measured 2–4 min per HotPotQA question with Gemma 4 E4B and up to 10 iterations before the desktop build reduced `MAX_LOOP_ITERATIONS` to 3.
+So one retrieval iteration in local mode is at minimum **chat → rerank → chat** (two loads; with an in-process Qwen3 embedder, **chat → embed → rerank → chat**, three), and a full 3-iteration turn that answers on iteration 3 is roughly: rewrite (chat) → analyze (chat) → [analyze (sub-)query (chat; cached for the question itself) → embed → rerank → chat] × 3. The `analyze_query` cache only helps when the exact same query string recurs (e.g. the same question asked twice in a day, or a sub-query identical to the original). Model load time dominates wall time on machines with slow disks; the benchmark reports in `Results/` measured 2–4 min per HotPotQA question with Gemma 4 E4B and up to 10 iterations before the desktop build reduced `MAX_LOOP_ITERATIONS` to 3.
 
 **Idle unload:** `MODEL_IDLE_SECONDS` (default 300; `0` = never) unloads whichever GGUF is resident after inactivity, so the first turn after a pause pays a cold chat load before the rewrite call.
 
@@ -648,7 +652,7 @@ So one retrieval iteration in local mode is at minimum **chat → embed → rera
 
 **Cross-KB and cross-request contention.** The runtime locks are process-wide; the async job lock serialises chats but ingestion does not take it. A chat running while ingestion embeds documents will thrash chat ↔ embed loads. Per-KB pinned local chat models (§5.5) add another swap axis: switching KBs with different pinned GGUFs reloads the chat model even when "chat" is already resident.
 
-**Cloud providers** (`LLM_PROVIDER=openai|gemini|anthropic|huggingface`, or a KB override) remove the chat-model swaps but **embedding and reranking stay local** — the embed ↔ rerank swap per iteration remains, and the reranker's sequential per-document scoring is unchanged.
+**Cloud providers** (`LLM_PROVIDER=openai|gemini|anthropic|huggingface`, or a KB override) remove the chat-model swaps but **embedding and reranking stay local** — the reranker load per iteration remains, and the reranker's sequential per-document scoring is unchanged.
 
 **Batching/parallel I/O already in place** (commits `8de5cda`, `b84ca73`): entity/BM25/vector branches concurrent; per-term Meili queries concurrent; Qdrant's three collections searched sequentially (one call each; the thread pool was dropped on 2026-09-19); all Kuzu variant lookups batched (`find_name_variants_batch`); Qdrant content/relationship enrichment batched by id list; note grounding one Cypher `UNWIND`; SQLite title lookup one `IN` query. Remaining serial hot spots: the reranker's per-document loop, `get_related_nodes` once per relevant doc (two Cypher queries each), and the LLM calls themselves.
 
@@ -660,14 +664,14 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 |---|---|---|---|
 | `RERANKER_TOP_K` | `10` | `hybrid_search`, loop expansion rerank | Docs kept per rerank pass (both passes) |
 | `RERANKER_SCORE_THRESHOLD` | `0.05` | `hybrid_search` only | Drop candidates below this yes-probability after the top-K cut |
-| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `_search_qdrant_multi_collection` | Qdrant `score_threshold` when the reranker is on |
+| `VECTOR_PRE_RERANK_THRESHOLD` | `0.45` | `vector_threshold()` in `_search_qdrant_multi_collection` and passages | Qdrant `score_threshold` when the embedder's `ModelOption.vector_threshold` is unset (EmbeddingGemma 2 uses 0.69) |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | `10` | `_expand_relevant_neighbors` | Max (origin, neighbour) pairs kept per iteration; also the trigger — per-pair rerank runs only when more pairs than this exist |
 | `GRAPH_EXPAND_SCORE_THRESHOLD` | `0` | same | If > 0, drop pairs scoring below it after the top-N cut |
 | `CHAT_HISTORY_MAX_MESSAGES` | `24` | `chat_store.get_recent_history`/`refresh_summary`, `render_history` | Messages (not turns) kept verbatim; older ones live on in the rolling summary |
 | `CHAT_MODEL` | `None` | `get_chat_model` | Global chat model override (set by `PATCH /api/v1/settings` / runtime_config); beaten only by a per-KB `llm_model` |
 | `LLM_PROVIDER` / `LLM_MODEL` | `local` / `local-chat` | `LLMService.__init__`, `get_chat_model` | Provider for analysis/reasoning/rewrite; `ollama`/`lm_studio` map to `local` |
 | `OPENAI_MODEL` / `GEMINI_MODEL` / `ANTHROPIC_MODEL` / `HUGGINGFACE_MODEL` (+ `*_API_KEY`) | `None` | `get_chat_model`, `ai_gate` | Provider-specific chat model and gate keys |
-| `EMBEDDING_MODEL` | `local-embed` | `EmbeddingService` | Only its basename matters: contains `qwen3` ⇒ query instruction prefix |
+| `EMBEDDING_MODEL` | `local-embed` | `EmbeddingService`, `vector_threshold` | Set to the catalog id at startup; basename contains `qwen3` ⇒ query instruction, `embeddinggemma` ⇒ task prompts and the served embedder; the id picks the pre-rerank cutoff |
 | `MODEL_RERANKER_LOCAL` | `qwen3-reranker-0.6b` | logs, progress stage | **Label only**; the file used is `reranker_gguf_path()` |
 | `QDRANT_COLLECTION_NODE_CORES` / `_RELATIONSHIPS` / `_ISOLATED_CONTEXTS` | `node_cores` / `node_relationships` / `node_isolated_contexts` | `QdrantService` | Base names; per-KB contexts use per-KB collection names — retrieval detects hit kind by substring `"relationships"` / `"isolated_context"` in the collection name, so renaming collections without those substrings breaks merge logic |
 | `MEILI_INDEX_NAME` | `orb_nodes` | `MeilisearchService` | BM25 index (per-KB variants) |
@@ -726,10 +730,12 @@ Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name v
 |---|---|
 | `_answer_chat_query(query, kb, history_turns, progress_callback)` | Route: `firefly_service.looks_like_finance_query(query)` (keyword list: balance(s), transaction(s), spending, spent, income, expense(s), budget, cash, account(s), finance, financial, report, net worth, savings) → `retrieve_for_query` + `answer_finance_question`; else `ChatWorkflow.chat` |
 | `list_chat_conversations` / `create_chat_conversation` / `get_chat_messages` / `delete_chat_conversation` | Thin wrappers over `chat_store` with 404s |
-| `_run_chat_job(request_id, query, kb, conversation_id, history)` | Async job body: progress → answer → persist assistant → terminal status |
-| `_run_chat_job_serialized(...)` | Wraps `_run_chat_job` in `_chat_job_lock`, publishing the waiting stage |
-| `start_chat(body, kb)` | Async endpoint (§4.4) |
-| `get_chat_status(request_id)` | Status read |
+| `_run_chat_job(request_id, query, kb, conversation_id, history, resumed=False)` | Async job body: progress → answer → persist assistant → terminal status; re-raises failures |
+| `_run_chat_job_serialized(..., resumed=False)` | Wraps `_run_chat_job` in `_chat_job_lock`, publishing the waiting stage |
+| `start_chat(body, kb)` | Async endpoint (§4.4); enqueues the `answer` job |
+| `prepare_answer(job)` | Job-worker entry: memo folder `answer-<16 hex>`, runs `_run_chat_job_serialized` |
+| `get_chat_status(request_id)` | Status read; falls back to the job row |
+| `get_pending_answer(conversation_id, kb)` | `{request_id}` of the conversation's active answer job |
 | `ChatStore.*` | See §5.2 |
 | `RerankerService.rerank(query, documents, top_n=None)` | Async façade over `local_gguf_reranker.rerank`; `[]` on missing GGUF/failure |
 
@@ -758,15 +764,16 @@ Conversation and message records (`GET .../conversations`, `.../messages`, `Chat
 
 ### 13.2 Client state machine (`frontend/src/lib/chat-context.tsx`)
 
-- `ChatProvider` holds `messages`, `conversations`, `activeConversationId`, `isLoading`, `isLoadingConversations`, `loadingStage`, `loadingModel`. `initializeForKb(kb)` (run when the KB changes) lists conversations and opens the most recent one; `selectConversation`, `startNewConversation`, `deleteActiveConversation` (DELETE then select the next remaining conversation or start fresh).
+- `ChatProvider` holds `messages`, `conversations`, `activeConversationId`, `isLoading`, `isLoadingConversations`, `loadingStage`, `loadingModel`. `initializeForKb(kb)` (run when the KB changes) lists conversations and opens the most recent one; `startNewConversation`, `deleteActiveConversation` (DELETE then select the next remaining conversation or start fresh).
+- `followAnswer(requestId, kb, start?)` is the poller shared by sending and reopening: it cancels any previous poller, bumps `sendGenerationRef`, sets `isLoading`, and, when `start` is given, awaits it (the `startChat` POST) before polling; without `start` it polls at once.
+- `selectConversation(id, kb)`: stops following the open answer (it keeps being written server-side), clears loading state, loads the messages, then `api.getPendingAnswer(id, kb)`; a `request_id` → `loadingStage = "Resuming answer"` and `followAnswer(request_id, kb)`. So an answer survives switching conversations, a reload, or a backend restart.
 - `sendMessage(text, kb)`:
   1. Ignored if blank or `isLoading` (the input and Send button are also disabled while loading — there is **one in-flight turn per tab**).
-  2. Cancels any previous poller (`pollCleanupRef`) and bumps a `sendGenerationRef` "generation" so late responses from an older send are ignored (`isStale()`).
-  3. Optimistically appends `{id: "local-user-<ts>", role: "user", content}`; sets `loadingStage = "Starting chat request"`.
-  4. Generates `requestId` (`crypto.randomUUID()`), calls `api.startChat(text, kb, requestId, activeConversationId)` → `POST /chat/async?kb=…`; on resolve records `conversation_id`, starts `setInterval(poll, POLL_INTERVAL_MS = 1000)` and polls once immediately. If the POST rejects (503 AI gate, 404 KB, network) → `fail()`.
-  5. `poll()`: gives up after `POLL_MAX_ATTEMPTS = 600` (~10 min) or `POLL_MAX_CONSECUTIVE_ERRORS = 8` consecutive rejected status calls; otherwise updates `loadingStage`/`loadingModel`/`activeConversationId` from the status; when `done`: `error` → `fail()`, else `complete(result.answer, result.thinking, result.conversation_id || conversation_id)`.
-  6. `fail()`: appends a **local, unpersisted** assistant message `"Sorry, I encountered an error. Please try again."` and clears loading state. The backend job (if any) continues.
-  7. `complete()`: appends an optimistic assistant message (`"I couldn't generate a response."` if `answer` is empty), clears loading state, `loadConversations(kb)` (titles/order), then `getChatMessages(conversationId)` and **replaces** the message list with server records (real ids, server timestamps) — if that refetch fails the optimistic messages stay.
+  2. Optimistically appends `{id: "local-user-<ts>", role: "user", content}`; sets `loadingStage = "Starting chat request"`.
+  3. Generates `requestId` (`crypto.randomUUID()`) and calls `followAnswer(requestId, kb, () => api.startChat(text, kb, requestId, activeConversationId))`: it cancels any previous poller (`pollCleanupRef`) and bumps a `sendGenerationRef` "generation" so late responses from an older send are ignored (`isStale()`); `POST /chat/async?kb=…`; on resolve records `conversation_id`, starts `setInterval(poll, POLL_INTERVAL_MS = 1000)` and polls once immediately. If the POST rejects (503 AI gate, 404 KB, network) → `fail()`.
+  4. `poll()`: gives up after `POLL_MAX_ATTEMPTS = 600` (~10 min) or `POLL_MAX_CONSECUTIVE_ERRORS = 8` consecutive rejected status calls; otherwise updates `loadingStage`/`loadingModel`/`activeConversationId` from the status; when `done`: `error` → `fail()`, else `complete(result.answer, result.thinking, result.conversation_id || conversation_id)`.
+  5. `fail()`: appends a **local, unpersisted** assistant message `"Sorry, I encountered an error. Please try again."` and clears loading state. The backend job (if any) continues.
+  6. `complete()`: appends an optimistic assistant message (`"I couldn't generate a response."` if `answer` is empty; none when `answer` is `undefined` — a resumed answer finished in an earlier run, whose status carries no text), clears loading state, `loadConversations(kb)` (titles/order), then `getChatMessages(conversationId)` and **replaces** the message list with server records (real ids, server timestamps) — if that refetch fails the optimistic messages stay.
 - Unmounting the provider stops polling. Navigating away and back re-runs `initializeForKb`, which shows the completed answer once persisted.
 
 ### 13.3 Rendering (`frontend/src/app/chat/page.tsx`)
@@ -786,7 +793,7 @@ Work from the logs (§15.1) before touching knobs: `retrieval.log` tells you whi
 | Symptom | Likely cause | Knob / change |
 |---|---|---|
 | Correct node is retrieved (visible in `[Retrieval] Prepared N candidates`) but not in the top list | Reranker cut | Raise `RERANKER_TOP_K` (more docs per pass, more prompt tokens, +1 reranker pass per extra doc); lower `RERANKER_SCORE_THRESHOLD` |
-| Node never appears in vector hits | Similarity below threshold or node has no merged core vector | Lower `VECTOR_PRE_RERANK_THRESHOLD` (0.45 → 0.35 is a common first move; the reranker will discard noise); confirm the node has a `node_cores` point (see doc 15) |
+| Node never appears in vector hits | Similarity below threshold or node has no merged core vector | Lower the pre-rerank cutoff (EmbeddingGemma 2's `vector_threshold` 0.69 in `model_catalog.py`; `VECTOR_PRE_RERANK_THRESHOLD` 0.45 → 0.35 for Qwen3; the reranker will discard noise); confirm the node has a `node_cores` point (see doc 15) |
 | Entity named in the question is not found by name | LLM `entities` empty/mis-split, or node name differs | Check `[LLM Analysis] ... Entities: [...]` in `retrieval.log`; improve ingestion naming/aliases; the fuzzy `CONTAINS` match is already lenient |
 | Multi-hop questions stop after one hop | Not enough iterations | `MAX_LOOP_ITERATIONS` 3 → 4 or 5 (each extra iteration ≈ one full embed/rerank/chat swap cycle in local mode); check `[IterLoop] EXHAUSTED` vs the no-next-query warning in logs to see which termination fired |
 | Bridge entity is only reachable through a neighbour | Expansion budget | Raise `GRAPH_EXPAND_TOP_NEIGHBORS`; keep `GRAPH_EXPAND_SCORE_THRESHOLD` at 0 unless expansions are visibly noisy |
@@ -834,11 +841,12 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 | Local repetition loop (Gemma ordinal cascade) | `create_chat_completion` retries up to 3 fresh samples, then `RuntimeError` → exhaustion or `Failed` | `llm.log` `Chat repetition loop on attempt n/3` |
 | Empty graph / fresh KB | All channels empty → exhaustion | "I couldn't find any relevant information in the knowledge base to answer that." |
 | Note deleted after ingestion but `REFERENCES` edge remains | Reference rendered with the graph title (`Untitled Note` if none); clicking it 404s in `getNote` (logged to console) | Dead reference pill |
-| Exception anywhere in an async job | `_chat_status[...] = {stage: "Failed", done: true, error}`; user message already persisted; no assistant row | Error bubble; dangling user turn in history |
+| Exception anywhere in an async job | `_chat_status[...] = {stage: "Failed", done: true, error}`, job row `failed`, memo folder cleared; user message already persisted; no assistant row | Error bubble; dangling user turn in history |
 | Browser closed mid-job | Job continues under the lock and persists the answer | Appears on next load |
+| App quit / crash mid-answer | Job row stays `running`; next start resumes it (`Resuming answer`), replaying saved model calls; given up after 3 interrupted attempts | Reopening the conversation follows it via `/pending` |
 | Frontend polls > 10 min | `fail()` client-side; backend unaffected | Error bubble, later the real answer appears after reload |
 | Two async chats at once (same or different KB) | Second waits on `_chat_job_lock` showing "Waiting for current chat to finish" | Stage text |
-| Chat concurrent with ingestion | No shared lock — ingestion's embedding calls swap with chat's models (extraction itself runs on the separate extraction `llama-server`, whose model memory is held alongside), longer wall time; `LocalLlamaRuntime._lock` prevents corruption | Slow turns |
+| Chat concurrent with ingestion | No shared lock — ingestion's extraction and EmbeddingGemma embeddings run on separate `llama-server`s whose model memory is held alongside chat's (an in-process Qwen3 embedder would swap with chat's models instead), longer wall time; `LocalLlamaRuntime._lock` prevents corruption | Slow turns |
 | Finance query (`looks_like_finance_query`) but Firefly not ready | `answer_finance_question` returns "I can't answer finance questions yet because …" with the note context attached | Answer text (no `sources` on this path) |
 
 ## 16. Invariants, locked decisions, and gotchas
@@ -885,7 +893,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - **Change the answer protocol:** prompt and parser both live in `LLMService.iterative_step`; the loop only reads `can_answer`, `final_answer`, `next_query`, `full_answer`, `reasoning`, `thinking`.
 - **Add per-claim citations:** the LLM currently never sees note ids; you would add `[n]` markers to doc texts in `iterative_step` and map them back in `ChatWorkflow.chat` — and update the frontend regex.
 - **Add streaming:** replace the status dict with an SSE/WebSocket endpoint fed by the same `progress_callback`; keep `_chat_status` for the existing poller.
-- **Add cancellation:** keep the `asyncio.Task` from `_chat_tasks` addressable by `request_id` and `task.cancel()`; note the LLM/embedding calls run in threads and will not stop mid-call.
+- **Add cancellation:** add a route calling `jobs.cancel(kb_id, request_id, kind="answer")` (it cancels the running task and clears the memo folder); note the LLM/embedding calls run in threads and will not stop mid-call.
 - **New stage strings:** free-form; the UI shows them verbatim. Keep them short.
 - **Change job-status retention:** the constants in `_prune()` (200 entries, 1800 s); keep entries at least until the client's next poll.
 - **New config knob:** add to `Settings` in `core/config.py` and document in [Configuration reference](21-configuration-reference.md).

@@ -189,7 +189,7 @@ Facts an assistant must know:
 
 - **Nothing in the backend reads `request_trace_id` today** (grep: the only references are in `main.py`). The docstring says "any logger that reads it can attach it to structured log records", but no logging Filter/Formatter does so; the file formatter is `%(asctime)s | %(name)s | %(levelname)s | %(message)s`. Trace ids are therefore only useful client-side (the header round-trips) and as an extension point.
 - The frontend (`frontend/src/lib/api.ts`) does not send `X-Request-Id`; every request gets a fresh UUID. Chat requests carry their own `request_id` in the JSON body (`ChatInput.request_id`) which is a *different* mechanism used for progress streaming — see [16](16-retrieval-and-chat.md).
-- Because the ContextVar is reset in `finally`, background tasks started via `BackgroundTasks` run after the response and see the default `""`; tasks spawned with `asyncio.create_task` inside the request inherit a copy of the context and keep the id.
+- Because the ContextVar is reset in `finally`, background tasks started via `BackgroundTasks` run after the response and see the default `""`; tasks spawned with `asyncio.create_task` inside the request inherit a copy of the context and keep the id. Ingestion, chat answers and attachment processing run on the job worker (`services/jobs.py`, started in `startup_event`, not in a request), so they always see `""`.
 - History: added in `68494b7` (2026-05-07, "Finalize Final Implementation: Kuzu/Typesense migration").
 
 ### 4.5 Startup hook (`startup_event`)
@@ -199,7 +199,9 @@ Registered with the deprecated `@app.on_event("startup")` (not a lifespan contex
 1. `logger.info("Application startup: Orb API online")` (logger `"API"` → `api.log`).
 2. `await init_db()` — `Base.metadata.create_all` + manual SQLite index (see §8).
 3. `runtime_config.load()`; if non-empty, `runtime_config.apply_to_settings(overrides)` and log `"Runtime config overrides applied"` with `extra={"overrides": [...keys]}`. This is what makes `DATA_DIR/runtime_config.json` win over the environment for `LLM_PROVIDER`, `CHAT_MODEL`, `LLM_BASE_URL` and the local-runtime knobs. **Important ordering consequence:** the `llm_service` singleton is a lazy proxy (`_LazyLLMService` in `services/llm.py`) that constructs `LLMService` on first attribute access. Nothing in startup touches it, so the provider read by `LLMService.__init__` is the post-override value. If any import-time code ever forces construction earlier, runtime overrides would be silently ignored for the provider — keep it lazy.
+3a. Durable jobs ([10](10-ingestion-pipeline.md) §4.5): `given_up = await jobs.recover()` — every `jobs` row still `running` was interrupted: it goes back to `queued`, or to `failed` (`last_error="interrupted N times"`) once `attempts >= jobs.MAX_ATTEMPTS` (3); finished rows older than 30 days are deleted. Notes of given-up `ingest_note` jobs get `failed=True, processing_stage="Ingestion failed (interrupted repeatedly)"`. Then the old sweep runs only for notes with **no** active job: a note not processed/failed whose stage is not `Saved` / `Ingestion complete` / `Ingestion failed`, not `%pending%`, not `Changed on disk%` → `failed=True, processing_stage="Ingestion failed (interrupted)"` (a note mid-pipeline from before jobs existed). Wrapped in `try/except` → `"Could not reset interrupted ingests"`. Finally `jobs.start()` starts the worker, which drains whatever is queued (resumed jobs included).
 4. `sync_embedding_infrastructure()` from `services/local_models.py`, wrapped in `try/except Exception` → `logger.warning("Embedding infrastructure sync skipped: ...")`. It reads `MODELS_DIR/models_manifest.json` selection, sets `settings.EMBEDDING_DIMENSIONS`, `settings.EMBEDDING_MODEL`, `settings.MODEL_RERANKER_LOCAL` from the manifest/catalog, and makes every KB's Qdrant collections match the embedding dimension (details in [12](12-local-models-and-inference.md) and [15](15-search-indexes-qdrant-meilisearch.md)). This is the third and last place at boot that mutates `settings` (after `config.py` bottom and `apply_to_settings`).
+4a. `_rebuild_vectors()`: clears `qdrant_service.vectors_ready`, `switch_to_default_embedder()` (moves a set-up install to EmbeddingGemma 2), then per KB `kb.qdrant.reembed(embedding_service.embed_documents, progress)` — re-embeds collections still at the old vector size from their stored text (no re-ingest); sets `vectors_ready` in `finally`. Failures are logged per KB and retried next start ([15](15-search-indexes-qdrant-meilisearch.md) §7.4).
 5. `start_vault_watchers()` from `services/vault_watcher.py`, also `try/except` → `logger.warning("Vault watcher not started: ...")`. Starts a daemon thread with a watchdog observer per KB vault; it marks notes stale on external `.md` edits, never auto-ingests ([09](09-notes-wikilinks-and-vault-files.md)).
 
 No Qdrant/Meili/Kuzu connectivity check happens at startup; those clients are created lazily per KB by `kb_registry` on first `?kb=` resolution, and each degrades to a disabled state on connection failure. `/health` therefore returns `healthy` even if every index is down.
@@ -279,14 +281,14 @@ Chat and ingestion share one provider: `init_clients` uses the chat provider for
 | Field | Type | Default | Consumer |
 |---|---|---|---|
 | `EMBEDDING_PROVIDER` | str | `"local"` | `embedding.EmbeddingService.__init__` — accepts `local`, `auto`, `""` (and deprecated `ollama`/`lm_studio` → local); anything else raises `ValueError` |
-| `EMBEDDING_MODEL` | str | `"local-embed"` | `embedding.py` (name only; `is_qwen3` detection by substring), overwritten by `local_models.sync_embedding_infrastructure` / `ensure_chat_and_embed_models` from the manifest |
+| `EMBEDDING_MODEL` | str | `"local-embed"` | `embedding.py` (name only; `is_qwen3` / `is_gemma` detection by substring, `served_embedder`), `model_catalog.vector_threshold`, overwritten by `local_models.sync_embedding_infrastructure` / `ensure_chat_and_embed_models` from the manifest |
 | `EMBEDDING_DIMENSIONS` | int | `1024` | `qdrant_service` (collection vector size), `local_models` (overwritten from manifest/catalog at startup) |
 
 **Retrieval tuning** (all read in `services/retrieval.py`)
 
 | Field | Type | Default | Effect |
 |---|---|---|---|
-| `VECTOR_PRE_RERANK_THRESHOLD` | float | `0.45` | Qdrant score cut-off when the reranker is **enabled** (looser; reranker prunes) |
+| `VECTOR_PRE_RERANK_THRESHOLD` | float | `0.45` | Qdrant score cut-off when the reranker is **enabled** (looser; reranker prunes), used only when the embedder's `ModelOption.vector_threshold` is unset — EmbeddingGemma 2 uses 0.69 (`model_catalog.vector_threshold`) |
 | `RERANKER_TOP_K` | int | `10` | `top_n` passed to the reranker (final and graph-expansion passes) |
 | `RERANKER_SCORE_THRESHOLD` | float | `0.05` | Drop reranked candidates below this |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int | `10` | Cap on relationship entries kept per expansion; reranking of neighbours only if more than this many |
@@ -482,7 +484,7 @@ There is **no migration framework** (no Alembic). New columns on existing instal
 
 ## 9. ORM models (`backend/app/models/`)
 
-All tables share the pattern: `String` UUID4 primary key generated in Python (`default=lambda: str(uuid.uuid4())`), timezone-aware `DateTime` columns defaulting to `datetime.now(timezone.utc)` (note SQLite stores them as ISO strings; timezone is preserved textually). `Base` is `declarative_base()` from `database.py`.
+All tables except `jobs` share the pattern: `String` UUID4 primary key generated in Python (`default=lambda: str(uuid.uuid4())`), timezone-aware `DateTime` columns defaulting to `datetime.now(timezone.utc)` (note SQLite stores them as ISO strings; timezone is preserved textually). `Base` is `declarative_base()` from `database.py`.
 
 ### 9.1 `notes` (`models/note.py`, class `Note`)
 
@@ -561,6 +563,7 @@ Derived status contract (`api/notes.py get_note_ingestion_status`): `processed �
 
 `UniqueConstraint("kb_id", "source_note_id", "target_title", name="uq_note_link")` — one edge per (source, literal target) per KB. Rebuilt by `services/wikilinks.rebuild_kb_note_links`. See [09](09-notes-wikilinks-and-vault-files.md).
 
+
 ### 9.5 Per-KB LLM override columns (uncommitted working tree)
 
 The current working tree (uncommitted at the time of writing) adds three nullable columns to `knowledge_bases`:
@@ -572,6 +575,25 @@ The current working tree (uncommitted at the time of writing) adds three nullabl
 | `llm_ingestion_model` | String | Pinned ingestion model id; `NULL` = follow this KB's chat model (`llm_model`, else the system chat model) |
 
 Comment in the model: "Chat + ingestion only — embed/rerank/multimodal stay system-wide (embed dims are shared)." `kb_registry._ensure_optional_columns` (renamed from `_ensure_firefly_columns`) adds them with `ALTER TABLE` on existing databases. `KBContext` gained `llm_provider`, `llm_model`, `llm_ingestion_model`, a cached `llm` property (returns the global `llm_service` when nothing is pinned, else a dedicated `LLMService(prov, chat_model=, ingestion_model=, ingestion_provider=prov)`), `has_llm_override`, and `apply_llm_override(...)` which also drops the cached retrieval/ingestion/chat workflow objects so they are rebuilt with the new service. Routes: `GET/PATCH /api/v1/kb/{kb_id}/llm` (`api/kb.py`), and `GET /api/v1/kb` rows now carry `effective_llm`. `kb_registry.effective_llm_config(meta)` computes `{provider, model, ingestion_model, inherited}` by layering the row over `settings`. See [08](08-knowledge-bases-and-vaults.md) for the full contract and [13](13-llm-providers-and-prompting.md) for the `LLMService` constructor changes.
+
+### 9.6 `jobs` (`models/job.py`, class `Job`)
+
+Durable queue for long work, owned by `services/jobs.py` ([10](10-ingestion-pipeline.md) §4.5). Created by `init_db` (`database.py` imports `app.models.job`).
+
+| Column | Type | Nullable | Meaning |
+|---|---|---|---|
+| `id` | Integer PK, autoincrement | no | Also the drain order |
+| `kind` | String | no | `ingest_note`, `answer`, `attachment` |
+| `kb_id` | String | no | |
+| `target_id` | String | no | Note id (`ingest_note`), chat `request_id` (`answer`), `"<note_id> <url>"` (`attachment`) |
+| `payload` | JSON | yes | What the job needs that no other table holds: `answer` `{conversation_id, query, history}`; `attachment` `{note_id, url}`; `ingest_note` none (the body is read from the vault when it starts) |
+| `input_hash` | String | no | sha256 of what decides the result (note body; conversation id + query; url). Same hash as an active job → kept; another → the active one is cancelled (`last_error="superseded"`) |
+| `state` | String, indexed | no, default `queued` | `queued` → `running` → `done` \| `failed` \| `cancelled` |
+| `attempts` | Integer | no, default 0 | Incremented each time the worker starts it; a crash leaves it counted (`recover` gives the attempt back to a note that was still queued) |
+| `last_error` | String | yes | Failure reason, `"superseded"`, `"cancelled by the user"`, `"interrupted N times"` |
+| `created_at` / `updated_at` | DateTime(tz) | — | `updated_at` has `onupdate`; finished rows older than 30 days are deleted at start |
+
+Index `ix_jobs_target` on `(kind, kb_id, target_id)`.
 
 ## 10. Pydantic schemas (`backend/app/schemas/`)
 

@@ -11,7 +11,7 @@ from functools import lru_cache
 from typing import Literal
 
 Role = Literal["chat", "embed", "reranker"]
-Family = Literal["gemma4", "qwen35", "qwen36", "qwen3-embed", "qwen3-rerank"]
+Family = Literal["gemma4", "qwen35", "qwen36", "qwen3-embed", "embeddinggemma", "qwen3-rerank"]
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,9 @@ class ModelOption:
     params: str
     embedding_dims: int | None = None  # embed models only
     recommended: bool = False
+    # Embed models: the cosine similarity a vector hit needs to reach the reranker.
+    # None = settings.VECTOR_PRE_RERANK_THRESHOLD (0.45, tuned for Qwen3).
+    vector_threshold: float | None = None
 
     @property
     def hf_path(self) -> str:
@@ -213,7 +216,6 @@ EMBED_MODELS: list[ModelOption] = [
         size_gb=0.6,
         params="0.6B",
         embedding_dims=1024,
-        recommended=True,
     ),
     ModelOption(
         "qwen3-embed-4b-q4",
@@ -240,6 +242,28 @@ EMBED_MODELS: list[ModelOption] = [
         embedding_dims=4096,
     ),
 ]
+
+# EmbeddingGemma 2 (retrieval study, 50 HotpotQA questions): F1 0.882 / recall 1.0 against
+# Qwen3 4B's 0.884 / 1.0, at 0.31 GB instead of 2.5 GB and ~30% faster per question.
+# llama-cpp-python cannot load it, so it runs on its own llama-server (embedding.py).
+# Its similarities run higher than Qwen3's: at 0.45 nearly every vector passed.
+EMBED_MODELS.append(
+    ModelOption(
+        "embeddinggemma-2-q8",
+        "embed",
+        "embeddinggemma",
+        "EmbeddingGemma 2 (Q8)",
+        "ggml-org/embeddinggemma-2-GGUF",
+        "embeddinggemma-2-Q8_0.gguf",
+        min_ram_gb=1,
+        size_gb=0.31,
+        params="270M",
+        embedding_dims=768,
+        recommended=True,
+        vector_threshold=0.69,
+    )
+)
+EMBED_DEFAULT = "embeddinggemma-2-q8"
 
 RERANK_MODELS: list[ModelOption] = [
     ModelOption(
@@ -377,13 +401,26 @@ def _fits(opt: ModelOption, budget: float) -> bool:
     return min(opt.min_ram_gb, opt.size_gb * 1.35) <= budget
 
 
-def pick_embed_for_budget(total_ram: float) -> ModelOption:
-    """Qwen3 embed tier from total system RAM (original design, sized up)."""
-    if total_ram >= 48:
-        return next(m for m in EMBED_MODELS if m.id == "qwen3-embed-8b-q4")
-    if total_ram >= 24:
-        return next(m for m in EMBED_MODELS if m.id == "qwen3-embed-4b-q4")
-    return next(m for m in EMBED_MODELS if m.id == "qwen3-embed-0.6b-q8")
+def pick_embed_for_budget(total_ram: float) -> ModelOption:  # pylint: disable=unused-argument
+    """EmbeddingGemma 2 on every machine: it matched Qwen3 4B at an eighth of the size."""
+    return next(m for m in EMBED_MODELS if m.id == EMBED_DEFAULT)
+
+
+def served_embedder(ref: str | None) -> bool:
+    """Embed models llama-cpp-python cannot load; they run on llama-server. ``ref``: catalog id or GGUF path."""
+    name = (ref or "").replace("\\", "/").rsplit("/", 1)[-1]
+    opt = get_option(ref or "") or next((m for m in EMBED_MODELS if m.hf_file == name), None)
+    return bool(opt and opt.family == "embeddinggemma")
+
+
+def vector_threshold(embed_id: str | None) -> float:
+    """The pre-rerank cosine cutoff for the active embedder."""
+    from app.core.config import settings
+
+    opt = get_option(embed_id or "")
+    if opt and opt.vector_threshold is not None:
+        return opt.vector_threshold
+    return float(settings.VECTOR_PRE_RERANK_THRESHOLD)
 
 
 def pick_rerank_for_budget(total_ram: float) -> ModelOption:
@@ -515,7 +552,7 @@ def recommend_stack(chat_id: str | None = None) -> dict:
         "budget_note": (
             f"Usable ~{usable:.0f} GB of {total:.0f} GB RAM "
             f"(backend={hw['accel'].get('backend')}). "
-            "Qwen3 embed + reranker are sized automatically (required for search, not chat). "
+            "The search embedder (EmbeddingGemma 2) and reranker are chosen automatically (required for search, not chat). "
             "Only the chat model you select is downloaded. "
             "Models marked “may be tight” can still be chosen if you know they run on this machine."
         ),

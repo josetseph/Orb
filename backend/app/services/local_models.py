@@ -245,7 +245,7 @@ CHAT_MODEL_ID = os.environ.get(
 )
 EMBED_MODEL_ID = os.environ.get(
     "ORB_EMBED_GGUF",
-    "Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf",
+    "ggml-org/embeddinggemma-2-GGUF/embeddinggemma-2-Q8_0.gguf",
 )
 RERANK_MODEL_ID = os.environ.get(
     "ORB_RERANK_GGUF",
@@ -888,6 +888,26 @@ def _ensure_mmproj_in_background(sel: dict) -> None:
     threading.Thread(target=_run, name="orb-mmproj", daemon=True).start()
 
 
+def switch_to_default_embedder() -> bool:
+    """Move a set-up install to the catalog's default embedder (EmbeddingGemma 2): download it
+    and point the selection at it. True when the embedder changed, so every vault's vectors
+    must be rebuilt (``QdrantService.reembed``)."""
+    from app.services.model_catalog import EMBED_DEFAULT, get_option
+
+    sel = load_manifest().get("selection") or {}
+    if not (sel.get("chat_id") or sel.get("chat_path")) or sel.get("embed_id") == EMBED_DEFAULT:
+        return False
+    opt = get_option(EMBED_DEFAULT)
+    logger.info("[Models] Switching the embedder %s -> %s", sel.get("embed_id") or "?", opt.id)
+    path = ensure_gguf(opt.hf_path)
+    save_selection(sel.get("chat_id") or "", opt.id, sel.get("reranker_id") or "", embedding_dims=opt.embedding_dims)
+    man = load_manifest()
+    man["selection"] = {**(man.get("selection") or {}), "embed_path": store_model_path(path)}
+    save_manifest(man)
+    sync_embedding_infrastructure(dims=opt.embedding_dims, embed_id=opt.id)
+    return True
+
+
 def gguf_paths_if_present() -> dict[str, Path] | None:
     """Return chat/embed paths from selection/manifest if files exist."""
     man = load_manifest()
@@ -1189,7 +1209,10 @@ class LocalLlamaRuntime:
             result = self._load_chat_unlocked(Path(chat_gguf))
             # Probe embed dims without keeping chat+embed co-resident.
             embed_path = Path(embed_gguf) if embed_gguf else None
-            if embed_path and embed_path != Path(chat_gguf):
+            from app.services.model_catalog import served_embedder
+
+            # A served embedder (EmbeddingGemma 2) does not load in-process; its size comes from the catalog.
+            if embed_path and embed_path != Path(chat_gguf) and not served_embedder(str(embed_path)):
                 self._embed_path_hint = embed_path
                 try:
                     self._unload_chat_unlocked(release=False)

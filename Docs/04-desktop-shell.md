@@ -65,7 +65,9 @@ backend/app/desktop_runtime.py   the process the shell spawns
 Quit (`RunEvent::Exit`) sends SIGTERM to the runtime's process group, escalating to
 SIGKILL after 4 s. The runtime also watches its parent pid and shuts itself and the
 sidecars down when the shell disappears for any reason, so a crashed or killed shell
-leaves nothing behind.
+leaves nothing behind. Work cut off this way (an ingestion, a chat answer, an attachment
+transcription) is a `jobs` row still `running`; the next start resumes it from its
+saved steps ([10](10-ingestion-pipeline.md) §4.5).
 
 ## 4. The runtime (`desktop_runtime.py`)
 
@@ -83,7 +85,9 @@ leaves nothing behind.
   llama.cpp build into `DATA_DIR/bin/llama.cpp-b11617/` and starts `llama-server` on
   the first local ingestion, stopping it after 300 s idle; `stop_sidecars()` stops it
   first on shutdown, and a server orphaned by a crashed backend is killed at the next
-  start (`DATA_DIR/llama-server.pid`). See [12](12-local-models-and-inference.md) §7.5.
+  start (`DATA_DIR/llama-server.pid`). The embedding server (EmbeddingGemma 2) is a
+  second instance on the same terms (`llama-server-embed.pid`), started on the first
+  embedding call. See [12](12-local-models-and-inference.md) §7.5.
 - **Reconnect on use**: `QdrantService` and `MeilisearchService` retry their
   connection when called, so a KB opened before a sidecar is listening becomes
   searchable the moment it is.

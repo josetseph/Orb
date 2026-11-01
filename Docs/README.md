@@ -86,7 +86,7 @@ These were observed in the code while writing the docs (2026-09-02 working tree)
 |---|---|---|
 | Retrieval | The GGUF cross-encoder is the only ranking signal and is mandatory: a missing or broken reranker fails the chat job with a visible error. | 16 |
 | Retrieval | `MAX_LOOP_ITERATIONS=3` used to give at most two actual retrievals (iteration 1 only planned); since 2026-10 the first iteration searches the question itself, so up to three. | 16 |
-| Ingestion | Re-ingest never deletes prior graph/vector data; `mention_count` grows. `is_similarity` / `created_at` on `SEMANTIC_REL` are never set. | 10, 14 |
+| Ingestion | Re-ingest takes back what the note asserted before (`clear_note_contribution`); `SEMANTIC_REL.mention_count = size(note_ids)` is exact. `is_similarity` / `created_at` on `SEMANTIC_REL` are never set. | 10, 14 |
 | Ingestion | L1 clustering threshold comment (0.50) disagrees with code (0.35). | 10, 21 |
 | Notes | `POST /api/v1/kb` response omits `slug` although the client needs it for `?kb=`. `kb/empty` lacks the `DATA_DIR` containment guard that `delete_kb` has. Deleting a KB orphans its `chat_conversations`. | 08, 09 |
 | Notes | Ingestion's LLM title update changes only the SQLite row; the vault file is renamed on the next autosave, not immediately. | 09, 10 |

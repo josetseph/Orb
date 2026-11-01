@@ -11,7 +11,7 @@
 | Page | Route | File | Primary components | Endpoints called |
 |---|---|---|---|---|
 | Home | `/` | `src/App.tsx` | `<Navigate to="/notes" replace />` | none |
-| Chat | `/chat` | `src/app/chat/page.tsx` | `ChatProvider` (via `useChat`), `AssistantMessageBody`, `SegmentedNoteContent`, `EntityDetailPanel`, notes' `FilePreviewModal` | `POST /chat/async`, `GET /chat/status/{id}`, `GET /chat/conversations`, `GET /chat/conversations/{id}/messages`, `DELETE /chat/conversations/{id}`, `GET /chat/conversations/{id}/export`, `GET /notes/{id}`, `POST /graph/entities/scan-text`, `GET /graph/3d/node/{id}`, `GET /vault/local-path`, `POST /desktop/reveal` |
+| Chat | `/chat` | `src/app/chat/page.tsx` | `ChatProvider` (via `useChat`), `AssistantMessageBody`, `SegmentedNoteContent`, `EntityDetailPanel`, notes' `FilePreviewModal` | `POST /chat/async`, `GET /chat/status/{id}`, `GET /chat/conversations/{id}/pending`, `GET /chat/conversations`, `GET /chat/conversations/{id}/messages`, `DELETE /chat/conversations/{id}`, `GET /chat/conversations/{id}/export`, `GET /notes/{id}`, `POST /graph/entities/scan-text`, `GET /graph/3d/node/{id}`, `GET /vault/local-path`, `POST /desktop/reveal` |
 | Graph (redirect) | `/graph` | `src/App.tsx` | `<Navigate to="/graph-3d" replace />` | none |
 | 3D entity graph | `/graph-3d` | `src/app/graph-3d/page.tsx` | `components/graph3d/*` (`Graph3DCanvas`, `HUD`, `ProximityLabelLayer`, `GraphSearchOverlay`, `NodeDetailModal`, `GraphModeSwitch`) + hooks | `GET /graph/3d/full`, `GET /graph/3d/node/{id}` |
 | Notes graph (2D) | `/notes-graph` | `src/app/notes-graph/page.tsx` | `react-force-graph-2d`, `ReactMarkdown` preview, `GraphModeSwitch`, `BlobMediaPlayer` | `GET /graph/notes`, `POST /graph/notes/rebuild`, `GET /notes/{id}` |

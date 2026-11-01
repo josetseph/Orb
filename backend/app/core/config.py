@@ -86,7 +86,7 @@ class Settings(BaseSettings):
     LLAMA_N_THREADS: int | None = None
     LLAMA_REPEAT_PENALTY: float = 1.12
     LLAMA_PROMPT_RESERVE: int = 4096
-    EMBED_N_CTX: int = 8192
+    EMBED_N_CTX: int = 16384
     RERANK_N_CTX: int = 8192
     MODEL_IDLE_SECONDS: float = 300  # 0 = keep models loaded
     EXTRACTION_CHUNK_TOKENS: int | None = None  # None = learned per model

@@ -150,6 +150,17 @@ Because the bootstrap file is shared, a dev session can silently pick up your re
 - **LLM output** is untrusted: parse through the Pydantic schemas in `schemas/extraction.py` (alias-tolerant validators) and the JSON-cleaning helpers in `services/llm.py`.
 - **Style**: pylint config in `backend/.pylintrc`; long modules carry `# pylint: disable=too-many-lines`. Imports are absolute (`from app.services...`). Type hints everywhere; `from __future__ import annotations` in new modules.
 
+### Long work resumes (all layers)
+
+Anything that runs longer than a moment must survive a crash, a quit or a failed call and continue by itself from its last finished step ([26 D14](26-decisions-and-constraints.md)). When you build or change such work:
+
+- **Write it down first.** Add a row with `jobs.enqueue(session, kind, kb_id, target_id, input_hash, payload)` in the same commit as the status change that asks for it, then `jobs.wake()`. Never start long work with `BackgroundTasks` or a bare `asyncio.create_task`. A new kind gets a branch in `jobs._prepare`.
+- **Save each step's output, keyed by what decides it.** Wrap expensive steps in `ingestion_checkpoint.memo(kind, parts, compute, keep=...)` with every input that changes the result in `parts`; model calls through `LLMService._chat` are already covered. Save successes only: a reply the caller rejects is `forget`-ed.
+- **Make writes repeatable.** Delete what this target wrote before, then write; derive ids from content (`_point_id`), never `uuid4`, for anything a rerun writes again.
+- **Resume, don't fail.** Startup `jobs.recover()` re-queues interrupted rows; never add a boot-time "mark failed" sweep.
+- **Show it.** A resumed job says so ("Queued to resume", "Resuming answer").
+- **Prove it.** Extend `tests/unit/test_resume.py` (kill at a step, resume, compare with one clean run, count model calls) for a new kind.
+
 ### Frontend (TypeScript / React)
 
 - Vite + react-router; pages live in `src/app/<route>/page.tsx` and are registered as lazy routes in `src/App.tsx`. Route-private code lives in `_components/`, `_hooks/`, `_lib/` next to the page.

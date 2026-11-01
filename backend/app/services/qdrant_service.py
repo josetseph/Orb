@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import re
 import time
+import json
+import threading
 import uuid
+from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
@@ -25,10 +28,41 @@ from qdrant_client.models import (
 logger = get_logger("QdrantService")
 
 
+def _point_id(*parts) -> str:
+    """A point id derived from what the point holds, so writing it again replaces it."""
+    return str(uuid.uuid5(uuid.NAMESPACE_OID, "/".join(str(p) for p in parts)))
+
+
 # Points per upsert request. A 2560-dim vector is ~27 KB of REST JSON, so this
 # keeps a request near 3 MB — well inside Qdrant's limit, with headroom for
 # larger embedding models.
 _UPSERT_BATCH_SIZE = 128
+
+
+# Cleared while vectors are rebuilt for a new embedder (main._rebuild_vectors): ingestion and
+# search wait on it instead of writing or querying a collection of the other size.
+vectors_ready = threading.Event()
+vectors_ready.set()
+
+
+def _reembed_dump(collection: str) -> Path:
+    from app.core.paths import resolve_data_dir
+
+    return resolve_data_dir() / "reembed" / f"{collection}.jsonl"
+
+
+def _reembed_text(collection: str, payload: dict, service: "QdrantService") -> str:
+    """The text a point's vector was made from, as each writer embeds it."""
+    # pylint: disable=protected-access
+    if collection == service._col_rels:
+        return payload.get("natural_language") or ""
+    if collection in (service._col_contexts, service._col_passages):
+        return payload.get("content") or ""
+    # Node cores: attachment documents embed their name; every other node (entity, community,
+    # temporal digest) embeds the description it stores, or its name when it has none.
+    if payload.get("type") == "document":
+        return payload.get("name") or ""
+    return payload.get("description") or payload.get("name") or ""
 
 
 class QdrantService:
@@ -563,8 +597,8 @@ class QdrantService:
             if not prepared:
                 return
             points = [
-                PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload)
-                for vector, payload in prepared
+                PointStruct(id=_point_id(node_id, i, payload.get("content")), vector=vector, payload=payload)
+                for i, (vector, payload) in enumerate(prepared)
             ]
             self._upsert_batched(collection_name, points)
         except Exception as exc:  # pylint: disable=broad-exception-caught
@@ -592,7 +626,8 @@ class QdrantService:
         if not self.is_available() or not self.client:
             return False
         vector = self._prepare_vector(vector) or vector
-        point_id = str(uuid.uuid4())
+        # Same note, entity and text → same point: a resumed write overwrites, never duplicates.
+        point_id = _point_id(note_id, node_id, content) if note_id else str(uuid.uuid4())
         payload: dict[str, Any] = {"parent_node_id": node_id, "content": content}
         if note_id:
             # Which note said it — so re-ingesting or deleting that note can
@@ -1145,7 +1180,7 @@ class QdrantService:
             self._col_passages,
             [
                 PointStruct(
-                    id=str(uuid.uuid4()),
+                    id=_point_id(note_id, "passage", i),
                     vector=self._prepare_vector(vec),
                     payload={"note_id": note_id, "title": title, "index": i, "content": text},
                 )
@@ -1179,6 +1214,67 @@ class QdrantService:
             self.replace_note_passages(note_id, "", [], [])
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Qdrant delete_note_passages failed for {note_id}: {exc}")
+
+    def reembed(self, embed, progress=None) -> int:
+        """Rebuild every collection whose vectors are not EMBEDDING_DIMENSIONS long (the
+        embedder changed) from the text its points store. Returns the points rewritten.
+
+        The new vectors go to DATA_DIR/reembed/<collection>.jsonl before the old
+        collection is dropped, so a crash mid-way resumes from the file. ``embed``
+        is ``embedding_service.embed_documents``; ``progress(done, total)``.
+        """
+        client = self.client
+        if client is None:
+            raise RuntimeError("Qdrant unavailable: vectors not rebuilt")
+        want = int(settings.EMBEDDING_DIMENSIONS)
+        stale: list[tuple[str, list]] = []
+        for name in (self._col_cores, self._col_rels, self._col_contexts, self._col_passages):
+            if _reembed_dump(name).exists():
+                stale.append((name, []))  # resumed below from its file
+                continue
+            if not client.collection_exists(name):
+                continue
+            vectors = client.get_collection(name).config.params.vectors
+            if getattr(vectors, "size", want) == want:
+                continue
+            points, offset = [], None
+            while True:
+                batch, offset = client.scroll(name, limit=1000, offset=offset, with_payload=True, with_vectors=False)
+                points.extend(batch)
+                if offset is None:
+                    break
+            stale.append((name, points))
+        total = sum(len(points) for _, points in stale)
+        done = 0
+        for name, points in stale:
+            dump = _reembed_dump(name)
+            if points:
+                rows = [(p.id, p.payload or {}) for p in points]
+                rows = [(pid, payload, _reembed_text(name, payload, self)) for pid, payload in rows]
+                rows = [r for r in rows if r[2]]
+                dump.parent.mkdir(parents=True, exist_ok=True)
+                tmp = dump.with_suffix(".partial")
+                with open(tmp, "w", encoding="utf-8") as out:
+                    for start in range(0, len(rows), 64):
+                        chunk = rows[start : start + 64]
+                        for (pid, payload, _), vector in zip(chunk, embed([r[2] for r in chunk])):
+                            out.write(json.dumps({"id": pid, "payload": payload, "vector": vector}) + "\n")
+                        done += len(chunk)
+                        if progress:
+                            progress(done, total)
+                tmp.rename(dump)
+            client.delete_collection(name)
+            client.create_collection(name, vectors_config=VectorParams(size=want, distance=Distance.COSINE))
+            if not dump.exists():
+                continue  # it held no points: recreating it at the new size was all it needed
+            with open(dump, encoding="utf-8") as rows_in:
+                restored = [json.loads(line) for line in rows_in]
+            self._upsert_batched(
+                name, [PointStruct(id=r["id"], vector=r["vector"], payload=r["payload"]) for r in restored]
+            )
+            dump.unlink()
+            logger.info("[Qdrant] '%s' re-embedded: %d points at %d dims", name, len(restored), want)
+        return total
 
     def delete_note_contexts(self, note_id: str) -> None:
         """Drop every context this note contributed, on every node."""

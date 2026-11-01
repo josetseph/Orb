@@ -46,7 +46,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rejected: Ollama, LM Studio, a user-run `llama-server`, a "local-models" HTTP service, a separate Marlin service (`LOCAL_MODELS_SERVICE_URL`, `MARLIN_SERVICE_URL`, `POST …/image/describe|/audio/transcribe|/caption|/rerank`).
 - Rationale: one process to supervise, no port juggling, no network hop for embeddings, easier packaging (`fbcafe7`, rules file).
 - Enforced: `services/local_models.py`, `multimodal_runtime.py`; `EmbeddingService` maps `ollama`/`lm_studio` to `local` with a warning; the runtime has no model sidecar ports.
-- Exception (working tree, 2026-10): `services/extraction_server.py` runs every local *ingestion* call (extraction, titles, image descriptions) on a pinned llama.cpp `llama-server` (build `b11617`, downloaded into `DATA_DIR/bin/` on first use) that the API starts on demand on a random loopback port and stops after 300 s idle. Rationale: in-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `llama-server` with parallel slots it cost nothing measurable — on the maintainer's 24 GB Mac Gemma 4 12B ran at ~10 tok/s with and without the grammar, and two parallel requests finished in the wall time of one. Chat, embeddings, reranking and media models stay in-process.
+- Exception (working tree, 2026-10): `services/extraction_server.py` runs every local *ingestion* call (extraction, titles, image descriptions) on a pinned llama.cpp `llama-server` (build `b11617`, downloaded into `DATA_DIR/bin/` on first use) that the API starts on demand on a random loopback port and stops after 300 s idle. Rationale: in-process, llama.cpp's JSON grammar made extraction 2.4–4× slower; through `llama-server` with parallel slots it cost nothing measurable — on the maintainer's 24 GB Mac Gemma 4 12B ran at ~10 tok/s with and without the grammar, and two parallel requests finished in the wall time of one. Chat, reranking and media models stay in-process. A second instance, `embedding_server` (2026-10-31), serves EmbeddingGemma 2, which llama-cpp-python cannot load (B10).
 
 ### B2. Exclusive residency: one heavy model at a time
 - Rejected: keeping chat + embed + rerank resident; separate processes per model.
@@ -59,7 +59,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### B4. GGUF selection lives in the models manifest; embed dims must match Qdrant
 - Rationale: switching embedding model changes vector size; collections must be resized deliberately.
-- Enforced: `save_selection(..., embedding_dims=)` and `sync_embedding_infrastructure()` at startup; `POST /setup/select-chat-model` resizes.
+- Enforced: `save_selection(..., embedding_dims=)` and `sync_embedding_infrastructure()` at startup; `POST /setup/select-chat-model` resizes empty collections; the startup `_rebuild_vectors` re-embeds non-empty ones from their stored text (B10).
 
 ### B5. Reranker is a cross-encoder GGUF, not coupled to embedding dims
 - Rationale: rerank quality drove the "Final Implementation" results; a cross-encoder can be swapped independently of the vector space.
@@ -82,6 +82,11 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rejected: Qwen3-ASR 1.7B (MLX `mlx-qwen3-asr` and transformers `Qwen/Qwen3-ASR-1.7B-hf` engines) with the Qwen3 forced aligner and a punctuation-restore pass; a user-facing engine or language setting.
 - Rationale: measured on an Apple M3 24 GB with a far-field lecture, word agreement against a commercial transcript: 10-minute slice 79.3 % vs 81.3 % (run-to-run noise ~3 points), full 88 minutes 73.7 % vs 75.5 %; 88 minutes with word timings in 181 s vs about 17 minutes; download 164 MB vs 4.7 GB + a 1.8 GB aligner. On a user's 41-minute lecture the MLX path took 34 s (73× realtime), 4,157 punctuated timed words, not truncated. Phonon produced no repetition loops or other-language text, and its decoder returns punctuated word timings, so the aligner and punctuation repair go. The cost is about two points of agreement and English only.
 - Enforced: `asr_engine.py` (Phonon layer; `truncated` is a failure), `fermion-research==0.2.9` pinned in `requirements-multimodal.txt` / `_MULTIMODAL_PIP`; `MODEL_ASR_HF`, `MODEL_ASR_LOCAL`, `ASR_ENGINE`, `ASR_LANGUAGE` removed. Attribution (weights CC BY 4.0, fermion Apache 2.0) in `THIRD_PARTY_NOTICES.md` and on the Models page's Transcription row.
+
+### B10. EmbeddingGemma 2 is the embedder on every machine, served by `llama-server`, with its own 0.69 pre-rerank cutoff (2026-10-31)
+- Rejected: the Qwen3 Embedding tiers by total RAM (0.6B / 4B / 8B; still in the catalog, no longer picked); keeping the shared 0.45 cutoff (EmbeddingGemma's similarities run higher — at 0.45 nearly every vector passed); re-ingesting vaults to move to the new vectors.
+- Rationale: retrieval study, 50 HotpotQA questions — F1 0.882 vs Qwen3 Embedding 4B's 0.884, recall 1.0 for both, ~30 % faster per question, 0.31 GB instead of 2.5 GB (8× smaller). Vectors are rebuilt from the text Qdrant already stores, so the switch costs no LLM call.
+- Enforced: `model_catalog.EMBED_DEFAULT` / `pick_embed_for_budget`, `ModelOption.vector_threshold` read through `vector_threshold(settings.EMBEDDING_MODEL)` in both pre-rerank cutoffs, `served_embedder` → `embedding.py` `_ServerEmbeddings` on `extraction_server.embedding_server`; EmbeddingGemma task prompts on queries and documents; `local_models.switch_to_default_embedder` + `main._rebuild_vectors` → `QdrantService.reembed` (dump to `DATA_DIR/reembed/` before the drop, resumable), with ingestion and search waiting on `vectors_ready`; test `test_embeddinggemma.py`.
 
 ---
 
@@ -108,7 +113,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 ### C5. Qdrant is the source of truth for vectors and long descriptive text; fail-closed on dimension mismatch
 - Rejected: silently recreating a collection when the embedding model changes.
 - Rationale: an implicit wipe destroyed user vectors mid-ingest during the audit (`f8f527f`).
-- Enforced: `qdrant_service` raises on mismatch during ingest; only `sync_embedding_infrastructure` / explicit selection may recreate.
+- Enforced: `qdrant_service` raises on mismatch during ingest; only `sync_embedding_infrastructure` / explicit selection may recreate (empty collections only), and only `QdrantService.reembed` at startup rebuilds non-empty ones — after writing the new vectors to `DATA_DIR/reembed/<collection>.jsonl`, never by wiping.
 
 ### C6. Per-KB isolation of every store, including Firefly
 - Rationale: users keep work and personal vaults apart; finance data must never leak between them.
@@ -199,6 +204,13 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 - Rejected: free-text predicates cleaned per edge (`clean_rel_type` stripping entity tokens, `_` → space rewrites) — one edge label per note.
 - Rationale: the graph should never accumulate predicates it cannot query; the model picks from a listed set and anything else collapses to a catch-all rather than being fuzzy-matched.
 - Enforced: `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates, catch-all `related_to`) rendered into the extraction and relationship-pass prompts; `ExtractedRelationship.closed_vocabulary` coerces off-list values; `SEMANTIC_REL.rel_type` therefore only holds listed values (legacy `relates_to` renamed by `_migrate_stores`).
+
+### D14. Every long task resumes from its last finished step (2026-11-01)
+- Decision: work that takes longer than a moment — ingesting, transcribing, reading a PDF, answering, re-indexing, migrating, downloading — survives a crash, a quit or a failed call and continues by itself at the next start, from the last finished step. Nothing finished is done twice; nobody restarts broken work by hand.
+- Rules: (1) write the job down durably before it starts; (2) save each step's output, keyed by everything that decides it; (3) make every write safe to repeat (deterministic ids, delete-then-write per note); (4) resume on start, never mark interrupted work failed; (5) save successes only — a malformed reply is a failure (D12), never cached; (6) say "Resuming" in the UI.
+- Rejected: in-memory queues (`BackgroundTasks`, bare `create_task`) for long work; marking notes mid-pipeline "Ingestion failed (interrupted)" at boot; a job-queue library or a second database.
+- Rationale: ingestion and benchmark runs broke repeatedly (credit ran out, memory froze, embed limits). The benchmark harness made those breaks cheap with a content-keyed call cache; the app turned them into manual re-ingests.
+- Enforced: `models/job.py` + `services/jobs.py` (one `jobs` table in `orb.db`, one worker; `recover()` at startup re-queues `running` rows and fails one interrupted `MAX_ATTEMPTS` = 3 times); kinds `ingest_note`, `answer`, `attachment`; `ingestion_checkpoint.memo` under `LLMService._chat`, `describe_image`, Phonon windows (`asr_engine.transcribe_with_phonon`) and Marlin captions; `SEMANTIC_REL.note_ids`; content-derived Qdrant point ids (`qdrant_service._point_id`); re-embed via dump files (B10), downloads via `.partial` files. Proof: `tests/unit/test_resume.py` kills an ingestion at a model call and after each store write and asserts the stores equal one clean run with no model call paid twice; `test_jobs_resume.py`. Plan: `Docs/plan-resumable-work.md`.
 
 ---
 

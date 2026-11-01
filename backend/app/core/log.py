@@ -27,6 +27,7 @@ COMPONENT_LOG_FILES = {
     "uvicorn.access": "api.log",
     "uvicorn.error": "api.log",
     "IngestionPipeline": "ingestion.log",
+    "Jobs": "ingestion.log",
     "IngestionTracker": "ingestion.log",
     "VaultSync": "ingestion.log",
     "VaultWatcher": "ingestion.log",

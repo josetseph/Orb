@@ -592,7 +592,7 @@ async def _extract_chunk(
     for attempt in range(_MAX_EXTRACTION_ATTEMPTS):
         try:
             prompt = _build_extraction_prompt(text)
-            raw, meta = await checkpoint.generate_with_meta(llm, prompt, temperature=0.1, json_mode=True)
+            raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=0.1, json_mode=True)
             tokens = count_tokens(text)
             model_name = llm.get_ingestion_model()
             if meta.get("truncated"):
@@ -624,7 +624,7 @@ async def _extract_chunk(
                 return Extraction.model_validate_json(raw or "")
             except ValueError:
                 # Saved replies replay on retry; an unusable one must not.
-                checkpoint.forget(llm, prompt, temperature=0.1)
+                checkpoint.forget_reply(llm, prompt, temperature=0.1)
                 raise
         except Exception as exc:  # pylint: disable=broad-exception-caught
             last_error = exc
@@ -644,13 +644,16 @@ async def _extract_chunk(
 async def _call_pass(llm, prompt: str, model_cls, label: str):
     """One task-split call, parsed into ``model_cls``. Never raises."""
     try:
-        raw, meta = await checkpoint.generate_with_meta(
-            llm, prompt, temperature=0.1, json_mode=True
-        )
+        raw, meta = await llm.ingestion_generate_with_meta(prompt, temperature=0.1, json_mode=True)
         if meta.get("truncated"):
             logger.warning("[Extraction] %s truncated — result may be partial", label)
-        return model_cls.model_validate_json(raw or "")
     except Exception as exc:  # pylint: disable=broad-exception-caught
+        logger.warning("[Extraction] %s failed: %s", label, exc)
+        return model_cls()
+    try:
+        return model_cls.model_validate_json(raw or "")
+    except ValueError as exc:
+        checkpoint.forget_reply(llm, prompt, temperature=0.1)  # a malformed reply never replays
         logger.warning("[Extraction] %s failed: %s", label, exc)
         return model_cls()
 
@@ -824,7 +827,7 @@ async def _batch_image_titles(llm, items: list[dict[str, str]]) -> dict[str, str
         'Return ONLY a JSON array: [{"index": 1, "title": "..."}, ...]'
     )
     try:
-        raw = await checkpoint.generate(llm, prompt, temperature=0.0, json_mode=True)
+        raw, _ = await llm.ingestion_generate_with_meta(prompt, temperature=0.0, json_mode=True)
         match = re.search(r"\[.*\]", raw or "", re.DOTALL)
         if not match:
             return {}
@@ -1300,9 +1303,7 @@ async def extraction_node(
             'Return ONLY: [{"index": 1, "name": "..."}, ...]'
         )
         try:
-            rename_resp = await checkpoint.generate(
-                _llm, rename_prompt, temperature=0.0, json_mode=True
-            )
+            rename_resp, _ = await _llm.ingestion_generate_with_meta(rename_prompt, temperature=0.0, json_mode=True)
             match = _re.search(r"\[.*\]", rename_resp, _re.DOTALL)
             if match:
                 name_list = _json.loads(match.group())

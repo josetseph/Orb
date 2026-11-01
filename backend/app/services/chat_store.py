@@ -160,6 +160,16 @@ class ChatStore:
             await session.refresh(msg)
             return _message_to_dict(msg)
 
+    async def has_reply(self, conversation_id: str, request_id: str) -> bool:
+        """Whether the assistant reply to ``request_id`` is already stored."""
+        async with AsyncSessionLocal() as session:
+            rows = await session.execute(
+                select(ChatMessage.metadata_json).where(
+                    ChatMessage.conversation_id == conversation_id, ChatMessage.role == "assistant"
+                )
+            )
+            return any((meta or {}).get("request_id") == request_id for meta in rows.scalars())
+
     async def get_recent_history(
         self, conversation_id: str, limit: int | None = None
     ) -> list[ChatTurn]:

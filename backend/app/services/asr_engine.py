@@ -24,12 +24,15 @@ ever downloaded from the Models page; transcription refuses rather than fetch.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.log import get_logger
+from app.services import ingestion_checkpoint as checkpoint
 
 logger = get_logger("MultimodalRuntime")
 
@@ -129,13 +132,42 @@ def load_phonon(models_dir: Path):
     return _unwrap(lambda: fermion.load_speech(PHONON_MODEL), "Phonon-2 load")
 
 
+def _decode_window(speech):
+    """The engine's own one-window decode, which its ``transcribe_detailed`` runs over the
+    windows ``segment.transcribe_windows`` cuts at pauses (fermion-research 0.2.9, pinned):
+    ``_decode_single`` on MLX, ``_decode_segment`` on the CPU engine. No hotwords are set,
+    so this is the same decode ``transcribe_detailed`` makes."""
+    if hasattr(speech, "_decode_single"):
+        return lambda audio: speech._decode_single(audio, speech.default_repetition_penalty)
+    return getattr(speech, "_decode_segment", None)
+
+
 def transcribe_with_phonon(speech, wav_path: str) -> Transcript:
     """Punctuated text and word timings for a 16 kHz mono WAV.
 
     ``truncated`` means a segment ran out of token budget and speech is
     missing: a failure, never a short transcript passed off as complete.
     """
-    result = _unwrap(lambda: speech.transcribe_detailed(wav_path), "Phonon-2")
+    decode = _decode_window(speech)
+    if decode is None:  # an engine without its own window decode: no per-window resume
+        return _transcript(_unwrap(lambda: speech.transcribe_detailed(wav_path), "Phonon-2"))
+    from fermion._speech import segment
+    from fermion._speech.engine import read_audio
+
+    def window(audio):
+        # Saved per window inside an ingestion, so a resume decodes only the windows left.
+        # Round-tripped through JSON even when fresh, so a replay reads exactly the same.
+        return checkpoint.memo(
+            "asr",
+            [PHONON_MODEL, hashlib.sha256(audio.tobytes()).hexdigest()],
+            lambda: json.loads(json.dumps(list(decode(audio)), default=float)),
+            keep=lambda res: not (res[2] and res[1] >= res[2]),  # out of token budget: a failure
+        )
+
+    return _transcript(_unwrap(lambda: segment.transcribe_windows(read_audio(wav_path), window), "Phonon-2"))
+
+
+def _transcript(result) -> Transcript:
     if result.truncated:
         raise RuntimeError(
             "Phonon-2 stopped short on part of this recording (truncated), so the "

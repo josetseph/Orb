@@ -49,7 +49,8 @@ flowchart TB
   KB[KBContext.llm\n(pinned LLMService or global llm_service)]
   Callers --> KB
   KB --> SVC[LLMService]
-  SVC --> CHAT[_chat — one per-provider fan-out]
+  SVC --> MEMO[_chat — ingestion_checkpoint.memo]
+  MEMO --> CHAT[_complete — one per-provider fan-out]
   CHAT -->|local| LOCAL[LocalOpenAICompat → LocalLlamaRuntime]
   CHAT -->|openai / openai_compat / huggingface| OA[openai.OpenAI]
   CHAT -->|gemini| GM[google.genai.Client]
@@ -66,7 +67,7 @@ flowchart TB
 | `gemini_client`, `anthropic_client` | native SDK clients (only set for those providers) | the gemini / anthropic branches of `_chat` |
 | `i_chat_client`, `i_gemini_client`, `i_anthropic_client` | ingestion twins (`ServerChatClient` for a local ingestion provider) | `_chat(..., ingestion=True)` via `ingestion_generate[_with_meta]`; `describe_image` |
 
-Every public generation method (`generate`, `generate_text`, `reason`, `_reason_step`, `_reason_step_sync`, `generate_title`, `ingestion_generate_with_meta`) is a thin caller of the private `_chat(messages, *, model, temperature, max_tokens, ingestion) -> (text, meta)`, so provider differences live in exactly one place.
+Every public generation method (`generate`, `generate_text`, `reason`, `_reason_step`, `_reason_step_sync`, `generate_title`, `ingestion_generate_with_meta`) is a thin caller of the private `_chat(messages, *, model, temperature, max_tokens, ingestion, json_mode) -> (text, meta)`, so provider differences live in exactly one place. `_chat` resolves `provider` (`ingestion_provider` when `ingestion`) and `model`, then runs `_complete(messages, provider=, model=, …)` — the per-provider fan-out — through `ingestion_checkpoint.memo("llm", chat_parts(provider, model, messages, temperature, max_tokens, json_mode), …)`: inside a job with an active checkpoint (an ingestion, a chat answer, an attachment job) the reply is saved and replayed on a resume; outside one it simply runs. An empty reply is never saved ([10](10-ingestion-pipeline.md) §4.5). Below, "`_chat` branches" means the branches of `_complete`.
 
 ### 3.2 Request lifecycle for a chat turn (what actually happens per provider)
 
@@ -181,7 +182,7 @@ Frontend: `api.getKBLLM(id)`, `api.updateKBLLM(id, {provider, model, ingestion_m
 
 There is no structured-output client layer. Every structured call is a chat call with `json_mode=True`, whose text is validated, exactly as written, with a pydantic model (`<Schema>.model_validate_json(raw or "")`): `analyze_query` (§9.8, `QueryAnalysis`), `iterative_step` (§7.2, `_ResearchStep`), ingestion extraction (doc 10, `Extraction` via `ingestion_generate_with_meta`), garbage-name recovery (§9.3), image titling and community naming (§9.5, `_CommunityName`). Any failure raises in the caller (for `analyze_query` inside the cached helper, so bad results are never cached, and it returns safe defaults).
 
-`json_mode: bool = False` is a keyword on `_chat`, `_reason_step`, `generate`, `ingestion_generate`, `ingestion_generate_with_meta` and on `ingestion_checkpoint.generate[_with_meta]`. `_chat` translates it per provider:
+`json_mode: bool = False` is a keyword on `_chat`, `_reason_step`, `generate`, `ingestion_generate`, `ingestion_generate_with_meta` and is part of the memo key (`ingestion_checkpoint.chat_parts`). `_complete` translates it per provider:
 
 | Provider | What `json_mode=True` sends |
 |---|---|
@@ -282,7 +283,7 @@ Legend — *Call*: which `LLMService` method / client; *Temp*: temperature; *For
 ### 9.1 Knowledge extraction ("Knowledge Architect") — `workflows/agents/ingestion_agent.py::_build_extraction_prompt(extraction_content)`
 
 - **Purpose**: turn one note (or one chunk of a long note) into `Extraction{title, nodes[{name,type,isolated_context}], relationships[{source_name,target_name,relationship_type,natural_language}]}`. `relationship_type` must be one of `schemas.extraction.RELATIONSHIP_TYPES` (42 snake_case predicates, listed verbatim in the prompt under "Allowed `relationship_type` values (no others)"); the schema validator coerces anything else to `related_to` (doc 10).
-- **Call**: `checkpoint.generate_with_meta(llm, prompt, temperature=0.1, json_mode=True)` → `llm.ingestion_generate_with_meta` (provider JSON mode, §6.1) + `Extraction.model_validate_json(raw or "")` on the reply as written (§6.2). Up to `_MAX_EXTRACTION_ATTEMPTS=3` with `asyncio.sleep(30*(attempt+1))` between attempts ("KV-cache pressure … lets Metal/CPU recover"). If `meta.truncated` and the chunk is > `MIN_SPLIT_TOKENS` (400) and depth < 3 → split in half (`split_for_extraction`) and `merge_extractions`.
+- **Call**: `llm.ingestion_generate_with_meta(prompt, temperature=0.1, json_mode=True)` (provider JSON mode, §6.1; memoised in `_chat`) + `Extraction.model_validate_json(raw or "")` on the reply as written (§6.2); a reply that fails validation is dropped from the memo with `ingestion_checkpoint.forget_reply(llm, prompt, temperature)` so the retry asks again (task-split passes in `_call_pass` do the same). Up to `_MAX_EXTRACTION_ATTEMPTS=3` with `asyncio.sleep(30*(attempt+1))` between attempts ("KV-cache pressure … lets Metal/CPU recover"). If `meta.truncated` and the chunk is > `MIN_SPLIT_TOKENS` (400) and depth < 3 → split in half (`split_for_extraction`) and `merge_extractions`.
 - **Inputs**: `extraction_content` = optional `# {user title}\n\n` + note body after multimedia enrichment. Chunking: `chunk_token_budget(llm.ingestion_context_tokens(), overhead=count(_build_extraction_prompt("")), model)` = `max(400, min(learned_budget(model, 4000), (ctx - overhead - 64)/3.5))` — the ceiling is learned per model from truncations (`services/extraction_budget.py`, pinned by `EXTRACTION_CHUNK_TOKENS`); a note over budget is extracted by task (entities → relationships → contexts) rather than by text (doc 10 §11); chunks split paragraphs → lines → sentences → words → chars.
 - **Skeleton** (≈1.9 k tokens of instructions; all braces doubled in source because it is an f-string):
 
@@ -310,14 +311,14 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 ### 9.2 Batched image titling — `ingestion_agent.py::_batch_image_titles(llm, items)`
 
 - **Purpose**: name each model-described image once per note so the enrichment block reads `[Image: <title>]` (placeholder tokens `{{ORB_IMAGE_TITLE_n}}` are substituted; filename fallback). Batched deliberately so the note pays one titling call, not one per image.
-- **Call**: `checkpoint.generate(llm, prompt, temperature=0.0, json_mode=True)` → `llm.ingestion_generate`.
+- **Call**: `llm.ingestion_generate_with_meta(prompt, temperature=0.0, json_mode=True)` (text only; memoised in `_chat`).
 - **Prompt**: `"For each numbered image description below, give a concise, specific title (2–6 words) that would serve as a unique entity name.\n\n{lines}\n\nReturn ONLY a JSON array: [{\"index\": 1, \"title\": \"...\"}, ...]"` where each line is `N. (file: <filename>) "<description[:600]>"`.
 - **Format**: first `[...]` via regex → `json.loads`; titles kept if `1 < len ≤ 80`; any failure → `{}`.
 
 ### 9.3 Garbage-name recovery — `ingestion_agent.py::extraction_node` (`rename_prompt`)
 
 - **Purpose**: nodes whose `name` ∈ `{untitled, none, unknown, ""}` but that have `isolated_context` get a specific name; unnamed context-less nodes are dropped.
-- **Call**: `checkpoint.generate(_llm, rename_prompt, temperature=0.0, json_mode=True)`.
+- **Call**: `_llm.ingestion_generate_with_meta(rename_prompt, temperature=0.0, json_mode=True)` (text only; memoised in `_chat`).
 - **Prompt**: `"For each numbered excerpt below, provide the most specific descriptive name for the node it describes (1–5 words each).\n\nReturn null if an excerpt has insufficient information to name specifically.\n\nReturn ONLY a JSON array: [{\"index\": 1, \"name\": \"Name Here\"}, {\"index\": 2, \"name\": null}, ...]\n\n{batch_lines}\n\nReturn ONLY: [{\"index\": 1, \"name\": \"...\"}, ...]"`, lines `N. (type=<type>) "<isolated_context>"`.
 - **Format**: first non-greedy `[...]`; accepted names `2 < len ≤ 80` and not garbage; then de-duplicated case-insensitively against clean nodes.
 
@@ -404,6 +405,7 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 - **Purpose**: read one image (a note attachment, an embedded PDF image, a sparse PDF page render, an image inside a `.docx`) with the KB's **ingestion** provider, so "the model you picked" reads your pictures. Called by `MultimediaService.describe_image` and `extract_text_from_pdf` (doc 11).
 - **Prompt** (`IMAGE_DESCRIBE_PROMPT`): `"Describe this image for a personal knowledge base, as plain text in this order: (1) one or two sentences on what it shows and what kind of image it is (photo, screenshot, poster, chart, document); (2) the people, places, organisations, dates and events it refers to; (3) ALL visible text transcribed verbatim, keeping line order — headings, dates, names, prices, links. No commentary."` — metadata before the transcription so an output cap loses the tail of the text, not the entities.
 - **Call** by `ingestion_provider`: `local` → first `extraction_server.has_vision(model)` (a `mmproj-*.gguf` beside the extraction GGUF; else `RuntimeError` naming the missing projector), then `i_chat_client.chat.completions.create` (the `ServerChatClient`) with `image_url` + text parts, `temperature=0.1`, no fixed output cap — the extraction `llama-server` (doc 12 §7.5), so the model is not loaded a second time in-process; the reply is returned stripped (the empty-text / `length` handling below applies to the OpenAI-shaped branch only); `gemini` → `generate_content([prompt, Part.from_bytes(...)])` with `temperature=0.1`, `thinking_budget=0`; `anthropic` → `messages.create` with a base64 `image` block + text, `max_tokens=ANTHROPIC_MAX_OUTPUT_TOKENS`; `openai` / `openai_compat` / `huggingface` → `chat.completions.create` with `image_url` + text content parts. The image is `multimedia.image_data_url(path)` — JPEG (quality 88), downscaled to `IMAGE_DESCRIBE_MAX_PIXELS`.
+- **Memo**: `describe_image` wraps `_describe_image(image_path, provider, model)` in `ingestion_checkpoint.memo("image", [provider, model, IMAGE_DESCRIBE_PROMPT, file_digest(image_path)], …)`, so inside a job each image or PDF page render is read once and replayed on a resume; an empty description is not saved.
 - **Format**: plain text, stripped. A text-only model that returns nothing → `ValueError("… returned no text for the image. Check that this model accepts image input.")`; a local model without a projector → `RuntimeError` naming the missing `mmproj-*.gguf`; an OpenAI-shaped `finish_reason == "length"` appends ` […]`. There is no cross-provider fallback.
 
 ### 9.13a Document summary — `LLMService.summarize_document(filename, text)`
@@ -426,7 +428,8 @@ Retrieval's `REASONING:` is deliberately **kept**: it is emitted *before* `FINDI
 
 - **Qwen3 reranker**: system `"Judge whether the Document meets the requirements based on the Query and the Instruct provided. Note that the answer can only be \"yes\" or \"no\"."`, instruct `"Given a question, retrieve relevant passages that answer the question"`, ChatML with empty `<think>` (doc 12 §10).
 - **Qwen3 embedding query instruction**: `"Instruct: Given a question, retrieve relevant context.\nQuery: "` (doc 12 §9.2); documents get no instruction (`workflows/ingestion.py` comment: "Documents are embedded without any instruction prefix").
-- **Phonon-2**: no prompt or language hint (English only; `transcribe_detailed(wav)`); **Marlin**: `model.caption(video_path)` (remote-code prompt).
+- **EmbeddingGemma 2 task prompts** (the default embedder): queries `"task: search result | query: "`, documents `"title: none | text: "` (`embedding.py`, doc 12 §9.2).
+- **Phonon-2**: no prompt or language hint (English only; fermion's per-window decode over `segment.transcribe_windows`, memoised per window — doc 11 §5.3); **Marlin**: `model.caption(video_path)` (remote-code prompt).
 
 ## 10. How to add a provider
 

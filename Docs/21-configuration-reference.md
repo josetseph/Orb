@@ -113,10 +113,10 @@ A dev gotcha: a bare `uvicorn` run on a machine that also has the desktop app in
 | Name | Type / default | Read in | Effect | Set by |
 |---|---|---|---|---|
 | `EMBEDDING_PROVIDER` | str / `"local"` | `Settings`; `embedding.EmbeddingService.__init__` | Accepted: `local`, `auto`, `""` (and deprecated `ollama`/`lm_studio` → local). **Anything else raises** `ValueError` | runtime (`local`), env |
-| `EMBEDDING_MODEL` | str / `"local-embed"` | `Settings`; `embedding.py` (`is_qwen3` substring check → query instruction), overwritten by `sync_embedding_infrastructure`/`ensure_chat_and_embed_models` | Embedding model id (catalog id from manifest) | manifest > env |
-| `EMBEDDING_DIMENSIONS` | int / `1024` | `Settings`; `qdrant_service` (vector size for collection create), `local_models` (manifest sync) | Must match the GGUF's output; changed dims trigger Qdrant collection recreation in `sync_embedding_infrastructure` | manifest > env |
-| `ORB_EMBED_GGUF` | str / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | env (import-time constant `local_models.EMBED_MODEL_ID`) | Legacy default GGUF id used when the manifest has no selection (`gguf_paths_if_present` fallback) | rarely |
-| `EMBED_N_CTX` | int / `8192` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked` | `n_ctx` for the embed GGUF | runtime (`8192`) |
+| `EMBEDDING_MODEL` | str / `"local-embed"` | `Settings`; `embedding.py` (`is_qwen3` / `is_gemma` substring checks → query instruction / task prompts; `served_embedder` → llama-server), `model_catalog.vector_threshold`, overwritten by `sync_embedding_infrastructure`/`ensure_chat_and_embed_models` | Embedding model id (catalog id from manifest) | manifest > env |
+| `EMBEDDING_DIMENSIONS` | int / `1024` | `Settings`; `qdrant_service` (vector size for collection create), `local_models` (manifest sync) | Must match the GGUF's output (768 for EmbeddingGemma 2); `sync_embedding_infrastructure` recreates empty mismatched collections, startup `_rebuild_vectors` re-embeds non-empty ones from stored text | manifest > env |
+| `ORB_EMBED_GGUF` | str / `ggml-org/embeddinggemma-2-GGUF/embeddinggemma-2-Q8_0.gguf` | env (import-time constant `local_models.EMBED_MODEL_ID`) | Legacy default GGUF id used when the manifest has no selection (`gguf_paths_if_present` fallback) | rarely |
+| `EMBED_N_CTX` | int / `16384` | env — `local_models.LocalLlamaRuntime._load_embed_unlocked`; `embedding_server` (`-c`/`-b`/`-ub`) | `n_ctx` for the embed GGUF (in-process or the embedding `llama-server`) | runtime (`16384`) |
 
 ### 3.6 Qdrant
 
@@ -161,11 +161,11 @@ All read in `backend/app/services/local_models.py` (and `model_catalog.py` for t
 | `LLAMA_FLASH_ATTN` | bool-ish / off | `_llama_metal_safe_kwargs`; `extraction_server` (`-fa on|off`) | `flash_attn=True` for `1`/`true`/`yes` | rarely |
 | `LLAMA_REPEAT_PENALTY` | float / `1.12` | `_default_repeat_penalty` → chat completion kwargs; `extraction_server` (`--repeat-penalty`) | Sampling repeat penalty | runtime (`1.12`) |
 | `LLAMA_N_THREADS` | int / llama.cpp default | `_chat_kwargs` | CPU threads | rarely |
-| `EMBED_N_CTX` | int / `8192` | `_load_embed_unlocked` | Embed GGUF context | runtime (`8192`) |
+| `EMBED_N_CTX` | int / `16384` | `_load_embed_unlocked`, `embedding_server` | Embed GGUF context (also the embedding server's batch/micro-batch) | runtime (`16384`) |
 | `RERANK_N_CTX` | int / `8192` | `LocalGGUFReranker.ensure_loaded` | Reranker GGUF context | runtime (`8192`) |
 | `MODEL_IDLE_SECONDS` | float / `300` | `model_idle_seconds` → idle watcher threads for chat/embed and reranker | Seconds of inactivity before in-process GGUFs are unloaded; `0` = never unload; negatives clamp to 0 | rarely |
 | `ORB_CHAT_GGUF` | HF `repo/file` / `bartowski/google_gemma-4-E4B-it-GGUF/google_gemma-4-E4B-it-Q4_K_M.gguf` | import-time `CHAT_MODEL_ID` | Legacy default chat GGUF (used only when the manifest has no selection) | rarely |
-| `ORB_EMBED_GGUF` | / `Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf` | `EMBED_MODEL_ID` | Legacy default embed GGUF | rarely |
+| `ORB_EMBED_GGUF` | / `ggml-org/embeddinggemma-2-GGUF/embeddinggemma-2-Q8_0.gguf` | `EMBED_MODEL_ID` | Legacy default embed GGUF | rarely |
 | `ORB_RERANK_GGUF` | / `mradermacher/Qwen3-Reranker-0.6B-GGUF/Qwen3-Reranker-0.6B.Q4_K_M.gguf` | `RERANK_MODEL_ID` → `reranker_gguf_path` fallback | Legacy default reranker GGUF | rarely |
 | `MODEL_RERANKER_LOCAL` | str / `qwen3-reranker-0.6b` | `Settings`; `retrieval.py` (labels only), overwritten from manifest | Display name of the reranker in logs/progress | manifest > env |
 
@@ -197,7 +197,7 @@ Transcription (Phonon-2, English only) has no model or engine setting: fermion r
 
 | Name | Type / default | Effect |
 |---|---|---|
-| `VECTOR_PRE_RERANK_THRESHOLD` | float / `0.45` | Qdrant min score when the reranker is on |
+| `VECTOR_PRE_RERANK_THRESHOLD` | float / `0.45` | Qdrant min score when the reranker is on and the embedder's catalog `vector_threshold` is unset (EmbeddingGemma 2, the default embedder, uses 0.69) |
 | `RERANKER_TOP_K` | int / `10` | Candidates kept after rerank (both passes) |
 | `RERANKER_SCORE_THRESHOLD` | float / `0.05` | Drop reranked candidates below |
 | `GRAPH_EXPAND_TOP_NEIGHBORS` | int / `10` | Relationship entries kept per graph expansion |

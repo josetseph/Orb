@@ -100,7 +100,7 @@ In short: the unit tests need the **full** backend environment installed, even t
 
 ### 3.4 Observed state of the suite (2026-09-20)
 
-`pytest tests/unit -q` → **556 passed, 0 failed** (2026-10-15, after `_clean_json` was removed; 485 on 2026-09-20 after the attachments / projector / packaging changes; 473 after the 09-19 band-aid removal pass, 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
+`pytest tests/unit -q` → **564 passed, 0 failed** (2026-10-31, after the EmbeddingGemma 2 switch; 556 on 2026-10-15, after `_clean_json` was removed; 485 on 2026-09-20 after the attachments / projector / packaging changes; 473 after the 09-19 band-aid removal pass, 455 before it) against an interpreter with `requirements.txt` + `pytest` + `pytest-asyncio` installed (the bundled `desktop/resources/backend/python` works; so does `uv venv --system-site-packages` over it). The repo's `backend/.venv` is still a partial install and cannot run the suite.
 
 Stale tests were cleaned up on 2026-09-19: `test_relationships.py`, `test_timing_helpers.py` and `test_chat_runtimes.py` were deleted with the code they covered; `test_graph_queries.py` lost the three tests for `min_confidence` / `find_paths_between_nodes` (APIs removed in `fbcafe7`); `test_qdrant_*.py` and `test_meili_contract.py` now set the backing `_client` attribute instead of the read-only lazy `client` property; `test_model_formats.py` shrank to the GGUF cases; `test_credentials.py` fakes `keyring` (it used to write into the developer's real keychain); the image-title stub speaks `ingestion_generate_with_meta`; the whitespace-query assertion in `test_chat_context.py` matches the stripping behaviour.
 
@@ -122,7 +122,7 @@ The pattern the live tests rely on is three idioms, documented in §13:
 
 ## 5. Unit test modules — contract pinned and why it matters
 
-69 modules under `backend/tests/unit/`. "Status" is against the current sources.
+73 modules under `backend/tests/unit/`. "Status" is against the current sources.
 
 | Module | Target | Tests | Status |
 |---|---|---|---|
@@ -144,10 +144,14 @@ The pattern the live tests rely on is three idioms, documented in §13:
 | `test_ingestion_community_names.py` | `IngestionWorkflow._name_and_summary`, `_name_fits_members` | 2 | pass |
 | `test_reranker_scoring.py` | `LocalGgufReranker._score_one`: sigmoid(yes − no) from the last position's logits, KV prefix shared with the previous document kept, one token re-evaluated for an identical prompt (fake model, no GGUF) | 1 | pass |
 | `test_extraction_server.py` | `IngestionWorkflow` ordered writes (submission order with several slots; one slot = one note at a time), `slots_for_ram`, release assets per platform, `ServerChatClient` turning `json_object` into the JSON grammar, `get_ingestion_model` extraction-model choice | 6 | pass |
+| `test_embeddinggemma.py` | `EMBED_DEFAULT` picked at every RAM tier, its 0.69 cutoff vs the 0.45 fallback, `served_embedder` by id and GGUF path; EmbeddingGemma task prompts on queries and documents; `QdrantService.reembed` rebuilding an old-size collection from stored text (per-collection text rule) and resuming from `DATA_DIR/reembed/<collection>.jsonl` after an interrupted drop | 4 | pass |
+| `test_jobs_resume.py` | `services/jobs.py` against a temp `orb.db`: a queued note runs and one left `running` by a crash resumes (`recover` + worker); `MAX_ATTEMPTS` interrupted → `failed`, not looping; same `input_hash` is one job, a new one supersedes, cancel stops a queued one; an `answer` cut off by a restart is resumed and its message saved; an `attachment` job runs from the table and a cancel stops it | 5 |not run in the partial `backend/.venv` |
+| `test_resume.py` | Kill-and-resume: the real pipeline with fake stores and a counting model is killed at a model call, after `create_or_update_relationship`, after `append_node_item` and after `upsert_node_relationships`; the resumed run must reach the same Kuzu/Qdrant/Meili snapshot as a clean run without paying for finished model calls twice | 1 (4 parametrised) |not run in the partial `backend/.venv` |
+| `test_ingestion_checkpoint.py` | `ingestion_checkpoint.memo` through `LLMService._chat`: a retry resumes from the failed call; another model/settings/prompt is a miss and failures are not saved; `forget_reply` makes the retry ask again; no active job = no cache; a transcription resumes at the first undecoded window (`transcribe_with_phonon`) | 5 |not run in the partial `backend/.venv` |
 | `test_ingestion_queue_failure.py` | A failure writing `"Queued for ingestion"` marks the note failed and ends the tracker entry | 1 | pass |
 | `test_note_passages.py` | Qdrant/Meili passage replace/search/delete per note, `_store_passages` (title prefix, both indexes), `backfill_passages` continuing past a failure, `llm.edges_order` | 4 | pass |
 | `test_media_install_restart.py` | `multimodal_services.ensure_multimodal_python_deps`: upgrading an already-imported package reports `restart_required`; a first install loads in place | 2 | pass |
-| (48 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion checkpoint/cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
+| (48 further modules) | credentials, model discovery/catalog/formats, GGUF metadata, ASR engine, attachments (link parsing, processing, subfolders, upload folder, vault folders + the `attachments/` boundary), extraction budget/placement, ingestion cancel/reset, KB finance toggle, desktop runtime (incl. Firefly `.env` quoting), vision routing (`find_mmproj`), … | 300+ | pass |
 
 ### 5.1 `test_chat_context.py` — follow-up query rewriting
 
@@ -436,5 +440,6 @@ cd frontend && npx vitest src/lib                             # watch one folder
 | 2026-09-19 | `1d5c7d7`, `69330c7` | Over-engineering sweep and band-aid removal: stale modules deleted (`test_relationships.py`, `test_timing_helpers.py`, `test_chat_runtimes.py`), `test_vault_migration.py`, `test_note_created_at.py`, `test_ingestion_community_names.py` added; 455 → 473 passing. |
 | 2026-09-20 | `f54809b` … `5a60d40` | Release prep: `test_upload_folder.py`; new cases for the `attachments/` boundary (`test_vault_folders.py`), the v2/v3 sweeps (`test_vault_migration.py`), eager projector init and strict `find_mmproj` (`test_local_runtime_budget.py`, `test_vision_routing.py`), Firefly `.env` quoting (`test_desktop_runtime.py`); 485 passing. |
 | 2026-10-15 | uncommitted | No repair of model replies: `test_llm_json_cleaning.py` deleted with `_clean_json`; `test_model_replies_as_written.py` added; `test_chat_context.py` gained `test_a_fenced_reply_is_a_failed_step_not_unwrapped`. 556 passed. |
+| 2026-10-31 | uncommitted | EmbeddingGemma 2 on every machine: `test_embeddinggemma.py` added (catalog default/cutoff/served route, task prompts, rebuild from stored text, resume after a drop). 564 passed. |
 
 Why the archive is kept in git despite its size: the reports are the only record of *why* the retrieval loop, reranker thresholds, Kuzu migration and model choices look the way they do; the raw logs let the numbers be re-derived. Why unit tests avoid infrastructure entirely: the project has no CI runner with Qdrant/Meilisearch, and the desktop packaging bundles its own binaries, so "fast, deterministic, import-only" was the only feasible contract (conftest docstring).

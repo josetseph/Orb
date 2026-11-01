@@ -189,10 +189,16 @@ class MultimediaService:
 
     def _caption_video_with_marlin(self, local_path: str) -> dict:
         """Marlin caption via in-process multimodal runtime."""
+        from app.services import ingestion_checkpoint as checkpoint
         from app.services.multimodal_runtime import multimodal_runtime
 
         try:
-            return multimodal_runtime.caption_video_path(local_path)
+            # Saved inside an ingestion: a resume does not watch the video again.
+            return checkpoint.memo(
+                "video",
+                ["marlin", checkpoint.file_digest(local_path)],
+                lambda: multimodal_runtime.caption_video_path(local_path),
+            )
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.error(f"Marlin captioning failed: {exc}")
             raise RuntimeError(f"Marlin captioning failed: {exc}") from exc

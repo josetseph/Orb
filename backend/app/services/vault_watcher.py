@@ -43,6 +43,7 @@ def _sync_vault_file(kb_id: str, vault: Path, rel: str, event: str) -> None:
     from sqlalchemy.orm import Session
 
     from app.models.note import Note
+    from app.services import jobs
     from app.services.vault import is_recent_self_write, read_note_file, title_from_filename
 
     if event != "deleted" and is_recent_self_write(vault / rel):
@@ -88,10 +89,7 @@ def _sync_vault_file(kb_id: str, vault: Path, rel: str, event: str) -> None:
                 row.processed = False
                 row.processing_stage = "Changed on disk — re-ingest when ready"
             # Unprocessed notes stay as Saved (or leave an active ingest stage alone).
-            elif row.processing_stage and (
-                row.processing_stage.startswith("Queued")
-                or row.processing_stage.startswith("Starting")
-            ):
+            elif jobs.has_active_sync(session, kb_id, row.id):
                 pass
             else:
                 row.processing_stage = "Saved"

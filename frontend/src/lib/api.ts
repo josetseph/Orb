@@ -147,6 +147,10 @@ export const api = {
     return http.get(`/chat/conversations/${conversationId}/messages${kbQuery(kb)}`);
   },
 
+  async getPendingAnswer(conversationId: string, kb = "default"): Promise<{ request_id: string | null }> {
+    return http.get(`/chat/conversations/${conversationId}/pending${kbQuery(kb)}`);
+  },
+
   async deleteChatConversation(conversationId: string, kb = "default") {
     return http.del(`/chat/conversations/${conversationId}${kbQuery(kb)}`);
   },
@@ -779,6 +783,8 @@ export const api = {
     temporal_digests: { running: boolean };
     /** Passages being indexed for notes ingested before passages existed. */
     passages?: { running: boolean; done?: number; total?: number };
+    /** Vectors being rebuilt for a new embedder (search waits meanwhile). */
+    vectors?: { running: boolean; done?: number; total?: number };
     ingestion?: {
       active: number;
     };

@@ -128,10 +128,11 @@ class IngestionWorkflow:
         self._community_run_active_seq = 0
         self._community_run_running = False
         self._temporal_digest_running = False
-        # Passage backfill progress {"done", "total"} while it runs.
+        # Passage backfill / vector rebuild progress {"done", "total"} while they run.
         self._passage_backfill: dict | None = None
+        self._vector_rebuild: dict | None = None
 
-    async def process_note(self, note_input: NoteInput, note_id: str = None):
+    async def process_note(self, note_input: NoteInput, note_id: str = None, resumed: bool = False):
         """Run the full ingestion pipeline for a single note, cancellable by id.
 
         The pipeline runs as its own task so ``cancel_ingestion`` can stop it
@@ -143,7 +144,7 @@ class IngestionWorkflow:
         key = (self.kb_id, note_id)
         ticket = self._next_ticket
         self._next_ticket += 1
-        inner = asyncio.create_task(self._process_note(note_input, note_id, ticket))
+        inner = asyncio.create_task(self._process_note(note_input, note_id, ticket, resumed))
         _running_ingestions[key] = inner
         try:
             return await inner
@@ -211,14 +212,14 @@ class IngestionWorkflow:
                 self._process_semaphore.release()
             self._finish_ticket(ticket)
 
-    async def _process_note(self, note_input: NoteInput, note_id: str, ticket: int):
+    async def _process_note(self, note_input: NoteInput, note_id: str, ticket: int, resumed: bool = False):
 
         # Register with the tracker BEFORE the semaphore so a running rebuild is
         # told to yield as soon as a note is queued, not only when it starts.
         await _tracker.begin_ingestion(self.kb_id)
         try:
             await self._update_note_processing_status(
-                note_id, "Queued for ingestion", None
+                note_id, "Queued to resume" if resumed else "Queued for ingestion", None
             )
         except Exception as exc:
             # Before the slot, so neither the failure mark nor the tracker release below runs: do both here,
@@ -229,9 +230,16 @@ class IngestionWorkflow:
 
         # Wait for a pipeline slot.  Without this cap, sending 990 notes at once
         # spawns 990 concurrent coroutines that all hit the DB pool simultaneously.
+        from app.services.qdrant_service import vectors_ready
+
+        if not vectors_ready.is_set():
+            # The embedder changed and the vault's vectors are being rebuilt: wait, or this
+            # note would be written at the new size into a collection of the old one.
+            await self._update_note_processing_status(note_id, "Waiting for the search index rebuild", None)
+            await asyncio.to_thread(vectors_ready.wait)
         async with self._pipeline_slot(ticket) as write_turn:
             await self._update_note_processing_status(
-                note_id, "Starting ingestion", None
+                note_id, "Resuming ingestion" if resumed else "Starting ingestion", None
             )
             logger.info(
                 f"\n{'='*70}\n"
@@ -1026,11 +1034,11 @@ class IngestionWorkflow:
                 node_id=node_id, name=name, node_type=node_type,
                 description_vector=vector, description=merged,
             )
-            rel_nl = " ".join(
+            rel_nl = " ".join(sorted(  # store order is arbitrary; the document must not be
                 r.get("natural_language", "")
                 for r in self._qdrant.get_relationships_for_node_ids([node_id])
                 if r.get("natural_language")
-            )
+            ))
             self._meili.index_node(
                 node_id=node_id, name=name, node_type=node_type,
                 isolated_contexts=contexts, relationship_natural_language=rel_nl,
@@ -1276,11 +1284,11 @@ class IngestionWorkflow:
             def _write_meili():
                 # Fetch relationship NL sentences from Qdrant (not Kuzu)
                 rel_qdrant = self._qdrant.get_relationships_for_node_ids([node_id])
-                rel_nl = " ".join(
+                rel_nl = " ".join(sorted(  # store order is arbitrary; the document must not be
                     r.get("natural_language", "")
                     for r in rel_qdrant
                     if r.get("natural_language")
-                )
+                ))
                 contexts = [ctx for ctx in existing_contexts if ctx and ctx.strip()]
                 # Defense-in-depth: if we somehow ended up with no contexts, fetch
                 # what Meilisearch already has so we don't wipe it with a blank upsert.
@@ -1980,7 +1988,7 @@ class IngestionWorkflow:
                     {
                         "node_id": node_id,
                         "relationship_natural_language": " ".join(
-                            _rel_nl_by_node.get(node_id, [])
+                            sorted(_rel_nl_by_node.get(node_id, []))
                         ),
                         "name": (
                             _refresh_content.get(node_id, {}).get("name") or ""
@@ -2175,6 +2183,10 @@ class IngestionWorkflow:
             "community_detection": {"running": self._community_run_running},
             "temporal_digests": {"running": self._temporal_digest_running},
             "passages": {"running": self._passage_backfill is not None, **(self._passage_backfill or {})},
+            "vectors": {
+                "running": getattr(self, "_vector_rebuild", None) is not None,
+                **(getattr(self, "_vector_rebuild", None) or {}),
+            },
             "ingestion": {"active": _tracker.active_count(self.kb_id)},
             "healthy": True,
         }

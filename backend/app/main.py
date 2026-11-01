@@ -2,6 +2,7 @@
 
 # pylint: disable=wrong-import-order,wrong-import-position,import-outside-toplevel
 import asyncio
+import time
 import uuid
 from contextvars import ContextVar
 from pathlib import Path
@@ -80,20 +81,33 @@ async def startup_event():
             "Runtime config overrides applied",
             extra={"overrides": list(overrides.keys())},
         )
+    from app.services import jobs
+
     try:
-        # Nothing is ingesting at boot, so a note still mid-pipeline was
-        # interrupted (crash, quit, restart). Left as-is the UI treats it as
-        # running forever and refuses to re-ingest it.
-        from sqlalchemy import or_, update
+        # Nothing runs at boot: jobs left running were interrupted and continue
+        # from their saved steps. One interrupted too often fails instead.
+        from sqlalchemy import or_, select, update
 
         from app.core.database import AsyncSessionLocal
+        from app.models.job import Job
         from app.models.note import Note
 
-        idle_stages = ("Saved", "Ingestion complete", "Ingestion failed")
+        given_up = await jobs.recover()
         async with AsyncSessionLocal() as session:
+            if given_up:
+                await session.execute(
+                    update(Note)
+                    .where(Note.id.in_(given_up))
+                    .values(failed=True, processing_stage="Ingestion failed (interrupted repeatedly)")
+                )
+            # A note mid-pipeline with no job to resume it (queued before jobs
+            # existed) would read "running" forever: mark it failed.
+            idle_stages = ("Saved", "Ingestion complete", "Ingestion failed")
+            resuming = select(Job.target_id).where(Job.state.in_(jobs.ACTIVE))
             result = await session.execute(
                 update(Note)
                 .where(
+                    Note.id.not_in(resuming),
                     Note.processed.is_(False),
                     Note.failed.is_(False),
                     Note.processing_stage.is_not(None),
@@ -113,6 +127,7 @@ async def startup_event():
                 )
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning(f"Could not reset interrupted ingests: {exc}")
+    jobs.start()
 
     # Neither blocks serving: the desktop window opens as soon as /health answers.
     asyncio.get_running_loop().run_in_executor(None, _background_startup)
@@ -125,6 +140,7 @@ def _background_startup() -> None:
         sync_embedding_infrastructure()
     except Exception as exc:  # pylint: disable=broad-exception-caught
         logger.warning(f"Embedding infrastructure sync skipped: {exc}")
+    _rebuild_vectors()
     try:
         from app.services.vault_watcher import start_vault_watchers
 
@@ -168,6 +184,49 @@ def _backfill_passages() -> None:
                 marker.touch()
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning("Passage backfill for KB '%s' deferred to next start: %s", meta.get("name"), exc)
+
+
+def _rebuild_vectors() -> None:
+    """Move to the default embedder (EmbeddingGemma 2) and re-embed every vault whose vectors
+    were made by another one, from the text the points store: no note is re-ingested.
+    Ingestion and search wait meanwhile; Activity shows the progress."""
+    from app.services.kb_registry import kb_registry
+    from app.services.qdrant_service import vectors_ready
+
+    vectors_ready.clear()
+    try:
+        from app.services.embedding import embedding_service
+        from app.services.local_models import switch_to_default_embedder
+
+        try:
+            switch_to_default_embedder()
+        except Exception as exc:  # pylint: disable=broad-exception-caught
+            logger.warning("Embedder switch deferred to next start: %s", exc)
+        for meta in kb_registry.list_kbs():
+            try:
+                kb = kb_registry.get_kb(meta["id"])
+                wf = kb.get_ingestion_workflow()
+
+                def progress(done, total, wf=wf):
+                    wf._vector_rebuild = {"done": done, "total": total}  # pylint: disable=protected-access
+
+                # Qdrant starts beside the API and may not answer yet: wait for it rather than
+                # release search over a vault whose vectors are still the old size.
+                deadline = time.monotonic() + 300
+                while kb.qdrant.client is None and time.monotonic() < deadline:
+                    time.sleep(3)
+                rewritten = kb.qdrant.reembed(embedding_service.embed_documents, progress)
+                if rewritten:
+                    logger.info("Vectors rebuilt for KB '%s': %d points", meta.get("name"), rewritten)
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                logger.warning("Vector rebuild for KB '%s' deferred to next start: %s", meta.get("name"), exc)
+            finally:
+                try:
+                    kb_registry.get_kb(meta["id"]).get_ingestion_workflow()._vector_rebuild = None  # pylint: disable=protected-access
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+    finally:
+        vectors_ready.set()
 
 
 def _migrate_stores() -> None:
