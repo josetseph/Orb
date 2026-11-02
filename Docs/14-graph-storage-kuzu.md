@@ -56,7 +56,7 @@ flowchart LR
     end
     KUZU[("Kuzu<br/>DATA_DIR/kuzu/&lt;slug&gt;/kuzu_graph")]
     subgraph Readers
-        RET["RetrievalService<br/>find_nodes_by_name / find_name_variants_batch /<br/>get_related_nodes / get_linked_evidence*"]
+        RET["RetrievalService<br/>find_nodes_by_name /<br/>get_related_nodes / get_linked_evidence*"]
         G3D["api/graph.py<br/>get_full_3d_graph / get_node_detail / get_related_nodes"]
     end
     Writers --> KUZU
@@ -270,7 +270,7 @@ Entity ID resolution order in `_write_ontology` (this is the anti-duplicate cont
 ### 6.2 Name normalisation
 
 - Ingestion: `normalize_name = name.lstrip("#").strip().lower()` for entity nodes; relationship endpoints use `.lower().strip()`.
-- Kuzu lookups always compare `toLower(n.name)`; parameters are lowercased in Python (`find_nodes_by_name`, `find_nodes_by_exact_names`, `find_name_variants*`).
+- Kuzu lookups always compare `toLower(n.name)`; parameters are lowercased in Python (`find_nodes_by_name`, `find_nodes_by_exact_names`).
 - Note node `name` is the resolved title (user title > LLM-extracted title > `llm_service.generate_title`), stored with original casing; `"Untitled"` if blank. Because notes are included in `kind IN ['indexable','note']` lookups, a note title can match an entity query.
 - Community and digest names are LLM/format-generated display strings (e.g. `"May 2024 — Month Digest"`).
 - Duplicates: nothing in Kuzu enforces name uniqueness. `find_nodes_by_exact_names` returns the lexicographically smallest id per name so callers converge on one canonical id.
@@ -509,8 +509,6 @@ Conventions: every method returns plain Python (`list[dict]` rows keyed by Cyphe
 | `resolve_node_id` | `(name) -> str|None` | `self._qdrant.find_node_id_by_name(name)` — **Qdrant, not Kuzu** | id | `get_related_nodes`, `create_or_update_relationship` |
 | `find_nodes_by_name` | `(names: list[str], fuzzy=True) -> list[dict]` | lowercases names; fuzzy: `UNWIND $names AS q MATCH (n:Node) WHERE n.kind IN ['indexable','note'] AND toLower(n.name) CONTAINS q RETURN DISTINCT n.id AS node_id, n.name AS name, [n.kind] AS labels, n.type AS entity_type, q AS matched_query LIMIT 50`; exact: `toLower(n.name) IN $names`, `matched_query = toLower(n.name)` | rows `{node_id,name,labels,entity_type,matched_query}` | `RetrievalService` (entity lookup), `_update_node_summary` (`fuzzy=False`) |
 | `find_nodes_by_exact_names` | `(names) -> dict[str,str]` | `WHERE n.kind='indexable' AND toLower(n.name) IN $names RETURN toLower(n.name) AS name, n.id AS id`; picks lexicographically smallest id per name | `{lower_name: id}` | `_write_ontology` (Kuzu fallback after Qdrant miss) |
-| `find_name_variants` | `(base_name, limit=5) -> list[dict]` | prefix/contains match on `toLower(n.name)` with suffix guards: excludes Sr/Jr cross-matches and generational suffixes (`_SUFFIX_PAT = ".* (sr\.?|jr\.?|senior|junior|i|ii|iii|iv|v|vi)$"`) unless both have them; `CONTAINS` branch requires `size(n.name) > size(base)+2` | rows `{node_id,name,labels,entity_type}` | none currently (batch variant is used) |
-| `find_name_variants_batch` | `(base_names, limit_per_name=5) -> dict[str, list[dict]]` | same predicate under `UNWIND $base_names AS base`, no LIMIT in Cypher; capped per base in Python; dedups and lowercases input | `{base_lower: [rows]}` | `RetrievalService` |
 | `get_indexable_nodes_for_communities` | `() -> list[dict]` | `WHERE n.kind='indexable' AND n.id IS NOT NULL RETURN n.id AS node_id, n.name AS name, n.type AS type` | rows | `rebuild_leiden_communities` |
 | `wipe_all_nodes` | `() -> int` | `count(n)` then `MATCH (n:Node) DETACH DELETE n` | count | `POST /admin/reset-ingestion-data` |
 | `clear_all_communities` | `() -> list[str]` | §9.5 | old community ids | `rebuild_leiden_communities` |
@@ -623,7 +621,7 @@ Runtime overrides (`DATA_DIR/runtime_config.json`, applied by `runtime_config.ap
 |---|---|
 | `KBRegistry` → `GraphService` | Constructs one instance per KB with `GraphService(db_path=<normalised kuzu_path>, qdrant=<that KB's QdrantService>)`, lazily on `KBContext.graph`. Default KB reuses the module singleton `graph_service`. `delete_kb` closes and deletes the file. |
 | `IngestionWorkflow` → `GraphService` | `execute_query` (note MERGE, entity+REFERENCES UNWIND, indexable MERGE in `_update_node_summary`, 1-hop neighbour query), `find_nodes_by_exact_names`, `find_nodes_by_name(fuzzy=False)`, `create_or_update_relationship`, `get_indexable_nodes_for_communities`, `clear_all_communities`, `create_leiden_community`, `set_node_community_membership`, `clear_all_temporal_digests`, `create_temporal_digest_node`, `clear_note_contribution`, `delete_orphan_entities`. Contract: entity ids supplied by ingestion are canonical; the graph never mints entity ids. |
-| `RetrievalService` → `GraphService` | Reads only: `find_nodes_by_name`, `find_name_variants_batch`, `get_related_nodes(name, max_depth=1, node_id=…)`, `get_linked_evidence`, `get_linked_evidence_by_node_ids`. Row shapes in §12 are the contract retrieval parses (`node_id`, `name`, `labels`/`label`, `entity_type`, `relationship_path`, `confidence_path`, `edge_direction`, `evidence`). |
+| `RetrievalService` → `GraphService` | Reads only: `find_nodes_by_name`, `get_related_nodes(name, max_depth=1, node_id=…)`, `get_linked_evidence`, `get_linked_evidence_by_node_ids`. Row shapes in §12 are the contract retrieval parses (`node_id`, `name`, `labels`/`label`, `entity_type`, `relationship_path`, `confidence_path`, `edge_direction`, `evidence`). |
 | `GraphService` → `QdrantService` | `find_node_id_by_name`, `find_node_ids_by_names`, `get_node_content_by_id`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `upsert_node_core` (community/digest), `delete_community_relationships`. The Qdrant instance must be the same KB's. |
 | `GraphService` → `EmbeddingService` | `embed_documents([summary])` for community and digest vectors; imported lazily inside the methods to avoid the `graph ↔ embedding ↔ local_models` import cycle. |
 | `api/graph.py`, `api/admin.py`, `api/notes.py` → `GraphService` | §13 and §8.3; all via `asyncio.to_thread`. |

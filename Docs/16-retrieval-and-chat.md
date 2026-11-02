@@ -20,7 +20,7 @@ This slice **owns**:
 This slice does **not** own (only consumes):
 
 - LLM provider plumbing and prompt helpers in `backend/app/services/llm.py` — documented in [LLM providers & prompting](13-llm-providers-and-prompting.md). This doc covers only the contracts retrieval depends on (`analyze_query`, `iterative_step`, `rewrite_follow_up_query`, `_reason_step`, `get_chat_model`).
-- Kuzu graph storage and Cypher (`backend/app/services/graph.py`) — see [Graph storage](14-graph-storage-kuzu.md). Only `find_nodes_by_name`, `find_name_variants_batch`, `get_related_nodes`, `get_linked_evidence`, `get_linked_evidence_by_node_ids` are described here, from the caller's perspective.
+- Kuzu graph storage and Cypher (`backend/app/services/graph.py`) — see [Graph storage](14-graph-storage-kuzu.md). Only `find_nodes_by_name`, `get_related_nodes`, `get_linked_evidence`, `get_linked_evidence_by_node_ids` are described here, from the caller's perspective.
 - Qdrant/Meilisearch index layout and write paths — see [Search indexes](15-search-indexes-qdrant-meilisearch.md). Only `search_all_collections`, `get_nodes_content_by_ids`, `get_relationships_for_node_ids`, `find_node_ids_by_names`, `search_nodes` are described.
 - Model download/loading/residency (`local_models.py`) — see [Local models](12-local-models-and-inference.md); this doc describes the *consequences* of residency rules for a chat turn.
 - The finance answer path (`firefly_service.answer_finance_question`) — see [Finance](17-finance-firefly.md); this doc covers only how chat routes into it and what shape comes back.
@@ -110,8 +110,8 @@ flowchart TD
     D -- yes --> E[hybrid_search current_query]
     E --> E1[analyze_query sub-query<br/>entities, keywords, attribute, types, date/period]
     E1 --> E2[embed_query enriched query]
-    E2 --> E3[asyncio.gather<br/>entity branch Kuzu + Person name variants<br/>Meili BM25 per term<br/>Qdrant 3 collections w/ temporal filters]
-    E3 --> E4[merge entity → BM25 → vector, dedup by lowercase name<br/>vector name variants]
+    E2 --> E3[asyncio.gather<br/>entity branch Kuzu<br/>Meili BM25 per term<br/>Qdrant 3 collections w/ temporal filters]
+    E3 --> E4[merge entity → BM25 → vector, dedup by lowercase name]
     E4 --> E5[get_linked_evidence_by_node_ids → linked_notes]
     E5 --> E6[candidates: entity_match / vector_match / community_summary<br/>text = _build_node_text node, []<br/>+ passage: Qdrant passages 500 + Meili passages 50]
     E6 --> E7[_apply_reranker_logging<br/>top_n=RERANKER_TOP_K, threshold=RERANKER_SCORE_THRESHOLD<br/>query + attribute + expected types]
@@ -393,9 +393,8 @@ Each branch's exception is caught and replaced with `[]` plus a warning (`[Entit
 1. Skip entirely if `query_entities` is empty.
 2. Lowercase/strip each entity; `graph.find_nodes_by_name(names, fuzzy=True)`. The fuzzy Cypher is `UNWIND $names AS q MATCH (n:Node) WHERE n.kind IN ['indexable','note'] AND toLower(n.name) CONTAINS q RETURN DISTINCT n.id AS node_id, n.name, [n.kind] AS labels, n.type AS entity_type, q AS matched_query LIMIT 50`. **`CONTAINS` is substring match**, so `"wood"` matches `ed wood`, `hollywood`, `woodstock`; and the same node can appear once per matching term (different `matched_query`), which is why the branch later dedupes by `node_id`. The exact-match variant (`fuzzy=False`, `toLower(n.name) IN $names`) exists but retrieval never uses it. Note nodes (`kind='note'`) are matched too — a note titled like the entity becomes a candidate.
 3. Mark each hit `_source="entity_match"`.
-4. **Name-variant expansion (Person only):** for found nodes whose `entity_type` is `person` (case-insensitive) and whose name has ≥ 2 words, one batched `graph.find_name_variants_batch(names)` (UNWIND; `toLower(n.name) STARTS WITH base + ' '` OR (`CONTAINS base` AND longer by > 2 chars); excludes Sr./Jr./roman-numeral suffix mismatches; ≤ 5 per base). Variants not already present get `_source="name_variant"`, `_variant_of=<base>`.
-5. Dedupe by `node_id` (fallback: lowercase name when `node_id` missing).
-6. **Enrich from Qdrant:** `qdrant.get_nodes_content_by_ids(ids)` — one `retrieve` on `node_cores` (point id = `uuid5(NAMESPACE_OID, node_id)`) plus one filtered `scroll` on `node_isolated_contexts` (`parent_node_id IN ids`), returning `{node_id: {name, type, description, community_level, isolated_contexts: ["<content> - <note_created_at>", ...]}}`. The branch sets `description` and `summary` to the core `description` and `isolated_contexts` to the list. Kuzu holds **no text** (only `id, kind, name, type, pos_*`), so a node with no Qdrant core and no contexts stays text-less and is dropped later by `_get_node_text`.
+4. Dedupe by `node_id` (fallback: lowercase name when `node_id` missing).
+5. **Enrich from Qdrant:** `qdrant.get_nodes_content_by_ids(ids)` — one `retrieve` on `node_cores` (point id = `uuid5(NAMESPACE_OID, node_id)`) plus one filtered `scroll` on `node_isolated_contexts` (`parent_node_id IN ids`), returning `{node_id: {name, type, description, community_level, isolated_contexts: ["<content> - <note_created_at>", ...]}}`. The branch sets `description` and `summary` to the core `description` and `isolated_contexts` to the list. Kuzu holds **no text** (only `id, kind, name, type, pos_*`), so a node with no Qdrant core and no contexts stays text-less and is dropped later by `_get_node_text`.
 
 #### Keyword branch (`_meili_branch`, Meilisearch)
 
@@ -436,13 +435,12 @@ Log lines: `[Qdrant] Raw hits from search_all_collections: N (threshold=…, rer
 
 **Temporal digests and communities** are ordinary `node_cores` points (type `community` or digest types, with `period_key`) and surface through the vector branch like any node; there is no separate community lookup ("STEP 3" comment in code). Both are built only when the Setup page button runs the admin endpoints.
 
-### 7.5 Merge precedence, variants, and note grounding
+### 7.5 Merge precedence and note grounding
 
 1. **Entity → BM25 → vector.** `entity_nodes = entity branch results`; names recorded in `node_names_found` (lowercase). `_merge_search_results(entity_nodes, meili_res, node_names_found)` appends Meili rows whose name is unseen (comparison uses the raw name against a lowercase set — a Meili name with capitals never collides and is appended even if the entity branch already has it; the Meili index stores lowercase names, so in practice this is benign). **Meili rows end up in `entity_nodes`** and therefore get candidate type `entity_match` (§8.1), not a keyword-specific type.
 2. Vector rows whose lowercase name is unseen become `vector_nodes` with `_source="vector"`.
-3. **Vector name variants:** `find_name_variants_batch` over **all** vector node names (the comment says "person entities" but there is no type filter here) — new names get `_source="vector_variant"`, `_variant_of`. These variant rows come from Kuzu and have **no Qdrant enrichment**, so they usually have no text and are dropped at candidate build unless the loop later surfaces them another way.
-4. `all_found_nodes = entity_nodes + vector_nodes`.
-5. **Note grounding (citations):** build `{node_id: lower_name}` for nodes that have an id (`node_id` or `id`), call `graph.get_linked_evidence_by_node_ids(ids, limit_per_node=2, node_id_to_name=map)`. Cypher: `UNWIND $node_ids AS node_id MATCH (n:Node {id: node_id})<-[r:REFERENCES]-(note:Node) WHERE note.kind = 'note' WITH node_id, collect(DISTINCT {id: note.id, title: note.name}) AS evidence RETURN node_id, evidence`, sliced to 2 per node. Result → `node_to_notes[lower_name] = [{id, title}, ...]`. If no node has an id, the name-based `get_linked_evidence(names, 2)` is used instead (it resolves names via `qdrant.find_node_ids_by_names`). Log: `[Retrieval] Found N grounding notes (for source links)`. **A note is cited only if a `REFERENCES` edge from the note node to the entity node exists in Kuzu**; `title` is the graph's `note.name`, later overridden by the SQLite title in `_extract_references`.
+3. `all_found_nodes = entity_nodes + vector_nodes`.
+4. **Note grounding (citations):** build `{node_id: lower_name}` for nodes that have an id (`node_id` or `id`), call `graph.get_linked_evidence_by_node_ids(ids, limit_per_node=2, node_id_to_name=map)`. Cypher: `UNWIND $node_ids AS node_id MATCH (n:Node {id: node_id})<-[r:REFERENCES]-(note:Node) WHERE note.kind = 'note' WITH node_id, collect(DISTINCT {id: note.id, title: note.name}) AS evidence RETURN node_id, evidence`, sliced to 2 per node. Result → `node_to_notes[lower_name] = [{id, title}, ...]`. If no node has an id, the name-based `get_linked_evidence(names, 2)` is used instead (it resolves names via `qdrant.find_node_ids_by_names`). Log: `[Retrieval] Found N grounding notes (for source links)`. **A note is cited only if a `REFERENCES` edge from the note node to the entity node exists in Kuzu**; `title` is the graph's `note.name`, later overridden by the SQLite title in `_extract_references`.
 
 Timing: `[⏱️ Timing] Retrieval phase: Xs (E entity + V vector nodes)`.
 
@@ -469,8 +467,8 @@ Timing: `[⏱️ Timing] Retrieval phase: Xs (E entity + V vector nodes)`.
 
 Build order and types:
 
-- **A. Entity nodes** (`entity_nodes`, incl. Meili rows and Person name variants): skipped if `_get_node_text(node)` is empty; `type="entity_match"`; `linked_notes = node_to_notes[lower_name]`.
-- **B. Vector nodes** (incl. vector variants): same text check; `type="community_summary"` when `entity_type.lower() == "community"` else `"vector_match"`.
+- **A. Entity nodes** (`entity_nodes`, incl. Meili rows): skipped if `_get_node_text(node)` is empty; `type="entity_match"`; `linked_notes = node_to_notes[lower_name]`.
+- **B. Vector nodes**: same text check; `type="community_summary"` when `entity_type.lower() == "community"` else `"vector_match"`.
 - **C. Note passages** (the notes' own text, doc 10 §6.0): `qdrant.search_passages(full_vector, 500, vector_threshold(settings.EMBEDDING_MODEL))` plus `meili.search_passages(query, 50)`, joined and de-duplicated on `(note_id, index)` (vector hits first). Each becomes `{"text": content, "_rerank_text": content, "type": "passage", "original_obj": {"name": "<title> (passage n)", "node_id": note_id, "summary": content}, "linked_notes": [{"id": note_id, "title": title}]}` — a distinct name because docs are merged by name and a note's title is often an entity's. They are reranked together with the graph candidates (the reranker scores the union, so there are no fusion weights to tune). No date filter applies to passages. The log line reads `Prepared N candidates (E entity + V vector + P passage)`.
 - No candidate type `neighbor_node` is produced any more, although the summary log line still counts it.
 
@@ -654,7 +652,7 @@ So one retrieval iteration in local mode is at minimum **chat → rerank → cha
 
 **Cloud providers** (`LLM_PROVIDER=openai|gemini|anthropic|huggingface`, or a KB override) remove the chat-model swaps but **embedding and reranking stay local** — the reranker load per iteration remains, and the reranker's sequential per-document scoring is unchanged.
 
-**Batching/parallel I/O already in place** (commits `8de5cda`, `b84ca73`): entity/BM25/vector branches concurrent; per-term Meili queries concurrent; Qdrant's three collections searched sequentially (one call each; the thread pool was dropped on 2026-09-19); all Kuzu variant lookups batched (`find_name_variants_batch`); Qdrant content/relationship enrichment batched by id list; note grounding one Cypher `UNWIND`; SQLite title lookup one `IN` query. Remaining serial hot spots: the reranker's per-document loop, `get_related_nodes` once per relevant doc (two Cypher queries each), and the LLM calls themselves.
+**Batching/parallel I/O already in place** (commits `8de5cda`, `b84ca73`): entity/BM25/vector branches concurrent; per-term Meili queries concurrent; Qdrant's three collections searched sequentially (one call each; the thread pool was dropped on 2026-09-19); Qdrant content/relationship enrichment batched by id list; note grounding one Cypher `UNWIND`; SQLite title lookup one `IN` query. Remaining serial hot spots: the reranker's per-document loop, `get_related_nodes` once per relevant doc (two Cypher queries each), and the LLM calls themselves.
 
 ## 11. Configuration keys that influence retrieval and chat
 
@@ -686,7 +684,7 @@ All `settings.*` keys come from `backend/app/core/config.py` (pydantic-settings;
 | `TEMPORAL_DIGEST_PERIOD` | `month` | ingestion only | Granularity of the digest nodes that retrieval sees; retrieval itself has no switch |
 | KB row `llm_provider` / `llm_model` / `llm_ingestion_model` | `NULL` | `KBContext.llm` | Per-KB override of provider + chat model (working tree) |
 
-Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; name variants `limit_per_name=5`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `analyze_query` `lru_cache` 64 entries; `_chat_status` 200 entries / 1800 s; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
+Hard-coded constants worth knowing: Kuzu `find_nodes_by_name` `LIMIT 50`; Meili `limit=100` per term; Qdrant `limit=500` per collection; note grounding `limit_per_node=2`; history truncation 600/500 chars; rewrite acceptance ≤ 300 chars; title 72/69 chars; `analyze_query` `lru_cache` 64 entries; `_chat_status` 200 entries / 1800 s; frontend poll 1000 ms × 600 attempts, 8 consecutive errors.
 
 ## 12. Function reference
 
@@ -869,7 +867,7 @@ All files are rotating (10 MB × 5) under `DATA_DIR/logs/` (`core/log.py` `COMPO
 - An exhausted loop's finding is shown labelled `"No definitive answer in your notes. Closest finding: …"` (`answered=False`), not as an answer.
 - `graph_expansion` docs are shown to the LLM but never enter `all_docs`/`context` themselves (name-dedup against their origin); their `linked_notes` are merged into the origin doc, which is how neighbour notes reach `sources`.
 - Meili results are typed `entity_match`, not a keyword type; the source can be told apart via `original_obj._source == "meili"`.
-- Vector name variants come from Kuzu without Qdrant enrichment and are usually dropped for lack of text.
+- Removed 2026-11-01: retrieval no longer expands hits to "name variants" (`find_name_variants*`). It cost about 1 s per vector hit on MuSiQue and added unrelated substring matches; duplicates are to be merged when entities are written (see `plan-entity-merging.md`).
 - A missing or broken reranker fails the chat job with a clear error rather than silently returning "couldn't find enough information".
 - `reranker_rank` is the pre-sort index, not the final rank.
 - `hybrid_search(top_k)` and `retrieve_with_iterative_loop(top_k)` ignore `top_k`.

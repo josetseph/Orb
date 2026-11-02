@@ -914,7 +914,6 @@ class RetrievalService:
         Flow:
         1. Query Analysis: Extract expected entity types and question attributes via LLM
         2. Entity Search: Find nodes by extracted entity names (primary entry point)
-           2.5 Name Variant Expansion: catch alternate/fuller name forms for Person entities
         2. Vector+Keyword Fallback: only when entity matching yields no usable content
         3. Community + Note Grounding: community summaries for broad queries; linked-note traceability
         4. Candidate Preparation: build ranked candidate list (no artificial cutoff)
@@ -994,7 +993,7 @@ class RetrievalService:
         # is unchanged.
 
         def _entity_branch() -> list[dict]:  # pylint: disable=too-many-branches
-            """STEP 1 + 1.5: entity name matching with Person name-variant expansion."""
+            """STEP 1: entity name matching."""
             if not query_entities:
                 return []
             # Normalize to lowercase so lookups match stored (lowercase) names
@@ -1010,51 +1009,6 @@ class RetrievalService:
             for node in entity_found:
                 node["_source"] = "entity_match"
                 _entity_candidates.append(node)
-
-            # STEP 1.5: NAME VARIANT EXPANSION
-            # Search for variants of found names to catch fuller/alternate versions
-            # e.g., "Robert Smith" → also find "Robert Smith Jr."
-            # Only Person entities with multi-word names are expanded; all
-            # qualifying names go through one batched Kuzu lookup.
-            _seen_variant_keys: set = set(
-                (n.get("name") or "").lower().strip() for n in _entity_candidates
-            )
-            _expandable_names: list[str] = list(
-                dict.fromkeys(
-                    node.get("name", "")
-                    for node in entity_found
-                    if node.get("name")
-                    and len(node.get("name", "").split()) >= 2
-                    and (node.get("entity_type") or "").lower() == "person"
-                )
-            )
-            variant_nodes = []
-            if _expandable_names:
-                try:
-                    _variant_map = self._graph.find_name_variants_batch(
-                        _expandable_names
-                    )
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.debug(f"  [Variant] Batch lookup failed: {e}")
-                    _variant_map = {}
-                for node_name in _expandable_names:
-                    for v in _variant_map.get(node_name.lower().strip(), []):
-                        _v_key = (v["name"] or "").lower().strip()
-                        if (
-                            _v_key not in _seen_variant_keys
-                            and _v_key != node_name.lower().strip()
-                        ):
-                            v["_source"] = "name_variant"
-                            v["_variant_of"] = node_name
-                            variant_nodes.append(v)
-                            _seen_variant_keys.add(_v_key)
-
-            if variant_nodes:
-                logger.info(
-                    f"  [Entity] Found {len(variant_nodes)} name variants: "
-                    f"{[(v['name'], v.get('_variant_of')) for v in variant_nodes]}"
-                )
-                _entity_candidates.extend(variant_nodes)
 
             # Dedup by node_id before enriching — the fuzzy UNWIND/CONTAINS
             # query can return the same node multiple times when it matches
@@ -1181,41 +1135,6 @@ class RetrievalService:
             vector_nodes.extend(
                 fold_vector_hits(entity_nodes, vector_results, node_names_found)
             )
-
-            # STEP 2.5: NAME VARIANT EXPANSION for vector-found person entities
-            # Catches "Margaret Johnson" -> "Margaret Johnson-Williams" for
-            # multi-hop queries. One batched Kuzu lookup for all vector names.
-            vector_variant_nodes = []
-            _vector_names = [
-                vnode.get("name", "") for vnode in vector_nodes if vnode.get("name")
-            ]
-            _v_variant_map: dict[str, list[dict]] = {}
-            if _vector_names:
-                try:
-                    _v_variant_map = await asyncio.to_thread(
-                        self._graph.find_name_variants_batch, _vector_names
-                    )
-                except Exception as e:  # pylint: disable=broad-exception-caught
-                    logger.debug(f"  [Variant] Batch lookup failed: {e}")
-            for vnode in vector_nodes:  # Check top vector results
-                vnode_name = vnode.get("name", "")
-                for v in _v_variant_map.get(vnode_name.lower().strip(), []):
-                    _vv_key = (v["name"] or "").lower().strip()
-                    if (
-                        _vv_key not in node_names_found
-                        and _vv_key != vnode_name.lower().strip()
-                    ):
-                        v["_source"] = "vector_variant"
-                        v["_variant_of"] = vnode_name
-                        vector_variant_nodes.append(v)
-                        node_names_found.add(_vv_key)
-
-            if vector_variant_nodes:
-                logger.info(
-                    f"  [Vector] Found {len(vector_variant_nodes)} name variants from vector results: "
-                    f"{[(v['name'], v.get('_variant_of')) for v in vector_variant_nodes]}"
-                )
-                vector_nodes.extend(vector_variant_nodes)
 
             if vector_nodes:
                 logger.info(

@@ -50,9 +50,6 @@ from app.services.qdrant_service import QdrantService, qdrant_service
 logger = get_logger("GraphService")
 
 
-_SUFFIX_PAT = ".* (sr\\.?|jr\\.?|senior|junior|i|ii|iii|iv|v|vi)$"
-
-
 # ---------------------------------------------------------------------------
 # Schema DDL
 # ---------------------------------------------------------------------------
@@ -231,81 +228,6 @@ class GraphService:
             if nm and nm not in name_to_id:
                 name_to_id[nm] = row["id"]
         return name_to_id
-
-    def find_name_variants(self, base_name: str, limit: int = 5) -> list[dict]:
-        """Return name variants for a node using regexp case-insensitive prefix matching."""
-        base_lower = base_name.lower().strip()
-        query = """
-        MATCH (n:Node)
-        WHERE n.kind IN ['indexable', 'note']
-          AND (toLower(n.name) STARTS WITH ($base_name + ' ')
-           OR (toLower(n.name) CONTAINS $base_name AND size(n.name) > size($base_name) + 2))
-          AND NOT (
-            (toLower(n.name) CONTAINS ' sr' AND toLower($base_name) CONTAINS ' jr')
-            OR (toLower(n.name) CONTAINS ' jr' AND toLower($base_name) CONTAINS ' sr')
-            OR (regexp_matches(toLower(n.name), $suffix_pat)
-                AND NOT regexp_matches(toLower($base_name), $suffix_pat))
-            OR (regexp_matches(toLower($base_name), $suffix_pat)
-                AND NOT regexp_matches(toLower(n.name), $suffix_pat))
-          )
-        RETURN DISTINCT
-            n.id AS node_id,
-            n.name AS name,
-            [n.kind] AS labels,
-            n.type AS entity_type
-        LIMIT $limit
-        """
-        return self.execute_query(
-            query,
-            {"base_name": base_lower, "limit": limit, "suffix_pat": _SUFFIX_PAT},
-        )
-
-    def find_name_variants_batch(
-        self, base_names: list[str], limit_per_name: int = 5
-    ) -> dict[str, list[dict]]:
-        """Batched ``find_name_variants``: one UNWIND scan for many base names.
-
-        Returns a mapping of lowercase base name → variant rows (same row shape
-        as ``find_name_variants``), capped at ``limit_per_name`` per base name.
-        """
-        normalized = list(
-            dict.fromkeys(n.lower().strip() for n in base_names if n and n.strip())
-        )
-        if not normalized:
-            return {}
-        query = """
-        UNWIND $base_names AS base
-        MATCH (n:Node)
-        WHERE n.kind IN ['indexable', 'note']
-          AND (toLower(n.name) STARTS WITH (base + ' ')
-           OR (toLower(n.name) CONTAINS base AND size(n.name) > size(base) + 2))
-          AND NOT (
-            (toLower(n.name) CONTAINS ' sr' AND base CONTAINS ' jr')
-            OR (toLower(n.name) CONTAINS ' jr' AND base CONTAINS ' sr')
-            OR (regexp_matches(toLower(n.name), $suffix_pat)
-                AND NOT regexp_matches(base, $suffix_pat))
-            OR (regexp_matches(base, $suffix_pat)
-                AND NOT regexp_matches(toLower(n.name), $suffix_pat))
-          )
-        RETURN DISTINCT
-            base AS base_name,
-            n.id AS node_id,
-            n.name AS name,
-            [n.kind] AS labels,
-            n.type AS entity_type
-        """
-        rows = self.execute_query(
-            query, {"base_names": normalized, "suffix_pat": _SUFFIX_PAT}
-        )
-        result: dict[str, list[dict]] = {}
-        for row in rows:
-            base = row.pop("base_name", "")
-            if not base:
-                continue
-            bucket = result.setdefault(base, [])
-            if len(bucket) < limit_per_name:
-                bucket.append(row)
-        return result
 
     def get_indexable_nodes_for_communities(self) -> list[dict]:
         """Return all indexable (non-community, non-note) nodes for community detection input."""
