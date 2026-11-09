@@ -102,6 +102,7 @@ backend/
 │   │   ├── multimedia.py       attachment discovery + PDF / image / audio / video / doc enrichment
 │   │   ├── ingestion_tracker.py    in-flight ingestion counter + cancel signals for a running rebuild
 │   │   ├── jobs.py             durable job queue: enqueue, cancel, recover at start, one worker
+│   │   ├── entity_merge.py     fold one entity into another (resumable job), and undo it
 │   │   ├── ingestion_checkpoint.py memo: save each model call / image read / ASR window so a job resumes
 │   │   ├── extraction_budget.py    learn how large an extraction chunk each model handles
 │   │   ├── firefly_service.py  Firefly III HTTP client, per-KB administration scoping

@@ -240,13 +240,13 @@ The SQLite column name `typesense_collection` is historical and now holds the Me
 client.get_index(uid)                      # MeilisearchApiError → create
 client.create_index(uid, {"primaryKey": "node_id"}); wait_for_task(…, timeout_in_ms=10000)
 index.update_settings({
-    "searchableAttributes": ["name", "type", "isolated_contexts", "relationship_natural_language"],   # _SEARCHABLE (order = attribute ranking priority)
+    "searchableAttributes": ["name", "aliases", "type", "isolated_contexts", "relationship_natural_language"],   # _SEARCHABLE (order = attribute ranking priority)
     "filterableAttributes": ["type", "community_level"],                                             # _FILTERABLE
     "displayedAttributes": ["*"],
 }); wait_for_task(…, 10000)
 ```
 
-- `searchableAttributes` order matters in Meilisearch: `name` > `type` > `isolated_contexts` > `relationship_natural_language` for the `attribute` ranking rule.
+- `searchableAttributes` order matters in Meilisearch: `name` > `aliases` > `type` > `isolated_contexts` > `relationship_natural_language` for the `attribute` ranking rule.
 - **Not configured** (Meilisearch defaults apply): ranking rules (`words, typo, proximity, attribute, sort, exactness`), typo tolerance (on; 1 typo ≥5 chars, 2 typos ≥9 chars), stop words (none), synonyms (none), `sortableAttributes` (none — no sort is used), pagination limits (`maxTotalHits` 1000), faceting.
 - Settings are re-applied on every service construction (idempotent). Failures to apply settings are logged at DEBUG only, so a stale attribute list is silent.
 - Nothing in the code uses the filterable attributes today; `search_nodes` sends no `filter`. `type` filtering for autocomplete is done client-side in `api/graph.py`.
@@ -272,7 +272,7 @@ Primary key `node_id`. Fields, all top-level strings/ints:
 |---|---|---|---|---|
 | `get_node` | `(node_id) -> dict|None` | `index.get_document(node_id)`; normalises the SDK `Document` object to a dict (`vars(doc)` minus private attrs, then `dict(doc)`, then attribute pick of the six known fields); any error → `None` | — | `_update_node_summary`, `update_nodes_community`, `api/graph.py` content fallback |
 | `search_nodes` | `(query, limit=20) -> list[{score, payload}]` | `index.search(query, {"limit": limit})`; **no filter, no highlighting, no attributesToRetrieve**; `score = float(total - idx)` — a synthetic rank-based score (top hit = N, last = 1), **not** Meilisearch's `_rankingScore` | — | retrieval `_search_meili_by_keyword(query, 100)` fanned out over the query plus extracted keywords; `api/graph.py` autocomplete (`limit*2`), scan-text (`2` per candidate) |
-| `index_node` | `(node_id, name, node_type, isolated_contexts: list[str] | None = None, relationship_natural_language="", community_level=None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
+| `index_node` | `(node_id, name, node_type, isolated_contexts: list[str] | None = None, relationship_natural_language="", community_level=None, aliases: list[str] | None = None) -> None` | `add_documents([doc], primary_key="node_id")` | `wait_for_task(task_uid, timeout_in_ms=5000)` | `_update_node_summary`, `_commit_community`, `build_temporal_digests` |
 | `update_nodes_community` | `(rows: list[{node_id, relationship_natural_language?, name?}]) -> None` | for each row `get_node` (or `{node_id}`), overlay non-empty fields, one `add_documents(docs)` | `wait_for_task(…, 30000)` | `rebuild_leiden_communities` end-of-run refresh |
 | `delete_node` | `(node_id) -> None` | `index.delete_document(node_id)`; 404/"not found" silently ignored | `wait_for_task(…, 5000)` | `api/notes.py`, community/digest rebuilds |
 | `reset_all` | `() -> None` | `delete_index` for the node index **and** the passages index (+wait 10 s each, warn on failure) then `_ensure_collection()` (the node index only; the passages index is re-created by the next `replace_note_passages`) | 10000 | admin reset, KB empty |

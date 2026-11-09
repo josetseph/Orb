@@ -168,6 +168,22 @@ class IngestionWorkflow:
             if _running_ingestions.get(key) is inner:
                 del _running_ingestions[key]
 
+    async def between_note_writes(self, work) -> None:
+        """Run ``work()`` (a coroutine function) with no note writing the graph: it queues in
+        write order like a note, so everything submitted before it is written first."""
+        ticket = self._next_ticket
+        self._next_ticket += 1
+        try:
+            if self._write_turn != ticket:
+                await self._turn_event(ticket).wait()
+            if self._concurrency > 1:
+                await work()
+            else:  # with one slot a note writes without waiting for its turn, but holds the slot
+                async with self._process_semaphore:
+                    await work()
+        finally:
+            self._finish_ticket(ticket)
+
     def _turn_event(self, ticket: int) -> asyncio.Event:
         return self._turn_events.setdefault(ticket, asyncio.Event())
 
@@ -470,6 +486,33 @@ class IngestionWorkflow:
             processing_model=None,
         )
 
+    def _use_merged_names(self, extraction: Extraction, content: str, normalize) -> None:
+        """A name merged into another entity means that entity (entity_merge.py): from here
+        on the note is written exactly as if it had used the entity's own name."""
+        mentioned = {normalize(n.name) for n in extraction.nodes}
+        for rel in extraction.relationships:
+            mentioned |= {normalize(rel.source_name), normalize(rel.target_name)}
+        merged = self._graph.resolve_aliases(sorted(m for m in mentioned if m))
+        if not merged:
+            return
+        for node in extraction.nodes:
+            hit = merged.get(normalize(node.name))
+            if hit:
+                # The fallback context searches the note for the name it actually used.
+                node.isolated_context = node.isolated_context or sentences_about(node.name, content)
+                node.name = hit["name"]
+        kept = []
+        for rel in extraction.relationships:
+            was_loop = normalize(rel.source_name) == normalize(rel.target_name)
+            for field in ("source_name", "target_name"):
+                hit = merged.get(normalize(getattr(rel, field)))
+                if hit:
+                    setattr(rel, field, hit["name"])
+            # "the denver post" -> "denver post" is now an entity related to itself.
+            if was_loop or normalize(rel.source_name) != normalize(rel.target_name):
+                kept.append(rel)
+        extraction.relationships = kept
+
     def _write_ontology(  # pylint: disable=too-many-locals,too-many-branches,too-many-statements
         self,
         note_id: str,
@@ -515,6 +558,8 @@ class IngestionWorkflow:
             if not name:
                 return ""
             return name.lstrip("#").strip().lower()
+
+        self._use_merged_names(extraction, content, normalize_name)
 
         # 1. NODES (Batch — unified single type)
         name_to_id: dict[str, str] = (
@@ -1042,6 +1087,7 @@ class IngestionWorkflow:
             self._meili.index_node(
                 node_id=node_id, name=name, node_type=node_type,
                 isolated_contexts=contexts, relationship_natural_language=rel_nl,
+                aliases=self._graph.aliases_of(node_id),
             )
 
         await asyncio.to_thread(_write)
@@ -1304,6 +1350,7 @@ class IngestionWorkflow:
                     node_type=node_type,
                     isolated_contexts=contexts,
                     relationship_natural_language=rel_nl,
+                    aliases=self._graph.aliases_of(node_id),
                 )
 
             await asyncio.to_thread(_write_meili)

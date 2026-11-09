@@ -26,6 +26,8 @@ ACTIVE = ("queued", "running")
 INGEST = "ingest_note"
 ANSWER = "answer"
 ATTACHMENT = "attachment"
+MERGE_ENTITY = "merge_entity"
+UNMERGE_ENTITY = "unmerge_entity"
 #: A job interrupted this many times may be what takes the app down: it fails instead.
 MAX_ATTEMPTS = 3
 #: Finished rows are kept this long, then dropped at start.
@@ -231,6 +233,10 @@ async def _prepare(job: Job):
         from app.api.notes import prepare_attachment
 
         return prepare_attachment(job)
+    if job.kind in (MERGE_ENTITY, UNMERGE_ENTITY):
+        from app.services.entity_merge import prepare
+
+        return prepare(job)
     if job.kind != INGEST:
         raise ValueError(f"unknown job kind {job.kind}")
     from app.models.note import Note

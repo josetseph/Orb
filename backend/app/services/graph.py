@@ -11,6 +11,7 @@ Relationship tables:
     REFERENCES(FROM Node TO Node, note_id STRING)
     MEMBER_OF(FROM Node TO Node, level INT64)
     CONTAINS(FROM Node TO Node)
+    Alias(name STRING PRIMARY KEY, node_id STRING)
     SEMANTIC_REL(FROM Node TO Node,
         rel_type STRING, confidence DOUBLE, strength DOUBLE,
         relevance DOUBLE, edge_weight DOUBLE, relationship_id STRING,
@@ -19,6 +20,9 @@ Relationship tables:
 
   ``note_ids`` are the notes asserting the edge (``note_id`` the first of them),
   so a note re-ingested or resumed takes back exactly what it said.
+
+  ``Alias`` maps a name merged away to the entity it now means (entity_merge.py).
+  A row whose node has since gone is simply never returned.
 
   ``pos_x/pos_y/pos_z``, ``is_similarity`` and ``created_at`` may still exist
   in databases created before they were dropped; nothing reads or writes them.
@@ -61,6 +65,11 @@ _SCHEMA_STMTS = [
         name STRING,
         type STRING,
         PRIMARY KEY(id)
+    )""",
+    """CREATE NODE TABLE IF NOT EXISTS Alias(
+        name STRING,
+        node_id STRING,
+        PRIMARY KEY(name)
     )""",
     """CREATE REL TABLE IF NOT EXISTS REFERENCES(
         FROM Node TO Node,
@@ -146,7 +155,11 @@ class GraphService:
 
     def resolve_node_id(self, name: str) -> str | None:
         """Resolve a node name to its stable node_id via Qdrant node_cores."""
-        return self._qdrant.find_node_id_by_name(name)
+        found = self._qdrant.find_node_id_by_name(name)
+        if found:
+            return found
+        alias = self.resolve_aliases([name]).get(name.lower().strip())
+        return alias["id"] if alias else None
 
     def execute_query(self, query: str, params: dict = None):
         """Execute a Cypher query and return results as a list of row dictionaries."""
@@ -227,7 +240,148 @@ class GraphService:
             nm = row.get("name")
             if nm and nm not in name_to_id:
                 name_to_id[nm] = row["id"]
+        for nm, alias in self.resolve_aliases(normalized).items():
+            name_to_id.setdefault(nm, alias["id"])
         return name_to_id
+
+    # ---- Aliases and merging (entity_merge.py) ------------------------------
+
+    def resolve_aliases(self, names: list[str]) -> dict[str, dict]:
+        """For each name that was merged away: ``{name: {"id", "name"}}`` of the entity it means."""
+        if not names:
+            return {}
+        rows = self.execute_query(
+            "UNWIND $names AS q MATCH (a:Alias {name: q}) MATCH (n:Node {id: a.node_id}) "
+            "WHERE n.kind = 'indexable' RETURN a.name AS alias, n.id AS id, n.name AS name",
+            {"names": list(names)},
+        )
+        return {r["alias"]: {"id": r["id"], "name": r["name"]} for r in rows}
+
+    def aliases_of(self, node_id: str) -> list[str]:
+        rows = self.execute_query(
+            "MATCH (a:Alias) WHERE a.node_id = $id RETURN a.name AS name ORDER BY name", {"id": node_id}
+        )
+        return [r["name"] for r in rows]
+
+    def set_aliases(self, names: list[str], node_id: str) -> None:
+        if names:
+            self.execute_query(
+                "UNWIND $names AS x MERGE (a:Alias {name: x}) SET a.node_id = $id",
+                {"names": names, "id": node_id},
+            )
+
+    def drop_aliases(self, names: list[str]) -> None:
+        if names:
+            self.execute_query("UNWIND $names AS x MATCH (a:Alias {name: x}) DELETE a", {"names": names})
+
+    def get_entity(self, node_id: str) -> dict | None:
+        rows = self.execute_query(
+            "MATCH (n:Node {id: $id}) RETURN n.id AS id, n.kind AS kind, n.name AS name, n.type AS type",
+            {"id": node_id},
+        )
+        return rows[0] if rows else None
+
+    def restore_entity(self, entity: dict) -> None:
+        self.execute_query(
+            "MERGE (n:Node {id: $id}) SET n.kind = $kind, n.name = $name, n.type = $type",
+            {k: entity[k] for k in ("id", "kind", "name", "type")},
+        )
+
+    def delete_entity(self, node_id: str) -> None:
+        self.execute_query("MATCH (n:Node {id: $id}) DETACH DELETE n", {"id": node_id})
+
+    def note_references(self, node_id: str) -> list[str]:
+        rows = self.execute_query(
+            "MATCH (n:Node)-[:REFERENCES]->(:Node {id: $id}) RETURN DISTINCT n.id AS id", {"id": node_id}
+        )
+        return [r["id"] for r in rows]
+
+    def add_references(self, note_ids: list[str], node_id: str) -> None:
+        if note_ids:
+            self.execute_query(
+                "UNWIND $notes AS nid MATCH (note:Node {id: nid}), (e:Node {id: $id}) "
+                "MERGE (note)-[r:REFERENCES]->(e) SET r.note_id = nid",
+                {"notes": note_ids, "id": node_id},
+            )
+
+    def drop_references(self, note_ids: list[str], node_id: str) -> None:
+        if note_ids:
+            self.execute_query(
+                "UNWIND $notes AS nid MATCH (:Node {id: nid})-[r:REFERENCES]->(:Node {id: $id}) DELETE r",
+                {"notes": note_ids, "id": node_id},
+            )
+
+    def entity_edges(self, node_id: str) -> list[dict]:
+        """Every SEMANTIC_REL touching the node, with all its properties."""
+        return self.execute_query(
+            """
+            MATCH (a:Node)-[r:SEMANTIC_REL]->(b:Node) WHERE a.id = $id OR b.id = $id
+            RETURN a.id AS source, b.id AS target, r.rel_type AS rel_type,
+                   r.relationship_id AS relationship_id, r.confidence AS confidence,
+                   r.strength AS strength, r.relevance AS relevance, r.edge_weight AS edge_weight,
+                   r.ingested_at AS ingested_at, r.last_updated AS last_updated,
+                   r.note_id AS note_id, r.note_ids AS note_ids
+            """,
+            {"id": node_id},
+        )
+
+    def _edge_note_ids(self, source: str, target: str, rel_type: str) -> list[str] | None:
+        rows = self.execute_query(
+            "MATCH (:Node {id: $s})-[r:SEMANTIC_REL]->(:Node {id: $t}) WHERE r.rel_type = $rt "
+            "RETURN r.note_ids AS ids LIMIT 1",
+            {"s": source, "t": target, "rt": rel_type},
+        )
+        return (rows[0]["ids"] or []) if rows else None
+
+    def _set_edge_notes(self, source: str, target: str, rel_type: str, ids: list[str]) -> None:
+        value = "$ids" if ids else "CAST([] AS STRING[])"  # Kuzu types an empty parameter INT64[]
+        params = {"s": source, "t": target, "rt": rel_type, "n": len(ids)}
+        if ids:
+            params["ids"] = ids
+        self.execute_query(
+            "MATCH (:Node {id: $s})-[r:SEMANTIC_REL]->(:Node {id: $t}) WHERE r.rel_type = $rt "
+            f"SET r.note_ids = {value}, r.mention_count = $n",
+            params,
+        )
+
+    def absorb_edge(self, source: str, target: str, edge: dict) -> None:
+        """Give (source)-[edge's type]->(target) the edge's notes, creating it if absent. Repeatable."""
+        rel_type, notes = edge["rel_type"], edge.get("note_ids") or []
+        live = self._edge_note_ids(source, target, rel_type)
+        if live is not None:
+            self._set_edge_notes(source, target, rel_type, live + [n for n in notes if n not in live])
+            return
+        self.execute_query(
+            """
+            MATCH (s:Node {id: $s}), (t:Node {id: $t})
+            CREATE (s)-[r:SEMANTIC_REL]->(t)
+            SET r.rel_type = $rt, r.relationship_id = $rid, r.confidence = $confidence,
+                r.strength = $strength, r.relevance = $relevance, r.edge_weight = $edge_weight,
+                r.ingested_at = $ingested_at, r.last_updated = $last_updated, r.note_id = $note_id
+            """,
+            {
+                "s": source, "t": target, "rt": rel_type, "rid": edge.get("relationship_id"),
+                **{k: edge.get(k) for k in (
+                    "confidence", "strength", "relevance", "edge_weight",
+                    "ingested_at", "last_updated", "note_id",
+                )},
+            },
+        )
+        self._set_edge_notes(source, target, rel_type, notes)
+
+    def retract_edge(self, source: str, target: str, rel_type: str, notes: list[str], created: bool) -> None:
+        """Undo ``absorb_edge``: take ``notes`` back; an edge it ``created`` goes once none are left."""
+        live = self._edge_note_ids(source, target, rel_type)
+        if live is None:
+            return
+        left = [n for n in live if n not in notes]
+        if created and not left:
+            self.execute_query(
+                "MATCH (:Node {id: $s})-[r:SEMANTIC_REL]->(:Node {id: $t}) WHERE r.rel_type = $rt DELETE r",
+                {"s": source, "t": target, "rt": rel_type},
+            )
+        else:
+            self._set_edge_notes(source, target, rel_type, left)
 
     def get_indexable_nodes_for_communities(self) -> list[dict]:
         """Return all indexable (non-community, non-note) nodes for community detection input."""

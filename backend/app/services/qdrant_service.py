@@ -1121,6 +1121,64 @@ class QdrantService:
         except Exception as exc:  # pylint: disable=broad-exception-caught
             logger.warning(f"Qdrant delete_node failed for {node_id}: {exc}")
 
+    # ── Moving a merged entity's points (entity_merge.py); failures raise ───────
+    def context_moves(self, node_id: str, keep_id: str) -> list[dict]:
+        """Where each of the node's contexts goes under ``keep_id``: the same id a note writing
+        it there would get, so a later re-ingest replaces it. ``shared``: ``keep_id`` already has it."""
+        def points(nid: str) -> list:
+            out, offset = [], None
+            while True:
+                page, offset = self.client.scroll(
+                    collection_name=self._col_contexts,
+                    scroll_filter=Filter(must=[FieldCondition(key="parent_node_id", match=MatchValue(value=nid))]),
+                    limit=500, offset=offset, with_payload=True, with_vectors=False,
+                )
+                out += page
+                if offset is None:
+                    return out
+
+        existing = {str(p.id) for p in points(keep_id)}
+        moves = []
+        for point in points(node_id):
+            payload, note_id = point.payload or {}, (point.payload or {}).get("note_id")
+            to = _point_id(note_id, keep_id, payload.get("content")) if note_id else _point_id("merged", keep_id, point.id)
+            moves.append({"from": str(point.id), "to": to, "shared": to in existing})
+        return moves
+
+    def move_context_points(self, moves: list[tuple[str, str, bool]], parent: str) -> None:
+        """``(from_id, to_id, keep_source)``: write each under ``parent``, then drop the source.
+        A source already gone was moved by an earlier run."""
+        if not moves:
+            return
+        col = self._col_contexts
+        found = {
+            str(p.id): p
+            for p in self.client.retrieve(col, ids=[m[0] for m in moves], with_payload=True, with_vectors=True)
+        }
+        self._upsert_batched(col, [
+            PointStruct(id=to, vector=found[src].vector, payload={**found[src].payload, "parent_node_id": parent})
+            for src, to, _ in moves if src in found
+        ])
+        gone = [src for src, _, keep in moves if src in found and not keep]
+        if gone:
+            self.client.delete(collection_name=col, points_selector=gone)
+
+    def relationship_texts(self, relationship_ids: list[str]) -> dict[str, str]:
+        """The stored sentence of each relationship that has a point."""
+        points = self.client.retrieve(
+            self._col_rels, ids=[str(uuid.uuid5(uuid.NAMESPACE_OID, r)) for r in relationship_ids], with_payload=True
+        ) if relationship_ids else []
+        return {p.payload["relationship_id"]: p.payload.get("natural_language", "") for p in points}
+
+    def retarget_relationship(self, relationship_id: str, source: str, target: str) -> None:
+        point = str(uuid.uuid5(uuid.NAMESPACE_OID, relationship_id))
+        if self.client.retrieve(self._col_rels, ids=[point], with_payload=False):
+            self.client.set_payload(
+                collection_name=self._col_rels,
+                payload={"source_node_id": source, "target_node_id": target},
+                points=[point],
+            )
+
     def delete_relationships(self, relationship_ids: list[str]) -> None:
         """Drop the relationship points for edges that no longer exist in Kuzu."""
         if not relationship_ids or not self.is_available() or not self.client:

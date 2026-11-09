@@ -214,7 +214,7 @@ async def process_note(self, note_input: NoteInput, note_id: str = None, resumed
 
 Every long task resumes from its last finished step (decision D14 in [26](26-decisions-and-constraints.md); convention in [27](27-development-guide.md) "Long work resumes"; plan `Docs/plan-resumable-work.md`).
 
-**The queue.** A job is a row of the `jobs` table in `orb.db` (`models/job.py`, columns in [06](06-backend-core-and-configuration.md) §9.6): `kind` (`ingest_note`, `answer`, `attachment`), `kb_id`, `target_id`, `payload`, `input_hash`, `state` (`queued` → `running` → `done` | `failed` | `cancelled`), `attempts`, `last_error`; `id` (autoincrement) is the drain order.
+**The queue.** A job is a row of the `jobs` table in `orb.db` (`models/job.py`, columns in [06](06-backend-core-and-configuration.md) §9.6): `kind` (`ingest_note`, `answer`, `attachment`, `merge_entity`, `unmerge_entity`), `kb_id`, `target_id`, `payload`, `input_hash`, `state` (`queued` → `running` → `done` | `failed` | `cancelled`), `attempts`, `last_error`; `id` (autoincrement) is the drain order.
 
 | Function | Behaviour |
 |---|---|

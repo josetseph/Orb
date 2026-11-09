@@ -14,6 +14,7 @@ logger = get_logger("MeilisearchService")
 
 _SEARCHABLE = [
     "name",
+    "aliases",
     "type",
     "isolated_contexts",
     "relationship_natural_language",
@@ -228,6 +229,7 @@ class MeilisearchService:
         isolated_contexts: list[str] | None = None,
         relationship_natural_language: str = "",
         community_level: int | None = None,
+        aliases: list[str] | None = None,
     ) -> None:
         if not self.is_available():
             return
@@ -236,6 +238,8 @@ class MeilisearchService:
             "name": name,
             "type": node_type,
         }
+        if aliases:
+            doc["aliases"] = list(aliases)
         if isolated_contexts:
             doc["isolated_contexts"] = list(isolated_contexts)
         if relationship_natural_language:

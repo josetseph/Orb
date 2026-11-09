@@ -179,7 +179,8 @@ All Kuzu work is synchronous. Every API call site wraps it in `asyncio.to_thread
 
 ### 4.7 Schema bootstrap and migrations
 
-- Bootstrap = `_SCHEMA_STMTS` (`CREATE NODE TABLE IF NOT EXISTS Node(...)`, `CREATE REL TABLE IF NOT EXISTS REFERENCES/MEMBER_OF/CONTAINS/SEMANTIC_REL(...)`).
+- Bootstrap = `_SCHEMA_STMTS` (`CREATE NODE TABLE IF NOT EXISTS Node(...)` and `Alias(...)`, `CREATE REL TABLE IF NOT EXISTS REFERENCES/MEMBER_OF/CONTAINS/SEMANTIC_REL(...)`).
+- `Alias(name PRIMARY KEY, node_id)` maps a name merged away to the entity it now means (`services/entity_merge.py`, [26](26-decisions-and-constraints.md) "Entity merging"). `resolve_aliases` joins to `Node`, so a row whose node has gone is never returned. `find_nodes_by_exact_names` and `resolve_node_id` fall back to it; `_write_ontology` rewrites merged names to the entity's own name before anything else reads them.
 - There is **no migration framework** for Kuzu. Adding a property to an existing table requires either an `ALTER TABLE … ADD` executed manually or deleting the DB file (users: Settings → reset; devs: `POST /api/v1/admin/reset-ingestion-data` only clears rows, it does not drop tables). Removing/renaming a property is likewise manual.
 - Two data-level "migrations" exist: `normalize_kuzu_path` (registry rows, at `KBRegistry._load`) and `main._migrate_stores` (per KB, once, gated by `DATA_DIR/.stores-migrated-v1-<kb_id>`: renames `SEMANTIC_REL.rel_type = 'relates_to'` to `'related_to'`, backfills `Node.name` for `kind='note'` nodes whose name is NULL/`''`/`Unknown`/`Untitled` from SQLite titles or the `rel_path` stem, and scrubs legacy `FACTS:` prefixes from Qdrant descriptions; the marker is touched only after all three succeeded). Neither touches schema. See doc 22.
 - The module docstring's `kind` list (`note | indexable | community`) is stale: `temporal_digest` is a fourth kind written by `create_temporal_digest_node`.

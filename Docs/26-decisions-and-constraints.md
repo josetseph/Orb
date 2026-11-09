@@ -285,6 +285,15 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 See [25-development-history.md](25-development-history.md) for the full chronology.
 
+## Entity merging (2026-11)
+
+- **A merge is one resumable job with a plan written first** (`services/entity_merge.py`, `entity_merges` table in `orb.db`). The plan is computed once, before the first change, and is also what undo reads.
+- **Write, then delete.** Points move under ids derived from their content before their sources go, and the absorbed node is removed last. A crash at any step resumes to the same result and loses nothing.
+- **A merge takes a turn in the note write order** (`IngestionWorkflow.between_note_writes`), so no note writes while relations move.
+- **A merged name means the entity.** `_write_ontology` rewrites aliases to the entity's own name first, so the rest of the pipeline runs as for an exact match and an existing node is never renamed.
+- **Undo restores what the merge moved.** What notes wrote to the kept entity afterwards stays on it. Only entities merge: never notes, attachment documents, communities or digests.
+- Which entities are the same is decided elsewhere; see `Docs/plan-entity-merging.md`.
+
 ## Model choice and credentials (2026-09)
 
 - **The catalog recommends; the filesystem decides.** Any chat GGUF on disk is selectable per KB. `model_catalog.py` exists to size and download recommendations, not to allow-list. Do not reintroduce "is this a known model id" as a gate.
