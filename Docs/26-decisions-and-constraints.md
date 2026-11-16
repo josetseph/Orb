@@ -246,7 +246,7 @@ Format per decision: **Decision** · Rejected alternatives · Rationale / eviden
 
 ### E8. Native wheels are built on the target OS in CI (no cross-compiling)
 - Rationale: `llama-cpp-python` Metal/CPU builds are platform-specific; v0.1.0 Mac builds shipped broken helper symlinks from a mismatched runner.
-- Enforced: `.github/workflows/desktop-release.yml` matrix (macos-14 arm64, macos-15-intel x64, windows-latest, ubuntu-22.04), followed by a `release` job that only drafts the GitHub Release from those artifacts.
+- Enforced: `.github/workflows/desktop-release.yml` matrix (macos-15 arm64, macos-15-intel x64, windows-latest, ubuntu-22.04), followed by a `release` job that only drafts the GitHub Release from those artifacts.
 
 ### E9. The macOS DMG is built with `hdiutil`, not Tauri's DMG script
 - Rejected: Tauri's `bundle_dmg.sh` (mount a temp image, lay it out through Finder AppleScript, unmount); an APFS image.

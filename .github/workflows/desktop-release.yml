@@ -17,7 +17,8 @@ jobs:
       matrix:
         include:
           - name: mac-arm64
-            os: macos-14
+            # macos-14 is retired; macos-15 is GitHub's Apple Silicon runner.
+            os: macos-15
             bundles: |
               desktop/src-tauri/target/release/bundle/dmg/*.dmg
               desktop/src-tauri/target/release/bundle/macos/*.app.tar.gz*
